@@ -1,0 +1,68 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10",
+  "nanobind>=2.0",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "stride-align"
+version = "0.1.0"
+description = "Smith-Waterman and Needleman-Wunsch alignments with a nanobind C++23 backend."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Adam" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: C++",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "cmake>=3.26",
+  "mypy>=1.8",
+  "ninja>=1.11",
+  "pytest>=8.0",
+  "ruff>=0.5",
+]
+
+[tool.poetry]
+package-mode = true
+
+[tool.poetry.group.dev.dependencies]
+build = ">=1.2"
+cmake = ">=3.26"
+mypy = ">=1.8"
+nanobind = ">=2.0"
+ninja = ">=1.11"
+pytest = ">=8.0"
+ruff = ">=0.5"
+scikit-build-core = ">=0.10"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+editable.mode = "redirect"
+wheel.packages = ["src/stride_align"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
