@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/linux_loongarch64_lasx.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::linux_loongarch64_lasx>;
+using Implementation = stride_align::backend_linux_loongarch64_lasx::Implementation;
 
 }  // namespace
 

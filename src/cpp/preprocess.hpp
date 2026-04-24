@@ -155,7 +155,7 @@ inline KernelBits parse_forced_kernel_bits(unsigned int width) {
     case 64:
       return KernelBits::bits64;
     default:
-      throw_value_error("width must be one of 8, 16, 32, or 64");
+      throw_value_error("width must be None, 0, 8, 16, 32, or 64");
   }
 }
 

@@ -2,6 +2,26 @@
 
 #include <array>
 
+#if defined(__linux__) && defined(__aarch64__)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
+
+#if defined(__linux__) && defined(__loongarch__)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
+
+#if defined(__linux__) && (defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__))
+#include <sys/auxv.h>
+#include <asm/cputable.h>
+#endif
+
+#if defined(__linux__) && defined(__riscv)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
+
 namespace stride_align {
 
 namespace {
@@ -75,6 +95,62 @@ bool x86_supports_avx10_512() noexcept {
     defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 14)
   __builtin_cpu_init();
   return x86_supports_avx512bwvl() != 0 && __builtin_cpu_supports("avx10.1-512") != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_aarch64_supports_asimd() noexcept {
+#if defined(__linux__) && defined(__aarch64__)
+  return (getauxval(AT_HWCAP) & HWCAP_ASIMD) != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_aarch64_supports_sve() noexcept {
+#if defined(__linux__) && defined(__aarch64__)
+  return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_aarch64_supports_sve2() noexcept {
+#if defined(__linux__) && defined(__aarch64__)
+  return linux_aarch64_supports_sve() && (getauxval(AT_HWCAP2) & HWCAP2_SVE2) != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_loongarch64_supports_lsx() noexcept {
+#if defined(__linux__) && defined(__loongarch__)
+  return (getauxval(AT_HWCAP) & HWCAP_LOONGARCH_LSX) != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_loongarch64_supports_lasx() noexcept {
+#if defined(__linux__) && defined(__loongarch__)
+  return (getauxval(AT_HWCAP) & HWCAP_LOONGARCH_LASX) != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_powerpc64_supports_vsx() noexcept {
+#if defined(__linux__) && (defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__))
+  return (getauxval(AT_HWCAP) & PPC_FEATURE_HAS_VSX) != 0;
+#else
+  return false;
+#endif
+}
+
+bool linux_riscv64_supports_rvv() noexcept {
+#if defined(__linux__) && defined(__riscv) && defined(COMPAT_HWCAP_ISA_V)
+  return (getauxval(AT_HWCAP) & COMPAT_HWCAP_ISA_V) != 0;
 #else
   return false;
 #endif
@@ -204,15 +280,23 @@ bool backend_is_available(BackendKind kind) noexcept {
     case BackendKind::x86_avx10_512:
       return x86_supports_avx10_512();
     case BackendKind::linux_aarch64_asimd:
+      return linux_aarch64_supports_asimd();
     case BackendKind::linux_aarch64_neon:
+      return linux_aarch64_supports_asimd();
     case BackendKind::linux_aarch64_sve:
+      return linux_aarch64_supports_sve();
     case BackendKind::linux_aarch64_sve2:
+      return linux_aarch64_supports_sve2();
     case BackendKind::macos_arm64_neon:
-    case BackendKind::linux_loongarch64_lsx:
-    case BackendKind::linux_loongarch64_lasx:
-    case BackendKind::linux_powerpc64_vsx:
-    case BackendKind::linux_riscv64_rvv:
       return true;
+    case BackendKind::linux_loongarch64_lsx:
+      return linux_loongarch64_supports_lsx();
+    case BackendKind::linux_loongarch64_lasx:
+      return linux_loongarch64_supports_lasx();
+    case BackendKind::linux_powerpc64_vsx:
+      return linux_powerpc64_supports_vsx();
+    case BackendKind::linux_riscv64_rvv:
+      return linux_riscv64_supports_rvv();
   }
 
   return false;

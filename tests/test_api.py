@@ -117,8 +117,398 @@ def test_width_parameter_rejects_narrower_kernel() -> None:
 
 
 def test_width_parameter_rejects_invalid_values() -> None:
-    with pytest.raises(ValueError, match="8, 16, 32, or 64"):
-        smith_waterman_score("AC", "AC", width=24)
+    with pytest.raises(ValueError, match="None, 0, 8, 16, 32, or 64"):
+        smith_waterman_score("AC", "AC", width=7)
+
+
+def test_width_parameter_accepts_none_and_zero() -> None:
+    assert smith_waterman_score("ACCGT", "CCG", width=None) == 6
+    assert smith_waterman_score("ACCGT", "CCG", width=0) == 6
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_generic_backend_supports_all_kernel_widths(width: int) -> None:
+    generic = pytest.importorskip("stride_align._generic")
+
+    assert generic.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert generic.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = generic.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = generic.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_sse41_backend_supports_all_kernel_widths(width: int) -> None:
+    sse41 = pytest.importorskip("stride_align._sse41")
+
+    assert sse41.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert sse41.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = sse41.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = sse41.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.X86_AVX2),
+    reason="AVX2 not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_avx2_backend_supports_all_kernel_widths(width: int) -> None:
+    avx2 = pytest.importorskip("stride_align._avx2")
+
+    assert avx2.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert avx2.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = avx2.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = avx2.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.X86_AVX512BWVL),
+    reason="AVX-512BWVL not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_avx512bwvl_backend_supports_all_kernel_widths(width: int) -> None:
+    avx512 = pytest.importorskip("stride_align._avx512bwvl")
+
+    assert avx512.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert avx512.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = avx512.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = avx512.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    backend_is_available(BackendKind.X86_AVX512BWVL),
+    reason="AVX-512BWVL available on this host",
+)
+def test_direct_avx512bwvl_backend_raises_runtime_error_when_unavailable() -> None:
+    avx512 = pytest.importorskip("stride_align._avx512bwvl")
+
+    with pytest.raises(RuntimeError, match="not available on this machine"):
+        avx512.smith_waterman_score("ACCGT", "CCG")
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.X86_AVX10_256),
+    reason="AVX10.1-256 not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_avx10_256_backend_supports_all_kernel_widths(width: int) -> None:
+    avx10_256 = pytest.importorskip("stride_align._avx10_256")
+
+    assert avx10_256.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert avx10_256.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = avx10_256.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = avx10_256.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    backend_is_available(BackendKind.X86_AVX10_256),
+    reason="AVX10.1-256 available on this host",
+)
+def test_direct_avx10_256_backend_raises_runtime_error_when_unavailable() -> None:
+    avx10_256 = pytest.importorskip("stride_align._avx10_256")
+
+    with pytest.raises(RuntimeError, match="not available on this machine"):
+        avx10_256.smith_waterman_score("ACCGT", "CCG")
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.X86_AVX10_512),
+    reason="AVX10.1-512 not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_avx10_512_backend_supports_all_kernel_widths(width: int) -> None:
+    avx10_512 = pytest.importorskip("stride_align._avx10_512")
+
+    assert avx10_512.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert avx10_512.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = avx10_512.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = avx10_512.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    backend_is_available(BackendKind.X86_AVX10_512),
+    reason="AVX10.1-512 available on this host",
+)
+def test_direct_avx10_512_backend_raises_runtime_error_when_unavailable() -> None:
+    avx10_512 = pytest.importorskip("stride_align._avx10_512")
+
+    with pytest.raises(RuntimeError, match="not available on this machine"):
+        avx10_512.smith_waterman_score("ACCGT", "CCG")
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_AARCH64_ASIMD),
+    reason="Linux AArch64 ASIMD not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_asimd_backend_supports_all_kernel_widths(width: int) -> None:
+    asimd = pytest.importorskip("stride_align._asimd")
+
+    assert asimd.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert asimd.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = asimd.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = asimd.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.MACOS_ARM64_NEON),
+    reason="macOS arm64 NEON not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_macos_arm64_neon_backend_supports_all_kernel_widths(width: int) -> None:
+    macos_neon = pytest.importorskip("stride_align._macos_arm64_neon")
+
+    assert macos_neon.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert macos_neon.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = macos_neon.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = macos_neon.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_AARCH64_NEON),
+    reason="Linux AArch64 NEON not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_neon_backend_supports_all_kernel_widths(width: int) -> None:
+    neon = pytest.importorskip("stride_align._neon")
+
+    assert neon.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert neon.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = neon.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = neon.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_AARCH64_SVE),
+    reason="Linux AArch64 SVE not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_sve_backend_supports_all_kernel_widths(width: int) -> None:
+    sve = pytest.importorskip("stride_align._sve")
+
+    assert sve.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert sve.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = sve.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = sve.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_AARCH64_SVE2),
+    reason="Linux AArch64 SVE2 not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_sve2_backend_supports_all_kernel_widths(width: int) -> None:
+    sve2 = pytest.importorskip("stride_align._sve2")
+
+    assert sve2.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert sve2.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = sve2.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = sve2.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_LOONGARCH64_LSX),
+    reason="Linux LoongArch64 LSX not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_lsx_backend_supports_all_kernel_widths(width: int) -> None:
+    lsx = pytest.importorskip("stride_align._lsx")
+
+    assert lsx.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert lsx.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = lsx.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = lsx.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_LOONGARCH64_LASX),
+    reason="Linux LoongArch64 LASX not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_lasx_backend_supports_all_kernel_widths(width: int) -> None:
+    lasx = pytest.importorskip("stride_align._lasx")
+
+    assert lasx.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert lasx.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = lasx.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = lasx.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.parametrize("width", [8, 16, 32])
+def test_direct_swar_backend_supports_all_kernel_widths(width: int) -> None:
+    swar = pytest.importorskip("stride_align._swar")
+
+    assert swar.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert swar.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = swar.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = swar.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+def test_direct_swar_backend_uses_generic_for_64_bit_width() -> None:
+    swar = pytest.importorskip("stride_align._swar")
+
+    assert swar.smith_waterman_score("ACCGT", "CCG", width=64) == 6
+
+    result = swar.needleman_wunsch_path("ACGT", "ACCT", width=64)
+
+    assert result.aligned_query == "ACGT"
+    assert result.aligned_target == "ACCT"
+    assert result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_POWERPC64_VSX),
+    reason="Linux PowerPC64 VSX not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_vsx_backend_supports_all_kernel_widths(width: int) -> None:
+    vsx = pytest.importorskip("stride_align._vsx")
+
+    assert vsx.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert vsx.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = vsx.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = vsx.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.LINUX_RISCV64_RVV),
+    reason="Linux RISC-V RVV not available on this host",
+)
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+def test_direct_rvv_backend_supports_all_kernel_widths(width: int) -> None:
+    rvv = pytest.importorskip("stride_align._rvv")
+
+    assert rvv.smith_waterman_score("ACCGT", "CCG", width=width) == 6
+    assert rvv.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
+
+    sw_result = rvv.smith_waterman_path("ACCGT", "CCG", width=width)
+    nw_result = rvv.needleman_wunsch_path("ACGT", "ACCT", width=width)
+
+    assert sw_result.aligned_query == "CCG"
+    assert sw_result.aligned_target == "CCG"
+    assert sw_result.operations == "MMM"
+    assert nw_result.aligned_query == "ACGT"
+    assert nw_result.aligned_target == "ACCT"
+    assert nw_result.operations == "MMXM"
 
 
 def test_zero_score_local_alignment_returns_empty_path() -> None:

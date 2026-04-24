@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/linux_riscv64_rvv.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::linux_riscv64_rvv>;
+using Implementation = stride_align::backend_linux_riscv64_rvv::Implementation;
 
 }  // namespace
 

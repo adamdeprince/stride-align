@@ -1,0 +1,266 @@
+#pragma once
+
+#include <arm_neon.h>
+
+#include <cstddef>
+#include <cstdint>
+
+#include <nanobind/nanobind.h>
+
+#include "backends/wide_kernel.hpp"
+
+namespace stride_align::arm_neon128_backend {
+
+namespace nb = nanobind;
+
+template <typename Token, typename Cell>
+struct SimdOps;
+
+template <>
+struct SimdOps<std::uint8_t, std::int8_t> {
+  using vector_type = int8x16_t;
+  static constexpr std::size_t alignment = 16;
+  static constexpr std::size_t lane_count = 16;
+  static constexpr bool has_vector_max = true;
+
+  static uint8x16_t load_tokens(const std::uint8_t* values) {
+    return vld1q_u8(values);
+  }
+
+  static vector_type load_cells(const std::int8_t* values) {
+    return vld1q_s8(values);
+  }
+
+  static void store_cells(std::int8_t* values, vector_type vector) {
+    vst1q_s8(values, vector);
+  }
+
+  static vector_type set1(std::int8_t value) {
+    return vdupq_n_s8(value);
+  }
+
+  static vector_type zero() {
+    return vdupq_n_s8(0);
+  }
+
+  static vector_type add(vector_type lhs, vector_type rhs) {
+    return vaddq_s8(lhs, rhs);
+  }
+
+  static vector_type max(vector_type lhs, vector_type rhs) {
+    return vmaxq_s8(lhs, rhs);
+  }
+
+  static vector_type substitution(
+      const std::uint8_t* query,
+      const std::uint8_t* target,
+      std::int8_t match_score,
+      std::int8_t mismatch_score) {
+    const uint8x16_t mask = vceqq_u8(load_tokens(query), load_tokens(target));
+    return vbslq_s8(mask, set1(match_score), set1(mismatch_score));
+  }
+};
+
+template <>
+struct SimdOps<std::uint16_t, std::int16_t> {
+  using vector_type = int16x8_t;
+  static constexpr std::size_t alignment = 16;
+  static constexpr std::size_t lane_count = 8;
+  static constexpr bool has_vector_max = true;
+
+  static uint16x8_t load_tokens(const std::uint16_t* values) {
+    return vld1q_u16(values);
+  }
+
+  static vector_type load_cells(const std::int16_t* values) {
+    return vld1q_s16(values);
+  }
+
+  static void store_cells(std::int16_t* values, vector_type vector) {
+    vst1q_s16(values, vector);
+  }
+
+  static vector_type set1(std::int16_t value) {
+    return vdupq_n_s16(value);
+  }
+
+  static vector_type zero() {
+    return vdupq_n_s16(0);
+  }
+
+  static vector_type add(vector_type lhs, vector_type rhs) {
+    return vaddq_s16(lhs, rhs);
+  }
+
+  static vector_type max(vector_type lhs, vector_type rhs) {
+    return vmaxq_s16(lhs, rhs);
+  }
+
+  static vector_type substitution(
+      const std::uint16_t* query,
+      const std::uint16_t* target,
+      std::int16_t match_score,
+      std::int16_t mismatch_score) {
+    const uint16x8_t mask = vceqq_u16(load_tokens(query), load_tokens(target));
+    return vbslq_s16(mask, set1(match_score), set1(mismatch_score));
+  }
+};
+
+template <>
+struct SimdOps<std::uint32_t, std::int32_t> {
+  using vector_type = int32x4_t;
+  static constexpr std::size_t alignment = 16;
+  static constexpr std::size_t lane_count = 4;
+  static constexpr bool has_vector_max = true;
+
+  static uint32x4_t load_tokens(const std::uint32_t* values) {
+    return vld1q_u32(values);
+  }
+
+  static vector_type load_cells(const std::int32_t* values) {
+    return vld1q_s32(values);
+  }
+
+  static void store_cells(std::int32_t* values, vector_type vector) {
+    vst1q_s32(values, vector);
+  }
+
+  static vector_type set1(std::int32_t value) {
+    return vdupq_n_s32(value);
+  }
+
+  static vector_type zero() {
+    return vdupq_n_s32(0);
+  }
+
+  static vector_type add(vector_type lhs, vector_type rhs) {
+    return vaddq_s32(lhs, rhs);
+  }
+
+  static vector_type max(vector_type lhs, vector_type rhs) {
+    return vmaxq_s32(lhs, rhs);
+  }
+
+  static vector_type substitution(
+      const std::uint32_t* query,
+      const std::uint32_t* target,
+      std::int32_t match_score,
+      std::int32_t mismatch_score) {
+    const uint32x4_t mask = vceqq_u32(load_tokens(query), load_tokens(target));
+    return vbslq_s32(mask, set1(match_score), set1(mismatch_score));
+  }
+};
+
+template <>
+struct SimdOps<std::uint64_t, std::int64_t> {
+  using vector_type = int64x2_t;
+  static constexpr std::size_t alignment = 16;
+  static constexpr std::size_t lane_count = 2;
+  static constexpr bool has_vector_max = true;
+
+  static uint64x2_t load_tokens(const std::uint64_t* values) {
+    return vld1q_u64(values);
+  }
+
+  static vector_type load_cells(const std::int64_t* values) {
+    return vld1q_s64(values);
+  }
+
+  static void store_cells(std::int64_t* values, vector_type vector) {
+    vst1q_s64(values, vector);
+  }
+
+  static vector_type set1(std::int64_t value) {
+    return vdupq_n_s64(value);
+  }
+
+  static vector_type zero() {
+    return vdupq_n_s64(0);
+  }
+
+  static vector_type add(vector_type lhs, vector_type rhs) {
+    return vaddq_s64(lhs, rhs);
+  }
+
+  static vector_type max(vector_type lhs, vector_type rhs) {
+    const uint64x2_t mask = vcgtq_s64(lhs, rhs);
+    return vbslq_s64(mask, lhs, rhs);
+  }
+
+  static vector_type substitution(
+      const std::uint64_t* query,
+      const std::uint64_t* target,
+      std::int64_t match_score,
+      std::int64_t mismatch_score) {
+    const uint64x2_t mask = vceqq_u64(load_tokens(query), load_tokens(target));
+    return vbslq_s64(mask, set1(match_score), set1(mismatch_score));
+  }
+};
+
+struct TargetImplementation {
+  static Score smith_waterman_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return wide_backend::detail::dispatch_score<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static AlignmentResult smith_waterman_path(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return wide_backend::detail::dispatch_traceback<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score needleman_wunsch_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return wide_backend::detail::dispatch_score<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static AlignmentResult needleman_wunsch_path(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return wide_backend::detail::dispatch_traceback<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+};
+
+}  // namespace stride_align::arm_neon128_backend

@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/linux_powerpc64_vsx.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::linux_powerpc64_vsx>;
+using Implementation = stride_align::backend_linux_powerpc64_vsx::Implementation;
 
 }  // namespace
 

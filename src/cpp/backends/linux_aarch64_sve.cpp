@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/linux_aarch64_sve.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::linux_aarch64_sve>;
+using Implementation = stride_align::backend_linux_aarch64_sve::Implementation;
 
 }  // namespace
 

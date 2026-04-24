@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/macos_arm64_neon.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::macos_arm64_neon>;
+using Implementation = stride_align::backend_macos_arm64_neon::Implementation;
 
 }  // namespace
 

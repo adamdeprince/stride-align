@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/x86_sse41.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::x86_sse41>;
+using Implementation = stride_align::backend_sse41::Implementation;
 
 }  // namespace
 

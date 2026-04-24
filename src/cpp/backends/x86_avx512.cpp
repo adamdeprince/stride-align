@@ -1,10 +1,9 @@
-#include "backends/generic.hpp"
+#include "backends/x86_avx512bwvl.hpp"
 #include "module_bindings.hpp"
 
 namespace {
 
-using Implementation =
-    stride_align::backend_generic::Implementation<stride_align::BackendKind::x86_avx512bwvl>;
+using Implementation = stride_align::backend_avx512bwvl::Implementation;
 
 }  // namespace
 

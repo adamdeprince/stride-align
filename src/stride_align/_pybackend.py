@@ -54,7 +54,7 @@ def _apply_forced_width(automatic: int, width: int | None) -> int:
     if width is None:
         return automatic
     if width not in {8, 16, 32, 64}:
-        raise ValueError("width must be one of 8, 16, 32, or 64")
+        raise ValueError("width must be None, 0, 8, 16, 32, or 64")
     if width < automatic:
         raise ValueError("width cannot be narrower than the automatically selected kernel width")
     return width
