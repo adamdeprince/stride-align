@@ -7,7 +7,7 @@
 
 #include <nanobind/nanobind.h>
 
-#include "backends/wide_kernel.hpp"
+#include "backends/arm_neon_kernel.hpp"
 
 namespace stride_align::arm_neon128_backend {
 
@@ -207,7 +207,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_score<SimdOps, true>(
+    return arm_neon_kernel::detail::dispatch_score<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
@@ -223,7 +223,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_traceback<SimdOps, true>(
+    return arm_neon_kernel::detail::dispatch_traceback<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
@@ -239,7 +239,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_score<SimdOps, false>(
+    return arm_neon_kernel::detail::dispatch_score<SimdOps, false>(
         prepared,
         match_score,
         mismatch_score,
@@ -255,7 +255,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_traceback<SimdOps, false>(
+    return arm_neon_kernel::detail::dispatch_traceback<SimdOps, false>(
         prepared,
         match_score,
         mismatch_score,

@@ -7,7 +7,7 @@
 
 #include <nanobind/nanobind.h>
 
-#include "backends/wide_kernel.hpp"
+#include "backends/x86_fixed_kernel.hpp"
 
 namespace stride_align::backend_avx2 {
 
@@ -204,7 +204,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_score<SimdOps, true>(
+    return x86_fixed_kernel::detail::dispatch_score<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
@@ -220,7 +220,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_traceback<SimdOps, true>(
+    return x86_fixed_kernel::detail::dispatch_traceback<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
@@ -236,7 +236,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_score<SimdOps, false>(
+    return x86_fixed_kernel::detail::dispatch_score<SimdOps, false>(
         prepared,
         match_score,
         mismatch_score,
@@ -252,7 +252,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return wide_backend::detail::dispatch_traceback<SimdOps, false>(
+    return x86_fixed_kernel::detail::dispatch_traceback<SimdOps, false>(
         prepared,
         match_score,
         mismatch_score,

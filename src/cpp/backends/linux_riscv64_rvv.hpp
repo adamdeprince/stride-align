@@ -10,7 +10,7 @@
 
 #include <nanobind/nanobind.h>
 
-#include "backends/scalable_wide_kernel.hpp"
+#include "backends/riscv_rvv_kernel.hpp"
 
 namespace stride_align::backend_linux_riscv64_rvv {
 
@@ -221,7 +221,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return scalable_backend::detail::dispatch_score<SimdOps, true>(
+    return riscv_rvv_kernel::detail::dispatch_score<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
@@ -237,7 +237,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return scalable_backend::detail::dispatch_traceback<SimdOps, true>(
+    return riscv_rvv_kernel::detail::dispatch_traceback<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
@@ -253,7 +253,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return scalable_backend::detail::dispatch_score<SimdOps, false>(
+    return riscv_rvv_kernel::detail::dispatch_score<SimdOps, false>(
         prepared,
         match_score,
         mismatch_score,
@@ -269,7 +269,7 @@ struct TargetImplementation {
       unsigned int width) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return scalable_backend::detail::dispatch_traceback<SimdOps, false>(
+    return riscv_rvv_kernel::detail::dispatch_traceback<SimdOps, false>(
         prepared,
         match_score,
         mismatch_score,
