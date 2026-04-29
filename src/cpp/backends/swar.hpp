@@ -8,6 +8,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/farrar_fixed_kernel.hpp"
 #include "backends/generic.hpp"
 
 namespace stride_align::backend_swar {
@@ -62,7 +63,6 @@ struct SimdOps {
   using vector_type = PackedWord;
   static_assert(std::is_unsigned_v<Token>);
   static_assert(std::is_signed_v<Cell>);
-  static_assert(sizeof(Token) == sizeof(Cell));
   static_assert(sizeof(Cell) == 1 || sizeof(Cell) == 2 || sizeof(Cell) == 4);
 
   static constexpr std::size_t alignment = alignof(PackedWord);
@@ -465,6 +465,42 @@ AlignmentResult dispatch_traceback(
   throw nb::python_error();
 }
 
+inline Score dispatch_farrar_score(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return farrar_fixed_kernel::detail::score<SimdOps, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return farrar_fixed_kernel::detail::score<SimdOps, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return farrar_fixed_kernel::detail::score<SimdOps, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return generic_detail::dispatch_farrar_score(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported Farrar score width");
+  throw nb::python_error();
+}
+
 }  // namespace detail
 
 struct Implementation {
@@ -490,6 +526,18 @@ struct Implementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return detail::dispatch_traceback<true>(prepared, match_score, mismatch_score, gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return detail::dispatch_farrar_score(prepared, match_score, mismatch_score, gap_score);
   }
 
   static Score needleman_wunsch_score(

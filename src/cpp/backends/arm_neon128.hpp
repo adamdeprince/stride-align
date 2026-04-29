@@ -7,6 +7,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/farrar_fixed_kernel.hpp"
 #include "backends/arm_neon_kernel.hpp"
 
 namespace stride_align::arm_neon128_backend {
@@ -224,6 +225,22 @@ struct TargetImplementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return arm_neon_kernel::detail::dispatch_traceback<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score<SimdOps>(
         prepared,
         match_score,
         mismatch_score,

@@ -8,6 +8,7 @@ from stride_align import (
     detect_best_backend,
     needleman_wunsch_path,
     needleman_wunsch_score,
+    smith_waterman_farrar_score,
     smith_waterman_path,
     smith_waterman_score,
 )
@@ -56,6 +57,17 @@ def test_string_fast_path_handles_wide_unicode() -> None:
 
 def test_smith_waterman_score_on_strings() -> None:
     assert smith_waterman_score("ACCGT", "CCG") == 6
+
+
+def test_smith_waterman_farrar_score_matches_standard_score() -> None:
+    assert smith_waterman_farrar_score(b"GGCCTT", b"CGGTTAT") == smith_waterman_score(
+        b"GGCCTT",
+        b"CGGTTAT",
+    )
+
+
+def test_smith_waterman_farrar_compacts_wide_unicode_to_byte_tokens() -> None:
+    assert smith_waterman_farrar_score("🙂🙃🙂", "🙃🙂", width=8) == 4
 
 
 def test_smith_waterman_path_on_bytes_returns_bytes() -> None:
@@ -120,6 +132,9 @@ def test_width_parameter_rejects_invalid_values() -> None:
     with pytest.raises(ValueError, match="None, 0, 8, 16, 32, or 64"):
         smith_waterman_score("AC", "AC", width=7)
 
+    with pytest.raises(ValueError, match="None, 0, 8, 16, 32, or 64"):
+        smith_waterman_farrar_score("AC", "AC", width=7)
+
 
 def test_width_parameter_accepts_none_and_zero() -> None:
     assert smith_waterman_score("ACCGT", "CCG", width=None) == 6
@@ -142,6 +157,45 @@ def test_direct_generic_backend_supports_all_kernel_widths(width: int) -> None:
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
     assert nw_result.operations == "MMXM"
+
+
+FARRAR_BACKENDS = [
+    ("stride_align._generic", None),
+    ("stride_align._swar", None),
+    ("stride_align._sse41", BackendKind.X86_SSE41),
+    ("stride_align._avx2", BackendKind.X86_AVX2),
+    ("stride_align._avx512bwvl", BackendKind.X86_AVX512BWVL),
+    ("stride_align._avx10_256", BackendKind.X86_AVX10_256),
+    ("stride_align._avx10_512", BackendKind.X86_AVX10_512),
+    ("stride_align._asimd", BackendKind.LINUX_AARCH64_ASIMD),
+    ("stride_align._neon", BackendKind.LINUX_AARCH64_NEON),
+    ("stride_align._sve", BackendKind.LINUX_AARCH64_SVE),
+    ("stride_align._sve2", BackendKind.LINUX_AARCH64_SVE2),
+    ("stride_align._macos_arm64_neon", BackendKind.MACOS_ARM64_NEON),
+    ("stride_align._lsx", BackendKind.LINUX_LOONGARCH64_LSX),
+    ("stride_align._lasx", BackendKind.LINUX_LOONGARCH64_LASX),
+    ("stride_align._vsx", BackendKind.LINUX_POWERPC64_VSX),
+    ("stride_align._rvv", BackendKind.LINUX_RISCV64_RVV),
+]
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_support_farrar_score_widths(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    module = pytest.importorskip(module_name)
+    query = b"GGCCTT"
+    target = b"CGGTTAT"
+
+    expected = module.smith_waterman_score(query, target)
+
+    assert module.smith_waterman_farrar_score(query, target, width=width) == expected
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])

@@ -7,6 +7,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/farrar_fixed_kernel.hpp"
 #include "backends/x86_fixed_kernel.hpp"
 
 namespace stride_align::backend_avx2 {
@@ -180,8 +181,17 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm256_set1_epi64x(value);
   }
 
+  static vector_type zero() {
+    return _mm256_setzero_si256();
+  }
+
   static vector_type add(vector_type lhs, vector_type rhs) {
     return _mm256_add_epi64(lhs, rhs);
+  }
+
+  static vector_type max(vector_type lhs, vector_type rhs) {
+    const vector_type mask = _mm256_cmpgt_epi64(lhs, rhs);
+    return _mm256_blendv_epi8(rhs, lhs, mask);
   }
 
   static vector_type substitution(
@@ -221,6 +231,22 @@ struct TargetImplementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return x86_fixed_kernel::detail::dispatch_traceback<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score<SimdOps>(
         prepared,
         match_score,
         mismatch_score,
@@ -304,6 +330,23 @@ struct Implementation {
       unsigned int width) {
     ensure_supported();
     return TargetImplementation::smith_waterman_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score(
         query,
         target,
         match_score,

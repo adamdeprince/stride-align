@@ -8,6 +8,7 @@
 #include <nanobind/nanobind.h>
 
 #include "backends/arm_sve_kernel.hpp"
+#include "backends/farrar_scalable_kernel.hpp"
 
 namespace stride_align::arm_sve_backend {
 
@@ -255,6 +256,22 @@ struct TargetImplementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return arm_sve_kernel::detail::dispatch_traceback<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_scalable_kernel::detail::dispatch_score<SimdOps>(
         prepared,
         match_score,
         mismatch_score,

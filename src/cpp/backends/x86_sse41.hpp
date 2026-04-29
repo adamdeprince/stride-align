@@ -13,6 +13,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/farrar_fixed_kernel.hpp"
 #include "backends/generic.hpp"
 
 namespace stride_align::backend_sse41 {
@@ -33,6 +34,8 @@ struct SimdOps;
 
 template <>
 struct SimdOps<std::uint8_t, std::int8_t> {
+  using vector_type = __m128i;
+  static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 16;
 
   static __m128i load_tokens(const std::uint8_t* values) {
@@ -75,6 +78,8 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
 template <>
 struct SimdOps<std::uint16_t, std::int16_t> {
+  using vector_type = __m128i;
+  static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 8;
 
   static __m128i load_tokens(const std::uint16_t* values) {
@@ -117,6 +122,8 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
 template <>
 struct SimdOps<std::uint32_t, std::int32_t> {
+  using vector_type = __m128i;
+  static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 4;
 
   static __m128i load_tokens(const std::uint32_t* values) {
@@ -159,6 +166,8 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
 template <>
 struct SimdOps<std::uint64_t, std::int64_t> {
+  using vector_type = __m128i;
+  static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 2;
 
   static __m128i load_tokens(const std::uint64_t* values) {
@@ -177,8 +186,24 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm_set1_epi64x(value);
   }
 
+  static __m128i zero() {
+    return _mm_setzero_si128();
+  }
+
   static __m128i add(__m128i lhs, __m128i rhs) {
     return _mm_add_epi64(lhs, rhs);
+  }
+
+  static __m128i max(__m128i lhs, __m128i rhs) {
+    alignas(alignment) std::int64_t left[lane_count] = {};
+    alignas(alignment) std::int64_t right[lane_count] = {};
+    alignas(alignment) std::int64_t output[lane_count] = {};
+    store_cells(left, lhs);
+    store_cells(right, rhs);
+    for (std::size_t lane = 0; lane < lane_count; ++lane) {
+      output[lane] = left[lane] > right[lane] ? left[lane] : right[lane];
+    }
+    return load_cells(output);
   }
 
   static __m128i substitution(
@@ -575,6 +600,22 @@ struct Implementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return detail::dispatch_traceback<true>(prepared, match_score, mismatch_score, gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score<detail::SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
   }
 
   static Score needleman_wunsch_score(

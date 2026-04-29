@@ -50,8 +50,20 @@ def _select_kernel_bits(symbol_limit: int, score_bound: int) -> int:
     return 64
 
 
+def _select_score_bits(score_bound: int) -> int:
+    if score_bound <= 127:
+        return 8
+    if score_bound <= 32_767:
+        return 16
+    if score_bound <= 2_147_483_647:
+        return 32
+    if score_bound > 9_223_372_036_854_775_807:
+        raise OverflowError("alignment score bound exceeds the 64-bit kernel capacity")
+    return 64
+
+
 def _apply_forced_width(automatic: int, width: int | None) -> int:
-    if width is None:
+    if width is None or width == 0:
         return automatic
     if width not in {8, 16, 32, 64}:
         raise ValueError("width must be None, 0, 8, 16, 32, or 64")
@@ -174,6 +186,79 @@ def _prepare_alignment(
         target_tokens=target_tokens,
         query_items=query_items,
         target_items=target_items,
+    )
+
+
+def _prepare_farrar_alignment(
+    query: object,
+    target: object,
+    *,
+    match_score: int,
+    mismatch_score: int,
+    gap_score: int,
+    width: int | None,
+) -> _PreparedAlignment:
+    query_is_bytes = isinstance(query, bytes)
+    target_is_bytes = isinstance(target, bytes)
+    query_is_str = isinstance(query, str)
+    target_is_str = isinstance(target, str)
+
+    if (query_is_bytes and target_is_str) or (query_is_str and target_is_bytes):
+        raise TypeError("bytes and str inputs cannot be aligned directly against each other")
+
+    if query_is_bytes and target_is_bytes:
+        query_tokens = list(query)
+        target_tokens = list(target)
+        symbol_count = len(set(query_tokens) | set(target_tokens))
+    elif query_is_str and target_is_str:
+        token_map: dict[str, int] = {}
+
+        def encode_str(value: str) -> list[int]:
+            encoded: list[int] = []
+            for character in value:
+                if character not in token_map:
+                    if len(token_map) >= 256:
+                        raise ValueError("Farrar token channel supports at most 256 distinct symbols")
+                    token_map[character] = len(token_map)
+                encoded.append(token_map[character])
+            return encoded
+
+        query_tokens = encode_str(query)
+        target_tokens = encode_str(target)
+        symbol_count = len(token_map)
+    else:
+        query_items = _materialize_sequence(query, "query")
+        target_items = _materialize_sequence(target, "target")
+        token_map: dict[object, int] = {}
+
+        def encode_items(items: list[object]) -> list[int]:
+            encoded: list[int] = []
+            for item in items:
+                if item not in token_map:
+                    if len(token_map) >= 256:
+                        raise ValueError("Farrar token channel supports at most 256 distinct symbols")
+                    token_map[item] = len(token_map)
+                encoded.append(token_map[item])
+            return encoded
+
+        query_tokens = encode_items(query_items)
+        target_tokens = encode_items(target_items)
+        symbol_count = len(token_map)
+
+    score_bound = _score_bound(
+        len(query_tokens),
+        len(target_tokens),
+        match_score,
+        mismatch_score,
+        gap_score,
+    )
+    return _PreparedAlignment(
+        output_kind="farrar",
+        kernel_bits=_apply_forced_width(_select_score_bits(score_bound), width),
+        query_tokens=query_tokens,
+        target_tokens=target_tokens,
+        query_items=[],
+        target_items=[],
     )
 
 
@@ -422,6 +507,33 @@ def smith_waterman_path(
     )
     return _traceback(
         prepared,
+        local_alignment=True,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+    )
+
+
+def smith_waterman_farrar_score(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    width: int | None = None,
+) -> int:
+    prepared = _prepare_farrar_alignment(
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        width=width,
+    )
+    return _score_only(
+        prepared.query_tokens,
+        prepared.target_tokens,
         local_alignment=True,
         match_score=match_score,
         mismatch_score=mismatch_score,

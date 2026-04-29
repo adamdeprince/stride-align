@@ -13,6 +13,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/farrar_fixed_kernel.hpp"
 #include "backends/powerpc_vsx_kernel.hpp"
 
 namespace stride_align::backend_linux_powerpc64_vsx {
@@ -186,8 +187,24 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return vec_splats(value);
   }
 
+  static vector_type zero() {
+    return set1(0);
+  }
+
   static vector_type add(vector_type lhs, vector_type rhs) {
     return vec_add(lhs, rhs);
+  }
+
+  static vector_type max(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::int64_t left[lane_count] = {};
+    alignas(alignment) std::int64_t right[lane_count] = {};
+    alignas(alignment) std::int64_t output[lane_count] = {};
+    store_cells(left, lhs);
+    store_cells(right, rhs);
+    for (std::size_t lane = 0; lane < lane_count; ++lane) {
+      output[lane] = left[lane] > right[lane] ? left[lane] : right[lane];
+    }
+    return load_cells(output);
   }
 
   static vector_type substitution(
@@ -227,6 +244,22 @@ struct TargetImplementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return powerpc_vsx_kernel::detail::dispatch_traceback<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score<SimdOps>(
         prepared,
         match_score,
         mismatch_score,
@@ -306,6 +339,23 @@ struct Implementation {
       unsigned int width) {
     ensure_supported();
     return TargetImplementation::smith_waterman_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score(
         query,
         target,
         match_score,

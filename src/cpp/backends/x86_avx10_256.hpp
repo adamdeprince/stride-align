@@ -7,6 +7,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/farrar_fixed_kernel.hpp"
 #include "backends/x86_fixed_kernel.hpp"
 
 namespace stride_align::backend_avx10_256 {
@@ -235,6 +236,22 @@ struct TargetImplementation {
         gap_score);
   }
 
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -313,6 +330,23 @@ struct Implementation {
       unsigned int width) {
     ensure_supported();
     return TargetImplementation::smith_waterman_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score(
         query,
         target,
         match_score,

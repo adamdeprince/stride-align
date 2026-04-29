@@ -87,6 +87,31 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("width") = nb::none());
 
   m.def(
+      "smith_waterman_farrar_score",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        return Implementation::smith_waterman_farrar_score(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("width") = nb::none());
+
+  m.def(
       "needleman_wunsch_score",
       [](nb::handle query,
          nb::handle target,

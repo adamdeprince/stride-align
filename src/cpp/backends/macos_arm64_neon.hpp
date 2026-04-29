@@ -58,6 +58,23 @@ struct Implementation {
         width);
   }
 
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,

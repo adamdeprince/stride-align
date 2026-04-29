@@ -11,6 +11,7 @@
 #include <nanobind/nanobind.h>
 
 #include "cpu.hpp"
+#include "farrar_preprocess.hpp"
 #include "preprocess.hpp"
 #include "stride_align/alignment.hpp"
 
@@ -102,6 +103,35 @@ Score score_only(
   }
 
   return static_cast<Score>(previous.back());
+}
+
+template <typename Cell>
+Score farrar_score_only(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_score) {
+  std::vector<Cell> previous(target.size() + 1, 0);
+  std::vector<Cell> current(target.size() + 1, 0);
+  Cell best_score = 0;
+
+  for (std::size_t row = 1; row <= query.size(); ++row) {
+    current[0] = 0;
+    for (std::size_t column = 1; column <= target.size(); ++column) {
+      const Cell diagonal = static_cast<Cell>(
+          previous[column - 1] +
+          (query[row - 1] == target[column - 1] ? match_score : mismatch_score));
+      const Cell up = static_cast<Cell>(previous[column] + gap_score);
+      const Cell left = static_cast<Cell>(current[column - 1] + gap_score);
+      const Cell cell = std::max<Cell>(0, std::max({diagonal, up, left}));
+      current[column] = cell;
+      best_score = std::max(best_score, cell);
+    }
+    std::swap(previous, current);
+  }
+
+  return static_cast<Score>(best_score);
 }
 
 template <typename Token, typename Cell, bool LocalAlignment>
@@ -371,6 +401,53 @@ AlignmentResult dispatch_traceback(
   throw nb::python_error();
 }
 
+inline Score dispatch_farrar_score(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return farrar_score_only<std::int8_t>(
+          query,
+          target,
+          static_cast<std::int8_t>(match_score),
+          static_cast<std::int8_t>(mismatch_score),
+          static_cast<std::int8_t>(gap_score));
+    case KernelBits::bits16:
+      return farrar_score_only<std::int16_t>(
+          query,
+          target,
+          static_cast<std::int16_t>(match_score),
+          static_cast<std::int16_t>(mismatch_score),
+          static_cast<std::int16_t>(gap_score));
+    case KernelBits::bits32:
+      return farrar_score_only<std::int32_t>(
+          query,
+          target,
+          static_cast<std::int32_t>(match_score),
+          static_cast<std::int32_t>(mismatch_score),
+          static_cast<std::int32_t>(gap_score));
+    case KernelBits::bits64:
+      return farrar_score_only<std::int64_t>(
+          query,
+          target,
+          static_cast<std::int64_t>(match_score),
+          static_cast<std::int64_t>(mismatch_score),
+          static_cast<std::int64_t>(gap_score));
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported Farrar score width");
+  throw nb::python_error();
+}
+
 }  // namespace detail
 
 template <BackendKind Kind>
@@ -397,6 +474,18 @@ struct Implementation {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return detail::dispatch_traceback<true>(prepared, match_score, mismatch_score, gap_score);
+  }
+
+  static Score smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return detail::dispatch_farrar_score(prepared, match_score, mismatch_score, gap_score);
   }
 
   static Score needleman_wunsch_score(

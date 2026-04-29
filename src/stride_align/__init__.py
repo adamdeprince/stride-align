@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ._cpu import BackendKind, BackendRecord, available_backends, backend_is_available, detect_best_backend
 
+
 def _import_backend(kind: BackendKind):
     match kind:
         case BackendKind.GENERIC:
@@ -11,6 +12,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -19,6 +21,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -27,6 +30,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -35,6 +39,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -43,6 +48,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -51,6 +57,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -59,6 +66,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -67,6 +75,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -75,6 +84,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -83,6 +93,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -91,6 +102,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -99,6 +111,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -107,6 +120,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -115,6 +129,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -123,6 +138,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -131,6 +147,7 @@ def _import_backend(kind: BackendKind):
                 AlignmentResult,
                 needleman_wunsch_path,
                 needleman_wunsch_score,
+                smith_waterman_farrar_score,
                 smith_waterman_path,
                 smith_waterman_score,
             )
@@ -139,12 +156,13 @@ def _import_backend(kind: BackendKind):
         AlignmentResult,
         smith_waterman_score,
         smith_waterman_path,
+        smith_waterman_farrar_score,
         needleman_wunsch_score,
         needleman_wunsch_path,
     )
 
 
-def _bind_backend_api() -> tuple[type, object, object, object, object]:
+def _bind_backend_api() -> tuple[type, object, object, object, object, object]:
     for kind in (detect_best_backend(), BackendKind.GENERIC):
         try:
             return _import_backend(kind)
@@ -155,6 +173,7 @@ def _bind_backend_api() -> tuple[type, object, object, object, object]:
         AlignmentResult,
         needleman_wunsch_path,
         needleman_wunsch_score,
+        smith_waterman_farrar_score,
         smith_waterman_path,
         smith_waterman_score,
     )
@@ -163,6 +182,7 @@ def _bind_backend_api() -> tuple[type, object, object, object, object]:
         AlignmentResult,
         smith_waterman_score,
         smith_waterman_path,
+        smith_waterman_farrar_score,
         needleman_wunsch_score,
         needleman_wunsch_path,
     )
@@ -172,6 +192,7 @@ def _bind_backend_api() -> tuple[type, object, object, object, object]:
     AlignmentResult,
     smith_waterman_score,
     smith_waterman_path,
+    smith_waterman_farrar_score,
     needleman_wunsch_score,
     needleman_wunsch_path,
 ) = _bind_backend_api()
@@ -186,6 +207,7 @@ __all__ = [
     "detect_best_backend",
     "needleman_wunsch_path",
     "needleman_wunsch_score",
+    "smith_waterman_farrar_score",
     "smith_waterman_path",
     "smith_waterman_score",
 ]
