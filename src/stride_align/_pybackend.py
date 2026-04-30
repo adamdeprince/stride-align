@@ -19,6 +19,22 @@ class AlignmentResult:
 
 
 @dataclass(frozen=True, slots=True)
+class AlignmentPath:
+    score: int
+    query_start: int
+    query_end: int
+    target_start: int
+    target_end: int
+    operations: str
+    cigar: str
+    matches: int
+    mismatches: int
+    insertions: int
+    deletions: int
+    aligned_length: int
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedAlignment:
     output_kind: str
     kernel_bits: int
@@ -209,7 +225,6 @@ def _prepare_farrar_alignment(
     if query_is_bytes and target_is_bytes:
         query_tokens = list(query)
         target_tokens = list(target)
-        symbol_count = len(set(query_tokens) | set(target_tokens))
     elif query_is_str and target_is_str:
         token_map: dict[str, int] = {}
 
@@ -218,14 +233,15 @@ def _prepare_farrar_alignment(
             for character in value:
                 if character not in token_map:
                     if len(token_map) >= 256:
-                        raise ValueError("Farrar token channel supports at most 256 distinct symbols")
+                        raise ValueError(
+                            "Farrar token channel supports at most 256 distinct symbols"
+                        )
                     token_map[character] = len(token_map)
                 encoded.append(token_map[character])
             return encoded
 
         query_tokens = encode_str(query)
         target_tokens = encode_str(target)
-        symbol_count = len(token_map)
     else:
         query_items = _materialize_sequence(query, "query")
         target_items = _materialize_sequence(target, "target")
@@ -236,14 +252,15 @@ def _prepare_farrar_alignment(
             for item in items:
                 if item not in token_map:
                     if len(token_map) >= 256:
-                        raise ValueError("Farrar token channel supports at most 256 distinct symbols")
+                        raise ValueError(
+                            "Farrar token channel supports at most 256 distinct symbols"
+                        )
                     token_map[item] = len(token_map)
                 encoded.append(token_map[item])
             return encoded
 
         query_tokens = encode_items(query_items)
         target_tokens = encode_items(target_items)
-        symbol_count = len(token_map)
 
     score_bound = _score_bound(
         len(query_tokens),
@@ -262,8 +279,49 @@ def _prepare_farrar_alignment(
     )
 
 
-def _substitution_score(query_base: int, target_base: int, match_score: int, mismatch_score: int) -> int:
+def _substitution_score(
+    query_base: int,
+    target_base: int,
+    match_score: int,
+    mismatch_score: int,
+) -> int:
     return match_score if query_base == target_base else mismatch_score
+
+
+def _cigar_from_operations(operations: str) -> str:
+    if not operations:
+        return ""
+
+    pieces: list[str] = []
+    current = operations[0]
+    count = 0
+    for operation in operations:
+        if operation == current:
+            count += 1
+            continue
+        pieces.append(f"{count}{current}")
+        current = operation
+        count = 1
+    pieces.append(f"{count}{current}")
+    return "".join(pieces)
+
+
+def _alignment_path_from_result(result: AlignmentResult) -> AlignmentPath:
+    operations = result.operations
+    return AlignmentPath(
+        score=result.score,
+        query_start=result.query_start,
+        query_end=result.query_end,
+        target_start=result.target_start,
+        target_end=result.target_end,
+        operations=operations,
+        cigar=_cigar_from_operations(operations),
+        matches=operations.count("M"),
+        mismatches=operations.count("X"),
+        insertions=operations.count("I"),
+        deletions=operations.count("D"),
+        aligned_length=len(operations),
+    )
 
 
 def _score_only(
@@ -402,7 +460,12 @@ def _traceback(
         query_end=best_row,
         target_start=column,
         target_end=best_column,
-        aligned_query=_materialize_output(prepared, side="query", start=row, operations=operations_text),
+        aligned_query=_materialize_output(
+            prepared,
+            side="query",
+            start=row,
+            operations=operations_text,
+        ),
         aligned_target=_materialize_output(
             prepared,
             side="target",
@@ -514,6 +577,27 @@ def smith_waterman_path(
     )
 
 
+def smith_waterman_path_info(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    width: int | None = None,
+) -> AlignmentPath:
+    return _alignment_path_from_result(
+        smith_waterman_path(
+            query,
+            target,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            width=width,
+        )
+    )
+
+
 def smith_waterman_farrar_score(
     query: object,
     target: object,
@@ -591,4 +675,25 @@ def needleman_wunsch_path(
         match_score=match_score,
         mismatch_score=mismatch_score,
         gap_score=gap_score,
+    )
+
+
+def needleman_wunsch_path_info(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    width: int | None = None,
+) -> AlignmentPath:
+    return _alignment_path_from_result(
+        needleman_wunsch_path(
+            query,
+            target,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            width=width,
+        )
     )

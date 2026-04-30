@@ -7,6 +7,11 @@
 
 #include <nanobind/nanobind.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC push_options
+#pragma GCC target("avx10.1-512")
+#endif
+
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/x86_fixed_kernel.hpp"
 
@@ -251,6 +256,9 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 };
 
 struct TargetImplementation {
+  using PreparedSmithWatermanFarrarScore =
+      farrar_fixed_kernel::detail::PreparedScore<SimdOps>;
+
   static Score smith_waterman_score(
       nb::handle query,
       nb::handle target,
@@ -299,6 +307,27 @@ struct TargetImplementation {
         gap_score);
   }
 
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::prepare_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_score<SimdOps>(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -332,7 +361,14 @@ struct TargetImplementation {
   }
 };
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC pop_options
+#endif
+
 struct Implementation {
+  using PreparedSmithWatermanFarrarScore =
+      TargetImplementation::PreparedSmithWatermanFarrarScore;
+
   static STRIDE_ALIGN_X86_BASELINE bool supported_on_this_machine() noexcept {
 #if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 14)
     return __builtin_cpu_supports("avx512f") != 0 && __builtin_cpu_supports("avx512bw") != 0 &&
@@ -400,6 +436,30 @@ struct Implementation {
         mismatch_score,
         gap_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedSmithWatermanFarrarScore
+  prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_score(

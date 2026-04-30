@@ -708,10 +708,19 @@ inline Score dispatch_farrar_score(
   throw nb::python_error();
 }
 
+struct PreparedFarrarScore {
+  PreparedFarrarAlignment prepared;
+  Score match_score = 2;
+  Score mismatch_score = -1;
+  Score gap_score = -1;
+};
+
 }  // namespace detail
 
 template <BackendKind Kind>
 struct Implementation {
+  using PreparedSmithWatermanFarrarScore = detail::PreparedFarrarScore;
+
   static Score smith_waterman_score(
       nb::handle query,
       nb::handle target,
@@ -746,6 +755,29 @@ struct Implementation {
     const auto prepared =
         prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
     return detail::dispatch_farrar_score(prepared, match_score, mismatch_score, gap_score);
+  }
+
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return PreparedSmithWatermanFarrarScore{
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width),
+        match_score,
+        mismatch_score,
+        gap_score};
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      const PreparedSmithWatermanFarrarScore& prepared) {
+    return detail::dispatch_farrar_score(
+        prepared.prepared,
+        prepared.match_score,
+        prepared.mismatch_score,
+        prepared.gap_score);
   }
 
   static Score needleman_wunsch_score(

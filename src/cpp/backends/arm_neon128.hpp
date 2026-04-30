@@ -250,6 +250,9 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 };
 
 struct TargetImplementation {
+  using PreparedSmithWatermanFarrarScore =
+      farrar_fixed_kernel::detail::PreparedScore<SimdOps>;
+
   static Score smith_waterman_score(
       nb::handle query,
       nb::handle target,
@@ -296,6 +299,27 @@ struct TargetImplementation {
         match_score,
         mismatch_score,
         gap_score);
+  }
+
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::prepare_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_score<SimdOps>(prepared);
   }
 
   static Score needleman_wunsch_score(

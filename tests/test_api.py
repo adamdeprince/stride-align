@@ -1,17 +1,22 @@
 import importlib.util
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from stride_align import (
+    AlignmentPath,
     AlignmentResult,
     BackendKind,
     available_backends,
     backend_is_available,
     detect_best_backend,
     needleman_wunsch_path,
+    needleman_wunsch_path_info,
     needleman_wunsch_score,
     smith_waterman_farrar_score,
     smith_waterman_path,
+    smith_waterman_path_info,
     smith_waterman_score,
 )
 
@@ -52,6 +57,25 @@ def test_needleman_wunsch_path_on_strings() -> None:
     assert result.operations == "MMXM"
 
 
+def test_needleman_wunsch_path_info_on_strings() -> None:
+    result = needleman_wunsch_path_info("ACGT", "ACCT")
+
+    assert isinstance(result, AlignmentPath)
+    assert result.score == 5
+    assert result.query_start == 0
+    assert result.query_end == 4
+    assert result.target_start == 0
+    assert result.target_end == 4
+    assert result.operations == "MMXM"
+    assert result.cigar == "2M1X1M"
+    assert result.matches == 3
+    assert result.mismatches == 1
+    assert result.insertions == 0
+    assert result.deletions == 0
+    assert result.aligned_length == 4
+    assert not hasattr(result, "aligned_query")
+
+
 def test_string_fast_path_handles_wide_unicode() -> None:
     result = needleman_wunsch_path("A🙂", "A🙂")
 
@@ -88,6 +112,24 @@ def test_smith_waterman_path_on_bytes_returns_bytes() -> None:
     assert result.aligned_query == b"CCG"
     assert result.aligned_target == b"CCG"
     assert result.operations == "MMM"
+
+
+def test_smith_waterman_path_info_on_bytes() -> None:
+    result = smith_waterman_path_info(b"ACCGT", b"CCG")
+
+    assert isinstance(result, AlignmentPath)
+    assert result.score == 6
+    assert result.query_start == 1
+    assert result.query_end == 4
+    assert result.target_start == 0
+    assert result.target_end == 3
+    assert result.operations == "MMM"
+    assert result.cigar == "3M"
+    assert result.matches == 3
+    assert result.mismatches == 0
+    assert result.insertions == 0
+    assert result.deletions == 0
+    assert result.aligned_length == 3
 
 
 def test_direct_bytes_and_str_pair_raises_type_error() -> None:
@@ -251,9 +293,164 @@ def test_benchmark_cli_defaults_to_16_and_32_bit_score_channels(capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert captured.out.splitlines()[0].startswith("backend,score_width")
-    assert "\ngeneric,16," in captured.out
-    assert "\ngeneric,32," in captured.out
+    assert captured.out.splitlines()[0].startswith("pass,backend,variant,score_width")
+    assert "\nenglish,generic,sw-farrar-score,16," in captured.out
+    assert "\nchinese,generic,sw-farrar-score,32," in captured.out
+
+
+def test_benchmark_cli_supports_path_info_variants(capsys) -> None:
+    from stride_align.benchmark import main
+
+    exit_code = main(
+        [
+            "--backends",
+            "generic",
+            "--variants",
+            "sw-path-info",
+            "nw-path-info",
+            "--passes",
+            "english",
+            "--widths",
+            "16",
+            "--length",
+            "16",
+            "--iterations",
+            "1",
+            "--warmups",
+            "0",
+            "--format",
+            "csv",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "\nenglish,generic,sw-path-info,16," in captured.out
+    assert "\nenglish,generic,nw-path-info,16," in captured.out
+
+
+def test_benchmark_cli_defaults_to_current_machine_backends(capsys) -> None:
+    from stride_align import benchmark
+
+    expected_backends = set(benchmark._available_backend_names())
+    exit_code = benchmark.main(
+        [
+            "--widths",
+            "16",
+            "--length",
+            "16",
+            "--iterations",
+            "1",
+            "--warmups",
+            "0",
+            "--format",
+            "csv",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    observed_backends = {
+        line.split(",")[1] for line in captured.out.splitlines()[1:] if line
+    }
+    assert exit_code == 0
+    assert observed_backends == expected_backends
+
+
+def test_benchmark_available_backend_names_are_cpu_discovered(monkeypatch) -> None:
+    from stride_align import benchmark
+
+    monkeypatch.setattr(
+        benchmark,
+        "available_backends",
+        lambda: [
+            SimpleNamespace(name="generic", available=True),
+            SimpleNamespace(name="x86_sse41", available=False),
+            SimpleNamespace(name="x86_avx2", available=True),
+        ],
+    )
+    monkeypatch.setattr(benchmark.importlib.util, "find_spec", lambda name: None)
+
+    assert benchmark._available_backend_names() == ["generic", "x86_avx2"]
+    assert benchmark._selected_backend_names(["available"]) == ["generic", "x86_avx2"]
+
+
+def test_benchmark_adds_parasail_when_importable(monkeypatch) -> None:
+    from stride_align import benchmark
+
+    monkeypatch.setattr(
+        benchmark,
+        "available_backends",
+        lambda: [SimpleNamespace(name="generic", available=True)],
+    )
+    monkeypatch.setattr(
+        benchmark.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "parasail" else None,
+    )
+
+    assert benchmark._available_backend_names() == ["generic", "parasail"]
+
+
+def test_benchmark_parasail_adapter_uses_safe_translated_inputs() -> None:
+    from stride_align import benchmark
+
+    class FakeParasailResult:
+        score = 7
+
+        def __init__(self) -> None:
+            self.cigar_accessed = False
+
+        @property
+        def cigar(self) -> str:
+            self.cigar_accessed = True
+            return "1M"
+
+    class FakeParasail:
+        def __init__(self) -> None:
+            self.calls = []
+            self.last_result: FakeParasailResult | None = None
+
+        def matrix_create(self, alphabet: str, match_score: int, mismatch_score: int):
+            return (alphabet, match_score, mismatch_score)
+
+        def sw_trace_striped_16(
+            self,
+            query: str,
+            target: str,
+            gap_open: int,
+            gap_extend: int,
+            matrix,
+        ) -> FakeParasailResult:
+            assert "\x00" not in query
+            assert "\x00" not in target
+            assert gap_open == 1
+            assert gap_extend == 1
+            self.calls.append((query, target, matrix))
+            self.last_result = FakeParasailResult()
+            return self.last_result
+
+    fake = FakeParasail()
+    adapter = benchmark._ParasailBenchmarkBackend(fake)
+
+    result = adapter.smith_waterman_path_info(
+        b"\x00\x01",
+        b"\x01",
+        match_score=2,
+        mismatch_score=-1,
+        gap_score=-1,
+        width=16,
+    )
+
+    assert result.score == 7
+    assert fake.calls
+    assert fake.last_result is not None
+    assert fake.last_result.cigar_accessed
+
+
+def test_pyproject_does_not_depend_on_parasail() -> None:
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert "parasail" not in pyproject
 
 
 def test_file_compare_cli_validates_score_width_after_decoding(tmp_path, capsys) -> None:

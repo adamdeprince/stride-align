@@ -213,6 +213,9 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 };
 
 struct TargetImplementation {
+  using PreparedSmithWatermanFarrarScore =
+      farrar_scalable_kernel::detail::PreparedScore<SimdOps>;
+
   static Score smith_waterman_score(
       nb::handle query,
       nb::handle target,
@@ -261,6 +264,27 @@ struct TargetImplementation {
         gap_score);
   }
 
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_scalable_kernel::detail::prepare_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    return farrar_scalable_kernel::detail::dispatch_prepared_score<SimdOps>(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -295,6 +319,9 @@ struct TargetImplementation {
 };
 
 struct Implementation {
+  using PreparedSmithWatermanFarrarScore =
+      TargetImplementation::PreparedSmithWatermanFarrarScore;
+
   static bool supported_on_this_machine() noexcept {
 #ifdef COMPAT_HWCAP_ISA_V
     return (getauxval(AT_HWCAP) & COMPAT_HWCAP_ISA_V) != 0;
@@ -361,6 +388,29 @@ struct Implementation {
         mismatch_score,
         gap_score,
         width);
+  }
+
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score_prepared(prepared);
   }
 
   static Score needleman_wunsch_score(

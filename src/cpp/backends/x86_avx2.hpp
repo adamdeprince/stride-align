@@ -7,6 +7,11 @@
 
 #include <nanobind/nanobind.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC push_options
+#pragma GCC target("avx2")
+#endif
+
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/x86_fixed_kernel.hpp"
 
@@ -22,12 +27,10 @@ namespace nb = nanobind;
 
 template <int ShiftBytes>
 inline __m256i shift_left_zero_256(__m256i vector) {
-  const __m128i low = _mm256_castsi256_si128(vector);
-  const __m128i high = _mm256_extracti128_si256(vector, 1);
-  const __m128i low_shifted = _mm_slli_si128(low, ShiftBytes);
-  const __m128i high_shifted =
-      _mm_or_si128(_mm_slli_si128(high, ShiftBytes), _mm_srli_si128(low, 16 - ShiftBytes));
-  return _mm256_inserti128_si256(_mm256_castsi128_si256(low_shifted), high_shifted, 1);
+  const __m256i shifted = _mm256_slli_si256(vector, ShiftBytes);
+  const __m256i carry_source = _mm256_permute2x128_si256(vector, vector, 0x08);
+  const __m256i carry = _mm256_srli_si256(carry_source, 16 - ShiftBytes);
+  return _mm256_or_si256(shifted, carry);
 }
 
 template <typename Token, typename Cell>
@@ -48,8 +51,16 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
   }
 
+  static vector_type load_aligned_cells(const std::int8_t* values) {
+    return _mm256_load_si256(reinterpret_cast<const __m256i*>(values));
+  }
+
   static void store_cells(std::int8_t* values, vector_type vector) {
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int8_t* values, vector_type vector) {
+    _mm256_store_si256(reinterpret_cast<__m256i*>(values), vector);
   }
 
   static vector_type set1(std::int8_t value) {
@@ -74,6 +85,18 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi8(lhs, rhs)) != 0;
+  }
+
+  static vector_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm256_cmpgt_epi8(lhs, rhs);
+  }
+
+  static vector_type bit_or(vector_type lhs, vector_type rhs) {
+    return _mm256_or_si256(lhs, rhs);
+  }
+
+  static bool any_nonzero(vector_type value) {
+    return _mm256_testz_si256(value, value) == 0;
   }
 
   static vector_type substitution(
@@ -101,8 +124,16 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
   }
 
+  static vector_type load_aligned_cells(const std::int16_t* values) {
+    return _mm256_load_si256(reinterpret_cast<const __m256i*>(values));
+  }
+
   static void store_cells(std::int16_t* values, vector_type vector) {
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int16_t* values, vector_type vector) {
+    _mm256_store_si256(reinterpret_cast<__m256i*>(values), vector);
   }
 
   static vector_type set1(std::int16_t value) {
@@ -127,6 +158,18 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi16(lhs, rhs)) != 0;
+  }
+
+  static vector_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm256_cmpgt_epi16(lhs, rhs);
+  }
+
+  static vector_type bit_or(vector_type lhs, vector_type rhs) {
+    return _mm256_or_si256(lhs, rhs);
+  }
+
+  static bool any_nonzero(vector_type value) {
+    return _mm256_testz_si256(value, value) == 0;
   }
 
   static vector_type substitution(
@@ -154,8 +197,16 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
   }
 
+  static vector_type load_aligned_cells(const std::int32_t* values) {
+    return _mm256_load_si256(reinterpret_cast<const __m256i*>(values));
+  }
+
   static void store_cells(std::int32_t* values, vector_type vector) {
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int32_t* values, vector_type vector) {
+    _mm256_store_si256(reinterpret_cast<__m256i*>(values), vector);
   }
 
   static vector_type set1(std::int32_t value) {
@@ -180,6 +231,18 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi32(lhs, rhs)) != 0;
+  }
+
+  static vector_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm256_cmpgt_epi32(lhs, rhs);
+  }
+
+  static vector_type bit_or(vector_type lhs, vector_type rhs) {
+    return _mm256_or_si256(lhs, rhs);
+  }
+
+  static bool any_nonzero(vector_type value) {
+    return _mm256_testz_si256(value, value) == 0;
   }
 
   static vector_type substitution(
@@ -207,8 +270,16 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
   }
 
+  static vector_type load_aligned_cells(const std::int64_t* values) {
+    return _mm256_load_si256(reinterpret_cast<const __m256i*>(values));
+  }
+
   static void store_cells(std::int64_t* values, vector_type vector) {
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int64_t* values, vector_type vector) {
+    _mm256_store_si256(reinterpret_cast<__m256i*>(values), vector);
   }
 
   static vector_type set1(std::int64_t value) {
@@ -236,6 +307,18 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi64(lhs, rhs)) != 0;
   }
 
+  static vector_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm256_cmpgt_epi64(lhs, rhs);
+  }
+
+  static vector_type bit_or(vector_type lhs, vector_type rhs) {
+    return _mm256_or_si256(lhs, rhs);
+  }
+
+  static bool any_nonzero(vector_type value) {
+    return _mm256_testz_si256(value, value) == 0;
+  }
+
   static vector_type substitution(
       const std::uint64_t* query,
       const std::uint64_t* target,
@@ -247,6 +330,9 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 };
 
 struct TargetImplementation {
+  using PreparedSmithWatermanFarrarScore =
+      farrar_fixed_kernel::detail::PreparedScore<SimdOps>;
+
   static Score smith_waterman_score(
       nb::handle query,
       nb::handle target,
@@ -295,6 +381,27 @@ struct TargetImplementation {
         gap_score);
   }
 
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::prepare_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_score<SimdOps>(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -328,7 +435,14 @@ struct TargetImplementation {
   }
 };
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC pop_options
+#endif
+
 struct Implementation {
+  using PreparedSmithWatermanFarrarScore =
+      TargetImplementation::PreparedSmithWatermanFarrarScore;
+
   static STRIDE_ALIGN_X86_BASELINE bool supported_on_this_machine() noexcept {
 #if defined(__GNUC__) || defined(__clang__)
     return __builtin_cpu_supports("avx2") != 0;
@@ -395,6 +509,30 @@ struct Implementation {
         mismatch_score,
         gap_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedSmithWatermanFarrarScore
+  prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_score(

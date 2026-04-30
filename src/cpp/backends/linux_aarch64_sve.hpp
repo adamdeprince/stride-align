@@ -14,6 +14,9 @@ namespace nb = nanobind;
 using TargetImplementation = stride_align::arm_sve_backend::TargetImplementation;
 
 struct Implementation {
+  using PreparedSmithWatermanFarrarScore =
+      TargetImplementation::PreparedSmithWatermanFarrarScore;
+
   static bool supported_on_this_machine() noexcept {
     return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
   }
@@ -76,6 +79,29 @@ struct Implementation {
         mismatch_score,
         gap_score,
         width);
+  }
+
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_score_prepared(prepared);
   }
 
   static Score needleman_wunsch_score(

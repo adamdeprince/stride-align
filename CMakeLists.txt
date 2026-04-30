@@ -57,8 +57,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(_sse41 PRIVATE -msse4.1)
-    target_compile_options(_avx2 PRIVATE -mavx2)
-    target_compile_options(_avx512bwvl PRIVATE -mavx512f -mavx512bw -mavx512vl)
   endif()
 
   list(
@@ -73,17 +71,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
 
   if(STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_256)
     add_stride_align_backend(_avx10_256 src/cpp/backends/x86_avx10_256.cpp)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-      target_compile_options(_avx10_256 PRIVATE -mavx10.1-256)
-    endif()
     list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_X86_AVX10_256=1)
   endif()
 
   if(STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_512)
     add_stride_align_backend(_avx10_512 src/cpp/backends/x86_avx10_512.cpp)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-      target_compile_options(_avx10_512 PRIVATE -mavx10.1-512)
-    endif()
     list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_X86_AVX10_512=1)
   endif()
 endif()

@@ -13,7 +13,6 @@ from typing import Any
 
 from . import available_backends
 
-
 InputData = str | bytes
 InputSymbol = str | int
 

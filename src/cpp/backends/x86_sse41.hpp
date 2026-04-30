@@ -46,8 +46,16 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
   }
 
+  static __m128i load_aligned_cells(const std::int8_t* values) {
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(values));
+  }
+
   static void store_cells(std::int8_t* values, __m128i vector) {
     _mm_storeu_si128(reinterpret_cast<__m128i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int8_t* values, __m128i vector) {
+    _mm_store_si128(reinterpret_cast<__m128i*>(values), vector);
   }
 
   static __m128i set1(std::int8_t value) {
@@ -74,6 +82,18 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm_movemask_epi8(_mm_cmpgt_epi8(lhs, rhs)) != 0;
   }
 
+  static __m128i greater_mask(__m128i lhs, __m128i rhs) {
+    return _mm_cmpgt_epi8(lhs, rhs);
+  }
+
+  static __m128i bit_or(__m128i lhs, __m128i rhs) {
+    return _mm_or_si128(lhs, rhs);
+  }
+
+  static bool any_nonzero(__m128i value) {
+    return _mm_testz_si128(value, value) == 0;
+  }
+
   static __m128i substitution(
       const std::uint8_t* query,
       const std::uint8_t* target,
@@ -98,8 +118,16 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
   }
 
+  static __m128i load_aligned_cells(const std::int16_t* values) {
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(values));
+  }
+
   static void store_cells(std::int16_t* values, __m128i vector) {
     _mm_storeu_si128(reinterpret_cast<__m128i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int16_t* values, __m128i vector) {
+    _mm_store_si128(reinterpret_cast<__m128i*>(values), vector);
   }
 
   static __m128i set1(std::int16_t value) {
@@ -126,6 +154,18 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm_movemask_epi8(_mm_cmpgt_epi16(lhs, rhs)) != 0;
   }
 
+  static __m128i greater_mask(__m128i lhs, __m128i rhs) {
+    return _mm_cmpgt_epi16(lhs, rhs);
+  }
+
+  static __m128i bit_or(__m128i lhs, __m128i rhs) {
+    return _mm_or_si128(lhs, rhs);
+  }
+
+  static bool any_nonzero(__m128i value) {
+    return _mm_testz_si128(value, value) == 0;
+  }
+
   static __m128i substitution(
       const std::uint16_t* query,
       const std::uint16_t* target,
@@ -150,8 +190,16 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
   }
 
+  static __m128i load_aligned_cells(const std::int32_t* values) {
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(values));
+  }
+
   static void store_cells(std::int32_t* values, __m128i vector) {
     _mm_storeu_si128(reinterpret_cast<__m128i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int32_t* values, __m128i vector) {
+    _mm_store_si128(reinterpret_cast<__m128i*>(values), vector);
   }
 
   static __m128i set1(std::int32_t value) {
@@ -178,6 +226,18 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm_movemask_epi8(_mm_cmpgt_epi32(lhs, rhs)) != 0;
   }
 
+  static __m128i greater_mask(__m128i lhs, __m128i rhs) {
+    return _mm_cmpgt_epi32(lhs, rhs);
+  }
+
+  static __m128i bit_or(__m128i lhs, __m128i rhs) {
+    return _mm_or_si128(lhs, rhs);
+  }
+
+  static bool any_nonzero(__m128i value) {
+    return _mm_testz_si128(value, value) == 0;
+  }
+
   static __m128i substitution(
       const std::uint32_t* query,
       const std::uint32_t* target,
@@ -202,8 +262,16 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
   }
 
+  static __m128i load_aligned_cells(const std::int64_t* values) {
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(values));
+  }
+
   static void store_cells(std::int64_t* values, __m128i vector) {
     _mm_storeu_si128(reinterpret_cast<__m128i*>(values), vector);
+  }
+
+  static void store_aligned_cells(std::int64_t* values, __m128i vector) {
+    _mm_store_si128(reinterpret_cast<__m128i*>(values), vector);
   }
 
   static __m128i set1(std::int64_t value) {
@@ -624,6 +692,9 @@ AlignmentResult dispatch_traceback(
 }  // namespace detail
 
 struct Implementation {
+  using PreparedSmithWatermanFarrarScore =
+      farrar_fixed_kernel::detail::PreparedScore<detail::SimdOps>;
+
   static Score smith_waterman_score(
       nb::handle query,
       nb::handle target,
@@ -662,6 +733,27 @@ struct Implementation {
         match_score,
         mismatch_score,
         gap_score);
+  }
+
+  static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::prepare_score<detail::SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static Score smith_waterman_farrar_score_prepared(
+      PreparedSmithWatermanFarrarScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_score<detail::SimdOps>(prepared);
   }
 
   static Score needleman_wunsch_score(
