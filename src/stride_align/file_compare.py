@@ -32,6 +32,7 @@ _UNSIGNED_LIMITS = {
 
 _BACKEND_MODULES = {
     "generic": "stride_align._generic",
+    "swar": "stride_align._swar",
     "x86_sse41": "stride_align._sse41",
     "x86_avx2": "stride_align._avx2",
     "x86_avx512bwvl": "stride_align._avx512bwvl",
@@ -49,6 +50,7 @@ _BACKEND_MODULES = {
 }
 
 _SHORT_BACKEND_ALIASES = {
+    "swar64": "swar",
     "sse41": "x86_sse41",
     "avx2": "x86_avx2",
     "avx512bwvl": "x86_avx512bwvl",
@@ -319,7 +321,8 @@ def _raw_alignment_score(
     width: int,
     match_score: int,
     mismatch_score: int,
-    gap_score: int,
+    gap_open_score: int,
+    gap_extend_score: int,
 ) -> int:
     return int(
         function(
@@ -327,7 +330,9 @@ def _raw_alignment_score(
             target,
             match_score=match_score,
             mismatch_score=mismatch_score,
-            gap_score=gap_score,
+            gap_score=gap_open_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
             width=width,
         )
     )
@@ -362,11 +367,6 @@ def _run(args: argparse.Namespace) -> tuple[float, float | None]:
     gap_extend_score = (
         args.gap_open_score if args.gap_extend_score is None else args.gap_extend_score
     )
-    if args.gap_open_score != gap_extend_score:
-        raise CommandError(
-            "this build currently supports linear gaps only; "
-            "--gap-open-score and --gap-extend-score must match"
-        )
 
     query = _read_input_once(args.query_file, args.encoding)
     target = _read_input_once(args.target_file, args.encoding)
@@ -405,6 +405,7 @@ def _run(args: argparse.Namespace) -> tuple[float, float | None]:
             args.match_score,
             args.mismatch_score,
             args.gap_open_score,
+            gap_extend_score,
         )
     elapsed = time.perf_counter() - start_time
     normalized = _normalize_score(raw_score, query.length, target.length, mode, args.match_score)

@@ -25,6 +25,18 @@ def _import_backend(kind: BackendKind):
                 smith_waterman_path_info,
                 smith_waterman_score,
             )
+        case BackendKind.SWAR:
+            from ._swar import (
+                AlignmentPath,
+                AlignmentResult,
+                needleman_wunsch_path,
+                needleman_wunsch_path_info,
+                needleman_wunsch_score,
+                smith_waterman_farrar_score,
+                smith_waterman_path,
+                smith_waterman_path_info,
+                smith_waterman_score,
+            )
         case BackendKind.X86_SSE41:
             from ._sse41 import (
                 AlignmentPath,

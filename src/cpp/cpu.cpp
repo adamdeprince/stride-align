@@ -33,6 +33,7 @@ struct BackendMetadata {
 
 constexpr std::array kBackends = {
     BackendMetadata{BackendKind::generic, "generic"},
+    BackendMetadata{BackendKind::swar, "swar"},
     BackendMetadata{BackendKind::x86_sse41, "x86_sse41"},
     BackendMetadata{BackendKind::x86_avx2, "x86_avx2"},
     BackendMetadata{BackendKind::x86_avx512bwvl, "x86_avx512bwvl"},
@@ -57,6 +58,10 @@ bool x86_supports_sse41() noexcept {
 #else
   return false;
 #endif
+}
+
+bool supports_64_bit_swar() noexcept {
+  return sizeof(void*) == 8;
 }
 
 bool x86_supports_avx2() noexcept {
@@ -172,6 +177,12 @@ bool backend_is_compiled(BackendKind kind) noexcept {
   switch (kind) {
     case BackendKind::generic:
       return true;
+    case BackendKind::swar:
+#ifdef STRIDE_ALIGN_HAVE_SWAR
+      return true;
+#else
+      return false;
+#endif
     case BackendKind::x86_sse41:
 #ifdef STRIDE_ALIGN_HAVE_X86_SSE41
       return true;
@@ -269,6 +280,8 @@ bool backend_is_available(BackendKind kind) noexcept {
   switch (kind) {
     case BackendKind::generic:
       return true;
+    case BackendKind::swar:
+      return supports_64_bit_swar();
     case BackendKind::x86_sse41:
       return x86_supports_sse41();
     case BackendKind::x86_avx2:

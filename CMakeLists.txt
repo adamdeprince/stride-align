@@ -50,6 +50,11 @@ configure_stride_align_target(_cpu)
 
 add_stride_align_backend(_generic src/cpp/backends/generic.cpp)
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  add_stride_align_backend(_swar src/cpp/backends/swar.cpp)
+  list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_SWAR=1)
+endif()
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
   add_stride_align_backend(_sse41 src/cpp/backends/x86_sse.cpp)
   add_stride_align_backend(_avx2 src/cpp/backends/x86_avx2.cpp)

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <variant>
@@ -13,6 +14,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/score_fast_paths.hpp"
 #include "farrar_preprocess.hpp"
 
 namespace stride_align::farrar_fixed_kernel {
@@ -99,6 +101,7 @@ struct PreparedScoreState {
   using cell_type = Cell;
 
   Cell gap_score = 0;
+  std::optional<Score> fast_score;
   std::size_t segment_count = 0;
   std::array<std::uint16_t, 256> profile_indices = {};
   std::vector<std::size_t> target_profile_offsets;
@@ -248,6 +251,19 @@ PreparedScoreState<Cell> prepare_score_state(
   const auto mismatch = static_cast<Cell>(mismatch_score);
   PreparedScoreState<Cell> state;
   state.gap_score = static_cast<Cell>(gap_score);
+  state.fast_score = score_fast_paths::fast_score_only<
+      std::uint8_t,
+      std::int64_t,
+      true>(
+      query,
+      target,
+      static_cast<std::int64_t>(match_score),
+      static_cast<std::int64_t>(mismatch_score),
+      static_cast<std::int64_t>(gap_score));
+  if (state.fast_score.has_value()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
 
   if (query.empty() || target.empty()) {
     state.profile_indices.fill(missing_profile_index);
@@ -275,6 +291,9 @@ Score score_state(PreparedScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
   if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
     return 0;
   }
@@ -322,6 +341,10 @@ Score score_state(PreparedScoreState<Cell>& state) {
       v_h = load_state_cells<Ops, Cell>(h_load_segment);
     }
 
+    // Parasail/SWPS3 can stop the lazy-F scan inside the segment loop by
+    // comparing against H-gap, but that deliberately excludes adjacent
+    // insertion/deletion paths. Keep full exact propagation and optimize only
+    // the convergence bookkeeping here.
     if constexpr (requires(typename Ops::vector_type value) {
                     Ops::greater_mask(value, value);
                     Ops::bit_or(value, value);
@@ -346,6 +369,34 @@ Score score_state(PreparedScoreState<Cell>& state) {
         }
 
         if (state.gap_score <= 0 && !Ops::any_nonzero(propagated_vector)) {
+          break;
+        }
+      }
+    } else if constexpr (requires(typename Ops::vector_type value, typename Ops::mask_type mask) {
+                           Ops::empty_mask();
+                           Ops::greater_mask(value, value);
+                           Ops::mask_or(mask, mask);
+                           Ops::any_mask(mask);
+                         }) {
+      for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+        v_f = shift_left_zero<Ops, Cell>(v_f);
+        auto propagated_mask = Ops::empty_mask();
+
+        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+          Cell* h_store_segment = h_store_data + segment * lane_count;
+          auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
+          propagated_mask =
+              Ops::mask_or(propagated_mask, Ops::greater_mask(v_f, v_h_segment));
+          v_h_segment = Ops::max(v_h_segment, v_f);
+          store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
+          if (track_lazy_best) {
+            best_vector = Ops::max(best_vector, v_h_segment);
+          }
+
+          v_f = Ops::add(v_f, gap_vector);
+        }
+
+        if (state.gap_score <= 0 && !Ops::any_mask(propagated_mask)) {
           break;
         }
       }

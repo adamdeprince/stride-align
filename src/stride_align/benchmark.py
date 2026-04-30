@@ -38,6 +38,7 @@ _CHINESE_REPLACEMENTS = "的一是在不了有人和国中大为上个情文清�
 
 _BACKEND_MODULES = {
     "generic": "stride_align._generic",
+    "swar": "stride_align._swar",
     "x86_sse41": "stride_align._sse41",
     "x86_avx2": "stride_align._avx2",
     "x86_avx512bwvl": "stride_align._avx512bwvl",
@@ -56,6 +57,7 @@ _BACKEND_MODULES = {
 }
 
 _SHORT_BACKEND_ALIASES = {
+    "swar64": "swar",
     "sse41": "x86_sse41",
     "avx2": "x86_avx2",
     "avx512bwvl": "x86_avx512bwvl",
@@ -87,6 +89,7 @@ _ALL_VARIANTS = (
     "sw-path",
     "nw-path",
 )
+_DEFAULT_VARIANTS = ("sw-farrar-score", "sw-score")
 
 _VARIANT_ALIASES = {
     "farrar": "sw-farrar-score",
@@ -99,9 +102,28 @@ _VARIANT_ALIASES = {
     "needleman-wunsch-path": "nw-path",
 }
 
-_ALL_PASSES = ("english", "chinese", "random-bytes")
-_DEFAULT_PASSES = ("english", "chinese")
+_ALL_SCORING_CASES = ("linear", "affine")
+_DEFAULT_SCORING_CASES = ("linear", "affine")
+_SCORING_CASE_ALIASES = {
+    "all": "all",
+    "both": "all",
+    "linear-gap": "linear",
+    "linear-gaps": "linear",
+    "affine-gap": "affine",
+    "affine-gaps": "affine",
+}
+
+_ALL_PASSES = ("english-short", "english", "chinese", "random-bytes")
+_DEFAULT_PASSES = ("english-short", "english", "chinese")
+_DEFAULT_WIDTHS_BY_PASS = {
+    "english-short": (8,),
+    "english": (16, 32),
+    "chinese": (16, 32),
+    "random-bytes": (16, 32),
+}
 _PASS_ALIASES = {
+    "short-english": "english-short",
+    "short": "english-short",
     "text": "all-text",
     "texts": "all-text",
     "random": "random-bytes",
@@ -123,6 +145,7 @@ class ResolvedBackend:
 @dataclass(frozen=True, slots=True)
 class BenchmarkResult:
     pass_name: str
+    case_name: str
     backend: str
     variant: str
     score_width: int
@@ -141,6 +164,19 @@ class BenchmarkPass:
     name: str
     query: object
     target: object
+
+
+@dataclass(frozen=True, slots=True)
+class ScoringCase:
+    name: str
+    match_score: int
+    mismatch_score: int
+    gap_open_score: int
+    gap_extend_score: int
+
+    @property
+    def is_linear(self) -> bool:
+        return self.gap_open_score == self.gap_extend_score
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -163,20 +199,39 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         type=int,
         choices=(8, 16, 32, 64),
-        default=[16, 32],
-        help="Score channel widths to benchmark. Defaults to 16 32.",
+        default=None,
+        help=(
+            "Score channel widths to benchmark. Defaults are pass-specific: "
+            "english-short uses 8, text passes use 16 32."
+        ),
     )
     parser.add_argument(
         "--variants",
         nargs="+",
-        default=["sw-farrar-score"],
+        default=list(_DEFAULT_VARIANTS),
         help=(
             "Workloads to benchmark. Choices: sw-farrar-score, sw-score, nw-score, "
             "sw-path-info, nw-path-info, sw-path, nw-path, or all. "
-            "Defaults to sw-farrar-score."
+            "Defaults to sw-farrar-score sw-score."
+        ),
+    )
+    parser.add_argument(
+        "--scoring-cases",
+        nargs="+",
+        default=list(_DEFAULT_SCORING_CASES),
+        help=(
+            "Scoring cases to benchmark. Choices: linear, affine, all. "
+            "Unequal affine gaps use native fallback unless a backend has a specialized path. "
+            "Defaults to linear affine."
         ),
     )
     parser.add_argument("--length", type=int, default=1024, help="Default query/target length.")
+    parser.add_argument(
+        "--short-length",
+        type=int,
+        default=31,
+        help="Query/target length for the english-short 8-bit pass. Defaults to 31.",
+    )
     parser.add_argument("--query-length", type=int, default=None)
     parser.add_argument("--target-length", type=int, default=None)
     parser.add_argument(
@@ -185,7 +240,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=list(_DEFAULT_PASSES),
         help=(
             "Benchmark passes to run. Choices: english, chinese, random-bytes, "
-            "all-text, all. Defaults to english chinese."
+            "english-short, all-text, all. Defaults to english-short english chinese."
         ),
     )
     parser.add_argument(
@@ -200,6 +255,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--match-score", "--match", type=int, default=2)
     parser.add_argument("--mismatch-score", "--mismatch", type=int, default=-1)
     parser.add_argument("--gap-score", "--gap", type=int, default=-1)
+    parser.add_argument("--affine-gap-open-score", "--affine-gap-open", type=int, default=-2)
+    parser.add_argument("--affine-gap-extend-score", "--affine-gap-extend", type=int, default=-1)
     parser.add_argument("--format", choices=("table", "csv"), default="table")
     return parser
 
@@ -253,12 +310,60 @@ def _selected_variants(variants: Sequence[str]) -> list[str]:
     return selected
 
 
+def _selected_scoring_case_names(cases: Sequence[str]) -> list[str]:
+    selected: list[str] = []
+    for scoring_case in cases:
+        canonical_case = _SCORING_CASE_ALIASES.get(scoring_case, scoring_case)
+        if canonical_case == "all":
+            for available_case in _ALL_SCORING_CASES:
+                if available_case not in selected:
+                    selected.append(available_case)
+            continue
+        if canonical_case not in _ALL_SCORING_CASES:
+            choices = ", ".join((*_ALL_SCORING_CASES, "all"))
+            raise BenchmarkError(
+                f"unknown scoring case {scoring_case!r}; choices: {choices}"
+            )
+        if canonical_case not in selected:
+            selected.append(canonical_case)
+    return selected
+
+
+def _build_scoring_cases(args: argparse.Namespace) -> list[ScoringCase]:
+    cases: list[ScoringCase] = []
+    for case_name in _selected_scoring_case_names(args.scoring_cases):
+        if case_name == "linear":
+            cases.append(
+                ScoringCase(
+                    name="linear",
+                    match_score=args.match_score,
+                    mismatch_score=args.mismatch_score,
+                    gap_open_score=args.gap_score,
+                    gap_extend_score=args.gap_score,
+                )
+            )
+            continue
+        if case_name == "affine":
+            cases.append(
+                ScoringCase(
+                    name="affine",
+                    match_score=args.match_score,
+                    mismatch_score=args.mismatch_score,
+                    gap_open_score=args.affine_gap_open_score,
+                    gap_extend_score=args.affine_gap_extend_score,
+                )
+            )
+            continue
+        raise AssertionError(f"unhandled scoring case {case_name!r}")
+    return cases
+
+
 def _selected_passes(passes: Sequence[str]) -> list[str]:
     selected: list[str] = []
     for benchmark_pass in passes:
         canonical_pass = _PASS_ALIASES.get(benchmark_pass, benchmark_pass)
         if canonical_pass == "all-text":
-            candidates = _DEFAULT_PASSES
+            candidates = ("english", "chinese")
         elif canonical_pass == "all":
             candidates = _ALL_PASSES
         elif canonical_pass in _ALL_PASSES:
@@ -324,6 +429,8 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ) -> int:
         return self._run(
             "sw-farrar-score",
@@ -333,6 +440,8 @@ class _ParasailBenchmarkBackend:
             mismatch_score,
             gap_score,
             width,
+            gap_open_score,
+            gap_extend_score,
         )
 
     def smith_waterman_score(
@@ -344,8 +453,20 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ) -> int:
-        return self._run("sw-score", query, target, match_score, mismatch_score, gap_score, width)
+        return self._run(
+            "sw-score",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
 
     def needleman_wunsch_score(
         self,
@@ -356,8 +477,20 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ) -> int:
-        return self._run("nw-score", query, target, match_score, mismatch_score, gap_score, width)
+        return self._run(
+            "nw-score",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
 
     def smith_waterman_path_info(
         self,
@@ -368,6 +501,8 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ):
         return self._run(
             "sw-path-info",
@@ -377,6 +512,8 @@ class _ParasailBenchmarkBackend:
             mismatch_score,
             gap_score,
             width,
+            gap_open_score,
+            gap_extend_score,
         )
 
     def needleman_wunsch_path_info(
@@ -388,6 +525,8 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ):
         return self._run(
             "nw-path-info",
@@ -397,6 +536,8 @@ class _ParasailBenchmarkBackend:
             mismatch_score,
             gap_score,
             width,
+            gap_open_score,
+            gap_extend_score,
         )
 
     def smith_waterman_path(
@@ -408,8 +549,20 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ):
-        return self._run("sw-path", query, target, match_score, mismatch_score, gap_score, width)
+        return self._run(
+            "sw-path",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
 
     def needleman_wunsch_path(
         self,
@@ -420,8 +573,20 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ):
-        return self._run("nw-path", query, target, match_score, mismatch_score, gap_score, width)
+        return self._run(
+            "nw-path",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
 
     def _prepare_smith_waterman_farrar_score(
         self,
@@ -432,8 +597,15 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ):
-        if gap_score >= 0:
+        gap_open, gap_extend = self._gap_penalties(
+            gap_score,
+            gap_open_score,
+            gap_extend_score,
+        )
+        if gap_open >= 0 or gap_extend >= 0:
             raise BenchmarkError("parasail benchmark adapter requires a non-positive gap score")
         query_text, target_text, matrix = self._prepare_inputs(
             query,
@@ -451,12 +623,23 @@ class _ParasailBenchmarkBackend:
             profile_function,
             profile_create(query_text, matrix),
             target_text,
-            -gap_score,
+            -gap_open,
+            -gap_extend,
         )
 
     def _smith_waterman_farrar_score_prepared(self, prepared):
-        profile_function, profile, target_text, gap_penalty = prepared
-        return profile_function(profile, target_text, gap_penalty, gap_penalty)
+        profile_function, profile, target_text, gap_open_penalty, gap_extend_penalty = prepared
+        return profile_function(profile, target_text, gap_open_penalty, gap_extend_penalty)
+
+    def _gap_penalties(
+        self,
+        gap_score: int,
+        gap_open_score: int | None,
+        gap_extend_score: int | None,
+    ) -> tuple[int, int]:
+        gap_open = gap_score if gap_open_score is None else gap_open_score
+        gap_extend = gap_score if gap_extend_score is None else gap_extend_score
+        return gap_open, gap_extend
 
     def _symbols(self, value: object) -> tuple[object, ...]:
         if isinstance(value, bytes):
@@ -539,8 +722,15 @@ class _ParasailBenchmarkBackend:
         mismatch_score: int,
         gap_score: int,
         width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
     ):
-        if gap_score >= 0:
+        gap_open, gap_extend = self._gap_penalties(
+            gap_score,
+            gap_open_score,
+            gap_extend_score,
+        )
+        if gap_open >= 0 or gap_extend >= 0:
             raise BenchmarkError("parasail benchmark adapter requires a non-positive gap score")
         query_text, target_text, matrix = self._prepare_inputs(
             query,
@@ -548,12 +738,13 @@ class _ParasailBenchmarkBackend:
             match_score,
             mismatch_score,
         )
-        gap_penalty = -gap_score
+        gap_open_penalty = -gap_open
+        gap_extend_penalty = -gap_extend
         result = self._function(variant, width)(
             query_text,
             target_text,
-            gap_penalty,
-            gap_penalty,
+            gap_open_penalty,
+            gap_extend_penalty,
             matrix,
         )
         if variant.endswith("path") or variant.endswith("path-info"):
@@ -611,7 +802,7 @@ def _build_text_pass(
     target_length: int,
     seed: int,
 ) -> BenchmarkPass:
-    if name == "english":
+    if name in {"english", "english-short"}:
         corpus = _ENGLISH_CORPUS
         replacements = _ENGLISH_REPLACEMENTS
     elif name == "chinese":
@@ -648,16 +839,21 @@ def _build_benchmark_passes(
     pass_names: Sequence[str],
     query_length: int,
     target_length: int,
+    short_length: int,
     alphabet_size: int,
     seed: int,
 ) -> list[BenchmarkPass]:
-    if query_length < 0 or target_length < 0:
+    if query_length < 0 or target_length < 0 or short_length < 0:
         raise BenchmarkError("sequence lengths must be non-negative")
 
     benchmark_passes: list[BenchmarkPass] = []
     for index, pass_name in enumerate(pass_names):
         pass_seed = seed + index * 1009
-        if pass_name in {"english", "chinese"}:
+        if pass_name == "english-short":
+            benchmark_passes.append(
+                _build_text_pass(pass_name, short_length, short_length, pass_seed)
+            )
+        elif pass_name in {"english", "chinese"}:
             benchmark_passes.append(
                 _build_text_pass(pass_name, query_length, target_length, pass_seed)
             )
@@ -675,30 +871,46 @@ def _build_benchmark_passes(
     return benchmark_passes
 
 
-def _validate_widths(
-    widths: Sequence[int],
+def _validate_width(
+    width: int,
+    pass_name: str,
     query_length: int,
     target_length: int,
-    match_score: int,
-    mismatch_score: int,
-    gap_score: int,
+    scoring_case: ScoringCase,
 ) -> None:
+    if width == 8 and pass_name == "chinese":
+        raise BenchmarkError("8-bit benchmark widths are limited to English/byte passes")
+
     score_bound = (query_length + target_length) * max(
-        abs(match_score),
-        abs(mismatch_score),
-        abs(gap_score),
+        abs(scoring_case.match_score),
+        abs(scoring_case.mismatch_score),
+        abs(scoring_case.gap_open_score),
+        abs(scoring_case.gap_extend_score),
     )
-    for width in widths:
-        if score_bound > _SIGNED_LIMITS[width]:
-            raise BenchmarkError(
-                f"score bound {score_bound} exceeds signed {width}-bit capacity "
-                f"{_SIGNED_LIMITS[width]}"
-            )
+    if score_bound > _SIGNED_LIMITS[width]:
+        raise BenchmarkError(
+            f"{pass_name}/{scoring_case.name} score bound {score_bound} exceeds signed "
+            f"{width}-bit capacity {_SIGNED_LIMITS[width]}"
+        )
+
+
+def _widths_for_pass(
+    benchmark_pass: BenchmarkPass,
+    selected_widths: Sequence[int] | None,
+) -> tuple[int, ...]:
+    if selected_widths is not None:
+        return tuple(selected_widths)
+    return _DEFAULT_WIDTHS_BY_PASS[benchmark_pass.name]
+
+
+def _backend_supports_scoring_case(backend: ResolvedBackend, scoring_case: ScoringCase) -> bool:
+    return scoring_case.is_linear or backend.name in _BACKEND_MODULES
 
 
 def _time_backend(
     backend: ResolvedBackend,
     pass_name: str,
+    case_name: str,
     variant: str,
     query: object,
     target: object,
@@ -707,12 +919,19 @@ def _time_backend(
     warmups: int,
     match_score: int,
     mismatch_score: int,
-    gap_score: int,
+    gap_open_score: int,
+    gap_extend_score: int,
 ) -> BenchmarkResult:
     function = _function_for_variant(backend.module, variant)
+    linear_gap_score = gap_open_score
+    extra_gap_kwargs = {
+        "gap_open_score": gap_open_score,
+        "gap_extend_score": gap_extend_score,
+    }
 
     if (
         variant == "sw-farrar-score"
+        and (gap_open_score == gap_extend_score or backend.name == "parasail")
         and hasattr(backend.module, "_prepare_smith_waterman_farrar_score")
         and hasattr(backend.module, "_smith_waterman_farrar_score_prepared")
     ):
@@ -721,8 +940,9 @@ def _time_backend(
             target,
             match_score=match_score,
             mismatch_score=mismatch_score,
-            gap_score=gap_score,
+            gap_score=linear_gap_score,
             width=width,
+            **extra_gap_kwargs,
         )
 
         def run_once() -> Any:
@@ -736,8 +956,9 @@ def _time_backend(
                 target,
                 match_score=match_score,
                 mismatch_score=mismatch_score,
-                gap_score=gap_score,
+                gap_score=linear_gap_score,
                 width=width,
+                **extra_gap_kwargs,
             )
 
     score = _result_score(run_once())
@@ -761,6 +982,7 @@ def _time_backend(
     cells = len(query) * len(target)
     return BenchmarkResult(
         pass_name=pass_name,
+        case_name=case_name,
         backend=backend.name,
         variant=variant,
         score_width=width,
@@ -777,19 +999,25 @@ def _time_backend(
 
 def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
     generic_medians = {
-        (result.pass_name, result.variant, result.score_width): result.median_seconds
+        (
+            result.pass_name,
+            result.case_name,
+            result.variant,
+            result.score_width,
+        ): result.median_seconds
         for result in results
         if result.backend == "generic"
     }
     output: list[BenchmarkResult] = []
     for result in results:
         generic_median = generic_medians.get(
-            (result.pass_name, result.variant, result.score_width)
+            (result.pass_name, result.case_name, result.variant, result.score_width)
         )
         speedup = None if generic_median is None else generic_median / result.median_seconds
         output.append(
             BenchmarkResult(
                 pass_name=result.pass_name,
+                case_name=result.case_name,
                 backend=result.backend,
                 variant=result.variant,
                 score_width=result.score_width,
@@ -808,13 +1036,13 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
 
 def _print_csv(results: Sequence[BenchmarkResult]) -> None:
     print(
-        "pass,backend,variant,score_width,score,iterations,warmups,best_seconds,"
+        "pass,case,backend,variant,score_width,score,iterations,warmups,best_seconds,"
         "median_seconds,mean_seconds,cells_per_second,speedup_vs_generic"
     )
     for result in results:
         speedup = "" if result.speedup_vs_generic is None else f"{result.speedup_vs_generic:.6g}"
         print(
-            f"{result.pass_name},{result.backend},{result.variant},"
+            f"{result.pass_name},{result.case_name},{result.backend},{result.variant},"
             f"{result.score_width},{result.score},"
             f"{result.iterations},"
             f"{result.warmups},{result.best_seconds:.9g},{result.median_seconds:.9g},"
@@ -826,17 +1054,21 @@ def _print_table(
     results: Sequence[BenchmarkResult],
     query_length: int,
     target_length: int,
+    short_length: int,
     pass_names: Sequence[str],
+    scoring_case_names: Sequence[str],
     seed: int,
 ) -> None:
     print("# stride-align-benchmark")
     print(f"# python={platform.python_version()} platform={platform.platform()}")
     print(
         f"# query_length={query_length} target_length={target_length} "
-        f"passes={','.join(pass_names)} seed={seed}"
+        f"short_length={short_length} passes={','.join(pass_names)} "
+        f"cases={','.join(scoring_case_names)} seed={seed}"
     )
     headers = (
         "pass",
+        "case",
         "backend",
         "variant",
         "width",
@@ -852,6 +1084,7 @@ def _print_table(
         rows.append(
             (
                 result.pass_name,
+                result.case_name,
                 result.backend,
                 result.variant,
                 str(result.score_width),
@@ -878,52 +1111,62 @@ def _run(args: argparse.Namespace) -> list[BenchmarkResult]:
 
     query_length = args.length if args.query_length is None else args.query_length
     target_length = args.length if args.target_length is None else args.target_length
-    _validate_widths(
-        args.widths,
-        query_length,
-        target_length,
-        args.match_score,
-        args.mismatch_score,
-        args.gap_score,
-    )
     pass_names = _selected_passes(args.passes)
     benchmark_passes = _build_benchmark_passes(
         pass_names,
         query_length,
         target_length,
+        args.short_length,
         args.alphabet_size,
         args.seed,
     )
     backends = _resolve_backends(args.backends)
     variants = _selected_variants(args.variants)
+    scoring_cases = _build_scoring_cases(args)
 
     results: list[BenchmarkResult] = []
     for benchmark_pass in benchmark_passes:
-        for variant in variants:
-            for width in args.widths:
-                expected_score: int | None = None
-                for backend in backends:
-                    result = _time_backend(
-                        backend,
-                        benchmark_pass.name,
-                        variant,
-                        benchmark_pass.query,
-                        benchmark_pass.target,
+        for scoring_case in scoring_cases:
+            for variant in variants:
+                for width in _widths_for_pass(benchmark_pass, args.widths):
+                    _validate_width(
                         width,
-                        args.iterations,
-                        args.warmups,
-                        args.match_score,
-                        args.mismatch_score,
-                        args.gap_score,
+                        benchmark_pass.name,
+                        len(benchmark_pass.query),
+                        len(benchmark_pass.target),
+                        scoring_case,
                     )
-                    if expected_score is None:
-                        expected_score = result.score
-                    elif result.score != expected_score:
-                        raise BenchmarkError(
-                            f"{backend.name} {benchmark_pass.name} {variant} width {width} "
-                            f"returned {result.score}, expected {expected_score}"
+                    expected_score: int | None = None
+                    for backend in backends:
+                        if not _backend_supports_scoring_case(backend, scoring_case):
+                            continue
+                        result = _time_backend(
+                            backend,
+                            benchmark_pass.name,
+                            scoring_case.name,
+                            variant,
+                            benchmark_pass.query,
+                            benchmark_pass.target,
+                            width,
+                            args.iterations,
+                            args.warmups,
+                            scoring_case.match_score,
+                            scoring_case.mismatch_score,
+                            scoring_case.gap_open_score,
+                            scoring_case.gap_extend_score,
                         )
-                    results.append(result)
+                        if expected_score is None:
+                            expected_score = result.score
+                        elif result.score != expected_score:
+                            raise BenchmarkError(
+                                f"{backend.name} {benchmark_pass.name} {scoring_case.name} "
+                                f"{variant} width {width} returned {result.score}, "
+                                f"expected {expected_score}"
+                            )
+                        results.append(result)
+
+    if not results:
+        raise BenchmarkError("no compatible benchmark combinations were selected")
 
     return _with_speedups(results)
 
@@ -949,7 +1192,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             results,
             query_length,
             target_length,
+            args.short_length,
             _selected_passes(args.passes),
+            _selected_scoring_case_names(args.scoring_cases),
             args.seed,
         )
     return 0

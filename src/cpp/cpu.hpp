@@ -7,6 +7,7 @@ namespace stride_align {
 
 enum class BackendKind {
   generic,
+  swar,
   x86_sse41,
   x86_avx2,
   x86_avx512bwvl,

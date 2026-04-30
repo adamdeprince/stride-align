@@ -12,6 +12,7 @@
 #pragma GCC target("avx10.1-512")
 #endif
 
+#include "backends/affine_fixed_kernel.hpp"
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/x86_fixed_kernel.hpp"
 
@@ -46,6 +47,7 @@ struct SimdOps;
 template <>
 struct SimdOps<std::uint8_t, std::int8_t> {
   using vector_type = __m512i;
+  using mask_type = __mmask64;
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 64;
   static constexpr bool has_vector_max = true;
@@ -58,8 +60,16 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm512_loadu_si512(values);
   }
 
+  static vector_type load_aligned_cells(const std::int8_t* values) {
+    return _mm512_load_si512(values);
+  }
+
   static void store_cells(std::int8_t* values, vector_type vector) {
     _mm512_storeu_si512(values, vector);
+  }
+
+  static void store_aligned_cells(std::int8_t* values, vector_type vector) {
+    _mm512_store_si512(values, vector);
   }
 
   static vector_type set1(std::int8_t value) {
@@ -86,6 +96,22 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm512_cmpgt_epi8_mask(lhs, rhs) != 0;
   }
 
+  static mask_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi8_mask(lhs, rhs);
+  }
+
+  static mask_type empty_mask() {
+    return 0;
+  }
+
+  static mask_type mask_or(mask_type lhs, mask_type rhs) {
+    return lhs | rhs;
+  }
+
+  static bool any_mask(mask_type mask) {
+    return mask != 0;
+  }
+
   static vector_type substitution(
       const std::uint8_t* query,
       const std::uint8_t* target,
@@ -99,6 +125,7 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 template <>
 struct SimdOps<std::uint16_t, std::int16_t> {
   using vector_type = __m512i;
+  using mask_type = __mmask32;
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 32;
   static constexpr bool has_vector_max = true;
@@ -111,8 +138,16 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm512_loadu_si512(values);
   }
 
+  static vector_type load_aligned_cells(const std::int16_t* values) {
+    return _mm512_load_si512(values);
+  }
+
   static void store_cells(std::int16_t* values, vector_type vector) {
     _mm512_storeu_si512(values, vector);
+  }
+
+  static void store_aligned_cells(std::int16_t* values, vector_type vector) {
+    _mm512_store_si512(values, vector);
   }
 
   static vector_type set1(std::int16_t value) {
@@ -139,6 +174,22 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm512_cmpgt_epi16_mask(lhs, rhs) != 0;
   }
 
+  static mask_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi16_mask(lhs, rhs);
+  }
+
+  static mask_type empty_mask() {
+    return 0;
+  }
+
+  static mask_type mask_or(mask_type lhs, mask_type rhs) {
+    return lhs | rhs;
+  }
+
+  static bool any_mask(mask_type mask) {
+    return mask != 0;
+  }
+
   static vector_type substitution(
       const std::uint16_t* query,
       const std::uint16_t* target,
@@ -152,6 +203,7 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 template <>
 struct SimdOps<std::uint32_t, std::int32_t> {
   using vector_type = __m512i;
+  using mask_type = __mmask16;
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 16;
   static constexpr bool has_vector_max = true;
@@ -164,8 +216,16 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm512_loadu_si512(values);
   }
 
+  static vector_type load_aligned_cells(const std::int32_t* values) {
+    return _mm512_load_si512(values);
+  }
+
   static void store_cells(std::int32_t* values, vector_type vector) {
     _mm512_storeu_si512(values, vector);
+  }
+
+  static void store_aligned_cells(std::int32_t* values, vector_type vector) {
+    _mm512_store_si512(values, vector);
   }
 
   static vector_type set1(std::int32_t value) {
@@ -192,6 +252,22 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm512_cmpgt_epi32_mask(lhs, rhs) != 0;
   }
 
+  static mask_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi32_mask(lhs, rhs);
+  }
+
+  static mask_type empty_mask() {
+    return 0;
+  }
+
+  static mask_type mask_or(mask_type lhs, mask_type rhs) {
+    return lhs | rhs;
+  }
+
+  static bool any_mask(mask_type mask) {
+    return mask != 0;
+  }
+
   static vector_type substitution(
       const std::uint32_t* query,
       const std::uint32_t* target,
@@ -205,6 +281,7 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 template <>
 struct SimdOps<std::uint64_t, std::int64_t> {
   using vector_type = __m512i;
+  using mask_type = __mmask8;
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 8;
   static constexpr bool has_vector_max = true;
@@ -217,8 +294,16 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm512_loadu_si512(values);
   }
 
+  static vector_type load_aligned_cells(const std::int64_t* values) {
+    return _mm512_load_si512(values);
+  }
+
   static void store_cells(std::int64_t* values, vector_type vector) {
     _mm512_storeu_si512(values, vector);
+  }
+
+  static void store_aligned_cells(std::int64_t* values, vector_type vector) {
+    _mm512_store_si512(values, vector);
   }
 
   static vector_type set1(std::int64_t value) {
@@ -243,6 +328,22 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm512_cmpgt_epi64_mask(lhs, rhs) != 0;
+  }
+
+  static mask_type greater_mask(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi64_mask(lhs, rhs);
+  }
+
+  static mask_type empty_mask() {
+    return 0;
+  }
+
+  static mask_type mask_or(mask_type lhs, mask_type rhs) {
+    return lhs | rhs;
+  }
+
+  static bool any_mask(mask_type mask) {
+    return mask != 0;
   }
 
   static vector_type substitution(
@@ -328,6 +429,78 @@ struct TargetImplementation {
     return farrar_fixed_kernel::detail::dispatch_prepared_score<SimdOps>(prepared);
   }
 
+  static Score smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return affine_fixed_kernel::detail::dispatch_score<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static AlignmentResult smith_waterman_affine_path(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return affine_fixed_kernel::detail::dispatch_traceback<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return affine_fixed_kernel::detail::dispatch_compact_byte_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -358,6 +531,54 @@ struct TargetImplementation {
         match_score,
         mismatch_score,
         gap_score);
+  }
+
+  static Score needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return affine_fixed_kernel::detail::dispatch_score<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static AlignmentResult needleman_wunsch_affine_path(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return affine_fixed_kernel::detail::dispatch_traceback<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 };
 
@@ -462,6 +683,63 @@ struct Implementation {
     return TargetImplementation::smith_waterman_farrar_score_prepared(prepared);
   }
 
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE AlignmentResult smith_waterman_affine_path(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
   static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -493,6 +771,44 @@ struct Implementation {
         match_score,
         mismatch_score,
         gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE AlignmentResult needleman_wunsch_affine_path(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
         width);
   }
 };

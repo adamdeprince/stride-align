@@ -12,6 +12,7 @@ using namespace stride_align;
 NB_MODULE(_cpu, m) {
   nb::enum_<BackendKind>(m, "BackendKind")
       .value("GENERIC", BackendKind::generic)
+      .value("SWAR", BackendKind::swar)
       .value("X86_SSE41", BackendKind::x86_sse41)
       .value("X86_AVX2", BackendKind::x86_avx2)
       .value("X86_AVX512BWVL", BackendKind::x86_avx512bwvl)

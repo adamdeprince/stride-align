@@ -181,7 +181,8 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
     nb::handle target,
     Score match_score,
     Score mismatch_score,
-    Score gap_score,
+    Score gap_open_score,
+    Score gap_extend_score,
     unsigned int width) {
   const bool query_is_bytes = PyBytes_Check(query.ptr()) != 0;
   const bool target_is_bytes = PyBytes_Check(target.ptr()) != 0;
@@ -218,11 +219,29 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
       prepared.target_tokens.size(),
       match_score,
       mismatch_score,
-      gap_score);
+      gap_open_score,
+      gap_extend_score);
   prepared.score_bits = detail::apply_forced_kernel_bits(
       farrar_detail::select_score_bits(prepared.score_bound),
       width);
   return prepared;
+}
+
+inline PreparedFarrarAlignment prepare_farrar_alignment(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    unsigned int width) {
+  return prepare_farrar_alignment(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_score,
+      gap_score,
+      width);
 }
 
 }  // namespace stride_align

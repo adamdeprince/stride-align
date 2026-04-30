@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -15,6 +14,7 @@
 #include "cpu.hpp"
 #include "farrar_preprocess.hpp"
 #include "preprocess.hpp"
+#include "backends/score_fast_paths.hpp"
 #include "stride_align/alignment.hpp"
 
 namespace stride_align::backend_generic {
@@ -281,82 +281,49 @@ AlignmentResult build_alignment_result(
   return result;
 }
 
-template <typename Cell>
-bool identity_fast_path_is_safe(Cell match_score, Cell mismatch_score, Cell gap_score) noexcept {
-  return match_score >= 0 && mismatch_score <= match_score && gap_score <= 0;
-}
-
-template <typename Cell>
-bool local_zero_fast_path_is_safe(Cell match_score, Cell mismatch_score, Cell gap_score) noexcept {
-  return match_score > 0 && mismatch_score <= 0 && gap_score <= 0;
-}
-
-template <typename Token>
-bool tokens_equal(std::span<const Token> query, std::span<const Token> target) {
-  return query.size() == target.size() &&
-      std::equal(query.begin(), query.end(), target.begin());
-}
-
-template <typename Token>
-bool small_symbols_are_disjoint(std::span<const Token> query, std::span<const Token> target) {
-  std::span<const Token> indexed = query;
-  std::span<const Token> probed = target;
-  if (target.size() < query.size()) {
-    indexed = target;
-    probed = query;
-  }
-
-  std::array<bool, 256> seen = {};
-  for (const Token token : indexed) {
-    const auto index = static_cast<std::uint64_t>(token);
-    if (index > 255) {
-      return false;
-    }
-    seen[static_cast<std::uint8_t>(index)] = true;
-  }
-
-  for (const Token token : probed) {
-    const auto index = static_cast<std::uint64_t>(token);
-    if (index > 255) {
-      return false;
-    }
-    if (seen[static_cast<std::uint8_t>(index)]) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-template <typename Token, typename Cell, bool LocalAlignment>
-std::optional<Score> fast_score_only(
+template <typename Token, typename Cell>
+TracebackResult token_independent_global_traceback(
     std::span<const Token> query,
     std::span<const Token> target,
-    Cell match_score,
-    Cell mismatch_score,
+    Cell substitution_score,
     Cell gap_score) {
-  if (query.empty() || target.empty()) {
-    if constexpr (LocalAlignment) {
-      return 0;
-    } else {
-      return static_cast<Score>(query.size() + target.size()) * static_cast<Score>(gap_score);
-    }
-  }
+  TracebackResult result;
+  result.query_end = query.size();
+  result.target_end = target.size();
+  result.score = score_fast_paths::token_independent_global_score(
+      query.size(),
+      target.size(),
+      substitution_score,
+      gap_score);
 
-  if ((!LocalAlignment || match_score > 0) &&
-      identity_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
-      tokens_equal(query, target)) {
-    return static_cast<Score>(query.size()) * static_cast<Score>(match_score);
+  const std::size_t diagonal_count =
+      static_cast<Score>(substitution_score) >= 2 * static_cast<Score>(gap_score)
+          ? std::min(query.size(), target.size())
+          : 0;
+  result.operations.reserve(query.size() + target.size() - diagonal_count);
+  for (std::size_t index = 0; index < diagonal_count; ++index) {
+    result.operations.push_back(query[index] == target[index] ? 'M' : 'X');
   }
+  result.operations.append(query.size() - diagonal_count, 'D');
+  result.operations.append(target.size() - diagonal_count, 'I');
+  return result;
+}
 
-  if constexpr (LocalAlignment) {
-    if (local_zero_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
-        small_symbols_are_disjoint(query, target)) {
-      return 0;
-    }
+template <typename Token, typename Cell>
+TracebackResult token_independent_local_traceback(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Cell substitution_score) {
+  TracebackResult result;
+  const std::size_t diagonal_count = std::min(query.size(), target.size());
+  result.score = static_cast<Score>(diagonal_count) * static_cast<Score>(substitution_score);
+  result.query_end = diagonal_count;
+  result.target_end = diagonal_count;
+  result.operations.reserve(diagonal_count);
+  for (std::size_t index = 0; index < diagonal_count; ++index) {
+    result.operations.push_back(query[index] == target[index] ? 'M' : 'X');
   }
-
-  return std::nullopt;
+  return result;
 }
 
 template <typename Token, typename Cell, bool LocalAlignment>
@@ -380,9 +347,25 @@ std::optional<TracebackResult> fast_traceback(
     return result;
   }
 
+  if constexpr (LocalAlignment) {
+    if (match_score <= 0 && mismatch_score <= 0 && gap_score <= 0) {
+      return TracebackResult{};
+    }
+  }
+
+  if (match_score == mismatch_score) {
+    if constexpr (LocalAlignment) {
+      if (match_score > 0 && gap_score <= 0) {
+        return token_independent_local_traceback(query, target, match_score);
+      }
+    } else {
+      return token_independent_global_traceback(query, target, match_score, gap_score);
+    }
+  }
+
   if ((!LocalAlignment || match_score > 0) &&
-      identity_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
-      tokens_equal(query, target)) {
+      score_fast_paths::identity_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
+      score_fast_paths::tokens_equal(query, target)) {
     TracebackResult result;
     result.score = static_cast<Score>(query.size()) * static_cast<Score>(match_score);
     result.query_end = query.size();
@@ -392,8 +375,11 @@ std::optional<TracebackResult> fast_traceback(
   }
 
   if constexpr (LocalAlignment) {
-    if (local_zero_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
-        small_symbols_are_disjoint(query, target)) {
+    if (score_fast_paths::local_zero_fast_path_is_safe(
+            match_score,
+            mismatch_score,
+            gap_score) &&
+        score_fast_paths::small_symbols_are_disjoint(query, target)) {
       return TracebackResult{};
     }
   }
@@ -411,7 +397,7 @@ std::optional<Score> dispatch_fast_score(
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
       const auto& target = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
-      return fast_score_only<std::uint8_t, std::int8_t, LocalAlignment>(
+      return score_fast_paths::fast_score_only<std::uint8_t, std::int8_t, LocalAlignment>(
           std::span<const std::uint8_t>(query.data(), query.size()),
           std::span<const std::uint8_t>(target.data(), target.size()),
           static_cast<std::int8_t>(match_score),
@@ -421,7 +407,7 @@ std::optional<Score> dispatch_fast_score(
     case KernelBits::bits16: {
       const auto& query = std::get<std::vector<std::uint16_t>>(prepared.query_tokens);
       const auto& target = std::get<std::vector<std::uint16_t>>(prepared.target_tokens);
-      return fast_score_only<std::uint16_t, std::int16_t, LocalAlignment>(
+      return score_fast_paths::fast_score_only<std::uint16_t, std::int16_t, LocalAlignment>(
           std::span<const std::uint16_t>(query.data(), query.size()),
           std::span<const std::uint16_t>(target.data(), target.size()),
           static_cast<std::int16_t>(match_score),
@@ -431,7 +417,7 @@ std::optional<Score> dispatch_fast_score(
     case KernelBits::bits32: {
       const auto& query = std::get<std::vector<std::uint32_t>>(prepared.query_tokens);
       const auto& target = std::get<std::vector<std::uint32_t>>(prepared.target_tokens);
-      return fast_score_only<std::uint32_t, std::int32_t, LocalAlignment>(
+      return score_fast_paths::fast_score_only<std::uint32_t, std::int32_t, LocalAlignment>(
           std::span<const std::uint32_t>(query.data(), query.size()),
           std::span<const std::uint32_t>(target.data(), target.size()),
           static_cast<std::int32_t>(match_score),
@@ -441,7 +427,7 @@ std::optional<Score> dispatch_fast_score(
     case KernelBits::bits64: {
       const auto& query = std::get<std::vector<std::uint64_t>>(prepared.query_tokens);
       const auto& target = std::get<std::vector<std::uint64_t>>(prepared.target_tokens);
-      return fast_score_only<std::uint64_t, std::int64_t, LocalAlignment>(
+      return score_fast_paths::fast_score_only<std::uint64_t, std::int64_t, LocalAlignment>(
           std::span<const std::uint64_t>(query.data(), query.size()),
           std::span<const std::uint64_t>(target.data(), target.size()),
           static_cast<std::int64_t>(match_score),
@@ -672,6 +658,16 @@ inline Score dispatch_farrar_score(
   const auto target = std::span<const std::uint8_t>(
       prepared.target_tokens.data(),
       prepared.target_tokens.size());
+
+  if (const auto fast = score_fast_paths::fast_score_only<std::uint8_t, std::int64_t, true>(
+          query,
+          target,
+          static_cast<std::int64_t>(match_score),
+          static_cast<std::int64_t>(mismatch_score),
+          static_cast<std::int64_t>(gap_score));
+      fast.has_value()) {
+    return *fast;
+  }
 
   switch (prepared.score_bits) {
     case KernelBits::bits8:

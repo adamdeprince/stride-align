@@ -50,8 +50,25 @@ def _score_bound(
     match_score: int,
     mismatch_score: int,
     gap_score: int,
+    gap_extend_score: int | None = None,
 ) -> int:
-    return (query_size + target_size) * max(abs(match_score), abs(mismatch_score), abs(gap_score))
+    gap_extend = gap_score if gap_extend_score is None else gap_extend_score
+    return (query_size + target_size) * max(
+        abs(match_score),
+        abs(mismatch_score),
+        abs(gap_score),
+        abs(gap_extend),
+    )
+
+
+def _resolve_gap_scores(
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+) -> tuple[int, int]:
+    gap_open = gap_score if gap_open_score is None else gap_open_score
+    gap_extend = gap_open if gap_extend_score is None else gap_extend_score
+    return gap_open, gap_extend
 
 
 def _select_kernel_bits(symbol_limit: int, score_bound: int) -> int:
@@ -104,7 +121,8 @@ def _prepare_alignment(
     match_score: int,
     mismatch_score: int,
     gap_score: int,
-    width: int | None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
 ) -> _PreparedAlignment:
     query_is_bytes = isinstance(query, bytes)
     target_is_bytes = isinstance(target, bytes)
@@ -128,6 +146,7 @@ def _prepare_alignment(
                         match_score,
                         mismatch_score,
                         gap_score,
+                        gap_extend_score,
                     ),
                 ),
                 width,
@@ -152,6 +171,7 @@ def _prepare_alignment(
                         match_score,
                         mismatch_score,
                         gap_score,
+                        gap_extend_score,
                     ),
                 ),
                 width,
@@ -194,6 +214,7 @@ def _prepare_alignment(
                     match_score,
                     mismatch_score,
                     gap_score,
+                    gap_extend_score,
                 ),
             ),
             width,
@@ -212,7 +233,8 @@ def _prepare_farrar_alignment(
     match_score: int,
     mismatch_score: int,
     gap_score: int,
-    width: int | None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
 ) -> _PreparedAlignment:
     query_is_bytes = isinstance(query, bytes)
     target_is_bytes = isinstance(target, bytes)
@@ -268,6 +290,7 @@ def _prepare_farrar_alignment(
         match_score,
         mismatch_score,
         gap_score,
+        gap_extend_score,
     )
     return _PreparedAlignment(
         output_kind="farrar",
@@ -286,6 +309,97 @@ def _substitution_score(
     mismatch_score: int,
 ) -> int:
     return match_score if query_base == target_base else mismatch_score
+
+
+def _token_independent_global_score(
+    query_size: int,
+    target_size: int,
+    substitution_score: int,
+    gap_score: int,
+) -> int:
+    diagonal_count = min(query_size, target_size) if substitution_score >= 2 * gap_score else 0
+    return diagonal_count * substitution_score + (
+        query_size + target_size - 2 * diagonal_count
+    ) * gap_score
+
+
+def _token_independent_local_score(
+    query_size: int,
+    target_size: int,
+    substitution_score: int,
+    gap_score: int,
+) -> int:
+    if query_size == 0 or target_size == 0:
+        return 0
+    if substitution_score <= 0 and gap_score <= 0:
+        return 0
+    if gap_score <= 0:
+        return min(query_size, target_size) * substitution_score if substitution_score > 0 else 0
+    if substitution_score <= 0:
+        return (query_size + target_size - 1) * gap_score
+    if substitution_score >= 2 * gap_score:
+        diagonal_count = min(query_size, target_size)
+        return diagonal_count * substitution_score + (
+            query_size + target_size - 2 * diagonal_count
+        ) * gap_score
+    return max(
+        (query_size + target_size - 1) * gap_score,
+        substitution_score + (query_size + target_size - 2) * gap_score,
+    )
+
+
+def _lcs_length(query: list[int], target: list[int]) -> int:
+    masks: dict[int, int] = {}
+    for index, token in enumerate(query):
+        masks[token] = masks.get(token, 0) | (1 << index)
+
+    row = 0
+    for token in target:
+        x = masks.get(token, 0) | row
+        y = (row << 1) | 1
+        row = x & ~(x - y)
+    return row.bit_count()
+
+
+def _fast_score_only(
+    query: list[int],
+    target: list[int],
+    *,
+    local_alignment: bool,
+    match_score: int,
+    mismatch_score: int,
+    gap_score: int,
+) -> int | None:
+    if not query or not target:
+        return 0 if local_alignment else (len(query) + len(target)) * gap_score
+
+    if local_alignment and match_score <= 0 and mismatch_score <= 0 and gap_score <= 0:
+        return 0
+
+    if match_score == mismatch_score:
+        if local_alignment:
+            return _token_independent_local_score(
+                len(query),
+                len(target),
+                match_score,
+                gap_score,
+            )
+        return _token_independent_global_score(
+            len(query),
+            len(target),
+            match_score,
+            gap_score,
+        )
+
+    if (
+        gap_score == 0
+        and match_score > 0
+        and mismatch_score <= 0
+        and mismatch_score < match_score
+    ):
+        return _lcs_length(query, target) * match_score
+
+    return None
 
 
 def _cigar_from_operations(operations: str) -> str:
@@ -333,6 +447,17 @@ def _score_only(
     mismatch_score: int,
     gap_score: int,
 ) -> int:
+    fast_score = _fast_score_only(
+        query,
+        target,
+        local_alignment=local_alignment,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+    )
+    if fast_score is not None:
+        return fast_score
+
     previous = [0] * (len(target) + 1)
     current = [0] * (len(target) + 1)
 
@@ -365,6 +490,204 @@ def _score_only(
         previous, current = current, previous
 
     return best_score if local_alignment else previous[-1]
+
+
+_NEGATIVE_INFINITY = -(1 << 120)
+
+
+def _gap_cost(length: int, gap_open_score: int, gap_extend_score: int) -> int:
+    if length == 0:
+        return 0
+    return gap_open_score + (length - 1) * gap_extend_score
+
+
+def _affine_score_only(
+    query: list[int],
+    target: list[int],
+    *,
+    local_alignment: bool,
+    match_score: int,
+    mismatch_score: int,
+    gap_open_score: int,
+    gap_extend_score: int,
+) -> int:
+    previous_h = [0] * (len(target) + 1)
+    current_h = [0] * (len(target) + 1)
+    previous_e = [_NEGATIVE_INFINITY] * (len(target) + 1)
+    current_e = [_NEGATIVE_INFINITY] * (len(target) + 1)
+
+    if not local_alignment:
+        for column in range(1, len(target) + 1):
+            previous_h[column] = _gap_cost(column, gap_open_score, gap_extend_score)
+
+    best_score = 0 if local_alignment else previous_h[-1]
+
+    for row, query_base in enumerate(query, start=1):
+        if local_alignment:
+            current_h[0] = 0
+            current_e[0] = _NEGATIVE_INFINITY
+        else:
+            current_h[0] = _gap_cost(row, gap_open_score, gap_extend_score)
+            current_e[0] = current_h[0]
+
+        f_score = _NEGATIVE_INFINITY
+        for column, target_base in enumerate(target, start=1):
+            e_score = max(
+                previous_h[column] + gap_open_score,
+                previous_e[column] + gap_extend_score,
+            )
+            f_score = max(
+                current_h[column - 1] + gap_open_score,
+                f_score + gap_extend_score,
+            )
+            diagonal = previous_h[column - 1] + _substitution_score(
+                query_base,
+                target_base,
+                match_score,
+                mismatch_score,
+            )
+            cell = max(diagonal, e_score, f_score)
+            if local_alignment:
+                cell = max(0, cell)
+                best_score = max(best_score, cell)
+
+            current_h[column] = cell
+            current_e[column] = e_score
+
+        previous_h, current_h = current_h, previous_h
+        previous_e, current_e = current_e, previous_e
+
+    return best_score if local_alignment else previous_h[-1]
+
+
+def _affine_traceback(
+    prepared: _PreparedAlignment,
+    *,
+    local_alignment: bool,
+    match_score: int,
+    mismatch_score: int,
+    gap_open_score: int,
+    gap_extend_score: int,
+) -> AlignmentResult:
+    query = prepared.query_tokens
+    target = prepared.target_tokens
+    rows = len(query) + 1
+    columns = len(target) + 1
+    h = [[0 if local_alignment else _NEGATIVE_INFINITY] * columns for _ in range(rows)]
+    e = [[_NEGATIVE_INFINITY] * columns for _ in range(rows)]
+    f = [[_NEGATIVE_INFINITY] * columns for _ in range(rows)]
+    h[0][0] = 0
+
+    if not local_alignment:
+        for row in range(1, rows):
+            score = _gap_cost(row, gap_open_score, gap_extend_score)
+            h[row][0] = score
+            e[row][0] = score
+        for column in range(1, columns):
+            score = _gap_cost(column, gap_open_score, gap_extend_score)
+            h[0][column] = score
+            f[0][column] = score
+
+    best_score = 0
+    best_row = 0
+    best_column = 0
+
+    for row, query_base in enumerate(query, start=1):
+        for column, target_base in enumerate(target, start=1):
+            e[row][column] = max(
+                h[row - 1][column] + gap_open_score,
+                e[row - 1][column] + gap_extend_score,
+            )
+            f[row][column] = max(
+                h[row][column - 1] + gap_open_score,
+                f[row][column - 1] + gap_extend_score,
+            )
+            diagonal = h[row - 1][column - 1] + _substitution_score(
+                query_base,
+                target_base,
+                match_score,
+                mismatch_score,
+            )
+            cell = max(diagonal, e[row][column], f[row][column])
+            if local_alignment:
+                cell = max(0, cell)
+            h[row][column] = cell
+
+            if local_alignment and cell > best_score:
+                best_score = cell
+                best_row = row
+                best_column = column
+
+    if not local_alignment:
+        best_row = len(query)
+        best_column = len(target)
+        best_score = h[best_row][best_column]
+
+    operations: list[str] = []
+    row = best_row
+    column = best_column
+    state = "h"
+
+    while row > 0 or column > 0:
+        if local_alignment and state == "h" and h[row][column] <= 0:
+            break
+
+        if state == "h":
+            if row > 0 and column > 0:
+                diagonal = h[row - 1][column - 1] + _substitution_score(
+                    query[row - 1],
+                    target[column - 1],
+                    match_score,
+                    mismatch_score,
+                )
+                if h[row][column] == diagonal:
+                    operations.append("M" if query[row - 1] == target[column - 1] else "X")
+                    row -= 1
+                    column -= 1
+                    continue
+            if row > 0 and h[row][column] == e[row][column]:
+                state = "e"
+                continue
+            if column > 0 and h[row][column] == f[row][column]:
+                state = "f"
+                continue
+            break
+
+        if state == "e":
+            operations.append("D")
+            continues_gap = row > 1 and e[row][column] == e[row - 1][column] + gap_extend_score
+            row -= 1
+            state = "e" if continues_gap else "h"
+            continue
+
+        operations.append("I")
+        continues_gap = column > 1 and f[row][column] == f[row][column - 1] + gap_extend_score
+        column -= 1
+        state = "f" if continues_gap else "h"
+
+    operations.reverse()
+    operations_text = "".join(operations)
+
+    return AlignmentResult(
+        score=best_score,
+        query_start=row,
+        query_end=best_row,
+        target_start=column,
+        target_end=best_column,
+        aligned_query=_materialize_output(
+            prepared,
+            side="query",
+            start=row,
+            operations=operations_text,
+        ),
+        aligned_target=_materialize_output(
+            prepared,
+            side="target",
+            start=column,
+            operations=operations_text,
+        ),
+        operations=operations_text,
+    )
 
 
 def _traceback(
@@ -531,23 +854,37 @@ def smith_waterman_score(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> int:
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
     prepared = _prepare_alignment(
         query,
         target,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
+        gap_extend_score=gap_extend,
         width=width,
     )
+    if gap_open != gap_extend:
+        return _affine_score_only(
+            prepared.query_tokens,
+            prepared.target_tokens,
+            local_alignment=True,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open,
+            gap_extend_score=gap_extend,
+        )
     return _score_only(
         prepared.query_tokens,
         prepared.target_tokens,
         local_alignment=True,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
     )
 
 
@@ -558,22 +895,35 @@ def smith_waterman_path(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentResult:
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
     prepared = _prepare_alignment(
         query,
         target,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
+        gap_extend_score=gap_extend,
         width=width,
     )
+    if gap_open != gap_extend:
+        return _affine_traceback(
+            prepared,
+            local_alignment=True,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open,
+            gap_extend_score=gap_extend,
+        )
     return _traceback(
         prepared,
         local_alignment=True,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
     )
 
 
@@ -584,6 +934,8 @@ def smith_waterman_path_info(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentPath:
     return _alignment_path_from_result(
@@ -593,6 +945,8 @@ def smith_waterman_path_info(
             match_score=match_score,
             mismatch_score=mismatch_score,
             gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
             width=width,
         )
     )
@@ -605,23 +959,37 @@ def smith_waterman_farrar_score(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> int:
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
     prepared = _prepare_farrar_alignment(
         query,
         target,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
+        gap_extend_score=gap_extend,
         width=width,
     )
+    if gap_open != gap_extend:
+        return _affine_score_only(
+            prepared.query_tokens,
+            prepared.target_tokens,
+            local_alignment=True,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open,
+            gap_extend_score=gap_extend,
+        )
     return _score_only(
         prepared.query_tokens,
         prepared.target_tokens,
         local_alignment=True,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
     )
 
 
@@ -632,23 +1000,37 @@ def needleman_wunsch_score(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> int:
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
     prepared = _prepare_alignment(
         query,
         target,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
+        gap_extend_score=gap_extend,
         width=width,
     )
+    if gap_open != gap_extend:
+        return _affine_score_only(
+            prepared.query_tokens,
+            prepared.target_tokens,
+            local_alignment=False,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open,
+            gap_extend_score=gap_extend,
+        )
     return _score_only(
         prepared.query_tokens,
         prepared.target_tokens,
         local_alignment=False,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
     )
 
 
@@ -659,22 +1041,35 @@ def needleman_wunsch_path(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentResult:
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
     prepared = _prepare_alignment(
         query,
         target,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
+        gap_extend_score=gap_extend,
         width=width,
     )
+    if gap_open != gap_extend:
+        return _affine_traceback(
+            prepared,
+            local_alignment=False,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open,
+            gap_extend_score=gap_extend,
+        )
     return _traceback(
         prepared,
         local_alignment=False,
         match_score=match_score,
         mismatch_score=mismatch_score,
-        gap_score=gap_score,
+        gap_score=gap_open,
     )
 
 
@@ -685,6 +1080,8 @@ def needleman_wunsch_path_info(
     match_score: int = 2,
     mismatch_score: int = -1,
     gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentPath:
     return _alignment_path_from_result(
@@ -694,6 +1091,8 @@ def needleman_wunsch_path_info(
             match_score=match_score,
             mismatch_score=mismatch_score,
             gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
             width=width,
         )
     )

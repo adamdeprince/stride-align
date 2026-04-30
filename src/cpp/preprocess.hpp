@@ -109,16 +109,33 @@ inline std::uint64_t compute_score_bound(
     std::size_t target_size,
     Score match_score,
     Score mismatch_score,
-    Score gap_score) noexcept {
+    Score gap_open_score,
+    Score gap_extend_score) noexcept {
   const auto step_limit = std::max({
       magnitude(match_score),
       magnitude(mismatch_score),
-      magnitude(gap_score),
+      magnitude(gap_open_score),
+      magnitude(gap_extend_score),
   });
   const auto path_length = saturating_add(
       static_cast<std::uint64_t>(query_size),
       static_cast<std::uint64_t>(target_size));
   return saturating_multiply(path_length, step_limit);
+}
+
+inline std::uint64_t compute_score_bound(
+    std::size_t query_size,
+    std::size_t target_size,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) noexcept {
+  return compute_score_bound(
+      query_size,
+      target_size,
+      match_score,
+      mismatch_score,
+      gap_score,
+      gap_score);
 }
 
 inline KernelBits select_kernel_bits(std::uint64_t symbol_limit, std::uint64_t score_bound) {
@@ -408,7 +425,8 @@ inline PreparedAlignment prepare_alignment(
     nb::handle target,
     Score match_score,
     Score mismatch_score,
-    Score gap_score,
+    Score gap_open_score,
+    Score gap_extend_score,
     unsigned int width) {
   const bool query_is_bytes = PyBytes_Check(query.ptr()) != 0;
   const bool target_is_bytes = PyBytes_Check(target.ptr()) != 0;
@@ -433,7 +451,8 @@ inline PreparedAlignment prepare_alignment(
         std::get<std::vector<std::uint8_t>>(target_tokens).size(),
         match_score,
         mismatch_score,
-        gap_score);
+        gap_open_score,
+        gap_extend_score);
     prepared.kernel_bits = detail::apply_forced_kernel_bits(
         detail::select_kernel_bits(prepared.symbol_limit, prepared.score_bound),
         width);
@@ -459,7 +478,13 @@ inline PreparedAlignment prepare_alignment(
     prepared.output_kind = OutputKind::unicode;
     prepared.symbol_limit = std::max(query_symbol_limit, target_symbol_limit);
     prepared.score_bound =
-        detail::compute_score_bound(query_size, target_size, match_score, mismatch_score, gap_score);
+        detail::compute_score_bound(
+            query_size,
+            target_size,
+            match_score,
+            mismatch_score,
+            gap_open_score,
+            gap_extend_score);
     prepared.kernel_bits = detail::apply_forced_kernel_bits(
         detail::select_kernel_bits(prepared.symbol_limit, prepared.score_bound),
         width);
@@ -484,13 +509,31 @@ inline PreparedAlignment prepare_alignment(
       prepared.target_items.size(),
       match_score,
       mismatch_score,
-      gap_score);
+      gap_open_score,
+      gap_extend_score);
   prepared.kernel_bits = detail::apply_forced_kernel_bits(
       detail::select_kernel_bits(prepared.symbol_limit, prepared.score_bound),
       width);
   prepared.query_tokens = detail::cast_storage(TokenStorage(std::move(query_tokens64)), prepared.kernel_bits);
   prepared.target_tokens = detail::cast_storage(TokenStorage(std::move(target_tokens64)), prepared.kernel_bits);
   return prepared;
+}
+
+inline PreparedAlignment prepare_alignment(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    unsigned int width) {
+  return prepare_alignment(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_score,
+      gap_score,
+      width);
 }
 
 template <typename Token>

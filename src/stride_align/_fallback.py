@@ -8,6 +8,7 @@ from enum import Enum, auto
 
 class BackendKind(Enum):
     GENERIC = auto()
+    SWAR = auto()
     X86_SSE41 = auto()
     X86_AVX2 = auto()
     X86_AVX512BWVL = auto()

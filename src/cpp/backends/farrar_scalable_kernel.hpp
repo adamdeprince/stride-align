@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <variant>
@@ -12,6 +13,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "backends/score_fast_paths.hpp"
 #include "farrar_preprocess.hpp"
 
 namespace stride_align::farrar_scalable_kernel {
@@ -54,6 +56,7 @@ struct PreparedScoreState {
   using cell_type = Cell;
 
   Cell gap_score = 0;
+  std::optional<Score> fast_score;
   std::size_t lane_count = 0;
   std::size_t segment_count = 0;
   std::array<std::uint16_t, 256> profile_indices = {};
@@ -195,6 +198,19 @@ PreparedScoreState<Cell> prepare_score_state(
   PreparedScoreState<Cell> state;
   state.gap_score = static_cast<Cell>(gap_score);
   state.lane_count = lane_count;
+  state.fast_score = score_fast_paths::fast_score_only<
+      std::uint8_t,
+      std::int64_t,
+      true>(
+      query,
+      target,
+      static_cast<std::int64_t>(match_score),
+      static_cast<std::int64_t>(mismatch_score),
+      static_cast<std::int64_t>(gap_score));
+  if (state.fast_score.has_value()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
 
   if (query.empty() || target.empty()) {
     state.profile_indices.fill(missing_profile_index);
@@ -227,6 +243,9 @@ Score score_state(PreparedScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   const std::size_t lane_count = state.lane_count;
 
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
   if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
     return 0;
   }
