@@ -359,6 +359,84 @@ AlignmentPath call_needleman_wunsch_path_info(
 }
 
 template <typename Implementation>
+AlignmentPath call_smith_waterman_affine_path_info(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  if constexpr (requires {
+                  Implementation::smith_waterman_affine_path_info(
+                      query,
+                      target,
+                      match_score,
+                      mismatch_score,
+                      gap_open_score,
+                      gap_extend_score,
+                      width);
+                }) {
+    return Implementation::smith_waterman_affine_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  } else {
+    return make_alignment_path(call_smith_waterman_affine_path<Implementation>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width));
+  }
+}
+
+template <typename Implementation>
+AlignmentPath call_needleman_wunsch_affine_path_info(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  if constexpr (requires {
+                  Implementation::needleman_wunsch_affine_path_info(
+                      query,
+                      target,
+                      match_score,
+                      mismatch_score,
+                      gap_open_score,
+                      gap_extend_score,
+                      width);
+                }) {
+    return Implementation::needleman_wunsch_affine_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  } else {
+    return make_alignment_path(call_needleman_wunsch_affine_path<Implementation>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width));
+  }
+}
+
+template <typename Implementation>
 void bind_backend_module(nb::module_& m, const char* doc) {
   m.doc() = doc;
 
@@ -458,14 +536,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
         const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
         if (!gaps.is_linear()) {
-          return make_alignment_path(call_smith_waterman_affine_path<Implementation>(
+          return call_smith_waterman_affine_path_info<Implementation>(
               query,
               target,
               match_score,
               mismatch_score,
               gaps.open,
               gaps.extend,
-              forced_width));
+              forced_width);
         }
         return call_smith_waterman_path_info<Implementation>(
             query,
@@ -664,14 +742,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
         const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
         if (!gaps.is_linear()) {
-          return make_alignment_path(call_needleman_wunsch_affine_path<Implementation>(
+          return call_needleman_wunsch_affine_path_info<Implementation>(
               query,
               target,
               match_score,
               mismatch_score,
               gaps.open,
               gaps.extend,
-              forced_width));
+              forced_width);
         }
         return call_needleman_wunsch_path_info<Implementation>(
             query,

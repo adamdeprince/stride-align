@@ -16,6 +16,7 @@
 #include "backends/affine_fixed_kernel.hpp"
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/powerpc_vsx_kernel.hpp"
+#include "backends/profile_traceback.hpp"
 
 namespace stride_align::backend_linux_powerpc64_vsx {
 
@@ -229,9 +230,18 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score > 0) {
+      const auto prepared =
+          prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return powerpc_vsx_kernel::detail::dispatch_score<SimdOps, true>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     const auto prepared =
-        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return powerpc_vsx_kernel::detail::dispatch_score<SimdOps, true>(
+        prepare_linear_score_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score<SimdOps>(
         prepared,
         match_score,
         mismatch_score,
@@ -245,13 +255,46 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    const auto prepared =
-        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return powerpc_vsx_kernel::detail::dispatch_traceback<SimdOps, true>(
-        prepared,
+    return profile_traceback::linear_path<true>(
+        query,
+        target,
         match_score,
         mismatch_score,
-        gap_score);
+        gap_score,
+        width);
+  }
+
+  static AlignmentPath smith_waterman_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static AlignmentPath smith_waterman_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return profile_traceback::linear_path_info<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
   }
 
   static Score smith_waterman_farrar_score(
@@ -299,7 +342,23 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    if (gap_open_score <= 0 && gap_extend_score <= 0) {
+      const auto prepared = prepare_farrar_alignment(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score,
+          width);
+      return affine_fixed_kernel::detail::dispatch_compact_byte_score<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    }
+    return profile_traceback::affine_score<true>(
         query,
         target,
         match_score,
@@ -307,12 +366,6 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return affine_fixed_kernel::detail::dispatch_score<SimdOps, true>(
-        prepared,
-        match_score,
-        mismatch_score,
-        gap_open_score,
-        gap_extend_score);
   }
 
   static AlignmentResult smith_waterman_affine_path(
@@ -323,7 +376,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    return profile_traceback::affine_path<true>(
         query,
         target,
         match_score,
@@ -331,12 +384,43 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return affine_fixed_kernel::detail::dispatch_traceback<SimdOps, true>(
-        prepared,
+  }
+
+  static AlignmentPath smith_waterman_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_path_info(
+        query,
+        target,
         match_score,
         mismatch_score,
         gap_open_score,
-        gap_extend_score);
+        gap_extend_score,
+        width);
+  }
+
+  static AlignmentPath smith_waterman_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return profile_traceback::affine_path_info<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
   }
 
   static Score smith_waterman_affine_farrar_score(
@@ -370,9 +454,18 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score > 0) {
+      const auto prepared =
+          prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return powerpc_vsx_kernel::detail::dispatch_score<SimdOps, false>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     const auto prepared =
-        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return powerpc_vsx_kernel::detail::dispatch_score<SimdOps, false>(
+        prepare_linear_score_alignment(query, target, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_global_score<SimdOps>(
         prepared,
         match_score,
         mismatch_score,
@@ -386,13 +479,46 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    const auto prepared =
-        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return powerpc_vsx_kernel::detail::dispatch_traceback<SimdOps, false>(
-        prepared,
+    return profile_traceback::linear_path<false>(
+        query,
+        target,
         match_score,
         mismatch_score,
-        gap_score);
+        gap_score,
+        width);
+  }
+
+  static AlignmentPath needleman_wunsch_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static AlignmentPath needleman_wunsch_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return profile_traceback::linear_path_info<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
   }
 
   static Score needleman_wunsch_affine_score(
@@ -403,7 +529,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    return affine::needleman_wunsch_score(
         query,
         target,
         match_score,
@@ -411,12 +537,6 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return affine_fixed_kernel::detail::dispatch_score<SimdOps, false>(
-        prepared,
-        match_score,
-        mismatch_score,
-        gap_open_score,
-        gap_extend_score);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(
@@ -427,7 +547,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    return profile_traceback::affine_path<false>(
         query,
         target,
         match_score,
@@ -435,12 +555,43 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return affine_fixed_kernel::detail::dispatch_traceback<SimdOps, false>(
-        prepared,
+  }
+
+  static AlignmentPath needleman_wunsch_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return profile_traceback::affine_path_info<false>(
+        query,
+        target,
         match_score,
         mismatch_score,
         gap_open_score,
-        gap_extend_score);
+        gap_extend_score,
+        width);
+  }
+
+  static AlignmentPath needleman_wunsch_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
   }
 };
 

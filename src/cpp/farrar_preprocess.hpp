@@ -2,6 +2,7 @@
 
 #include <Python.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -240,6 +241,58 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
       match_score,
       mismatch_score,
       gap_score,
+      gap_score,
+      width);
+}
+
+inline unsigned int unicode_storage_bits(nb::handle value) {
+  if (PyUnicode_Check(value.ptr()) == 0) {
+    return 0;
+  }
+  if (PyUnicode_READY(value.ptr()) != 0) {
+    throw nb::python_error();
+  }
+
+  switch (PyUnicode_KIND(value.ptr())) {
+    case PyUnicode_1BYTE_KIND:
+      return 8;
+    case PyUnicode_2BYTE_KIND:
+      return 16;
+    case PyUnicode_4BYTE_KIND:
+      return 32;
+    default:
+      detail::throw_type_error("unsupported Python Unicode storage kind");
+  }
+}
+
+inline void validate_linear_score_width_for_unicode(
+    nb::handle query,
+    nb::handle target,
+    unsigned int width) {
+  if (width == 0) {
+    return;
+  }
+
+  const unsigned int required_width =
+      std::max(unicode_storage_bits(query), unicode_storage_bits(target));
+  if (required_width != 0 && width < required_width) {
+    detail::throw_value_error("width cannot be narrower than the automatically selected kernel width");
+  }
+}
+
+inline PreparedFarrarAlignment prepare_linear_score_alignment(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    unsigned int width) {
+  validate_linear_score_width_for_unicode(query, target, width);
+  return prepare_farrar_alignment(
+      query,
+      target,
+      match_score,
+      mismatch_score,
       gap_score,
       width);
 }

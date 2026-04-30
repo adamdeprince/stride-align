@@ -44,7 +44,7 @@ def test_backend_is_available_for_detected_backend() -> None:
     assert backend_is_available(detect_best_backend())
 
 
-def test_public_dispatch_keeps_non_farrar_score_on_generic(monkeypatch) -> None:
+def test_public_dispatch_uses_profile_simd_for_long_linear_scores(monkeypatch) -> None:
     import stride_align
 
     class FakeBackend:
@@ -52,6 +52,9 @@ def test_public_dispatch_keeps_non_farrar_score_on_generic(monkeypatch) -> None:
             self.name = name
 
         def smith_waterman_score(self, *args, **kwargs) -> str:
+            return self.name
+
+        def needleman_wunsch_score(self, *args, **kwargs) -> str:
             return self.name
 
     generic = FakeBackend("generic")
@@ -63,7 +66,8 @@ def test_public_dispatch_keeps_non_farrar_score_on_generic(monkeypatch) -> None:
         {BackendKind.GENERIC: generic, BackendKind.X86_AVX2: avx2},
     )
 
-    assert stride_align.smith_waterman_score("A" * 128, "A" * 128) == "generic"
+    assert stride_align.smith_waterman_score("A" * 128, "A" * 128) == "avx2"
+    assert stride_align.needleman_wunsch_score("A" * 128, "A" * 128) == "avx2"
 
 
 def test_public_dispatch_uses_wide_simd_for_long_farrar(monkeypatch) -> None:
@@ -764,6 +768,39 @@ FARRAR_BACKENDS = [
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])
 @pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_linear_scores_match_generic_across_stripes(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    generic = pytest.importorskip("stride_align._generic")
+    module = pytest.importorskip(module_name)
+    query = "ABCD" * 9 + "A"
+    target = "ACBD" * 7 + "D"
+    kwargs = {
+        "match_score": 1,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "width": width,
+    }
+
+    assert module.smith_waterman_score(query, target, **kwargs) == generic.smith_waterman_score(
+        query,
+        target,
+        **kwargs,
+    )
+    assert module.needleman_wunsch_score(query, target, **kwargs) == generic.needleman_wunsch_score(
+        query,
+        target,
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
 def test_direct_backends_support_farrar_score_widths(
     module_name: str,
     backend_kind: BackendKind | None,
@@ -807,6 +844,54 @@ def test_direct_backends_accept_affine_gap_scores(
         module.smith_waterman_path("AAABBB", "AAACCCBBB", width=width, **kwargs).operations
         == "MMMIIIMMM"
     )
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_profile_traceback_matches_generic(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    generic = pytest.importorskip("stride_align._generic")
+    module = pytest.importorskip(module_name)
+    query = "ABCAABBC"
+    target = "AACBBAC"
+
+    linear_kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "width": width,
+    }
+    affine_kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "gap_open_score": -3,
+        "gap_extend_score": -1,
+        "width": width,
+    }
+
+    for method_name, kwargs in (
+        ("smith_waterman_path", linear_kwargs),
+        ("needleman_wunsch_path", linear_kwargs),
+        ("smith_waterman_path", affine_kwargs),
+        ("needleman_wunsch_path", affine_kwargs),
+    ):
+        expected = getattr(generic, method_name)(query, target, **kwargs)
+        observed = getattr(module, method_name)(query, target, **kwargs)
+        observed_info = getattr(module, f"{method_name}_info")(query, target, **kwargs)
+
+        assert observed.score == expected.score
+        assert observed.operations == expected.operations
+        assert observed.query_start == expected.query_start
+        assert observed.target_start == expected.target_start
+        assert observed_info.score == expected.score
+        assert observed_info.operations == expected.operations
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])

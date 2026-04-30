@@ -64,6 +64,23 @@ struct Implementation {
         width);
   }
 
+  static AlignmentPath smith_waterman_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
   static Score smith_waterman_farrar_score(
       nb::handle query,
       nb::handle target,
@@ -142,6 +159,25 @@ struct Implementation {
         width);
   }
 
+  static AlignmentPath smith_waterman_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
   static Score smith_waterman_affine_farrar_score(
       nb::handle query,
       nb::handle target,
@@ -195,6 +231,23 @@ struct Implementation {
         width);
   }
 
+  static AlignmentPath needleman_wunsch_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
   static Score needleman_wunsch_affine_score(
       nb::handle query,
       nb::handle target,
@@ -224,6 +277,25 @@ struct Implementation {
       unsigned int width) {
     ensure_supported();
     return TargetImplementation::needleman_wunsch_affine_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static AlignmentPath needleman_wunsch_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_path_info(
         query,
         target,
         match_score,

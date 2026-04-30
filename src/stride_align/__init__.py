@@ -179,6 +179,19 @@ def _length(value: object) -> int | None:
         return None
 
 
+def _profile_traceback_compatible(query: object, target: object) -> bool:
+    if isinstance(query, bytes) and isinstance(target, bytes):
+        return True
+    if isinstance(query, str) and isinstance(target, str):
+        return len(set(query) | set(target)) <= 256
+    if isinstance(query, (bytes, str)) or isinstance(target, (bytes, str)):
+        return False
+    try:
+        return len(set(query) | set(target)) <= 256  # type: ignore[arg-type]
+    except TypeError:
+        return False
+
+
 def _score_width(
     query_length: int,
     target_length: int,
@@ -244,12 +257,42 @@ def _select_backend(
         width=forced_width,
     )
 
-    if variant != "sw-farrar-score" or cells == 0:
+    if cells == 0:
         return _GENERIC_BACKEND
 
-    # Current benchmarks show the anti-diagonal SIMD kernels lose to generic for
-    # non-Farrar work. Use SIMD only for the striped Farrar score path, where
-    # width and setup overhead determine whether narrow or wide vectors win.
+    if not affine and variant in {"sw-score", "nw-score"}:
+        if cells <= 4096 and score_width == 8:
+            priority = (
+                _SHORT_LINEAR_FARRAR_PRIORITY
+                if variant == "sw-score"
+                else _REAL_SIMD_NARROW_PRIORITY
+            )
+            return _first_available(priority) or _GENERIC_BACKEND
+        return _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
+
+    if variant in {"sw-path", "nw-path", "sw-path-info", "nw-path-info"}:
+        if not _profile_traceback_compatible(query, target):
+            return _GENERIC_BACKEND
+        priority = (
+            _REAL_SIMD_NARROW_PRIORITY
+            if cells <= 4096 and score_width == 8
+            else _REAL_SIMD_WIDE_PRIORITY
+        )
+        return _first_available(priority) or _GENERIC_BACKEND
+
+    if affine and variant in {"sw-score", "nw-score"}:
+        if not _profile_traceback_compatible(query, target):
+            return _GENERIC_BACKEND
+        priority = (
+            _REAL_SIMD_NARROW_PRIORITY
+            if cells <= 4096 and score_width == 8
+            else _REAL_SIMD_WIDE_PRIORITY
+        )
+        return _first_available(priority) or _GENERIC_BACKEND
+
+    if variant != "sw-farrar-score":
+        return _GENERIC_BACKEND
+
     if affine and cells <= 4096 and score_width == 8:
         return _first_available(_REAL_SIMD_NARROW_PRIORITY) or _GENERIC_BACKEND
 

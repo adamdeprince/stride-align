@@ -57,6 +57,8 @@ struct PreparedScoreState {
 
   Cell gap_score = 0;
   std::optional<Score> fast_score;
+  std::size_t query_size = 0;
+  std::size_t target_size = 0;
   std::size_t lane_count = 0;
   std::size_t segment_count = 0;
   std::array<std::uint16_t, 256> profile_indices = {};
@@ -108,6 +110,28 @@ typename Ops::vector_type shift_left_zero(
     output[lane] = input[lane - 1];
   }
   return Ops::load_cells(output.data(), lane_count);
+}
+
+template <typename Ops, typename Cell>
+typename Ops::vector_type shift_left_insert(
+    typename Ops::vector_type vector,
+    Cell inserted,
+    std::size_t lane_count) {
+  std::vector<Cell> input(lane_count, 0);
+  std::vector<Cell> output(lane_count, 0);
+  Ops::store_cells(input.data(), vector, lane_count);
+  output[0] = inserted;
+  for (std::size_t lane = 1; lane < lane_count; ++lane) {
+    output[lane] = input[lane - 1];
+  }
+  return Ops::load_cells(output.data(), lane_count);
+}
+
+template <typename Ops, typename Cell>
+typename Ops::vector_type first_lane_vector(Cell first, Cell rest, std::size_t lane_count) {
+  std::vector<Cell> values(lane_count, rest);
+  values[0] = first;
+  return Ops::load_cells(values.data(), lane_count);
 }
 
 template <typename Ops, typename Cell>
@@ -214,6 +238,8 @@ PreparedScoreState<Cell> prepare_score_state(
   PreparedScoreState<Cell> state;
   state.gap_score = static_cast<Cell>(gap_score);
   state.lane_count = lane_count;
+  state.query_size = query.size();
+  state.target_size = target.size();
   state.fast_score = score_fast_paths::fast_score_only<
       std::uint8_t,
       std::int64_t,
@@ -251,6 +277,105 @@ PreparedScoreState<Cell> prepare_score_state(
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
   state.e_store.resize(state_cells);
+  return state;
+}
+
+template <typename Cell>
+void initialize_global_column_zero(
+    std::vector<Cell>& h_store,
+    std::size_t query_size,
+    std::size_t segment_count,
+    std::size_t lane_count,
+    Cell gap_score) {
+  const Cell low_score = std::numeric_limits<Cell>::lowest();
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    for (std::size_t lane = 0; lane < lane_count; ++lane) {
+      const std::size_t query_index = lane * segment_count + segment;
+      Cell score = low_score;
+      if (query_index < query_size) {
+        score = static_cast<Cell>(
+            static_cast<Score>(query_index + 1U) * static_cast<Score>(gap_score));
+      }
+      h_store[segment * lane_count + lane] = score;
+    }
+  }
+}
+
+template <typename Cell>
+Cell striped_row_value(
+    const Cell* values,
+    std::size_t row,
+    std::size_t segment_count,
+    std::size_t lane_count) {
+  const std::size_t query_index = row - 1U;
+  const std::size_t lane = query_index / segment_count;
+  const std::size_t segment = query_index % segment_count;
+  return values[segment * lane_count + lane];
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+PreparedScoreState<Cell> prepare_global_score_state(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  const std::size_t lane_count = Ops::lane_count();
+  if (lane_count == 0) {
+    PyErr_SetString(PyExc_RuntimeError, "scalable SIMD backend reported zero active lanes");
+    throw nb::python_error();
+  }
+
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+
+  const auto match = static_cast<Cell>(match_score);
+  const auto mismatch = static_cast<Cell>(mismatch_score);
+  PreparedScoreState<Cell> state;
+  state.gap_score = static_cast<Cell>(gap_score);
+  state.lane_count = lane_count;
+  state.query_size = query.size();
+  state.target_size = target.size();
+  state.fast_score = score_fast_paths::fast_score_only<
+      std::uint8_t,
+      std::int64_t,
+      false>(
+      query,
+      target,
+      static_cast<std::int64_t>(match_score),
+      static_cast<std::int64_t>(mismatch_score),
+      static_cast<std::int64_t>(gap_score));
+  if (state.fast_score.has_value()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
+
+  if (query.empty() || target.empty()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  const auto profile_tokens = collect_profile_tokens(target, state.profile_indices);
+  state.profile = build_profile<Cell>(
+      query,
+      profile_tokens,
+      match,
+      mismatch,
+      state.segment_count,
+      lane_count);
+  state.target_profile_offsets.reserve(target.size());
+  for (const auto token : target) {
+    state.target_profile_offsets.push_back(
+        static_cast<std::size_t>(state.profile_indices[token]) * state.segment_count * lane_count);
+  }
+  const auto state_cells = state.segment_count * lane_count;
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
   return state;
 }
 
@@ -556,6 +681,92 @@ Score score_state(PreparedScoreState<Cell>& state) {
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_score_state(PreparedScoreState<Cell>& state) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  const std::size_t lane_count = state.lane_count;
+
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
+  if (state.query_size == 0 || state.target_size == 0) {
+    return static_cast<Score>(state.query_size + state.target_size) *
+        static_cast<Score>(state.gap_score);
+  }
+
+  initialize_global_column_zero(
+      state.h_store,
+      state.query_size,
+      state.segment_count,
+      lane_count,
+      state.gap_score);
+  std::fill(state.h_load.begin(), state.h_load.end(), std::numeric_limits<Cell>::lowest());
+
+  const auto gap_vector = Ops::set1(state.gap_score, lane_count);
+  const Cell low_score = std::numeric_limits<Cell>::lowest();
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  const Cell* profile_data = state.profile.data();
+
+  for (std::size_t target_index = 0; target_index < state.target_profile_offsets.size();
+       ++target_index) {
+    std::swap(h_store_data, h_load_data);
+
+    const Cell top_left = static_cast<Cell>(
+        static_cast<Score>(target_index) * static_cast<Score>(state.gap_score));
+    const Cell first_up = static_cast<Cell>(
+        static_cast<Score>(target_index + 2U) * static_cast<Score>(state.gap_score));
+    auto v_h = shift_left_insert<Ops, Cell>(
+        Ops::load_cells(h_load_data + ((state.segment_count - 1U) * lane_count), lane_count),
+        top_left,
+        lane_count);
+    auto v_up = first_lane_vector<Ops, Cell>(first_up, low_score, lane_count);
+    const Cell* profile_row =
+        profile_data + state.target_profile_offsets[target_index];
+
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* h_store_segment = h_store_data + segment * lane_count;
+      Cell* h_load_segment = h_load_data + segment * lane_count;
+      const Cell* profile_segment = profile_row + segment * lane_count;
+
+      const auto v_profile = Ops::load_cells(profile_segment, lane_count);
+      const auto v_left = Ops::add(
+          Ops::load_cells(h_load_segment, lane_count),
+          gap_vector,
+          lane_count);
+      auto v_cell = Ops::add(v_h, v_profile, lane_count);
+      v_cell = Ops::max(v_cell, v_left, lane_count);
+      v_cell = Ops::max(v_cell, v_up, lane_count);
+      Ops::store_cells(h_store_segment, v_cell, lane_count);
+
+      v_up = Ops::add(v_cell, gap_vector, lane_count);
+      v_h = Ops::load_cells(h_load_segment, lane_count);
+    }
+
+    for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+      v_up = shift_left_insert<Ops, Cell>(v_up, low_score, lane_count);
+      bool propagated = false;
+
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        auto v_h_segment = Ops::load_cells(h_store_segment, lane_count);
+        propagated =
+            propagated || any_greater<Ops, Cell>(v_up, v_h_segment, lane_count);
+        v_h_segment = Ops::max(v_h_segment, v_up, lane_count);
+        Ops::store_cells(h_store_segment, v_h_segment, lane_count);
+        v_up = Ops::add(v_h_segment, gap_vector, lane_count);
+      }
+
+      if (state.gap_score <= 0 && !propagated) {
+        break;
+      }
+    }
+  }
+
+  return static_cast<Score>(
+      striped_row_value(h_store_data, state.query_size, state.segment_count, lane_count));
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
 Score score(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
@@ -567,6 +778,20 @@ Score score(
       mismatch_score,
       gap_score);
   return score_state<OpsTemplate, Cell>(state);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_score(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_global_score_state<OpsTemplate, Cell>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  return global_score_state<OpsTemplate, Cell>(state);
 }
 
 template <template <typename, typename> class OpsTemplate>
@@ -640,6 +865,43 @@ Score dispatch_score(
   }
 
   PyErr_SetString(PyExc_RuntimeError, "unsupported Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+Score dispatch_global_score(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return global_score<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return global_score<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return global_score<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return global_score<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported global Farrar score width");
   throw nb::python_error();
 }
 

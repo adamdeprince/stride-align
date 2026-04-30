@@ -16,6 +16,7 @@
 #include "backends/affine_fixed_kernel.hpp"
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/generic.hpp"
+#include "backends/profile_traceback.hpp"
 
 namespace stride_align::backend_swar {
 
@@ -527,13 +528,13 @@ struct Implementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    const auto prepared =
-        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return generic_detail::dispatch_traceback<true>(
-        prepared,
+    return profile_traceback::linear_path<true>(
+        query,
+        target,
         match_score,
         mismatch_score,
-        gap_score);
+        gap_score,
+        width);
   }
 
   static AlignmentPath smith_waterman_path_info(
@@ -543,8 +544,13 @@ struct Implementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    return make_alignment_path(
-        smith_waterman_path(query, target, match_score, mismatch_score, gap_score, width));
+    return profile_traceback::linear_path_info<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
   }
 
   static Score smith_waterman_farrar_score(
@@ -584,7 +590,23 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    if (gap_open_score <= 0 && gap_extend_score <= 0) {
+      const auto prepared = prepare_farrar_alignment(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score,
+          width);
+      return detail::dispatch_affine_farrar_score(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    }
+    return profile_traceback::affine_score<true>(
         query,
         target,
         match_score,
@@ -592,12 +614,6 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return detail::dispatch_affine_score<true>(
-        prepared,
-        match_score,
-        mismatch_score,
-        gap_open_score,
-        gap_extend_score);
   }
 
   static AlignmentResult smith_waterman_affine_path(
@@ -608,7 +624,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    return profile_traceback::affine_path<true>(
         query,
         target,
         match_score,
@@ -616,12 +632,24 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return detail::dispatch_affine_traceback<true>(
-        prepared,
+  }
+
+  static AlignmentPath smith_waterman_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return profile_traceback::affine_path_info<true>(
+        query,
+        target,
         match_score,
         mismatch_score,
         gap_open_score,
-        gap_extend_score);
+        gap_extend_score,
+        width);
   }
 
   static Score smith_waterman_affine_farrar_score(
@@ -671,13 +699,13 @@ struct Implementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    const auto prepared =
-        prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
-    return generic_detail::dispatch_traceback<false>(
-        prepared,
+    return profile_traceback::linear_path<false>(
+        query,
+        target,
         match_score,
         mismatch_score,
-        gap_score);
+        gap_score,
+        width);
   }
 
   static AlignmentPath needleman_wunsch_path_info(
@@ -687,8 +715,13 @@ struct Implementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    return make_alignment_path(
-        needleman_wunsch_path(query, target, match_score, mismatch_score, gap_score, width));
+    return profile_traceback::linear_path_info<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
   }
 
   static Score needleman_wunsch_affine_score(
@@ -699,7 +732,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    return affine::needleman_wunsch_score(
         query,
         target,
         match_score,
@@ -707,12 +740,6 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return detail::dispatch_affine_score<false>(
-        prepared,
-        match_score,
-        mismatch_score,
-        gap_open_score,
-        gap_extend_score);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(
@@ -723,7 +750,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_alignment(
+    return profile_traceback::affine_path<false>(
         query,
         target,
         match_score,
@@ -731,12 +758,24 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return detail::dispatch_affine_traceback<false>(
-        prepared,
+  }
+
+  static AlignmentPath needleman_wunsch_affine_path_info(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return profile_traceback::affine_path_info<false>(
+        query,
+        target,
         match_score,
         mismatch_score,
         gap_open_score,
-        gap_extend_score);
+        gap_extend_score,
+        width);
   }
 };
 
