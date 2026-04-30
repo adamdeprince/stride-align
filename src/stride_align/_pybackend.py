@@ -952,6 +952,33 @@ def smith_waterman_path_info(
     )
 
 
+def smith_waterman_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return smith_waterman_path_info(
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    ).cigar
+
+
+smith_waterman_trace_cigar = smith_waterman_cigar
+smith_waterman_trade_cigar = smith_waterman_cigar
+
+
 def smith_waterman_farrar_score(
     query: object,
     target: object,
@@ -1096,3 +1123,30 @@ def needleman_wunsch_path_info(
             width=width,
         )
     )
+
+
+def needleman_wunsch_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return needleman_wunsch_path_info(
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    ).cigar
+
+
+needleman_wunsch_trace_cigar = needleman_wunsch_cigar
+needleman_wunsch_trade_cigar = needleman_wunsch_cigar

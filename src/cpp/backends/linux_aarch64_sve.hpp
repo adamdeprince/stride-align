@@ -16,6 +16,7 @@ using TargetImplementation = stride_align::arm_sve_backend::TargetImplementation
 struct Implementation {
   using PreparedSmithWatermanFarrarScore =
       TargetImplementation::PreparedSmithWatermanFarrarScore;
+  using PreparedAffineScore = TargetImplementation::PreparedAffineScore;
 
   static bool supported_on_this_machine() noexcept {
     return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
@@ -195,6 +196,79 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static PreparedAffineScore prepare_smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score smith_waterman_affine_score_prepared(PreparedAffineScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_score_prepared(prepared);
+  }
+
+  static PreparedAffineScore prepare_smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_affine_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score smith_waterman_affine_farrar_score_prepared(
+      PreparedAffineScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_farrar_score_prepared(prepared);
+  }
+
+  static PreparedAffineScore prepare_needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_needleman_wunsch_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_score_prepared(prepared);
   }
 
   static Score needleman_wunsch_score(

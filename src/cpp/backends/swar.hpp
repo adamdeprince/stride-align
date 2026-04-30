@@ -207,6 +207,23 @@ struct PreparedSmithWatermanFarrarScore {
       state;
 };
 
+struct GenericPreparedAffineScore {
+  PreparedFarrarAlignment prepared;
+  Score match_score = 2;
+  Score mismatch_score = -1;
+  Score gap_open_score = -1;
+  Score gap_extend_score = -1;
+};
+
+struct PreparedAffineScore {
+  std::variant<
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int8_t>,
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int16_t>,
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>,
+      GenericPreparedAffineScore>
+      state;
+};
+
 inline Score dispatch_farrar_score(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
@@ -296,6 +313,107 @@ inline Score dispatch_prepared_farrar_score(PreparedSmithWatermanFarrarScore& pr
         } else {
           using Cell = typename State::cell_type;
           return farrar_fixed_kernel::detail::score_state<SimdOps, Cell>(state);
+        }
+      },
+      prepared.state);
+}
+
+inline PreparedAffineScore prepare_affine_score(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  PreparedAffineScore output;
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      output.state =
+          farrar_fixed_kernel::detail::prepare_affine_score_state<SimdOps, std::int8_t>(
+              prepared,
+              match_score,
+              mismatch_score,
+              gap_open_score,
+              gap_extend_score);
+      return output;
+    case KernelBits::bits16:
+      output.state =
+          farrar_fixed_kernel::detail::prepare_affine_score_state<SimdOps, std::int16_t>(
+              prepared,
+              match_score,
+              mismatch_score,
+              gap_open_score,
+              gap_extend_score);
+      return output;
+    case KernelBits::bits32:
+      output.state =
+          farrar_fixed_kernel::detail::prepare_affine_score_state<SimdOps, std::int32_t>(
+              prepared,
+              match_score,
+              mismatch_score,
+              gap_open_score,
+              gap_extend_score);
+      return output;
+    case KernelBits::bits64:
+      output.state = GenericPreparedAffineScore{
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score};
+      return output;
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported SWAR affine score width");
+  throw nb::python_error();
+}
+
+inline Score dispatch_prepared_affine_score(PreparedAffineScore& prepared) {
+  return std::visit(
+      [](auto& state) -> Score {
+        using State = std::decay_t<decltype(state)>;
+        if constexpr (std::is_same_v<State, GenericPreparedAffineScore>) {
+          const auto query = std::span<const std::uint8_t>(
+              state.prepared.query_tokens.data(),
+              state.prepared.query_tokens.size());
+          const auto target = std::span<const std::uint8_t>(
+              state.prepared.target_tokens.data(),
+              state.prepared.target_tokens.size());
+          return affine::detail::score_only<std::uint8_t, true>(
+              query,
+              target,
+              state.match_score,
+              state.mismatch_score,
+              state.gap_open_score,
+              state.gap_extend_score);
+        } else {
+          using Cell = typename State::cell_type;
+          return farrar_fixed_kernel::detail::affine_score_state<SimdOps, Cell>(state);
+        }
+      },
+      prepared.state);
+}
+
+inline Score dispatch_prepared_global_affine_score(PreparedAffineScore& prepared) {
+  return std::visit(
+      [](auto& state) -> Score {
+        using State = std::decay_t<decltype(state)>;
+        if constexpr (std::is_same_v<State, GenericPreparedAffineScore>) {
+          const auto query = std::span<const std::uint8_t>(
+              state.prepared.query_tokens.data(),
+              state.prepared.query_tokens.size());
+          const auto target = std::span<const std::uint8_t>(
+              state.prepared.target_tokens.data(),
+              state.prepared.target_tokens.size());
+          return affine::detail::score_only<std::uint8_t, false>(
+              query,
+              target,
+              state.match_score,
+              state.mismatch_score,
+              state.gap_open_score,
+              state.gap_extend_score);
+        } else {
+          using Cell = typename State::cell_type;
+          return farrar_fixed_kernel::detail::global_affine_score_state<SimdOps, Cell>(state);
         }
       },
       prepared.state);
@@ -500,10 +618,60 @@ inline Score dispatch_affine_farrar_score(
   throw nb::python_error();
 }
 
+inline Score dispatch_global_affine_farrar_score(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return farrar_fixed_kernel::detail::global_affine_score<SimdOps, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    case KernelBits::bits16:
+      return farrar_fixed_kernel::detail::global_affine_score<SimdOps, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    case KernelBits::bits32:
+      return farrar_fixed_kernel::detail::global_affine_score<SimdOps, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    case KernelBits::bits64:
+      return affine::detail::score_only<std::uint8_t, false>(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported SWAR global affine Farrar score width");
+  throw nb::python_error();
+}
+
 }  // namespace detail
 
 struct Implementation {
   using PreparedSmithWatermanFarrarScore = detail::PreparedSmithWatermanFarrarScore;
+  using PreparedAffineScore = detail::PreparedAffineScore;
 
   static Score smith_waterman_score(
       nb::handle query,
@@ -676,6 +844,84 @@ struct Implementation {
         gap_extend_score);
   }
 
+  static PreparedAffineScore prepare_smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return detail::prepare_affine_score(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score smith_waterman_affine_score_prepared(PreparedAffineScore& prepared) {
+    return detail::dispatch_prepared_affine_score(prepared);
+  }
+
+  static PreparedAffineScore prepare_smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return prepare_smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score smith_waterman_affine_farrar_score_prepared(PreparedAffineScore& prepared) {
+    return smith_waterman_affine_score_prepared(prepared);
+  }
+
+  static PreparedAffineScore prepare_needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return detail::prepare_affine_score(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
+    return detail::dispatch_prepared_global_affine_score(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -732,7 +978,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return affine::needleman_wunsch_score(
+    const auto prepared = prepare_farrar_alignment(
         query,
         target,
         match_score,
@@ -740,6 +986,12 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return detail::dispatch_global_affine_farrar_score(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(

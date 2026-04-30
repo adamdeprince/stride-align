@@ -270,6 +270,8 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 struct TargetImplementation {
   using PreparedSmithWatermanFarrarScore =
       farrar_scalable_kernel::detail::PreparedScore<SimdOps>;
+  using PreparedAffineScore =
+      farrar_scalable_kernel::detail::PreparedAffineScore<SimdOps>;
 
   static Score smith_waterman_score(
       nb::handle query,
@@ -459,6 +461,84 @@ struct TargetImplementation {
         gap_extend_score);
   }
 
+  static PreparedAffineScore prepare_smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_scalable_kernel::detail::prepare_affine_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score smith_waterman_affine_score_prepared(PreparedAffineScore& prepared) {
+    return farrar_scalable_kernel::detail::dispatch_prepared_affine_score<SimdOps>(prepared);
+  }
+
+  static PreparedAffineScore prepare_smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return prepare_smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score smith_waterman_affine_farrar_score_prepared(PreparedAffineScore& prepared) {
+    return smith_waterman_affine_score_prepared(prepared);
+  }
+
+  static PreparedAffineScore prepare_needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_scalable_kernel::detail::prepare_affine_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
+    return farrar_scalable_kernel::detail::dispatch_prepared_global_affine_score<SimdOps>(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -524,7 +604,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return affine::needleman_wunsch_score(
+    const auto prepared = prepare_farrar_alignment(
         query,
         target,
         match_score,
@@ -532,6 +612,12 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return farrar_scalable_kernel::detail::dispatch_global_affine_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(

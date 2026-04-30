@@ -85,6 +85,12 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm512_add_epi8(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int8_t sentinel) {
+    const vector_type sum = _mm512_add_epi8(lhs, rhs);
+    const __mmask64 mask = _mm512_cmpeq_epi8_mask(lhs, set1(sentinel));
+    return _mm512_mask_blend_epi8(mask, sum, set1(sentinel));
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm512_max_epi8(lhs, rhs);
   }
@@ -161,6 +167,12 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
   static vector_type add(vector_type lhs, vector_type rhs) {
     return _mm512_add_epi16(lhs, rhs);
+  }
+
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int16_t sentinel) {
+    const vector_type sum = _mm512_add_epi16(lhs, rhs);
+    const __mmask32 mask = _mm512_cmpeq_epi16_mask(lhs, set1(sentinel));
+    return _mm512_mask_blend_epi16(mask, sum, set1(sentinel));
   }
 
   static vector_type max(vector_type lhs, vector_type rhs) {
@@ -241,6 +253,12 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm512_add_epi32(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int32_t sentinel) {
+    const vector_type sum = _mm512_add_epi32(lhs, rhs);
+    const __mmask16 mask = _mm512_cmpeq_epi32_mask(lhs, set1(sentinel));
+    return _mm512_mask_blend_epi32(mask, sum, set1(sentinel));
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm512_max_epi32(lhs, rhs);
   }
@@ -319,6 +337,12 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm512_add_epi64(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int64_t sentinel) {
+    const vector_type sum = _mm512_add_epi64(lhs, rhs);
+    const __mmask8 mask = _mm512_cmpeq_epi64_mask(lhs, set1(sentinel));
+    return _mm512_mask_blend_epi64(mask, sum, set1(sentinel));
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm512_max_epi64(lhs, rhs);
   }
@@ -360,6 +384,8 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 struct TargetImplementation {
   using PreparedSmithWatermanFarrarScore =
       farrar_fixed_kernel::detail::PreparedScore<SimdOps>;
+  using PreparedAffineScore =
+      farrar_fixed_kernel::detail::PreparedAffineScore<SimdOps>;
 
   static Score smith_waterman_score(
       nb::handle query,
@@ -549,6 +575,84 @@ struct TargetImplementation {
         gap_extend_score);
   }
 
+  static PreparedAffineScore prepare_smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score smith_waterman_affine_score_prepared(PreparedAffineScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_affine_score<SimdOps>(prepared);
+  }
+
+  static PreparedAffineScore prepare_smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return prepare_smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score smith_waterman_affine_farrar_score_prepared(PreparedAffineScore& prepared) {
+    return smith_waterman_affine_score_prepared(prepared);
+  }
+
+  static PreparedAffineScore prepare_needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_global_affine_score<SimdOps>(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -614,7 +718,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return affine::needleman_wunsch_score(
+    const auto prepared = prepare_farrar_alignment(
         query,
         target,
         match_score,
@@ -622,6 +726,12 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return farrar_fixed_kernel::detail::dispatch_global_affine_score<SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(
@@ -668,6 +778,7 @@ struct TargetImplementation {
 struct Implementation {
   using PreparedSmithWatermanFarrarScore =
       TargetImplementation::PreparedSmithWatermanFarrarScore;
+  using PreparedAffineScore = TargetImplementation::PreparedAffineScore;
 
   static STRIDE_ALIGN_X86_BASELINE bool supported_on_this_machine() noexcept {
 #if defined(__GNUC__) || defined(__clang__)
@@ -855,6 +966,79 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedAffineScore prepare_smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_affine_score_prepared(PreparedAffineScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_score_prepared(prepared);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedAffineScore prepare_smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_affine_farrar_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_affine_farrar_score_prepared(
+      PreparedAffineScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_farrar_score_prepared(prepared);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedAffineScore prepare_needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_needleman_wunsch_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_score_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_score(

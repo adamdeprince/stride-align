@@ -621,6 +621,105 @@ class _ParasailBenchmarkBackend:
         gap_open_score: int | None = None,
         gap_extend_score: int | None = None,
     ):
+        return self._prepare_profile_score(
+            "sw-farrar-score",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def _smith_waterman_farrar_score_prepared(self, prepared):
+        return self._score_prepared_profile(prepared)
+
+    def _prepare_smith_waterman_score(
+        self,
+        query: object,
+        target: object,
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._prepare_profile_score(
+            "sw-score",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def _smith_waterman_score_prepared(self, prepared):
+        return self._score_prepared_profile(prepared)
+
+    def _prepare_needleman_wunsch_score(
+        self,
+        query: object,
+        target: object,
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._prepare_profile_score(
+            "nw-score",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def _needleman_wunsch_score_prepared(self, prepared):
+        return self._score_prepared_profile(prepared)
+
+    def _prepare_smith_waterman_affine_score(self, *args, **kwargs):
+        return self._prepare_smith_waterman_score(*args, **kwargs)
+
+    def _smith_waterman_affine_score_prepared(self, prepared):
+        return self._score_prepared_profile(prepared)
+
+    def _prepare_smith_waterman_affine_farrar_score(self, *args, **kwargs):
+        return self._prepare_smith_waterman_farrar_score(*args, **kwargs)
+
+    def _smith_waterman_affine_farrar_score_prepared(self, prepared):
+        return self._score_prepared_profile(prepared)
+
+    def _prepare_needleman_wunsch_affine_score(self, *args, **kwargs):
+        return self._prepare_needleman_wunsch_score(*args, **kwargs)
+
+    def _needleman_wunsch_affine_score_prepared(self, prepared):
+        return self._score_prepared_profile(prepared)
+
+    def _prepare_profile_score(
+        self,
+        variant: str,
+        query: object,
+        target: object,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None,
+        gap_extend_score: int | None,
+    ):
         gap_open, gap_extend = self._gap_penalties(
             gap_score,
             gap_open_score,
@@ -635,10 +734,11 @@ class _ParasailBenchmarkBackend:
             mismatch_score,
         )
         profile_create = getattr(self._parasail, f"profile_create_{width}", None)
-        profile_function = getattr(self._parasail, f"sw_striped_profile_{width}", None)
+        profile_function = self._profile_function(variant, width)
         if profile_create is None or profile_function is None:
             raise BenchmarkError(
-                f"parasail does not expose a prepared striped SW function for width {width}"
+                f"parasail does not expose a prepared profile function for {variant} "
+                f"width {width}"
             )
         return (
             profile_function,
@@ -648,7 +748,7 @@ class _ParasailBenchmarkBackend:
             -gap_extend,
         )
 
-    def _smith_waterman_farrar_score_prepared(self, prepared):
+    def _score_prepared_profile(self, prepared):
         profile_function, profile, target_text, gap_open_penalty, gap_extend_penalty = prepared
         return profile_function(profile, target_text, gap_open_penalty, gap_extend_penalty)
 
@@ -724,6 +824,15 @@ class _ParasailBenchmarkBackend:
             return (f"nw_trace_striped_{width}", f"nw_trace_scan_{width}")
         raise AssertionError(f"unhandled parasail benchmark variant {variant!r}")
 
+    def _profile_function_names(self, variant: str, width: int) -> tuple[str, ...]:
+        if variant == "sw-farrar-score":
+            return (f"sw_striped_profile_{width}",)
+        if variant == "sw-score":
+            return (f"sw_scan_profile_{width}", f"sw_striped_profile_{width}")
+        if variant == "nw-score":
+            return (f"nw_scan_profile_{width}", f"nw_striped_profile_{width}")
+        raise AssertionError(f"unhandled parasail benchmark variant {variant!r}")
+
     def _function(self, variant: str, width: int):
         for name in self._function_names(variant, width):
             function = getattr(self._parasail, name, None)
@@ -732,6 +841,17 @@ class _ParasailBenchmarkBackend:
         choices = ", ".join(self._function_names(variant, width))
         raise BenchmarkError(
             f"parasail does not expose a function for {variant} width {width}: {choices}"
+        )
+
+    def _profile_function(self, variant: str, width: int):
+        for name in self._profile_function_names(variant, width):
+            function = getattr(self._parasail, name, None)
+            if function is not None:
+                return function
+        choices = ", ".join(self._profile_function_names(variant, width))
+        raise BenchmarkError(
+            f"parasail does not expose a prepared profile function for {variant} "
+            f"width {width}: {choices}"
         )
 
     def _run(
@@ -971,25 +1091,71 @@ def _time_backend(
         "gap_open_score": gap_open_score,
         "gap_extend_score": gap_extend_score,
     }
+    is_affine = gap_open_score != gap_extend_score
 
-    if (
-        variant == "sw-farrar-score"
-        and (gap_open_score == gap_extend_score or backend.name == "parasail")
-        and hasattr(backend.module, "_prepare_smith_waterman_farrar_score")
-        and hasattr(backend.module, "_smith_waterman_farrar_score_prepared")
-    ):
-        prepared = backend.module._prepare_smith_waterman_farrar_score(
-            query,
-            target,
-            match_score=match_score,
-            mismatch_score=mismatch_score,
-            gap_score=linear_gap_score,
-            width=width,
-            **extra_gap_kwargs,
+    prepared_names: tuple[str, str] | None = None
+    if variant in {"sw-farrar-score", "sw-score", "nw-score"}:
+        affine_prepared_names = {
+            "sw-farrar-score": (
+                "_prepare_smith_waterman_affine_farrar_score",
+                "_smith_waterman_affine_farrar_score_prepared",
+            ),
+            "sw-score": (
+                "_prepare_smith_waterman_affine_score",
+                "_smith_waterman_affine_score_prepared",
+            ),
+            "nw-score": (
+                "_prepare_needleman_wunsch_affine_score",
+                "_needleman_wunsch_affine_score_prepared",
+            ),
+        }
+        linear_prepared_names = {
+            "sw-farrar-score": (
+                "_prepare_smith_waterman_farrar_score",
+                "_smith_waterman_farrar_score_prepared",
+            ),
+            "sw-score": (
+                "_prepare_smith_waterman_score",
+                "_smith_waterman_score_prepared",
+            ),
+            "nw-score": (
+                "_prepare_needleman_wunsch_score",
+                "_needleman_wunsch_score_prepared",
+            ),
+        }
+        prepared_names = (
+            affine_prepared_names[variant] if is_affine else linear_prepared_names[variant]
         )
 
-        def run_once() -> Any:
-            return backend.module._smith_waterman_farrar_score_prepared(prepared)
+    if prepared_names is not None:
+        prepare_name, prepared_score_name = prepared_names
+        if hasattr(backend.module, prepare_name) and hasattr(backend.module, prepared_score_name):
+            prepared = getattr(backend.module, prepare_name)(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=linear_gap_score,
+                width=width,
+                **extra_gap_kwargs,
+            )
+            score_prepared = getattr(backend.module, prepared_score_name)
+
+            def run_once() -> Any:
+                return score_prepared(prepared)
+
+        else:
+
+            def run_once() -> Any:
+                return function(
+                    query,
+                    target,
+                    match_score=match_score,
+                    mismatch_score=mismatch_score,
+                    gap_score=linear_gap_score,
+                    width=width,
+                    **extra_gap_kwargs,
+                )
 
     else:
 

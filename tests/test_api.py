@@ -11,13 +11,19 @@ from stride_align import (
     available_backends,
     backend_is_available,
     detect_best_backend,
+    needleman_wunsch_cigar,
     needleman_wunsch_path,
     needleman_wunsch_path_info,
     needleman_wunsch_score,
+    needleman_wunsch_trace_cigar,
+    needleman_wunsch_trade_cigar,
+    smith_waterman_cigar,
     smith_waterman_farrar_score,
     smith_waterman_path,
     smith_waterman_path_info,
     smith_waterman_score,
+    smith_waterman_trace_cigar,
+    smith_waterman_trade_cigar,
 )
 
 
@@ -187,6 +193,14 @@ def test_needleman_wunsch_path_info_on_strings() -> None:
     assert not hasattr(result, "aligned_query")
 
 
+def test_needleman_wunsch_cigar_apis_return_cigar_only() -> None:
+    expected = needleman_wunsch_path_info("ACGT", "ACCT").cigar
+
+    assert needleman_wunsch_cigar("ACGT", "ACCT") == expected
+    assert needleman_wunsch_trace_cigar("ACGT", "ACCT") == expected
+    assert needleman_wunsch_trade_cigar("ACGT", "ACCT") == expected
+
+
 def test_string_fast_path_handles_wide_unicode() -> None:
     result = needleman_wunsch_path("A🙂", "A🙂")
 
@@ -259,6 +273,10 @@ def test_affine_gap_scores_are_supported_by_public_api() -> None:
     assert result.aligned_query == "AAA---BBB"
     assert result.aligned_target == "AAACCCBBB"
     assert result.operations == "MMMIIIMMM"
+    assert smith_waterman_cigar(query, target, **kwargs) == "3M3I3M"
+    assert smith_waterman_trace_cigar(query, target, **kwargs) == "3M3I3M"
+    assert smith_waterman_trade_cigar(query, target, **kwargs) == "3M3I3M"
+    assert needleman_wunsch_cigar(query, target, **kwargs) == "3M3I3M"
 
 
 def test_smith_waterman_path_on_bytes_returns_bytes() -> None:
@@ -291,6 +309,14 @@ def test_smith_waterman_path_info_on_bytes() -> None:
     assert result.insertions == 0
     assert result.deletions == 0
     assert result.aligned_length == 3
+
+
+def test_smith_waterman_cigar_apis_return_cigar_only() -> None:
+    expected = smith_waterman_path_info(b"ACCGT", b"CCG").cigar
+
+    assert smith_waterman_cigar(b"ACCGT", b"CCG") == expected
+    assert smith_waterman_trace_cigar(b"ACCGT", b"CCG") == expected
+    assert smith_waterman_trade_cigar(b"ACCGT", b"CCG") == expected
 
 
 def test_direct_bytes_and_str_pair_raises_type_error() -> None:
@@ -581,6 +607,87 @@ def test_benchmark_adds_parasail_when_importable(monkeypatch) -> None:
     assert benchmark._available_backend_names() == ["generic", "parasail"]
 
 
+@pytest.mark.parametrize(
+    ("variant", "prepare_name", "prepared_name", "direct_name"),
+    [
+        (
+            "sw-farrar-score",
+            "_prepare_smith_waterman_affine_farrar_score",
+            "_smith_waterman_affine_farrar_score_prepared",
+            "smith_waterman_farrar_score",
+        ),
+        (
+            "sw-score",
+            "_prepare_smith_waterman_affine_score",
+            "_smith_waterman_affine_score_prepared",
+            "smith_waterman_score",
+        ),
+        (
+            "nw-score",
+            "_prepare_needleman_wunsch_affine_score",
+            "_needleman_wunsch_affine_score_prepared",
+            "needleman_wunsch_score",
+        ),
+    ],
+)
+def test_benchmark_uses_prepared_affine_profiles_when_available(
+    variant: str,
+    prepare_name: str,
+    prepared_name: str,
+    direct_name: str,
+) -> None:
+    from stride_align import benchmark
+
+    class FakeModule:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def __getattr__(self, name: str):
+            if name == prepare_name:
+
+                def prepare(*args, **kwargs):
+                    assert kwargs["gap_open_score"] == -2
+                    assert kwargs["gap_extend_score"] == -1
+                    self.calls.append("prepare")
+                    return object()
+
+                return prepare
+            if name == prepared_name:
+
+                def run_prepared(prepared):
+                    self.calls.append("prepared")
+                    return 37
+
+                return run_prepared
+            if name == direct_name:
+
+                def run_direct(*args, **kwargs):
+                    raise AssertionError("direct affine benchmark path should not be used")
+
+                return run_direct
+            raise AttributeError(name)
+
+    fake = FakeModule()
+    result = benchmark._time_backend(
+        benchmark.ResolvedBackend("x86_avx2", "fake", fake),
+        "english",
+        "affine",
+        variant,
+        "AAAA",
+        "AAAT",
+        16,
+        2,
+        1,
+        2,
+        -1,
+        -2,
+        -1,
+    )
+
+    assert result.score == 37
+    assert fake.calls == ["prepare", "prepared", "prepared", "prepared", "prepared"]
+
+
 def test_benchmark_parasail_adapter_uses_safe_translated_inputs() -> None:
     from stride_align import benchmark
 
@@ -844,6 +951,51 @@ def test_direct_backends_accept_affine_gap_scores(
         module.smith_waterman_path("AAABBB", "AAACCCBBB", width=width, **kwargs).operations
         == "MMMIIIMMM"
     )
+    assert module.smith_waterman_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3M3I3M"
+    assert module.smith_waterman_trace_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3M3I3M"
+    assert module.smith_waterman_trade_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3M3I3M"
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_prepared_affine_profiles_match_direct_scores(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    module = pytest.importorskip(module_name)
+    if not hasattr(module, "_prepare_smith_waterman_affine_score"):
+        pytest.skip(f"{module_name} does not expose prepared affine profiles")
+
+    query = "ABCAABBC"
+    target = "AACBBAC"
+    kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "gap_open_score": -3,
+        "gap_extend_score": -1,
+        "width": width,
+    }
+
+    sw_prepared = module._prepare_smith_waterman_affine_score(query, target, **kwargs)
+    sw_farrar_prepared = module._prepare_smith_waterman_affine_farrar_score(query, target, **kwargs)
+    nw_prepared = module._prepare_needleman_wunsch_affine_score(query, target, **kwargs)
+
+    assert module._smith_waterman_affine_score_prepared(sw_prepared) == module.smith_waterman_score(
+        query,
+        target,
+        **kwargs,
+    )
+    assert module._smith_waterman_affine_farrar_score_prepared(
+        sw_farrar_prepared
+    ) == module.smith_waterman_farrar_score(query, target, **kwargs)
+    assert module._needleman_wunsch_affine_score_prepared(
+        nw_prepared
+    ) == module.needleman_wunsch_score(query, target, **kwargs)
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])
@@ -892,6 +1044,11 @@ def test_direct_backends_profile_traceback_matches_generic(
         assert observed.target_start == expected.target_start
         assert observed_info.score == expected.score
         assert observed_info.operations == expected.operations
+        assert getattr(module, method_name.replace("_path", "_cigar"))(
+            query,
+            target,
+            **kwargs,
+        ) == observed_info.cigar
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])

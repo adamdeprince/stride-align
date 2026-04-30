@@ -437,6 +437,66 @@ AlignmentPath call_needleman_wunsch_affine_path_info(
 }
 
 template <typename Implementation>
+std::string call_smith_waterman_cigar(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  if (gap_open_score != gap_extend_score) {
+    return call_smith_waterman_affine_path_info<Implementation>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width)
+        .cigar;
+  }
+  return call_smith_waterman_path_info<Implementation>(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      width)
+      .cigar;
+}
+
+template <typename Implementation>
+std::string call_needleman_wunsch_cigar(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  if (gap_open_score != gap_extend_score) {
+    return call_needleman_wunsch_affine_path_info<Implementation>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width)
+        .cigar;
+  }
+  return call_needleman_wunsch_path_info<Implementation>(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      width)
+      .cigar;
+}
+
+template <typename Implementation>
 void bind_backend_module(nb::module_& m, const char* doc) {
   m.doc() = doc;
 
@@ -564,6 +624,99 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("width") = nb::none());
 
   m.def(
+      "smith_waterman_cigar",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        return call_smith_waterman_cigar<Implementation>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gaps.open,
+            gaps.extend,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "smith_waterman_trace_cigar",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        return call_smith_waterman_cigar<Implementation>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gaps.open,
+            gaps.extend,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "smith_waterman_trade_cigar",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        return call_smith_waterman_cigar<Implementation>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gaps.open,
+            gaps.extend,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
       "smith_waterman_farrar_score",
       [](nb::handle query,
          nb::handle target,
@@ -645,6 +798,125 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         "_smith_waterman_farrar_score_prepared",
         [](Prepared& prepared) {
           return Implementation::smith_waterman_farrar_score_prepared(prepared);
+        },
+        nb::arg("prepared"));
+  }
+
+  if constexpr (requires { typename Implementation::PreparedAffineScore; }) {
+    using PreparedAffine = typename Implementation::PreparedAffineScore;
+    nb::class_<PreparedAffine>(m, "_PreparedAffineScore");
+
+    m.def(
+        "_prepare_smith_waterman_affine_score",
+        [](nb::handle query,
+           nb::handle target,
+           Score match_score,
+           Score mismatch_score,
+           Score gap_score,
+           nb::object gap_open_score,
+           nb::object gap_extend_score,
+           nb::object width) {
+          const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+          const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+          return Implementation::prepare_smith_waterman_affine_score(
+              query,
+              target,
+              match_score,
+              mismatch_score,
+              gaps.open,
+              gaps.extend,
+              forced_width);
+        },
+        nb::arg("query"),
+        nb::arg("target"),
+        nb::kw_only(),
+        nb::arg("match_score") = 2,
+        nb::arg("mismatch_score") = -1,
+        nb::arg("gap_score") = -1,
+        nb::arg("gap_open_score") = nb::none(),
+        nb::arg("gap_extend_score") = nb::none(),
+        nb::arg("width") = nb::none());
+
+    m.def(
+        "_smith_waterman_affine_score_prepared",
+        [](PreparedAffine& prepared) {
+          return Implementation::smith_waterman_affine_score_prepared(prepared);
+        },
+        nb::arg("prepared"));
+
+    m.def(
+        "_prepare_smith_waterman_affine_farrar_score",
+        [](nb::handle query,
+           nb::handle target,
+           Score match_score,
+           Score mismatch_score,
+           Score gap_score,
+           nb::object gap_open_score,
+           nb::object gap_extend_score,
+           nb::object width) {
+          const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+          const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+          return Implementation::prepare_smith_waterman_affine_farrar_score(
+              query,
+              target,
+              match_score,
+              mismatch_score,
+              gaps.open,
+              gaps.extend,
+              forced_width);
+        },
+        nb::arg("query"),
+        nb::arg("target"),
+        nb::kw_only(),
+        nb::arg("match_score") = 2,
+        nb::arg("mismatch_score") = -1,
+        nb::arg("gap_score") = -1,
+        nb::arg("gap_open_score") = nb::none(),
+        nb::arg("gap_extend_score") = nb::none(),
+        nb::arg("width") = nb::none());
+
+    m.def(
+        "_smith_waterman_affine_farrar_score_prepared",
+        [](PreparedAffine& prepared) {
+          return Implementation::smith_waterman_affine_farrar_score_prepared(prepared);
+        },
+        nb::arg("prepared"));
+
+    m.def(
+        "_prepare_needleman_wunsch_affine_score",
+        [](nb::handle query,
+           nb::handle target,
+           Score match_score,
+           Score mismatch_score,
+           Score gap_score,
+           nb::object gap_open_score,
+           nb::object gap_extend_score,
+           nb::object width) {
+          const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+          const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+          return Implementation::prepare_needleman_wunsch_affine_score(
+              query,
+              target,
+              match_score,
+              mismatch_score,
+              gaps.open,
+              gaps.extend,
+              forced_width);
+        },
+        nb::arg("query"),
+        nb::arg("target"),
+        nb::kw_only(),
+        nb::arg("match_score") = 2,
+        nb::arg("mismatch_score") = -1,
+        nb::arg("gap_score") = -1,
+        nb::arg("gap_open_score") = nb::none(),
+        nb::arg("gap_extend_score") = nb::none(),
+        nb::arg("width") = nb::none());
+
+    m.def(
+        "_needleman_wunsch_affine_score_prepared",
+        [](PreparedAffine& prepared) {
+          return Implementation::needleman_wunsch_affine_score_prepared(prepared);
         },
         nb::arg("prepared"));
   }
@@ -757,6 +1029,99 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             match_score,
             mismatch_score,
             gaps.open,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "needleman_wunsch_cigar",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        return call_needleman_wunsch_cigar<Implementation>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gaps.open,
+            gaps.extend,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "needleman_wunsch_trace_cigar",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        return call_needleman_wunsch_cigar<Implementation>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gaps.open,
+            gaps.extend,
+            forced_width);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "needleman_wunsch_trade_cigar",
+      [](nb::handle query,
+         nb::handle target,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        return call_needleman_wunsch_cigar<Implementation>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gaps.open,
+            gaps.extend,
             forced_width);
       },
       nb::arg("query"),

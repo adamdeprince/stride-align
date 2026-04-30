@@ -270,7 +270,14 @@ def _select_backend(
             return _first_available(priority) or _GENERIC_BACKEND
         return _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
 
-    if variant in {"sw-path", "nw-path", "sw-path-info", "nw-path-info"}:
+    if variant in {
+        "sw-path",
+        "nw-path",
+        "sw-path-info",
+        "nw-path-info",
+        "sw-cigar",
+        "nw-cigar",
+    }:
         if not _profile_traceback_compatible(query, target):
             return _GENERIC_BACKEND
         priority = (
@@ -416,6 +423,81 @@ def smith_waterman_path_info(
     )
 
 
+def smith_waterman_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return _dispatch(
+        "smith_waterman_cigar",
+        "sw-cigar",
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def smith_waterman_trace_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return _dispatch(
+        "smith_waterman_trace_cigar",
+        "sw-cigar",
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def smith_waterman_trade_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return _dispatch(
+        "smith_waterman_trade_cigar",
+        "sw-cigar",
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
 def smith_waterman_farrar_score(
     query: object,
     target: object,
@@ -516,6 +598,81 @@ def needleman_wunsch_path_info(
     )
 
 
+def needleman_wunsch_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return _dispatch(
+        "needleman_wunsch_cigar",
+        "nw-cigar",
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def needleman_wunsch_trace_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return _dispatch(
+        "needleman_wunsch_trace_cigar",
+        "nw-cigar",
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def needleman_wunsch_trade_cigar(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> str:
+    return _dispatch(
+        "needleman_wunsch_trade_cigar",
+        "nw-cigar",
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
 __all__ = [
     "AlignmentPath",
     "AlignmentResult",
@@ -524,11 +681,17 @@ __all__ = [
     "available_backends",
     "backend_is_available",
     "detect_best_backend",
+    "needleman_wunsch_cigar",
     "needleman_wunsch_path",
     "needleman_wunsch_path_info",
     "needleman_wunsch_score",
+    "needleman_wunsch_trace_cigar",
+    "needleman_wunsch_trade_cigar",
+    "smith_waterman_cigar",
     "smith_waterman_farrar_score",
     "smith_waterman_path",
     "smith_waterman_path_info",
     "smith_waterman_score",
+    "smith_waterman_trace_cigar",
+    "smith_waterman_trade_cigar",
 ]

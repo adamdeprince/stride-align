@@ -72,6 +72,12 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm_add_epi8(lhs, rhs);
   }
 
+  static __m128i add_sentinel(__m128i lhs, __m128i rhs, std::int8_t sentinel) {
+    const __m128i sum = _mm_add_epi8(lhs, rhs);
+    const __m128i mask = _mm_cmpeq_epi8(lhs, set1(sentinel));
+    return _mm_blendv_epi8(sum, set1(sentinel), mask);
+  }
+
   static __m128i max(__m128i lhs, __m128i rhs) {
     return _mm_max_epi8(lhs, rhs);
   }
@@ -142,6 +148,12 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
   static __m128i add(__m128i lhs, __m128i rhs) {
     return _mm_add_epi16(lhs, rhs);
+  }
+
+  static __m128i add_sentinel(__m128i lhs, __m128i rhs, std::int16_t sentinel) {
+    const __m128i sum = _mm_add_epi16(lhs, rhs);
+    const __m128i mask = _mm_cmpeq_epi16(lhs, set1(sentinel));
+    return _mm_blendv_epi8(sum, set1(sentinel), mask);
   }
 
   static __m128i max(__m128i lhs, __m128i rhs) {
@@ -216,6 +228,12 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm_add_epi32(lhs, rhs);
   }
 
+  static __m128i add_sentinel(__m128i lhs, __m128i rhs, std::int32_t sentinel) {
+    const __m128i sum = _mm_add_epi32(lhs, rhs);
+    const __m128i mask = _mm_cmpeq_epi32(lhs, set1(sentinel));
+    return _mm_blendv_epi8(sum, set1(sentinel), mask);
+  }
+
   static __m128i max(__m128i lhs, __m128i rhs) {
     return _mm_max_epi32(lhs, rhs);
   }
@@ -286,6 +304,12 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static __m128i add(__m128i lhs, __m128i rhs) {
     return _mm_add_epi64(lhs, rhs);
+  }
+
+  static __m128i add_sentinel(__m128i lhs, __m128i rhs, std::int64_t sentinel) {
+    const __m128i sum = _mm_add_epi64(lhs, rhs);
+    const __m128i mask = _mm_cmpeq_epi64(lhs, set1(sentinel));
+    return _mm_blendv_epi8(sum, set1(sentinel), mask);
   }
 
   static __m128i max(__m128i lhs, __m128i rhs) {
@@ -696,6 +720,8 @@ AlignmentResult dispatch_traceback(
 struct Implementation {
   using PreparedSmithWatermanFarrarScore =
       farrar_fixed_kernel::detail::PreparedScore<detail::SimdOps>;
+  using PreparedAffineScore =
+      farrar_fixed_kernel::detail::PreparedAffineScore<detail::SimdOps>;
 
   static Score smith_waterman_score(
       nb::handle query,
@@ -881,6 +907,84 @@ struct Implementation {
         gap_extend_score);
   }
 
+  static PreparedAffineScore prepare_smith_waterman_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::prepare_affine_score<detail::SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score smith_waterman_affine_score_prepared(PreparedAffineScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_affine_score<detail::SimdOps>(prepared);
+  }
+
+  static PreparedAffineScore prepare_smith_waterman_affine_farrar_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return prepare_smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static Score smith_waterman_affine_farrar_score_prepared(PreparedAffineScore& prepared) {
+    return smith_waterman_affine_score_prepared(prepared);
+  }
+
+  static PreparedAffineScore prepare_needleman_wunsch_affine_score(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::prepare_affine_score<detail::SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_global_affine_score<detail::SimdOps>(prepared);
+  }
+
   static Score needleman_wunsch_score(
       nb::handle query,
       nb::handle target,
@@ -942,7 +1046,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return affine::needleman_wunsch_score(
+    const auto prepared = prepare_farrar_alignment(
         query,
         target,
         match_score,
@@ -950,6 +1054,12 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return farrar_fixed_kernel::detail::dispatch_global_affine_score<detail::SimdOps>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(
