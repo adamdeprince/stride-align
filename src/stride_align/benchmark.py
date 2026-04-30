@@ -80,16 +80,21 @@ _SIGNED_LIMITS = {
     64: (1 << 63) - 1,
 }
 
-_ALL_VARIANTS = (
+_SCORE_ONLY_VARIANTS = (
     "sw-farrar-score",
     "sw-score",
     "nw-score",
+)
+_PATH_INFO_VARIANTS = (
     "sw-path-info",
     "nw-path-info",
+)
+_FULL_PATH_VARIANTS = (
     "sw-path",
     "nw-path",
 )
-_DEFAULT_VARIANTS = ("sw-farrar-score", "sw-score")
+_ALL_VARIANTS = (*_SCORE_ONLY_VARIANTS, *_PATH_INFO_VARIANTS, *_FULL_PATH_VARIANTS)
+_DEFAULT_VARIANTS = (*_SCORE_ONLY_VARIANTS, *_PATH_INFO_VARIANTS)
 
 _VARIANT_ALIASES = {
     "farrar": "sw-farrar-score",
@@ -100,6 +105,19 @@ _VARIANT_ALIASES = {
     "needleman-wunsch-path-info": "nw-path-info",
     "smith-waterman-path": "sw-path",
     "needleman-wunsch-path": "nw-path",
+}
+_VARIANT_GROUPS = {
+    "all": _ALL_VARIANTS,
+    "score": _SCORE_ONLY_VARIANTS,
+    "scores": _SCORE_ONLY_VARIANTS,
+    "score-only": _SCORE_ONLY_VARIANTS,
+    "score-only-generators": _SCORE_ONLY_VARIANTS,
+    "path": _PATH_INFO_VARIANTS,
+    "paths": _PATH_INFO_VARIANTS,
+    "path-info": _PATH_INFO_VARIANTS,
+    "path-generators": _PATH_INFO_VARIANTS,
+    "full-path": _FULL_PATH_VARIANTS,
+    "full-paths": _FULL_PATH_VARIANTS,
 }
 
 _ALL_SCORING_CASES = ("linear", "affine")
@@ -148,6 +166,8 @@ class BenchmarkResult:
     case_name: str
     backend: str
     variant: str
+    generator: str
+    output: str
     score_width: int
     score: int
     iterations: int
@@ -211,8 +231,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=list(_DEFAULT_VARIANTS),
         help=(
             "Workloads to benchmark. Choices: sw-farrar-score, sw-score, nw-score, "
-            "sw-path-info, nw-path-info, sw-path, nw-path, or all. "
-            "Defaults to sw-farrar-score sw-score."
+            "sw-path-info, nw-path-info, sw-path, nw-path, or groups score-only, "
+            "path, full-path, all. Defaults to score-only plus path-info generators."
         ),
     )
     parser.add_argument(
@@ -297,13 +317,14 @@ def _selected_variants(variants: Sequence[str]) -> list[str]:
     selected: list[str] = []
     for variant in variants:
         canonical_variant = _VARIANT_ALIASES.get(variant, variant)
-        if canonical_variant == "all":
-            for available_variant in _ALL_VARIANTS:
+        variant_group = _VARIANT_GROUPS.get(canonical_variant)
+        if variant_group is not None:
+            for available_variant in variant_group:
                 if available_variant not in selected:
                     selected.append(available_variant)
             continue
         if canonical_variant not in _ALL_VARIANTS:
-            choices = ", ".join((*_ALL_VARIANTS, "all"))
+            choices = ", ".join((*_ALL_VARIANTS, *_VARIANT_GROUPS))
             raise BenchmarkError(f"unknown benchmark variant {variant!r}; choices: {choices}")
         if canonical_variant not in selected:
             selected.append(canonical_variant)
@@ -771,6 +792,28 @@ def _function_for_variant(module: Any, variant: str):
     raise AssertionError(f"unhandled benchmark variant {variant!r}")
 
 
+def _generator_for_variant(variant: str) -> str:
+    if variant.endswith("-score"):
+        return "score-only"
+    if variant.endswith("-path-info") or variant.endswith("-path"):
+        return "path"
+    raise AssertionError(f"unhandled benchmark variant {variant!r}")
+
+
+def _output_for_variant(backend_name: str, variant: str) -> str:
+    if variant.endswith("-score"):
+        return "score"
+    if backend_name == "parasail" and (
+        variant.endswith("-path-info") or variant.endswith("-path")
+    ):
+        return "trace-cigar"
+    if variant.endswith("-path-info"):
+        return "path-info"
+    if variant.endswith("-path"):
+        return "full-path"
+    raise AssertionError(f"unhandled benchmark variant {variant!r}")
+
+
 def _result_score(result: Any) -> int:
     if isinstance(result, int):
         return result
@@ -985,6 +1028,8 @@ def _time_backend(
         case_name=case_name,
         backend=backend.name,
         variant=variant,
+        generator=_generator_for_variant(variant),
+        output=_output_for_variant(backend.name, variant),
         score_width=width,
         score=score,
         iterations=iterations,
@@ -1020,6 +1065,8 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
                 case_name=result.case_name,
                 backend=result.backend,
                 variant=result.variant,
+                generator=result.generator,
+                output=result.output,
                 score_width=result.score_width,
                 score=result.score,
                 iterations=result.iterations,
@@ -1036,14 +1083,15 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
 
 def _print_csv(results: Sequence[BenchmarkResult]) -> None:
     print(
-        "pass,case,backend,variant,score_width,score,iterations,warmups,best_seconds,"
-        "median_seconds,mean_seconds,cells_per_second,speedup_vs_generic"
+        "pass,case,backend,variant,generator,output,score_width,score,iterations,"
+        "warmups,best_seconds,median_seconds,mean_seconds,cells_per_second,"
+        "speedup_vs_generic"
     )
     for result in results:
         speedup = "" if result.speedup_vs_generic is None else f"{result.speedup_vs_generic:.6g}"
         print(
             f"{result.pass_name},{result.case_name},{result.backend},{result.variant},"
-            f"{result.score_width},{result.score},"
+            f"{result.generator},{result.output},{result.score_width},{result.score},"
             f"{result.iterations},"
             f"{result.warmups},{result.best_seconds:.9g},{result.median_seconds:.9g},"
             f"{result.mean_seconds:.9g},{result.cells_per_second:.9g},{speedup}"
@@ -1066,11 +1114,17 @@ def _print_table(
         f"short_length={short_length} passes={','.join(pass_names)} "
         f"cases={','.join(scoring_case_names)} seed={seed}"
     )
+    print(
+        "# generator distinguishes score-only from path-producing calls; "
+        "output distinguishes native path materialization from parasail trace/cigar."
+    )
     headers = (
         "pass",
         "case",
         "backend",
         "variant",
+        "generator",
+        "output",
         "width",
         "score",
         "median_s",
@@ -1087,6 +1141,8 @@ def _print_table(
                 result.case_name,
                 result.backend,
                 result.variant,
+                result.generator,
+                result.output,
                 str(result.score_width),
                 str(result.score),
                 f"{result.median_seconds:.6g}",

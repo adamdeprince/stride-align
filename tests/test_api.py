@@ -44,6 +44,108 @@ def test_backend_is_available_for_detected_backend() -> None:
     assert backend_is_available(detect_best_backend())
 
 
+def test_public_dispatch_keeps_non_farrar_score_on_generic(monkeypatch) -> None:
+    import stride_align
+
+    class FakeBackend:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def smith_waterman_score(self, *args, **kwargs) -> str:
+            return self.name
+
+    generic = FakeBackend("generic")
+    avx2 = FakeBackend("avx2")
+    monkeypatch.setattr(stride_align, "_GENERIC_BACKEND", generic)
+    monkeypatch.setattr(
+        stride_align,
+        "_AVAILABLE_BACKENDS",
+        {BackendKind.GENERIC: generic, BackendKind.X86_AVX2: avx2},
+    )
+
+    assert stride_align.smith_waterman_score("A" * 128, "A" * 128) == "generic"
+
+
+def test_public_dispatch_uses_wide_simd_for_long_farrar(monkeypatch) -> None:
+    import stride_align
+
+    class FakeBackend:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def smith_waterman_farrar_score(self, *args, **kwargs) -> str:
+            return self.name
+
+    generic = FakeBackend("generic")
+    avx2 = FakeBackend("avx2")
+    monkeypatch.setattr(stride_align, "_GENERIC_BACKEND", generic)
+    monkeypatch.setattr(
+        stride_align,
+        "_AVAILABLE_BACKENDS",
+        {BackendKind.GENERIC: generic, BackendKind.X86_AVX2: avx2},
+    )
+
+    assert stride_align.smith_waterman_farrar_score("A" * 128, "A" * 128) == "avx2"
+
+
+def test_public_dispatch_allows_swar_for_short_linear_farrar(monkeypatch) -> None:
+    import stride_align
+
+    class FakeBackend:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def smith_waterman_farrar_score(self, *args, **kwargs) -> str:
+            return self.name
+
+    generic = FakeBackend("generic")
+    swar = FakeBackend("swar")
+    monkeypatch.setattr(stride_align, "_GENERIC_BACKEND", generic)
+    monkeypatch.setattr(
+        stride_align,
+        "_AVAILABLE_BACKENDS",
+        {BackendKind.GENERIC: generic, BackendKind.SWAR: swar},
+    )
+
+    assert stride_align.smith_waterman_farrar_score("A" * 31, "A" * 31, width=8) == "swar"
+
+
+def test_public_dispatch_prefers_narrow_simd_for_short_affine_farrar(monkeypatch) -> None:
+    import stride_align
+
+    class FakeBackend:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def smith_waterman_farrar_score(self, *args, **kwargs) -> str:
+            return self.name
+
+    generic = FakeBackend("generic")
+    sse41 = FakeBackend("sse41")
+    avx2 = FakeBackend("avx2")
+    monkeypatch.setattr(stride_align, "_GENERIC_BACKEND", generic)
+    monkeypatch.setattr(
+        stride_align,
+        "_AVAILABLE_BACKENDS",
+        {
+            BackendKind.GENERIC: generic,
+            BackendKind.X86_SSE41: sse41,
+            BackendKind.X86_AVX2: avx2,
+        },
+    )
+
+    assert (
+        stride_align.smith_waterman_farrar_score(
+            "A" * 31,
+            "A" * 31,
+            gap_open_score=-2,
+            gap_extend_score=-1,
+            width=8,
+        )
+        == "sse41"
+    )
+
+
 def test_needleman_wunsch_score_on_strings() -> None:
     assert needleman_wunsch_score("ACGT", "ACCT") == 5
 
@@ -348,11 +450,16 @@ def test_benchmark_cli_defaults_include_short_8_bit_english(capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert captured.out.splitlines()[0].startswith("pass,case,backend,variant,score_width")
-    assert "\nenglish-short,linear,generic,sw-farrar-score,8," in captured.out
-    assert "\nenglish-short,linear,generic,sw-score,8," in captured.out
-    assert "\nenglish,linear,generic,sw-farrar-score,16," in captured.out
-    assert "\nchinese,linear,generic,sw-farrar-score,32," in captured.out
+    assert captured.out.splitlines()[0].startswith(
+        "pass,case,backend,variant,generator,output,score_width"
+    )
+    assert "\nenglish-short,linear,generic,sw-farrar-score,score-only,score,8," in captured.out
+    assert "\nenglish-short,linear,generic,sw-score,score-only,score,8," in captured.out
+    assert "\nenglish-short,linear,generic,nw-score,score-only,score,8," in captured.out
+    assert "\nenglish-short,linear,generic,sw-path-info,path,path-info,8," in captured.out
+    assert "\nenglish-short,linear,generic,nw-path-info,path,path-info,8," in captured.out
+    assert "\nenglish,linear,generic,sw-farrar-score,score-only,score,16," in captured.out
+    assert "\nchinese,linear,generic,sw-farrar-score,score-only,score,32," in captured.out
 
 
 def test_benchmark_cli_supports_path_info_variants(capsys) -> None:
@@ -382,8 +489,29 @@ def test_benchmark_cli_supports_path_info_variants(capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "\nenglish,linear,generic,sw-path-info,16," in captured.out
-    assert "\nenglish,linear,generic,nw-path-info,16," in captured.out
+    assert "\nenglish,linear,generic,sw-path-info,path,path-info,16," in captured.out
+    assert "\nenglish,linear,generic,nw-path-info,path,path-info,16," in captured.out
+
+
+def test_benchmark_labels_score_and_path_outputs() -> None:
+    from stride_align import benchmark
+
+    assert benchmark._generator_for_variant("sw-score") == "score-only"
+    assert benchmark._generator_for_variant("sw-path-info") == "path"
+    assert benchmark._output_for_variant("generic", "sw-path-info") == "path-info"
+    assert benchmark._output_for_variant("generic", "sw-path") == "full-path"
+    assert benchmark._output_for_variant("parasail", "sw-path-info") == "trace-cigar"
+
+
+def test_benchmark_variant_groups_expand_generators() -> None:
+    from stride_align import benchmark
+
+    assert benchmark._selected_variants(["score-only"]) == [
+        "sw-farrar-score",
+        "sw-score",
+        "nw-score",
+    ]
+    assert benchmark._selected_variants(["path"]) == ["sw-path-info", "nw-path-info"]
 
 
 def test_benchmark_cli_defaults_to_current_machine_backends(capsys) -> None:
@@ -679,6 +807,32 @@ def test_direct_backends_accept_affine_gap_scores(
         module.smith_waterman_path("AAABBB", "AAACCCBBB", width=width, **kwargs).operations
         == "MMMIIIMMM"
     )
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_affine_farrar_matches_score_across_stripes(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    module = pytest.importorskip(module_name)
+    kwargs = {
+        "match_score": 1,
+        "mismatch_score": -1,
+        "gap_score": -2,
+        "gap_open_score": -2,
+        "gap_extend_score": -1,
+    }
+    query = "A" * 8 + "CCC" + "B" * 8
+    target = "A" * 8 + "B" * 8
+
+    expected = module.smith_waterman_score(query, target, width=width, **kwargs)
+
+    assert module.smith_waterman_farrar_score(query, target, width=width, **kwargs) == expected
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])
