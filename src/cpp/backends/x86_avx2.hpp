@@ -20,6 +20,16 @@ namespace nb = nanobind;
 #define STRIDE_ALIGN_X86_BASELINE
 #endif
 
+template <int ShiftBytes>
+inline __m256i shift_left_zero_256(__m256i vector) {
+  const __m128i low = _mm256_castsi256_si128(vector);
+  const __m128i high = _mm256_extracti128_si256(vector, 1);
+  const __m128i low_shifted = _mm_slli_si128(low, ShiftBytes);
+  const __m128i high_shifted =
+      _mm_or_si128(_mm_slli_si128(high, ShiftBytes), _mm_srli_si128(low, 16 - ShiftBytes));
+  return _mm256_inserti128_si256(_mm256_castsi128_si256(low_shifted), high_shifted, 1);
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -56,6 +66,14 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm256_max_epi8(lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_256<1>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm256_movemask_epi8(_mm256_cmpgt_epi8(lhs, rhs)) != 0;
   }
 
   static vector_type substitution(
@@ -103,6 +121,14 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm256_max_epi16(lhs, rhs);
   }
 
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_256<2>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm256_movemask_epi8(_mm256_cmpgt_epi16(lhs, rhs)) != 0;
+  }
+
   static vector_type substitution(
       const std::uint16_t* query,
       const std::uint16_t* target,
@@ -146,6 +172,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm256_max_epi32(lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_256<4>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm256_movemask_epi8(_mm256_cmpgt_epi32(lhs, rhs)) != 0;
   }
 
   static vector_type substitution(
@@ -192,6 +226,14 @@ struct SimdOps<std::uint64_t, std::int64_t> {
   static vector_type max(vector_type lhs, vector_type rhs) {
     const vector_type mask = _mm256_cmpgt_epi64(lhs, rhs);
     return _mm256_blendv_epi8(rhs, lhs, mask);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_256<8>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm256_movemask_epi8(_mm256_cmpgt_epi64(lhs, rhs)) != 0;
   }
 
   static vector_type substitution(

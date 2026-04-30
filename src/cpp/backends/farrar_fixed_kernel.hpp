@@ -42,10 +42,12 @@ struct ScoreToken<std::int64_t> {
 template <template <typename, typename> class OpsTemplate, typename Cell>
 using ScoreOps = OpsTemplate<typename ScoreToken<Cell>::type, Cell>;
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
-typename ScoreOps<OpsTemplate, Cell>::vector_type shift_left_zero(
-    typename ScoreOps<OpsTemplate, Cell>::vector_type vector) {
-  using Ops = ScoreOps<OpsTemplate, Cell>;
+template <typename Ops, typename Cell>
+typename Ops::vector_type shift_left_zero(typename Ops::vector_type vector) {
+  if constexpr (requires { Ops::shift_left_zero(vector); }) {
+    return Ops::shift_left_zero(vector);
+  }
+
   alignas(Ops::alignment) Cell input[Ops::lane_count] = {};
   alignas(Ops::alignment) Cell output[Ops::lane_count] = {};
   Ops::store_cells(input, vector);
@@ -55,16 +57,37 @@ typename ScoreOps<OpsTemplate, Cell>::vector_type shift_left_zero(
   return Ops::load_cells(output);
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
-void update_best(
-    typename ScoreOps<OpsTemplate, Cell>::vector_type vector,
-    Cell& best_score) {
-  using Ops = ScoreOps<OpsTemplate, Cell>;
+template <typename Ops, typename Cell>
+Cell reduce_max(typename Ops::vector_type vector) {
+  if constexpr (requires { Ops::reduce_max(vector); }) {
+    return Ops::reduce_max(vector);
+  }
+
   alignas(Ops::alignment) Cell scores[Ops::lane_count] = {};
   Ops::store_cells(scores, vector);
+  Cell best_score = 0;
   for (std::size_t lane = 0; lane < Ops::lane_count; ++lane) {
     best_score = std::max(best_score, scores[lane]);
   }
+  return best_score;
+}
+
+template <typename Ops, typename Cell>
+bool any_greater(typename Ops::vector_type lhs, typename Ops::vector_type rhs) {
+  if constexpr (requires { Ops::any_gt(lhs, rhs); }) {
+    return Ops::any_gt(lhs, rhs);
+  }
+
+  alignas(Ops::alignment) Cell left[Ops::lane_count] = {};
+  alignas(Ops::alignment) Cell right[Ops::lane_count] = {};
+  Ops::store_cells(left, lhs);
+  Ops::store_cells(right, rhs);
+  for (std::size_t lane = 0; lane < Ops::lane_count; ++lane) {
+    if (left[lane] > right[lane]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
@@ -122,12 +145,12 @@ Score score(
 
   const auto zero_vector = Ops::zero();
   const auto gap_vector = Ops::set1(gap);
-  Cell best_score = 0;
+  auto best_vector = zero_vector;
 
   for (const std::uint8_t target_token : target) {
     std::swap(h_store, h_load);
 
-    auto v_h = shift_left_zero<OpsTemplate, Cell>(
+    auto v_h = shift_left_zero<Ops, Cell>(
         Ops::load_cells(h_load.data() + ((segment_count - 1U) * lane_count)));
     auto v_f = zero_vector;
 
@@ -146,7 +169,7 @@ Score score(
       v_h = Ops::max(v_h, v_f);
       v_h = Ops::max(v_h, zero_vector);
       Ops::store_cells(h_store_segment, v_h);
-      update_best<OpsTemplate, Cell>(v_h, best_score);
+      best_vector = Ops::max(best_vector, v_h);
 
       const auto v_h_gap = Ops::add(v_h, gap_vector);
       v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
@@ -156,22 +179,27 @@ Score score(
     }
 
     for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
-      v_f = shift_left_zero<OpsTemplate, Cell>(v_f);
+      v_f = shift_left_zero<Ops, Cell>(v_f);
 
       for (std::size_t segment = 0; segment < segment_count; ++segment) {
         Cell* h_store_segment = h_store.data() + segment * lane_count;
         auto v_h_segment = Ops::load_cells(h_store_segment);
         v_h_segment = Ops::max(v_h_segment, v_f);
         Ops::store_cells(h_store_segment, v_h_segment);
-        update_best<OpsTemplate, Cell>(v_h_segment, best_score);
+        best_vector = Ops::max(best_vector, v_h_segment);
 
-        const auto v_h_gap = Ops::add(v_h_segment, gap_vector);
         v_f = Ops::add(v_f, gap_vector);
+        if (gap <= 0 && !any_greater<Ops, Cell>(v_f, zero_vector)) {
+          goto lazy_f_done;
+        }
       }
     }
+
+lazy_f_done:
+    ;
   }
 
-  return static_cast<Score>(best_score);
+  return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
 }
 
 template <template <typename, typename> class OpsTemplate>

@@ -66,6 +66,14 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm_max_epi8(lhs, rhs);
   }
 
+  static __m128i shift_left_zero(__m128i vector) {
+    return _mm_slli_si128(vector, 1);
+  }
+
+  static bool any_gt(__m128i lhs, __m128i rhs) {
+    return _mm_movemask_epi8(_mm_cmpgt_epi8(lhs, rhs)) != 0;
+  }
+
   static __m128i substitution(
       const std::uint8_t* query,
       const std::uint8_t* target,
@@ -110,6 +118,14 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm_max_epi16(lhs, rhs);
   }
 
+  static __m128i shift_left_zero(__m128i vector) {
+    return _mm_slli_si128(vector, 2);
+  }
+
+  static bool any_gt(__m128i lhs, __m128i rhs) {
+    return _mm_movemask_epi8(_mm_cmpgt_epi16(lhs, rhs)) != 0;
+  }
+
   static __m128i substitution(
       const std::uint16_t* query,
       const std::uint16_t* target,
@@ -152,6 +168,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static __m128i max(__m128i lhs, __m128i rhs) {
     return _mm_max_epi32(lhs, rhs);
+  }
+
+  static __m128i shift_left_zero(__m128i vector) {
+    return _mm_slli_si128(vector, 4);
+  }
+
+  static bool any_gt(__m128i lhs, __m128i rhs) {
+    return _mm_movemask_epi8(_mm_cmpgt_epi32(lhs, rhs)) != 0;
   }
 
   static __m128i substitution(
@@ -204,6 +228,10 @@ struct SimdOps<std::uint64_t, std::int64_t> {
       output[lane] = left[lane] > right[lane] ? left[lane] : right[lane];
     }
     return load_cells(output);
+  }
+
+  static __m128i shift_left_zero(__m128i vector) {
+    return _mm_slli_si128(vector, 8);
   }
 
   static __m128i substitution(
@@ -459,6 +487,15 @@ Score dispatch_score(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
+  if (const auto fast = generic_detail::dispatch_fast_score<LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      fast.has_value()) {
+    return *fast;
+  }
+
   switch (prepared.kernel_bits) {
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
@@ -512,6 +549,15 @@ AlignmentResult dispatch_traceback(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
+  if (const auto fast = generic_detail::dispatch_fast_traceback<LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      fast.has_value()) {
+    return *fast;
+  }
+
   switch (prepared.kernel_bits) {
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);

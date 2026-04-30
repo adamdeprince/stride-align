@@ -14,6 +14,25 @@ namespace stride_align::arm_neon128_backend {
 
 namespace nb = nanobind;
 
+inline bool any_mask(uint8x16_t mask) {
+  const uint64x2_t words = vreinterpretq_u64_u8(mask);
+  return (vgetq_lane_u64(words, 0) | vgetq_lane_u64(words, 1)) != 0;
+}
+
+inline bool any_mask(uint16x8_t mask) {
+  const uint64x2_t words = vreinterpretq_u64_u16(mask);
+  return (vgetq_lane_u64(words, 0) | vgetq_lane_u64(words, 1)) != 0;
+}
+
+inline bool any_mask(uint32x4_t mask) {
+  const uint64x2_t words = vreinterpretq_u64_u32(mask);
+  return (vgetq_lane_u64(words, 0) | vgetq_lane_u64(words, 1)) != 0;
+}
+
+inline bool any_mask(uint64x2_t mask) {
+  return (vgetq_lane_u64(mask, 0) | vgetq_lane_u64(mask, 1)) != 0;
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -50,6 +69,14 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return vmaxq_s8(lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return vreinterpretq_s8_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s8(vector), 15));
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return any_mask(vcgtq_s8(lhs, rhs));
   }
 
   static vector_type substitution(
@@ -97,6 +124,14 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return vmaxq_s16(lhs, rhs);
   }
 
+  static vector_type shift_left_zero(vector_type vector) {
+    return vreinterpretq_s16_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s16(vector), 14));
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return any_mask(vcgtq_s16(lhs, rhs));
+  }
+
   static vector_type substitution(
       const std::uint16_t* query,
       const std::uint16_t* target,
@@ -140,6 +175,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return vmaxq_s32(lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return vreinterpretq_s32_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s32(vector), 12));
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return any_mask(vcgtq_s32(lhs, rhs));
   }
 
   static vector_type substitution(
@@ -186,6 +229,14 @@ struct SimdOps<std::uint64_t, std::int64_t> {
   static vector_type max(vector_type lhs, vector_type rhs) {
     const uint64x2_t mask = vcgtq_s64(lhs, rhs);
     return vbslq_s64(mask, lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return vreinterpretq_s64_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s64(vector), 8));
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return any_mask(vcgtq_s64(lhs, rhs));
   }
 
   static vector_type substitution(

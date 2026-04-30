@@ -20,6 +20,21 @@ namespace nb = nanobind;
 #define STRIDE_ALIGN_X86_BASELINE
 #endif
 
+template <int ShiftBytes>
+inline __m512i shift_left_zero_512(__m512i vector) {
+  static_assert(ShiftBytes == 1 || ShiftBytes == 2 || ShiftBytes == 4 || ShiftBytes == 8);
+  const __m512i previous_lane_indices = _mm512_set_epi64(6, 5, 4, 3, 2, 1, 0, 0);
+  if constexpr (ShiftBytes == 8) {
+    return _mm512_maskz_permutexvar_epi64(0xFE, previous_lane_indices, vector);
+  } else {
+    const __m512i shifted = _mm512_slli_epi64(vector, ShiftBytes * 8);
+    const __m512i carry = _mm512_srli_epi64(vector, 64 - ShiftBytes * 8);
+    const __m512i carry_from_previous_lane =
+        _mm512_maskz_permutexvar_epi64(0xFE, previous_lane_indices, carry);
+    return _mm512_or_si512(shifted, carry_from_previous_lane);
+  }
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -56,6 +71,14 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm512_max_epi8(lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_512<1>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi8_mask(lhs, rhs) != 0;
   }
 
   static vector_type substitution(
@@ -103,6 +126,14 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm512_max_epi16(lhs, rhs);
   }
 
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_512<2>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi16_mask(lhs, rhs) != 0;
+  }
+
   static vector_type substitution(
       const std::uint16_t* query,
       const std::uint16_t* target,
@@ -148,6 +179,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return _mm512_max_epi32(lhs, rhs);
   }
 
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_512<4>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi32_mask(lhs, rhs) != 0;
+  }
+
   static vector_type substitution(
       const std::uint32_t* query,
       const std::uint32_t* target,
@@ -191,6 +230,14 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return _mm512_max_epi64(lhs, rhs);
+  }
+
+  static vector_type shift_left_zero(vector_type vector) {
+    return shift_left_zero_512<8>(vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs) {
+    return _mm512_cmpgt_epi64_mask(lhs, rhs) != 0;
   }
 
   static vector_type substitution(

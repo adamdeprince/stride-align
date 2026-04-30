@@ -25,6 +25,10 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+stride-align-benchmark = "stride_align.benchmark:main"
+stride-align-file-compare = "stride_align.file_compare:main"
+
 [project.optional-dependencies]
 dev = [
   "build>=1.2",

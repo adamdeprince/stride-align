@@ -264,6 +264,15 @@ Score dispatch_score(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
+  if (const auto fast = generic_detail::dispatch_fast_score<LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      fast.has_value()) {
+    return *fast;
+  }
+
   switch (prepared.kernel_bits) {
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
@@ -317,6 +326,15 @@ AlignmentResult dispatch_traceback(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
+  if (const auto fast = generic_detail::dispatch_fast_traceback<LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      fast.has_value()) {
+    return *fast;
+  }
+
   switch (prepared.kernel_bits) {
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);

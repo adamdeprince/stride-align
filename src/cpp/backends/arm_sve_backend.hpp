@@ -58,6 +58,15 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return svmax_s8_x(predicate(count), lhs, rhs);
   }
 
+  static std::int8_t reduce_max(vector_type vector, std::size_t count) {
+    return svmaxv_s8(predicate(count), vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs, std::size_t count) {
+    const svbool_t pg = predicate(count);
+    return svptest_any(pg, svcmpgt_s8(pg, lhs, rhs));
+  }
+
   static vector_type substitution(
       const std::uint8_t* query,
       const std::uint8_t* target,
@@ -109,6 +118,15 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs, std::size_t count) {
     return svmax_s16_x(predicate(count), lhs, rhs);
+  }
+
+  static std::int16_t reduce_max(vector_type vector, std::size_t count) {
+    return svmaxv_s16(predicate(count), vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs, std::size_t count) {
+    const svbool_t pg = predicate(count);
+    return svptest_any(pg, svcmpgt_s16(pg, lhs, rhs));
   }
 
   static vector_type substitution(
@@ -164,6 +182,15 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return svmax_s32_x(predicate(count), lhs, rhs);
   }
 
+  static std::int32_t reduce_max(vector_type vector, std::size_t count) {
+    return svmaxv_s32(predicate(count), vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs, std::size_t count) {
+    const svbool_t pg = predicate(count);
+    return svptest_any(pg, svcmpgt_s32(pg, lhs, rhs));
+  }
+
   static vector_type substitution(
       const std::uint32_t* query,
       const std::uint32_t* target,
@@ -215,6 +242,15 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs, std::size_t count) {
     return svmax_s64_x(predicate(count), lhs, rhs);
+  }
+
+  static std::int64_t reduce_max(vector_type vector, std::size_t count) {
+    return svmaxv_s64(predicate(count), vector);
+  }
+
+  static bool any_gt(vector_type lhs, vector_type rhs, std::size_t count) {
+    const svbool_t pg = predicate(count);
+    return svptest_any(pg, svcmpgt_s64(pg, lhs, rhs));
   }
 
   static vector_type substitution(

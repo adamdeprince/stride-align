@@ -1,3 +1,5 @@
+import importlib.util
+
 import pytest
 
 from stride_align import (
@@ -22,6 +24,10 @@ def test_detect_best_backend_returns_enum() -> None:
 def test_available_backends_includes_generic() -> None:
     backends = available_backends()
     assert any(record.name == "generic" and record.available for record in backends)
+
+
+def test_swar_backend_is_not_packaged() -> None:
+    assert importlib.util.find_spec("stride_align._swar") is None
 
 
 def test_backend_is_available_for_detected_backend() -> None:
@@ -141,6 +147,154 @@ def test_width_parameter_accepts_none_and_zero() -> None:
     assert smith_waterman_score("ACCGT", "CCG", width=0) == 6
 
 
+def test_file_compare_cli_reports_normalized_score(tmp_path, capsys) -> None:
+    from stride_align.file_compare import main
+
+    query = tmp_path / "query.txt"
+    target = tmp_path / "target.txt"
+    query.write_text("ACGT", encoding="utf-8")
+    target.write_text("AGT", encoding="utf-8")
+
+    exit_code = main([str(query), str(target), "--mode", "sw", "--simd", "generic"])
+
+    assert exit_code == 0
+    assert 0.0 <= float(capsys.readouterr().out.strip()) <= 1.0
+
+
+def test_file_compare_cli_benchmark_reports_selected_backend(tmp_path, capsys) -> None:
+    from stride_align.file_compare import main
+
+    query = tmp_path / "query.txt"
+    target = tmp_path / "target.txt"
+    query.write_text("ACGT", encoding="utf-8")
+    target.write_text("AGT", encoding="utf-8")
+
+    exit_code = main(
+        [
+            str(query),
+            str(target),
+            "--simd",
+            "generic",
+            "--benchmark",
+            "--benchmark-iterations",
+            "2",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "backend=generic" in captured.out
+    assert "kernel_backend=generic" in captured.out
+    assert "effective_width=8" in captured.out
+    assert "iterations=2" in captured.out
+
+
+def test_file_compare_cli_binary_encoding_accepts_raw_bytes(tmp_path, capsys) -> None:
+    from stride_align.file_compare import main
+
+    query = tmp_path / "query.bin"
+    target = tmp_path / "target.bin"
+    payload = b"\x7fELF\x00\xff\x80A"
+    query.write_bytes(payload)
+    target.write_bytes(payload)
+
+    exit_code = main(
+        [
+            str(query),
+            str(target),
+            "--encoding",
+            "binary",
+            "--token-width",
+            "8",
+            "--simd",
+            "generic",
+        ]
+    )
+
+    assert exit_code == 0
+    assert float(capsys.readouterr().out.strip()) == 1.0
+
+
+def test_file_compare_cli_defaults_to_auto_backend(tmp_path, capsys) -> None:
+    from stride_align.file_compare import main
+
+    query = tmp_path / "query.txt"
+    target = tmp_path / "target.txt"
+    query.write_text("ACGT", encoding="utf-8")
+    target.write_text("AGT", encoding="utf-8")
+
+    exit_code = main([str(query), str(target), "--benchmark"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "backend=auto" in captured.out
+    assert "kernel_backend=auto" in captured.out
+
+
+def test_benchmark_cli_defaults_to_16_and_32_bit_score_channels(capsys) -> None:
+    from stride_align.benchmark import main
+
+    exit_code = main(
+        [
+            "--backends",
+            "generic",
+            "--length",
+            "16",
+            "--iterations",
+            "1",
+            "--warmups",
+            "0",
+            "--format",
+            "csv",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.splitlines()[0].startswith("backend,score_width")
+    assert "\ngeneric,16," in captured.out
+    assert "\ngeneric,32," in captured.out
+
+
+def test_file_compare_cli_validates_score_width_after_decoding(tmp_path, capsys) -> None:
+    from stride_align.file_compare import main
+
+    query = tmp_path / "query.txt"
+    target = tmp_path / "target.txt"
+    query.write_text("A" * 100, encoding="utf-8")
+    target.write_text("A" * 100, encoding="utf-8")
+
+    exit_code = main(
+        [
+            str(query),
+            str(target),
+            "--score-width",
+            "8",
+            "--match-score",
+            "2",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "exceeds signed 8-bit capacity" in captured.err
+
+
+def test_file_compare_cli_rejects_farrar_with_wide_token_channel(tmp_path, capsys) -> None:
+    from stride_align.file_compare import main
+
+    query = tmp_path / "query.txt"
+    target = tmp_path / "target.txt"
+    query.write_text("ACGT", encoding="utf-8")
+    target.write_text("AGT", encoding="utf-8")
+
+    exit_code = main([str(query), str(target), "--farrar", "--token-width", "16"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "Farrar uses an 8-bit token channel" in captured.err
+
+
 @pytest.mark.parametrize("width", [8, 16, 32, 64])
 def test_direct_generic_backend_supports_all_kernel_widths(width: int) -> None:
     generic = pytest.importorskip("stride_align._generic")
@@ -161,7 +315,6 @@ def test_direct_generic_backend_supports_all_kernel_widths(width: int) -> None:
 
 FARRAR_BACKENDS = [
     ("stride_align._generic", None),
-    ("stride_align._swar", None),
     ("stride_align._sse41", BackendKind.X86_SSE41),
     ("stride_align._avx2", BackendKind.X86_AVX2),
     ("stride_align._avx512bwvl", BackendKind.X86_AVX512BWVL),
@@ -489,36 +642,6 @@ def test_direct_lasx_backend_supports_all_kernel_widths(width: int) -> None:
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
     assert nw_result.operations == "MMXM"
-
-
-@pytest.mark.parametrize("width", [8, 16, 32])
-def test_direct_swar_backend_supports_all_kernel_widths(width: int) -> None:
-    swar = pytest.importorskip("stride_align._swar")
-
-    assert swar.smith_waterman_score("ACCGT", "CCG", width=width) == 6
-    assert swar.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
-
-    sw_result = swar.smith_waterman_path("ACCGT", "CCG", width=width)
-    nw_result = swar.needleman_wunsch_path("ACGT", "ACCT", width=width)
-
-    assert sw_result.aligned_query == "CCG"
-    assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
-    assert nw_result.aligned_query == "ACGT"
-    assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
-
-
-def test_direct_swar_backend_uses_generic_for_64_bit_width() -> None:
-    swar = pytest.importorskip("stride_align._swar")
-
-    assert swar.smith_waterman_score("ACCGT", "CCG", width=64) == 6
-
-    result = swar.needleman_wunsch_path("ACGT", "ACCT", width=64)
-
-    assert result.aligned_query == "ACGT"
-    assert result.aligned_target == "ACCT"
-    assert result.operations == "MMXM"
 
 
 @pytest.mark.skipif(

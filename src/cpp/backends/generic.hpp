@@ -1,8 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -279,12 +281,261 @@ AlignmentResult build_alignment_result(
   return result;
 }
 
+template <typename Cell>
+bool identity_fast_path_is_safe(Cell match_score, Cell mismatch_score, Cell gap_score) noexcept {
+  return match_score >= 0 && mismatch_score <= match_score && gap_score <= 0;
+}
+
+template <typename Cell>
+bool local_zero_fast_path_is_safe(Cell match_score, Cell mismatch_score, Cell gap_score) noexcept {
+  return match_score > 0 && mismatch_score <= 0 && gap_score <= 0;
+}
+
+template <typename Token>
+bool tokens_equal(std::span<const Token> query, std::span<const Token> target) {
+  return query.size() == target.size() &&
+      std::equal(query.begin(), query.end(), target.begin());
+}
+
+template <typename Token>
+bool small_symbols_are_disjoint(std::span<const Token> query, std::span<const Token> target) {
+  std::span<const Token> indexed = query;
+  std::span<const Token> probed = target;
+  if (target.size() < query.size()) {
+    indexed = target;
+    probed = query;
+  }
+
+  std::array<bool, 256> seen = {};
+  for (const Token token : indexed) {
+    const auto index = static_cast<std::uint64_t>(token);
+    if (index > 255) {
+      return false;
+    }
+    seen[static_cast<std::uint8_t>(index)] = true;
+  }
+
+  for (const Token token : probed) {
+    const auto index = static_cast<std::uint64_t>(token);
+    if (index > 255) {
+      return false;
+    }
+    if (seen[static_cast<std::uint8_t>(index)]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <typename Token, typename Cell, bool LocalAlignment>
+std::optional<Score> fast_score_only(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_score) {
+  if (query.empty() || target.empty()) {
+    if constexpr (LocalAlignment) {
+      return 0;
+    } else {
+      return static_cast<Score>(query.size() + target.size()) * static_cast<Score>(gap_score);
+    }
+  }
+
+  if ((!LocalAlignment || match_score > 0) &&
+      identity_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
+      tokens_equal(query, target)) {
+    return static_cast<Score>(query.size()) * static_cast<Score>(match_score);
+  }
+
+  if constexpr (LocalAlignment) {
+    if (local_zero_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
+        small_symbols_are_disjoint(query, target)) {
+      return 0;
+    }
+  }
+
+  return std::nullopt;
+}
+
+template <typename Token, typename Cell, bool LocalAlignment>
+std::optional<TracebackResult> fast_traceback(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_score) {
+  if (query.empty() || target.empty()) {
+    TracebackResult result;
+    if constexpr (!LocalAlignment) {
+      result.score =
+          static_cast<Score>(query.size() + target.size()) * static_cast<Score>(gap_score);
+      result.query_end = query.size();
+      result.target_end = target.size();
+      result.operations.reserve(query.size() + target.size());
+      result.operations.append(query.size(), 'D');
+      result.operations.append(target.size(), 'I');
+    }
+    return result;
+  }
+
+  if ((!LocalAlignment || match_score > 0) &&
+      identity_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
+      tokens_equal(query, target)) {
+    TracebackResult result;
+    result.score = static_cast<Score>(query.size()) * static_cast<Score>(match_score);
+    result.query_end = query.size();
+    result.target_end = target.size();
+    result.operations.assign(query.size(), 'M');
+    return result;
+  }
+
+  if constexpr (LocalAlignment) {
+    if (local_zero_fast_path_is_safe(match_score, mismatch_score, gap_score) &&
+        small_symbols_are_disjoint(query, target)) {
+      return TracebackResult{};
+    }
+  }
+
+  return std::nullopt;
+}
+
+template <bool LocalAlignment>
+std::optional<Score> dispatch_fast_score(
+    const PreparedAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.kernel_bits) {
+    case KernelBits::bits8: {
+      const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
+      return fast_score_only<std::uint8_t, std::int8_t, LocalAlignment>(
+          std::span<const std::uint8_t>(query.data(), query.size()),
+          std::span<const std::uint8_t>(target.data(), target.size()),
+          static_cast<std::int8_t>(match_score),
+          static_cast<std::int8_t>(mismatch_score),
+          static_cast<std::int8_t>(gap_score));
+    }
+    case KernelBits::bits16: {
+      const auto& query = std::get<std::vector<std::uint16_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint16_t>>(prepared.target_tokens);
+      return fast_score_only<std::uint16_t, std::int16_t, LocalAlignment>(
+          std::span<const std::uint16_t>(query.data(), query.size()),
+          std::span<const std::uint16_t>(target.data(), target.size()),
+          static_cast<std::int16_t>(match_score),
+          static_cast<std::int16_t>(mismatch_score),
+          static_cast<std::int16_t>(gap_score));
+    }
+    case KernelBits::bits32: {
+      const auto& query = std::get<std::vector<std::uint32_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint32_t>>(prepared.target_tokens);
+      return fast_score_only<std::uint32_t, std::int32_t, LocalAlignment>(
+          std::span<const std::uint32_t>(query.data(), query.size()),
+          std::span<const std::uint32_t>(target.data(), target.size()),
+          static_cast<std::int32_t>(match_score),
+          static_cast<std::int32_t>(mismatch_score),
+          static_cast<std::int32_t>(gap_score));
+    }
+    case KernelBits::bits64: {
+      const auto& query = std::get<std::vector<std::uint64_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint64_t>>(prepared.target_tokens);
+      return fast_score_only<std::uint64_t, std::int64_t, LocalAlignment>(
+          std::span<const std::uint64_t>(query.data(), query.size()),
+          std::span<const std::uint64_t>(target.data(), target.size()),
+          static_cast<std::int64_t>(match_score),
+          static_cast<std::int64_t>(mismatch_score),
+          static_cast<std::int64_t>(gap_score));
+    }
+  }
+
+  return std::nullopt;
+}
+
+template <bool LocalAlignment>
+std::optional<AlignmentResult> dispatch_fast_traceback(
+    const PreparedAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.kernel_bits) {
+    case KernelBits::bits8: {
+      const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
+      const auto trace = fast_traceback<std::uint8_t, std::int8_t, LocalAlignment>(
+          std::span<const std::uint8_t>(query.data(), query.size()),
+          std::span<const std::uint8_t>(target.data(), target.size()),
+          static_cast<std::int8_t>(match_score),
+          static_cast<std::int8_t>(mismatch_score),
+          static_cast<std::int8_t>(gap_score));
+      if (trace.has_value()) {
+        return build_alignment_result<std::uint8_t>(prepared, *trace, query, target);
+      }
+      return std::nullopt;
+    }
+    case KernelBits::bits16: {
+      const auto& query = std::get<std::vector<std::uint16_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint16_t>>(prepared.target_tokens);
+      const auto trace = fast_traceback<std::uint16_t, std::int16_t, LocalAlignment>(
+          std::span<const std::uint16_t>(query.data(), query.size()),
+          std::span<const std::uint16_t>(target.data(), target.size()),
+          static_cast<std::int16_t>(match_score),
+          static_cast<std::int16_t>(mismatch_score),
+          static_cast<std::int16_t>(gap_score));
+      if (trace.has_value()) {
+        return build_alignment_result<std::uint16_t>(prepared, *trace, query, target);
+      }
+      return std::nullopt;
+    }
+    case KernelBits::bits32: {
+      const auto& query = std::get<std::vector<std::uint32_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint32_t>>(prepared.target_tokens);
+      const auto trace = fast_traceback<std::uint32_t, std::int32_t, LocalAlignment>(
+          std::span<const std::uint32_t>(query.data(), query.size()),
+          std::span<const std::uint32_t>(target.data(), target.size()),
+          static_cast<std::int32_t>(match_score),
+          static_cast<std::int32_t>(mismatch_score),
+          static_cast<std::int32_t>(gap_score));
+      if (trace.has_value()) {
+        return build_alignment_result<std::uint32_t>(prepared, *trace, query, target);
+      }
+      return std::nullopt;
+    }
+    case KernelBits::bits64: {
+      const auto& query = std::get<std::vector<std::uint64_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint64_t>>(prepared.target_tokens);
+      const auto trace = fast_traceback<std::uint64_t, std::int64_t, LocalAlignment>(
+          std::span<const std::uint64_t>(query.data(), query.size()),
+          std::span<const std::uint64_t>(target.data(), target.size()),
+          static_cast<std::int64_t>(match_score),
+          static_cast<std::int64_t>(mismatch_score),
+          static_cast<std::int64_t>(gap_score));
+      if (trace.has_value()) {
+        return build_alignment_result<std::uint64_t>(prepared, *trace, query, target);
+      }
+      return std::nullopt;
+    }
+  }
+
+  return std::nullopt;
+}
+
 template <bool LocalAlignment>
 Score dispatch_score(
     const PreparedAlignment& prepared,
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
+  if (const auto fast = dispatch_fast_score<LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      fast.has_value()) {
+    return *fast;
+  }
+
   switch (prepared.kernel_bits) {
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
@@ -338,6 +589,15 @@ AlignmentResult dispatch_traceback(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
+  if (const auto fast = dispatch_fast_traceback<LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      fast.has_value()) {
+    return *fast;
+  }
+
   switch (prepared.kernel_bits) {
     case KernelBits::bits8: {
       const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
