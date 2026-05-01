@@ -2370,15 +2370,13 @@ void update_linear_local_endpoint_from_lanes(
 
 struct LinearMaskedTrace {
   std::size_t segment_count = 0;
-  std::vector<std::uint64_t> diagonal;
-  std::vector<std::uint64_t> up;
-  std::vector<std::uint64_t> left;
+  std::vector<std::uint64_t> low_bits;
+  std::vector<std::uint64_t> high_bits;
 
   LinearMaskedTrace(std::size_t target_size, std::size_t segments)
       : segment_count(segments),
-        diagonal(target_size * segments, 0),
-        up(target_size * segments, 0),
-        left(target_size * segments, 0) {}
+        low_bits(target_size * segments, 0),
+        high_bits(target_size * segments, 0) {}
 
   std::size_t index(std::size_t column, std::size_t segment) const noexcept {
     return (column - 1U) * segment_count + segment;
@@ -2387,20 +2385,17 @@ struct LinearMaskedTrace {
   void set(
       std::size_t column,
       std::size_t segment,
-      std::uint64_t diagonal_mask,
-      std::uint64_t up_mask,
-      std::uint64_t left_mask) noexcept {
+      std::uint64_t low_mask,
+      std::uint64_t high_mask) noexcept {
     const std::size_t mask_index = index(column, segment);
-    diagonal[mask_index] = diagonal_mask;
-    up[mask_index] = up_mask;
-    left[mask_index] = left_mask;
+    low_bits[mask_index] = low_mask;
+    high_bits[mask_index] = high_mask;
   }
 
   void force_up(std::size_t column, std::size_t segment, std::uint64_t mask) noexcept {
     const std::size_t mask_index = index(column, segment);
-    diagonal[mask_index] &= ~mask;
-    left[mask_index] &= ~mask;
-    up[mask_index] |= mask;
+    low_bits[mask_index] &= ~mask;
+    high_bits[mask_index] |= mask;
   }
 
   void force_up_when_not_diagonal(
@@ -2408,9 +2403,10 @@ struct LinearMaskedTrace {
       std::size_t segment,
       std::uint64_t mask) noexcept {
     const std::size_t mask_index = index(column, segment);
-    mask &= ~diagonal[mask_index];
-    left[mask_index] &= ~mask;
-    up[mask_index] |= mask;
+    const std::uint64_t diagonal_mask = low_bits[mask_index] & ~high_bits[mask_index];
+    mask &= ~diagonal_mask;
+    low_bits[mask_index] &= ~mask;
+    high_bits[mask_index] |= mask;
   }
 
   TraceDirection direction(
@@ -2426,16 +2422,12 @@ struct LinearMaskedTrace {
 
     const std::uint64_t mask = std::uint64_t{1} << lane;
     const std::size_t mask_index = index(column, segment);
-    if ((up[mask_index] & mask) != 0) {
-      return TraceDirection::up;
+    const bool low_bit = (low_bits[mask_index] & mask) != 0;
+    const bool high_bit = (high_bits[mask_index] & mask) != 0;
+    if (!high_bit) {
+      return low_bit ? TraceDirection::diagonal : TraceDirection::stop;
     }
-    if ((left[mask_index] & mask) != 0) {
-      return TraceDirection::left;
-    }
-    if ((diagonal[mask_index] & mask) != 0) {
-      return TraceDirection::diagonal;
-    }
-    return TraceDirection::stop;
+    return low_bit ? TraceDirection::left : TraceDirection::up;
   }
 };
 
@@ -2703,8 +2695,9 @@ auto linear_sw_masked_trace_state(
           trace_mask_gt<Ops>(v_cell, zero_vector) & valid_mask;
       const std::uint64_t left_mask = positive_mask & left_better_mask;
       const std::uint64_t up_mask = positive_mask & up_better_mask & ~left_better_mask;
-      const std::uint64_t diagonal_mask = positive_mask & ~(up_mask | left_mask);
-      trace.set(column, segment, diagonal_mask, up_mask, left_mask);
+      const std::uint64_t low_mask = positive_mask & ~up_mask;
+      const std::uint64_t high_mask = up_mask | left_mask;
+      trace.set(column, segment, low_mask, high_mask);
 
       update_linear_local_endpoint_from_vector<Ops, Cell>(
           v_cell,

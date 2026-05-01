@@ -618,29 +618,33 @@ Current performance shape:
   issues.
 
 
-17. AVX2 mask-packed linear Smith-Waterman traceback
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+17. AVX2/AVX512 mask-packed linear Smith-Waterman traceback
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-This pass added a new shared helper in src/cpp/backends/farrar_fixed_kernel.hpp:
+This pass added a shared helper in src/cpp/backends/farrar_fixed_kernel.hpp:
 
   farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(...)
   farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar<SimdOps>(...)
 
-AVX2 routing:
+AVX2/AVX512 routing:
 
-- src/cpp/backends/x86_avx2.hpp routes non-positive linear
-  smith_waterman_path, smith_waterman_path_info, and
-  smith_waterman_linear_cigar through the new masked helper.
+- src/cpp/backends/x86_avx2.hpp and src/cpp/backends/x86_avx512bwvl.hpp route
+  non-positive linear smith_waterman_path, smith_waterman_path_info, and
+  smith_waterman_linear_cigar through the masked helper.
 - Positive linear gaps still fall back to profile_traceback.
-- AVX512BWVL is not routed yet. The previous condition was to port after AVX2
-  wins; AVX2 now wins over the generic scalar trace route, but not over parasail
-  uniformly.
+- AVX2 extracts lane masks with movemask/compression helpers.
+- AVX512BWVL uses native AVX-512 k masks from _mm512_cmp*_mask for 8/16/32/64
+  bit score lanes.
 
 Key implementation difference from the older striped trace experiment:
 
 - The hot loop no longer emits trace one lane at a time.
-- Each segment/column stores three SIMD-derived lane masks: diagonal, up, and
-  left.
+- Each segment/column stores two SIMD-derived direction bitplanes:
+
+    stop = 00, diagonal = 01, up = 10, left = 11
+
+  This replaced the older three-mask representation that stored separate
+  diagonal/up/left masks.
 - Lazy-F correction overwrites trace with a mask operation:
 
     trace.force_up(column, segment, propagated_mask)
@@ -659,27 +663,41 @@ Measured focused result:
 
   /tmp/stride-align-avx2-masked-linear-sw-trace.csv
   /tmp/stride-align-avx2-masked-linear-sw-trace-tie-fixed.csv
+  /tmp/stride-align-avx2-2mask-linear-sw-trace.csv
+  /tmp/stride-align-avx512-2mask-linear-sw-trace.csv
 
-Representative median results from the tie-fixed run:
+The two-bitplane run was about 0.947x the median runtime of the prior
+three-mask run by geometric mean across English/Chinese SW path/path-info/CIGAR
+width-16/32 rows. Most rows improved; English width-32 CIGAR regressed in that
+short run.
+
+The AVX512 two-bitplane route was about 0.512x the AVX2 runtime and 0.729x the
+parasail runtime by geometric mean on the same focused rows.
+
+Representative median results from the two-bitplane run:
 
 - English 1024x1024, width 32:
-  - sw-path: AVX2 0.00125s vs generic 0.00205s vs parasail 0.00118s.
-  - sw-path-info: AVX2 0.00118s vs generic 0.00207s vs parasail 0.00119s.
-  - sw-cigar: AVX2 0.00119s vs generic 0.00178s vs parasail 0.00114s.
+  - sw-path: AVX2 0.00112s vs generic 0.00210s vs parasail 0.00105s.
+  - sw-path-info: AVX2 0.00116s vs generic 0.00193s vs parasail 0.00120s.
+  - sw-cigar: AVX2 0.00133s vs generic 0.00175s vs parasail 0.00107s.
+  - AVX512 follow-up: sw-path 0.00071s, sw-path-info 0.00077s,
+    sw-cigar 0.00070s.
 
 - Chinese 1024x1024, width 32:
-  - sw-path: AVX2 0.00121s vs generic 0.00191s vs parasail 0.00084s.
-  - sw-path-info: AVX2 0.00120s vs generic 0.00194s vs parasail 0.00087s.
-  - sw-cigar: AVX2 0.00118s vs generic 0.00164s vs parasail 0.00084s.
+  - sw-path: AVX2 0.00105s vs generic 0.00188s vs parasail 0.00091s.
+  - sw-path-info: AVX2 0.00114s vs generic 0.00196s vs parasail 0.00088s.
+  - sw-cigar: AVX2 0.00113s vs generic 0.00154s vs parasail 0.00075s.
+  - AVX512 follow-up: sw-path 0.00088s, sw-path-info 0.00082s,
+    sw-cigar 0.00080s.
 
 Current decision:
 
-- Keep the AVX2 masked route active for linear Smith-Waterman traceback.
+- Keep the AVX2 and AVX512BWVL masked routes active for linear
+  Smith-Waterman traceback.
 - Do not remove profile_traceback; it remains the fallback for positive gaps,
   other architectures, and as a simple correctness reference.
-- Next x86 target should either port this structure to AVX512BWVL or reduce the
-  remaining CIGAR/path overhead by improving endpoint selection and traceback
-  decode locality.
+- Next x86 target should reduce the remaining CIGAR/path overhead by improving
+  endpoint selection and traceback decode locality.
 
 
 Expected Loongson result after port

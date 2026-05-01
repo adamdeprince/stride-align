@@ -121,6 +121,14 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return _mm512_cmpgt_epi8_mask(lhs, rhs);
   }
 
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpgt_epi8_mask(lhs, rhs));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpeq_epi8_mask(lhs, rhs));
+  }
+
   static mask_type empty_mask() {
     return 0;
   }
@@ -218,6 +226,14 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm512_cmpgt_epi16_mask(lhs, rhs);
   }
 
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpgt_epi16_mask(lhs, rhs));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpeq_epi16_mask(lhs, rhs));
+  }
+
   static mask_type empty_mask() {
     return 0;
   }
@@ -304,6 +320,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static mask_type greater_mask(vector_type lhs, vector_type rhs) {
     return _mm512_cmpgt_epi32_mask(lhs, rhs);
+  }
+
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpgt_epi32_mask(lhs, rhs));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpeq_epi32_mask(lhs, rhs));
   }
 
   static mask_type empty_mask() {
@@ -394,6 +418,14 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm512_cmpgt_epi64_mask(lhs, rhs);
   }
 
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpgt_epi64_mask(lhs, rhs));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint64_t>(_mm512_cmpeq_epi64_mask(lhs, rhs));
+  }
+
   static mask_type empty_mask() {
     return 0;
   }
@@ -470,6 +502,18 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto output_prepared =
+          prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto path = farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
+    }
     return profile_traceback::linear_path<true>(
         query,
         target,
@@ -486,6 +530,15 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     return profile_traceback::linear_path_info<true>(
         query,
         target,
@@ -502,6 +555,15 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     return profile_traceback::linear_cigar<true>(
         query,
         target,
