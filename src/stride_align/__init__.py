@@ -348,6 +348,238 @@ def _dispatch(
     )
 
 
+_SCORE_VARIANT_ALIASES = {
+    "smith_waterman": "sw-score",
+    "smith-waterman": "sw-score",
+    "sw": "sw-score",
+    "local": "sw-score",
+    "sw-score": "sw-score",
+    "needleman_wunsch": "nw-score",
+    "needleman-wunsch": "nw-score",
+    "nw": "nw-score",
+    "global": "nw-score",
+    "nw-score": "nw-score",
+    "smith_waterman_farrar": "sw-farrar-score",
+    "smith-waterman-farrar": "sw-farrar-score",
+    "farrar": "sw-farrar-score",
+    "sw-farrar-score": "sw-farrar-score",
+}
+
+_SCORE_MANY_FUNCTIONS = {
+    "sw-score": ("smith_waterman_scores", "smith_waterman_score"),
+    "nw-score": ("needleman_wunsch_scores", "needleman_wunsch_score"),
+    "sw-farrar-score": ("smith_waterman_farrar_scores", "smith_waterman_farrar_score"),
+}
+
+
+def _canonical_score_variant(variant: str) -> str:
+    canonical = _SCORE_VARIANT_ALIASES.get(variant)
+    if canonical is None:
+        choices = ", ".join(sorted(_SCORE_VARIANT_ALIASES))
+        raise ValueError(f"unknown score variant {variant!r}; choices: {choices}")
+    return canonical
+
+
+def _materialize_targets(targets: object) -> tuple[object, ...]:
+    if isinstance(targets, (str, bytes)):
+        raise TypeError("targets must be an iterable of target sequences, not a single str/bytes")
+    try:
+        return tuple(targets)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise TypeError("targets must be an iterable of target sequences") from exc
+
+
+def _representative_target(targets: tuple[object, ...]) -> object:
+    def target_length(target: object) -> int:
+        length = _length(target)
+        return -1 if length is None else length
+
+    return max(targets, key=target_length)
+
+
+def _dispatch_many(
+    variant: str,
+    query: object,
+    targets: object,
+    *,
+    match_score: int,
+    mismatch_score: int,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+    width: int | None,
+) -> list[int]:
+    target_tuple = _materialize_targets(targets)
+    if not target_tuple:
+        return []
+
+    canonical_variant = _canonical_score_variant(variant)
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
+    backend = _select_backend(
+        variant=canonical_variant,
+        query=query,
+        target=_representative_target(target_tuple),
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_open_score=gap_open,
+        gap_extend_score=gap_extend,
+        width=width,
+    )
+    many_name, scalar_name = _SCORE_MANY_FUNCTIONS[canonical_variant]
+    many_function = getattr(backend, many_name, None)
+    if many_function is not None:
+        return list(
+            many_function(
+                query,
+                target_tuple,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+                width=width,
+            )
+        )
+
+    scalar_function = getattr(backend, scalar_name)
+    return [
+        int(
+            scalar_function(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+                width=width,
+            )
+        )
+        for target in target_tuple
+    ]
+
+
+class Scores:
+    """Score facade for comparing one query against many targets."""
+
+    __slots__ = (
+        "query",
+        "variant",
+        "match_score",
+        "mismatch_score",
+        "gap_score",
+        "gap_open_score",
+        "gap_extend_score",
+        "width",
+    )
+
+    def __init__(
+        self,
+        query: object,
+        *,
+        variant: str = "smith_waterman",
+        match_score: int = 2,
+        mismatch_score: int = -1,
+        gap_score: int = -1,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+        width: int | None = None,
+    ) -> None:
+        self.query = query
+        self.variant = _canonical_score_variant(variant)
+        self.match_score = int(match_score)
+        self.mismatch_score = int(mismatch_score)
+        self.gap_score = int(gap_score)
+        self.gap_open_score = None if gap_open_score is None else int(gap_open_score)
+        self.gap_extend_score = None if gap_extend_score is None else int(gap_extend_score)
+        self.width = None if width is None else _forced_width(width)
+
+    def compare(self, targets: object) -> list[int]:
+        return _dispatch_many(
+            self.variant,
+            self.query,
+            targets,
+            match_score=self.match_score,
+            mismatch_score=self.mismatch_score,
+            gap_score=self.gap_score,
+            gap_open_score=self.gap_open_score,
+            gap_extend_score=self.gap_extend_score,
+            width=self.width,
+        )
+
+
+def smith_waterman_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[int]:
+    return _dispatch_many(
+        "sw-score",
+        query,
+        targets,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def needleman_wunsch_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[int]:
+    return _dispatch_many(
+        "nw-score",
+        query,
+        targets,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def smith_waterman_farrar_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[int]:
+    return _dispatch_many(
+        "sw-farrar-score",
+        query,
+        targets,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
 def smith_waterman_score(
     query: object,
     target: object,
@@ -678,6 +910,7 @@ __all__ = [
     "AlignmentResult",
     "BackendKind",
     "BackendRecord",
+    "Scores",
     "available_backends",
     "backend_is_available",
     "detect_best_backend",
@@ -685,13 +918,16 @@ __all__ = [
     "needleman_wunsch_path",
     "needleman_wunsch_path_info",
     "needleman_wunsch_score",
+    "needleman_wunsch_scores",
     "needleman_wunsch_trace_cigar",
     "needleman_wunsch_trade_cigar",
     "smith_waterman_cigar",
     "smith_waterman_farrar_score",
+    "smith_waterman_farrar_scores",
     "smith_waterman_path",
     "smith_waterman_path_info",
     "smith_waterman_score",
+    "smith_waterman_scores",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
 ]

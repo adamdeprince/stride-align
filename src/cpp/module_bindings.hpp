@@ -2,8 +2,10 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <sstream>
+#include <vector>
 
 #include "affine.hpp"
 #include "stride_align/alignment.hpp"
@@ -37,6 +39,26 @@ inline GapScores resolve_gap_scores(
       "prepared Farrar scoring currently requires linear gaps; "
       "gap_open_score and gap_extend_score must match");
   throw nb::python_error();
+}
+
+template <typename Function>
+std::vector<Score> call_score_many(nb::handle targets, Function&& function) {
+  PyObject* fast_targets =
+      PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
+  if (fast_targets == nullptr) {
+    throw nb::python_error();
+  }
+
+  nb::object owner = nb::steal<nb::object>(fast_targets);
+  const auto size = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
+  PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+
+  std::vector<Score> scores;
+  scores.reserve(size);
+  for (std::size_t index = 0; index < size; ++index) {
+    scores.push_back(function(nb::handle(items[index])));
+  }
+  return scores;
 }
 
 inline void bind_alignment_result_type(nb::module_& m) {
@@ -446,6 +468,25 @@ std::string call_smith_waterman_cigar(
     Score gap_extend_score,
     unsigned int width) {
   if (gap_open_score != gap_extend_score) {
+    if constexpr (requires {
+                    Implementation::smith_waterman_affine_cigar(
+                        query,
+                        target,
+                        match_score,
+                        mismatch_score,
+                        gap_open_score,
+                        gap_extend_score,
+                        width);
+                  }) {
+      return Implementation::smith_waterman_affine_cigar(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score,
+          width);
+    }
     return call_smith_waterman_affine_path_info<Implementation>(
         query,
         target,
@@ -455,6 +496,25 @@ std::string call_smith_waterman_cigar(
         gap_extend_score,
         width)
         .cigar;
+  }
+  if constexpr (requires {
+                  Implementation::smith_waterman_linear_cigar(
+                      query,
+                      target,
+                      match_score,
+                      mismatch_score,
+                      gap_open_score,
+                      width);
+                }) {
+    if (gap_open_score <= 0) {
+      return Implementation::smith_waterman_linear_cigar(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          width);
+    }
   }
   return call_smith_waterman_path_info<Implementation>(
       query,
@@ -476,6 +536,25 @@ std::string call_needleman_wunsch_cigar(
     Score gap_extend_score,
     unsigned int width) {
   if (gap_open_score != gap_extend_score) {
+    if constexpr (requires {
+                    Implementation::needleman_wunsch_affine_cigar(
+                        query,
+                        target,
+                        match_score,
+                        mismatch_score,
+                        gap_open_score,
+                        gap_extend_score,
+                        width);
+                  }) {
+      return Implementation::needleman_wunsch_affine_cigar(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score,
+          width);
+    }
     return call_needleman_wunsch_affine_path_info<Implementation>(
         query,
         target,
@@ -485,6 +564,25 @@ std::string call_needleman_wunsch_cigar(
         gap_extend_score,
         width)
         .cigar;
+  }
+  if constexpr (requires {
+                  Implementation::needleman_wunsch_linear_cigar(
+                      query,
+                      target,
+                      match_score,
+                      mismatch_score,
+                      gap_open_score,
+                      width);
+                }) {
+    if (gap_open_score <= 0) {
+      return Implementation::needleman_wunsch_linear_cigar(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          width);
+    }
   }
   return call_needleman_wunsch_path_info<Implementation>(
       query,
@@ -535,6 +633,91 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       },
       nb::arg("query"),
       nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "smith_waterman_scores",
+      [](nb::handle query,
+         nb::handle targets,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        if (!gaps.is_linear()) {
+          if constexpr (requires {
+                          Implementation::smith_waterman_affine_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              gaps.extend,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0 && gaps.extend <= 0) {
+              return Implementation::smith_waterman_affine_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  gaps.extend,
+                  forced_width);
+            }
+          }
+        } else {
+          if constexpr (requires {
+                          Implementation::smith_waterman_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0) {
+              return Implementation::smith_waterman_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  forced_width);
+            }
+          }
+        }
+        return call_score_many(targets, [&](nb::handle target) {
+          if (!gaps.is_linear()) {
+            return call_smith_waterman_affine_score<Implementation>(
+                query,
+                target,
+                match_score,
+                mismatch_score,
+                gaps.open,
+                gaps.extend,
+                forced_width);
+          }
+          return Implementation::smith_waterman_score(
+              query,
+              target,
+              match_score,
+              mismatch_score,
+              gaps.open,
+              forced_width);
+        });
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
       nb::kw_only(),
       nb::arg("match_score") = 2,
       nb::arg("mismatch_score") = -1,
@@ -756,6 +939,91 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("gap_extend_score") = nb::none(),
       nb::arg("width") = nb::none());
 
+  m.def(
+      "smith_waterman_farrar_scores",
+      [](nb::handle query,
+         nb::handle targets,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        if (!gaps.is_linear()) {
+          if constexpr (requires {
+                          Implementation::smith_waterman_affine_farrar_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              gaps.extend,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0 && gaps.extend <= 0) {
+              return Implementation::smith_waterman_affine_farrar_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  gaps.extend,
+                  forced_width);
+            }
+          }
+        } else {
+          if constexpr (requires {
+                          Implementation::smith_waterman_farrar_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0) {
+              return Implementation::smith_waterman_farrar_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  forced_width);
+            }
+          }
+        }
+        return call_score_many(targets, [&](nb::handle target) {
+          if (!gaps.is_linear()) {
+            return call_smith_waterman_affine_farrar_score<Implementation>(
+                query,
+                target,
+                match_score,
+                mismatch_score,
+                gaps.open,
+                gaps.extend,
+                forced_width);
+          }
+          return Implementation::smith_waterman_farrar_score(
+              query,
+              target,
+              match_score,
+              mismatch_score,
+              gaps.open,
+              forced_width);
+        });
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
   if constexpr (requires { typename Implementation::PreparedSmithWatermanFarrarScore; }) {
     using Prepared = typename Implementation::PreparedSmithWatermanFarrarScore;
     nb::class_<Prepared>(m, "_PreparedSmithWatermanFarrarScore");
@@ -953,6 +1221,91 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       },
       nb::arg("query"),
       nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "needleman_wunsch_scores",
+      [](nb::handle query,
+         nb::handle targets,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        if (!gaps.is_linear()) {
+          if constexpr (requires {
+                          Implementation::needleman_wunsch_affine_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              gaps.extend,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0 && gaps.extend <= 0) {
+              return Implementation::needleman_wunsch_affine_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  gaps.extend,
+                  forced_width);
+            }
+          }
+        } else {
+          if constexpr (requires {
+                          Implementation::needleman_wunsch_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0) {
+              return Implementation::needleman_wunsch_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  forced_width);
+            }
+          }
+        }
+        return call_score_many(targets, [&](nb::handle target) {
+          if (!gaps.is_linear()) {
+            return call_needleman_wunsch_affine_score<Implementation>(
+                query,
+                target,
+                match_score,
+                mismatch_score,
+                gaps.open,
+                gaps.extend,
+                forced_width);
+          }
+          return Implementation::needleman_wunsch_score(
+              query,
+              target,
+              match_score,
+              mismatch_score,
+              gaps.open,
+              forced_width);
+        });
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
       nb::kw_only(),
       nb::arg("match_score") = 2,
       nb::arg("mismatch_score") = -1,

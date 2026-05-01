@@ -27,6 +27,14 @@ struct PreparedFarrarAlignment {
   std::vector<std::uint8_t> target_tokens;
 };
 
+struct PreparedFarrarBatchAlignment {
+  KernelBits score_bits = KernelBits::bits64;
+  std::uint64_t symbol_count = 0;
+  std::uint64_t score_bound = 0;
+  std::vector<std::uint8_t> query_tokens;
+  std::vector<std::vector<std::uint8_t>> target_tokens;
+};
+
 namespace farrar_detail {
 
 inline KernelBits select_score_bits(std::uint64_t score_bound) {
@@ -87,6 +95,28 @@ inline std::uint64_t byte_symbol_count(
   return count;
 }
 
+inline std::uint64_t byte_symbol_count(
+    const std::vector<std::uint8_t>& query,
+    const std::vector<std::vector<std::uint8_t>>& targets) {
+  bool seen[256] = {};
+  std::uint64_t count = 0;
+  const auto mark = [&](std::uint8_t token) {
+    if (!seen[token]) {
+      seen[token] = true;
+      ++count;
+    }
+  };
+  for (const auto token : query) {
+    mark(token);
+  }
+  for (const auto& target : targets) {
+    for (const auto token : target) {
+      mark(token);
+    }
+  }
+  return count;
+}
+
 inline std::vector<std::uint8_t> compact_unicode_tokens(
     PyObject* unicode_object,
     std::unordered_map<Py_UCS4, std::uint8_t>& token_map) {
@@ -133,6 +163,10 @@ inline std::vector<nb::object> sequence_items(nb::handle input, std::string_view
   return output;
 }
 
+inline std::vector<nb::object> sequence_items(PyObject* input, std::string_view argument_name) {
+  return sequence_items(nb::handle(input), argument_name);
+}
+
 inline std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> compact_object_tokens(
     const std::vector<nb::object>& query_items,
     const std::vector<nb::object>& target_items,
@@ -173,6 +207,40 @@ inline std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> compact_o
   auto query_tokens = encode(query_items);
   auto target_tokens = encode(target_items);
   return {std::move(query_tokens), std::move(target_tokens)};
+}
+
+inline std::vector<std::uint8_t> compact_object_tokens(
+    const std::vector<nb::object>& items,
+    nb::dict& token_map,
+    std::uint64_t& symbol_count) {
+  std::vector<std::uint8_t> encoded;
+  encoded.reserve(items.size());
+
+  for (const auto& item : items) {
+    PyObject* existing = PyDict_GetItemWithError(token_map.ptr(), item.ptr());
+    if (existing != nullptr) {
+      const auto token = PyLong_AsUnsignedLong(existing);
+      if (token == static_cast<unsigned long>(-1) && PyErr_Occurred()) {
+        throw nb::python_error();
+      }
+      encoded.push_back(static_cast<std::uint8_t>(token));
+      continue;
+    }
+
+    if (PyErr_Occurred()) {
+      throw nb::python_error();
+    }
+
+    const auto next_token = next_compact_token(static_cast<std::size_t>(symbol_count));
+    nb::int_ token_value(next_token);
+    if (PyDict_SetItem(token_map.ptr(), item.ptr(), token_value.ptr()) != 0) {
+      throw nb::python_error();
+    }
+    ++symbol_count;
+    encoded.push_back(next_token);
+  }
+
+  return encoded;
 }
 
 }  // namespace farrar_detail
@@ -238,6 +306,102 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
   return prepare_farrar_alignment(
       query,
       target,
+      match_score,
+      mismatch_score,
+      gap_score,
+      gap_score,
+      width);
+}
+
+inline PreparedFarrarBatchAlignment prepare_farrar_batch_alignment(
+    nb::handle query,
+    nb::handle targets,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PyObject* fast_targets =
+      PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
+  if (fast_targets == nullptr) {
+    throw nb::python_error();
+  }
+
+  nb::object owner = nb::steal<nb::object>(fast_targets);
+  const auto target_count = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
+  PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+
+  const bool query_is_bytes = PyBytes_Check(query.ptr()) != 0;
+  const bool query_is_unicode = PyUnicode_Check(query.ptr()) != 0;
+
+  bool all_targets_bytes = target_count > 0;
+  bool all_targets_unicode = target_count > 0;
+  for (std::size_t index = 0; index < target_count; ++index) {
+    all_targets_bytes = all_targets_bytes && PyBytes_Check(items[index]) != 0;
+    all_targets_unicode = all_targets_unicode && PyUnicode_Check(items[index]) != 0;
+  }
+
+  if ((query_is_bytes && all_targets_unicode) || (query_is_unicode && all_targets_bytes)) {
+    detail::throw_type_error("bytes and str inputs cannot be aligned directly against each other");
+  }
+
+  PreparedFarrarBatchAlignment prepared;
+  prepared.target_tokens.reserve(target_count);
+
+  if (query_is_bytes && all_targets_bytes) {
+    prepared.query_tokens = farrar_detail::copy_bytes_tokens_8(query.ptr());
+    for (std::size_t index = 0; index < target_count; ++index) {
+      prepared.target_tokens.push_back(farrar_detail::copy_bytes_tokens_8(items[index]));
+    }
+    prepared.symbol_count =
+        farrar_detail::byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
+  } else if (query_is_unicode && all_targets_unicode) {
+    std::unordered_map<Py_UCS4, std::uint8_t> token_map;
+    prepared.query_tokens = farrar_detail::compact_unicode_tokens(query.ptr(), token_map);
+    for (std::size_t index = 0; index < target_count; ++index) {
+      prepared.target_tokens.push_back(
+          farrar_detail::compact_unicode_tokens(items[index], token_map));
+    }
+    prepared.symbol_count = token_map.size();
+  } else {
+    nb::dict token_map;
+    auto query_items = farrar_detail::sequence_items(query, "query");
+    prepared.query_tokens =
+        farrar_detail::compact_object_tokens(query_items, token_map, prepared.symbol_count);
+    for (std::size_t index = 0; index < target_count; ++index) {
+      auto target_items = farrar_detail::sequence_items(items[index], "target");
+      prepared.target_tokens.push_back(
+          farrar_detail::compact_object_tokens(target_items, token_map, prepared.symbol_count));
+    }
+  }
+
+  std::size_t max_target_size = 0;
+  for (const auto& target : prepared.target_tokens) {
+    max_target_size = std::max(max_target_size, target.size());
+  }
+  prepared.score_bound = detail::compute_score_bound(
+      prepared.query_tokens.size(),
+      max_target_size,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score);
+  prepared.score_bits = detail::apply_forced_kernel_bits(
+      farrar_detail::select_score_bits(prepared.score_bound),
+      width);
+  return prepared;
+}
+
+inline PreparedFarrarBatchAlignment prepare_farrar_batch_alignment(
+    nb::handle query,
+    nb::handle targets,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    unsigned int width) {
+  return prepare_farrar_batch_alignment(
+      query,
+      targets,
       match_score,
       mismatch_score,
       gap_score,

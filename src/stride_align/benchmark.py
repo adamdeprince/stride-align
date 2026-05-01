@@ -16,7 +16,16 @@ from typing import Any
 
 from . import available_backends
 
-_PARASAIL_SAFE_ALPHABET = "".join(chr(codepoint) for codepoint in range(1, 256))
+# Keep translated benchmark symbols away from parasail's biologically meaningful
+# ASCII letters and special matrix characters; otherwise arbitrary text remapping
+# can change scores for non-biological corpora.
+_PARASAIL_SAFE_ALPHABET = bytes(
+    codepoint
+    for codepoint in range(1, 256)
+    if codepoint not in {ord("*"), ord("\\")}
+    and not (ord("A") <= codepoint <= ord("Z"))
+    and not (ord("a") <= codepoint <= ord("z"))
+)
 
 _ENGLISH_CORPUS = (
     "The quick brown fox watches the city wake under a low grey sky. "
@@ -89,11 +98,22 @@ _PATH_INFO_VARIANTS = (
     "sw-path-info",
     "nw-path-info",
 )
+_CIGAR_VARIANTS = (
+    "sw-cigar",
+    "nw-cigar",
+    "sw-trade-cigar",
+    "nw-trade-cigar",
+)
 _FULL_PATH_VARIANTS = (
     "sw-path",
     "nw-path",
 )
-_ALL_VARIANTS = (*_SCORE_ONLY_VARIANTS, *_PATH_INFO_VARIANTS, *_FULL_PATH_VARIANTS)
+_ALL_VARIANTS = (
+    *_SCORE_ONLY_VARIANTS,
+    *_PATH_INFO_VARIANTS,
+    *_CIGAR_VARIANTS,
+    *_FULL_PATH_VARIANTS,
+)
 _DEFAULT_VARIANTS = (*_SCORE_ONLY_VARIANTS, *_PATH_INFO_VARIANTS)
 
 _VARIANT_ALIASES = {
@@ -103,6 +123,10 @@ _VARIANT_ALIASES = {
     "needleman-wunsch-score": "nw-score",
     "smith-waterman-path-info": "sw-path-info",
     "needleman-wunsch-path-info": "nw-path-info",
+    "smith-waterman-cigar": "sw-cigar",
+    "needleman-wunsch-cigar": "nw-cigar",
+    "smith-waterman-trade-cigar": "sw-trade-cigar",
+    "needleman-wunsch-trade-cigar": "nw-trade-cigar",
     "smith-waterman-path": "sw-path",
     "needleman-wunsch-path": "nw-path",
 }
@@ -116,6 +140,9 @@ _VARIANT_GROUPS = {
     "paths": _PATH_INFO_VARIANTS,
     "path-info": _PATH_INFO_VARIANTS,
     "path-generators": _PATH_INFO_VARIANTS,
+    "cigar": _CIGAR_VARIANTS,
+    "cigars": _CIGAR_VARIANTS,
+    "cigar-generators": _CIGAR_VARIANTS,
     "full-path": _FULL_PATH_VARIANTS,
     "full-paths": _FULL_PATH_VARIANTS,
 }
@@ -148,6 +175,20 @@ _PASS_ALIASES = {
     "bytes": "random-bytes",
 }
 
+_ALL_SHAPES = ("1:1", "1:many")
+_DEFAULT_SHAPES = ("1:1", "1:many")
+_SHAPE_ALIASES = {
+    "one-to-one": "1:1",
+    "one-to-1": "1:1",
+    "single": "1:1",
+    "pair": "1:1",
+    "one-to-many": "1:many",
+    "one-to-n": "1:many",
+    "batch": "1:many",
+    "many": "1:many",
+    "all": "all",
+}
+
 
 class BenchmarkError(Exception):
     """User-facing benchmark configuration error."""
@@ -164,6 +205,7 @@ class ResolvedBackend:
 class BenchmarkResult:
     pass_name: str
     case_name: str
+    shape: str
     backend: str
     variant: str
     generator: str
@@ -182,8 +224,9 @@ class BenchmarkResult:
 @dataclass(frozen=True, slots=True)
 class BenchmarkPass:
     name: str
+    shape: str
     query: object
-    target: object
+    targets: tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,8 +274,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=list(_DEFAULT_VARIANTS),
         help=(
             "Workloads to benchmark. Choices: sw-farrar-score, sw-score, nw-score, "
-            "sw-path-info, nw-path-info, sw-path, nw-path, or groups score-only, "
-            "path, full-path, all. Defaults to score-only plus path-info generators."
+            "sw-path-info, nw-path-info, sw-cigar, nw-cigar, sw-trade-cigar, "
+            "nw-trade-cigar, sw-path, nw-path, or groups score-only, path, "
+            "cigar, full-path, all. Defaults to score-only plus path-info generators."
         ),
     )
     parser.add_argument(
@@ -262,6 +306,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "Benchmark passes to run. Choices: english, chinese, random-bytes, "
             "english-short, all-text, all. Defaults to english-short english chinese."
         ),
+    )
+    parser.add_argument(
+        "--shapes",
+        nargs="+",
+        default=list(_DEFAULT_SHAPES),
+        help=(
+            "Comparison shapes to benchmark. Choices: 1:1, 1:many, all. "
+            "1:many uses one query against --many-count targets and currently applies "
+            "to score-only variants."
+        ),
+    )
+    parser.add_argument(
+        "--many-count",
+        type=int,
+        default=8,
+        help="Number of targets in each 1:many score benchmark. Defaults to 8.",
     )
     parser.add_argument(
         "--alphabet-size",
@@ -399,6 +459,24 @@ def _selected_passes(passes: Sequence[str]) -> list[str]:
     return selected
 
 
+def _selected_shapes(shapes: Sequence[str]) -> list[str]:
+    selected: list[str] = []
+    for shape in shapes:
+        canonical_shape = _SHAPE_ALIASES.get(shape, shape)
+        if canonical_shape == "all":
+            candidates = _ALL_SHAPES
+        elif canonical_shape in _ALL_SHAPES:
+            candidates = (canonical_shape,)
+        else:
+            choices = ", ".join((*_ALL_SHAPES, "all"))
+            raise BenchmarkError(f"unknown benchmark shape {shape!r}; choices: {choices}")
+
+        for candidate in candidates:
+            if candidate not in selected:
+                selected.append(candidate)
+    return selected
+
+
 def _resolve_backends(names: Sequence[str] | None) -> list[ResolvedBackend]:
     selected = _selected_backend_names(names)
     available = set(_available_backend_names())
@@ -438,7 +516,7 @@ class _ParasailBenchmarkBackend:
         self._parasail = parasail_module
         self._prepared_cache: dict[
             tuple[tuple[object, ...], tuple[object, ...], int, int],
-            tuple[str, str, Any],
+            tuple[bytes, bytes, Any],
         ] = {}
 
     def smith_waterman_farrar_score(
@@ -465,6 +543,32 @@ class _ParasailBenchmarkBackend:
             gap_extend_score,
         )
 
+    def smith_waterman_farrar_scores(
+        self,
+        query: bytes,
+        targets: Sequence[object],
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ) -> list[int]:
+        return [
+            self.smith_waterman_farrar_score(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                width=width,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+            )
+            for target in targets
+        ]
+
     def smith_waterman_score(
         self,
         query: bytes,
@@ -489,6 +593,32 @@ class _ParasailBenchmarkBackend:
             gap_extend_score,
         )
 
+    def smith_waterman_scores(
+        self,
+        query: bytes,
+        targets: Sequence[object],
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ) -> list[int]:
+        return [
+            self.smith_waterman_score(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                width=width,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+            )
+            for target in targets
+        ]
+
     def needleman_wunsch_score(
         self,
         query: bytes,
@@ -512,6 +642,32 @@ class _ParasailBenchmarkBackend:
             gap_open_score,
             gap_extend_score,
         )
+
+    def needleman_wunsch_scores(
+        self,
+        query: bytes,
+        targets: Sequence[object],
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ) -> list[int]:
+        return [
+            self.needleman_wunsch_score(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                width=width,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+            )
+            for target in targets
+        ]
 
     def smith_waterman_path_info(
         self,
@@ -599,6 +755,102 @@ class _ParasailBenchmarkBackend:
     ):
         return self._run(
             "nw-path",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def smith_waterman_cigar(
+        self,
+        query: bytes,
+        target: bytes,
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._run(
+            "sw-cigar",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def needleman_wunsch_cigar(
+        self,
+        query: bytes,
+        target: bytes,
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._run(
+            "nw-cigar",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def smith_waterman_trade_cigar(
+        self,
+        query: bytes,
+        target: bytes,
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._run(
+            "sw-trade-cigar",
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def needleman_wunsch_trade_cigar(
+        self,
+        query: bytes,
+        target: bytes,
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._run(
+            "nw-trade-cigar",
             query,
             target,
             match_score,
@@ -775,7 +1027,7 @@ class _ParasailBenchmarkBackend:
         target: object,
         match_score: int,
         mismatch_score: int,
-    ) -> tuple[str, str, Any]:
+    ) -> tuple[bytes, bytes, Any]:
         query_symbols = self._symbols(query)
         target_symbols = self._symbols(target)
         key = (query_symbols, target_symbols, match_score, mismatch_score)
@@ -784,7 +1036,7 @@ class _ParasailBenchmarkBackend:
             return cached
 
         symbols: list[object] = []
-        translation: dict[object, str] = {}
+        translation: dict[object, bytes] = {}
         for symbol in (*query_symbols, *target_symbols):
             if symbol in translation:
                 continue
@@ -794,7 +1046,7 @@ class _ParasailBenchmarkBackend:
                     f"safe adapter alphabet: {len(symbols) + 1} > "
                     f"{len(_PARASAIL_SAFE_ALPHABET)}"
                 )
-            translation[symbol] = _PARASAIL_SAFE_ALPHABET[len(symbols)]
+            translation[symbol] = _PARASAIL_SAFE_ALPHABET[len(symbols) : len(symbols) + 1]
             symbols.append(symbol)
 
         if len(symbols) > len(_PARASAIL_SAFE_ALPHABET):
@@ -803,8 +1055,8 @@ class _ParasailBenchmarkBackend:
                 f"safe adapter alphabet: {len(symbols)} > {len(_PARASAIL_SAFE_ALPHABET)}"
             )
 
-        query_text = "".join(translation[symbol] for symbol in query_symbols)
-        target_text = "".join(translation[symbol] for symbol in target_symbols)
+        query_text = b"".join(translation[symbol] for symbol in query_symbols)
+        target_text = b"".join(translation[symbol] for symbol in target_symbols)
         alphabet = _PARASAIL_SAFE_ALPHABET[: len(symbols)]
         matrix = self._parasail.matrix_create(alphabet, match_score, mismatch_score)
         prepared = (query_text, target_text, matrix)
@@ -818,9 +1070,9 @@ class _ParasailBenchmarkBackend:
             return (f"sw_scan_{width}", f"sw_striped_{width}")
         if variant == "nw-score":
             return (f"nw_scan_{width}", f"nw_striped_{width}")
-        if variant in {"sw-path-info", "sw-path"}:
+        if variant in {"sw-path-info", "sw-path", "sw-cigar", "sw-trade-cigar"}:
             return (f"sw_trace_striped_{width}", f"sw_trace_scan_{width}")
-        if variant in {"nw-path-info", "nw-path"}:
+        if variant in {"nw-path-info", "nw-path", "nw-cigar", "nw-trade-cigar"}:
             return (f"nw_trace_striped_{width}", f"nw_trace_scan_{width}")
         raise AssertionError(f"unhandled parasail benchmark variant {variant!r}")
 
@@ -888,8 +1140,12 @@ class _ParasailBenchmarkBackend:
             gap_extend_penalty,
             matrix,
         )
-        if variant.endswith("path") or variant.endswith("path-info"):
-            getattr(result, "cigar", None)
+        if (
+            variant.endswith("path")
+            or variant.endswith("path-info")
+            or variant.endswith("cigar")
+        ):
+            _result_cigar(result)
         return result
 
 
@@ -905,6 +1161,14 @@ def _function_for_variant(module: Any, variant: str):
             return module.smith_waterman_path_info
         case "nw-path-info":
             return module.needleman_wunsch_path_info
+        case "sw-cigar":
+            return module.smith_waterman_cigar
+        case "nw-cigar":
+            return module.needleman_wunsch_cigar
+        case "sw-trade-cigar":
+            return module.smith_waterman_trade_cigar
+        case "nw-trade-cigar":
+            return module.needleman_wunsch_trade_cigar
         case "sw-path":
             return module.smith_waterman_path
         case "nw-path":
@@ -912,10 +1176,21 @@ def _function_for_variant(module: Any, variant: str):
     raise AssertionError(f"unhandled benchmark variant {variant!r}")
 
 
+def _batch_function_for_variant(module: Any, variant: str):
+    match variant:
+        case "sw-farrar-score":
+            return module.smith_waterman_farrar_scores
+        case "sw-score":
+            return module.smith_waterman_scores
+        case "nw-score":
+            return module.needleman_wunsch_scores
+    raise AssertionError(f"batch scoring is not available for benchmark variant {variant!r}")
+
+
 def _generator_for_variant(variant: str) -> str:
     if variant.endswith("-score"):
         return "score-only"
-    if variant.endswith("-path-info") or variant.endswith("-path"):
+    if variant.endswith("-path-info") or variant.endswith("-path") or variant.endswith("-cigar"):
         return "path"
     raise AssertionError(f"unhandled benchmark variant {variant!r}")
 
@@ -924,9 +1199,11 @@ def _output_for_variant(backend_name: str, variant: str) -> str:
     if variant.endswith("-score"):
         return "score"
     if backend_name == "parasail" and (
-        variant.endswith("-path-info") or variant.endswith("-path")
+        variant.endswith("-path-info") or variant.endswith("-path") or variant.endswith("-cigar")
     ):
         return "trace-cigar"
+    if variant.endswith("-cigar"):
+        return "cigar"
     if variant.endswith("-path-info"):
         return "path-info"
     if variant.endswith("-path"):
@@ -938,6 +1215,24 @@ def _result_score(result: Any) -> int:
     if isinstance(result, int):
         return result
     return int(result.score)
+
+
+def _result_cigar(result: Any) -> str:
+    if isinstance(result, str):
+        return result
+    cigar = result.cigar
+    decoded = getattr(cigar, "decode", None)
+    if isinstance(decoded, bytes):
+        return decoded.decode("ascii")
+    return str(cigar)
+
+
+def _score_variant_for_cigar(variant: str) -> str:
+    if variant.startswith("sw-"):
+        return "sw-score"
+    if variant.startswith("nw-"):
+        return "nw-score"
+    raise AssertionError(f"unhandled CIGAR benchmark variant {variant!r}")
 
 
 def _repeat_window(corpus: str, length: int, offset: int) -> str:
@@ -961,9 +1256,11 @@ def _mutate_text(value: str, replacements: str, seed: int) -> str:
 
 def _build_text_pass(
     name: str,
+    shape: str,
     query_length: int,
     target_length: int,
     seed: int,
+    many_count: int,
 ) -> BenchmarkPass:
     if name in {"english", "english-short"}:
         corpus = _ENGLISH_CORPUS
@@ -976,16 +1273,23 @@ def _build_text_pass(
 
     offset = (seed * 29) % len(corpus)
     query = _repeat_window(corpus, query_length, offset)
-    target = _repeat_window(corpus, target_length, offset)
-    target = _mutate_text(target, replacements, seed + len(name))
-    return BenchmarkPass(name=name, query=query, target=target)
+    target_count = 1 if shape == "1:1" else many_count
+    targets = []
+    for target_index in range(target_count):
+        target_offset = (offset + target_index * 53) % len(corpus)
+        target = _repeat_window(corpus, target_length, target_offset)
+        target = _mutate_text(target, replacements, seed + len(name) + target_index * 101)
+        targets.append(target)
+    return BenchmarkPass(name=name, shape=shape, query=query, targets=tuple(targets))
 
 
 def _build_random_bytes_pass(
+    shape: str,
     query_length: int,
     target_length: int,
     alphabet_size: int,
     seed: int,
+    many_count: int,
 ) -> BenchmarkPass:
     if query_length < 0 or target_length < 0:
         raise BenchmarkError("sequence lengths must be non-negative")
@@ -994,43 +1298,69 @@ def _build_random_bytes_pass(
 
     rng = random.Random(seed)
     query = bytes(rng.randrange(alphabet_size) for _ in range(query_length))
-    target = bytes(rng.randrange(alphabet_size) for _ in range(target_length))
-    return BenchmarkPass(name="random-bytes", query=query, target=target)
+    target_count = 1 if shape == "1:1" else many_count
+    targets = tuple(
+        bytes(rng.randrange(alphabet_size) for _ in range(target_length))
+        for _ in range(target_count)
+    )
+    return BenchmarkPass(name="random-bytes", shape=shape, query=query, targets=targets)
 
 
 def _build_benchmark_passes(
     pass_names: Sequence[str],
+    shapes: Sequence[str],
     query_length: int,
     target_length: int,
     short_length: int,
     alphabet_size: int,
     seed: int,
+    many_count: int,
 ) -> list[BenchmarkPass]:
     if query_length < 0 or target_length < 0 or short_length < 0:
         raise BenchmarkError("sequence lengths must be non-negative")
+    if many_count < 1:
+        raise BenchmarkError("--many-count must be at least 1")
 
     benchmark_passes: list[BenchmarkPass] = []
     for index, pass_name in enumerate(pass_names):
         pass_seed = seed + index * 1009
-        if pass_name == "english-short":
-            benchmark_passes.append(
-                _build_text_pass(pass_name, short_length, short_length, pass_seed)
-            )
-        elif pass_name in {"english", "chinese"}:
-            benchmark_passes.append(
-                _build_text_pass(pass_name, query_length, target_length, pass_seed)
-            )
-        elif pass_name == "random-bytes":
-            benchmark_passes.append(
-                _build_random_bytes_pass(
-                    query_length,
-                    target_length,
-                    alphabet_size,
-                    pass_seed,
+        for shape_index, shape in enumerate(shapes):
+            shape_seed = pass_seed + shape_index * 6151
+            if pass_name == "english-short":
+                benchmark_passes.append(
+                    _build_text_pass(
+                        pass_name,
+                        shape,
+                        short_length,
+                        short_length,
+                        shape_seed,
+                        many_count,
+                    )
                 )
-            )
-        else:
-            raise AssertionError(f"unhandled benchmark pass {pass_name!r}")
+            elif pass_name in {"english", "chinese"}:
+                benchmark_passes.append(
+                    _build_text_pass(
+                        pass_name,
+                        shape,
+                        query_length,
+                        target_length,
+                        shape_seed,
+                        many_count,
+                    )
+                )
+            elif pass_name == "random-bytes":
+                benchmark_passes.append(
+                    _build_random_bytes_pass(
+                        shape,
+                        query_length,
+                        target_length,
+                        alphabet_size,
+                        shape_seed,
+                        many_count,
+                    )
+                )
+            else:
+                raise AssertionError(f"unhandled benchmark pass {pass_name!r}")
     return benchmark_passes
 
 
@@ -1084,8 +1414,17 @@ def _time_backend(
     mismatch_score: int,
     gap_open_score: int,
     gap_extend_score: int,
+    shape: str = "1:1",
 ) -> BenchmarkResult:
-    function = _function_for_variant(backend.module, variant)
+    targets = tuple(target) if shape == "1:many" else (target,)
+    if shape == "1:many" and variant not in _SCORE_ONLY_VARIANTS:
+        raise AssertionError(f"1:many benchmark shape does not support {variant!r}")
+
+    function = (
+        _batch_function_for_variant(backend.module, variant)
+        if shape == "1:many"
+        else _function_for_variant(backend.module, variant)
+    )
     linear_gap_score = gap_open_score
     extra_gap_kwargs = {
         "gap_open_score": gap_open_score,
@@ -1127,12 +1466,25 @@ def _time_backend(
             affine_prepared_names[variant] if is_affine else linear_prepared_names[variant]
         )
 
-    if prepared_names is not None:
+    if shape == "1:many":
+
+        def run_once() -> Any:
+            return function(
+                query,
+                targets,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=linear_gap_score,
+                width=width,
+                **extra_gap_kwargs,
+            )
+
+    elif prepared_names is not None:
         prepare_name, prepared_score_name = prepared_names
         if hasattr(backend.module, prepare_name) and hasattr(backend.module, prepared_score_name):
             prepared = getattr(backend.module, prepare_name)(
                 query,
-                target,
+                targets[0],
                 match_score=match_score,
                 mismatch_score=mismatch_score,
                 gap_score=linear_gap_score,
@@ -1149,7 +1501,7 @@ def _time_backend(
             def run_once() -> Any:
                 return function(
                     query,
-                    target,
+                    targets[0],
                     match_score=match_score,
                     mismatch_score=mismatch_score,
                     gap_score=linear_gap_score,
@@ -1162,7 +1514,7 @@ def _time_backend(
         def run_once() -> Any:
             return function(
                 query,
-                target,
+                targets[0],
                 match_score=match_score,
                 mismatch_score=mismatch_score,
                 gap_score=linear_gap_score,
@@ -1170,7 +1522,32 @@ def _time_backend(
                 **extra_gap_kwargs,
             )
 
-    score = _result_score(run_once())
+    if shape == "1:many":
+        scores = [_result_score(score) for score in run_once()]
+        score = sum(scores)
+    elif variant.endswith("-cigar"):
+        first_result = run_once()
+        expected_cigar = _result_cigar(first_result)
+        if isinstance(first_result, str):
+            score_function = _function_for_variant(
+                backend.module,
+                _score_variant_for_cigar(variant),
+            )
+            score = _result_score(
+                score_function(
+                    query,
+                    targets[0],
+                    match_score=match_score,
+                    mismatch_score=mismatch_score,
+                    gap_score=linear_gap_score,
+                    width=width,
+                    **extra_gap_kwargs,
+                )
+            )
+        else:
+            score = _result_score(first_result)
+    else:
+        score = _result_score(run_once())
 
     for _ in range(warmups):
         run_once()
@@ -1178,20 +1555,37 @@ def _time_backend(
     timings: list[float] = []
     for _ in range(iterations):
         start = time.perf_counter()
-        observed_score = _result_score(run_once())
+        result = run_once()
         elapsed = time.perf_counter() - start
-        if observed_score != score:
-            raise BenchmarkError(
-                f"{backend.name} produced unstable scores for width {width}: "
-                f"{score} then {observed_score}"
-            )
+        if shape == "1:many":
+            observed_scores = [_result_score(observed_score) for observed_score in result]
+            if observed_scores != scores:
+                raise BenchmarkError(
+                    f"{backend.name} produced unstable batch scores for width {width}: "
+                    f"{scores} then {observed_scores}"
+                )
+        elif variant.endswith("-cigar"):
+            observed_cigar = _result_cigar(result)
+            if observed_cigar != expected_cigar:
+                raise BenchmarkError(
+                    f"{backend.name} produced unstable CIGARs for width {width}: "
+                    f"{expected_cigar!r} then {observed_cigar!r}"
+                )
+        else:
+            observed_score = _result_score(result)
+            if observed_score != score:
+                raise BenchmarkError(
+                    f"{backend.name} produced unstable scores for width {width}: "
+                    f"{score} then {observed_score}"
+                )
         timings.append(elapsed)
 
     median_seconds = statistics.median(timings)
-    cells = len(query) * len(target)
+    cells = len(query) * sum(len(target_item) for target_item in targets)
     return BenchmarkResult(
         pass_name=pass_name,
         case_name=case_name,
+        shape=shape,
         backend=backend.name,
         variant=variant,
         generator=_generator_for_variant(variant),
@@ -1213,6 +1607,7 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
         (
             result.pass_name,
             result.case_name,
+            result.shape,
             result.variant,
             result.score_width,
         ): result.median_seconds
@@ -1222,13 +1617,14 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
     output: list[BenchmarkResult] = []
     for result in results:
         generic_median = generic_medians.get(
-            (result.pass_name, result.case_name, result.variant, result.score_width)
+            (result.pass_name, result.case_name, result.shape, result.variant, result.score_width)
         )
         speedup = None if generic_median is None else generic_median / result.median_seconds
         output.append(
             BenchmarkResult(
                 pass_name=result.pass_name,
                 case_name=result.case_name,
+                shape=result.shape,
                 backend=result.backend,
                 variant=result.variant,
                 generator=result.generator,
@@ -1249,14 +1645,14 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
 
 def _print_csv(results: Sequence[BenchmarkResult]) -> None:
     print(
-        "pass,case,backend,variant,generator,output,score_width,score,iterations,"
+        "pass,case,shape,backend,variant,generator,output,score_width,score,iterations,"
         "warmups,best_seconds,median_seconds,mean_seconds,cells_per_second,"
         "speedup_vs_generic"
     )
     for result in results:
         speedup = "" if result.speedup_vs_generic is None else f"{result.speedup_vs_generic:.6g}"
         print(
-            f"{result.pass_name},{result.case_name},{result.backend},{result.variant},"
+            f"{result.pass_name},{result.case_name},{result.shape},{result.backend},{result.variant},"
             f"{result.generator},{result.output},{result.score_width},{result.score},"
             f"{result.iterations},"
             f"{result.warmups},{result.best_seconds:.9g},{result.median_seconds:.9g},"
@@ -1270,6 +1666,8 @@ def _print_table(
     target_length: int,
     short_length: int,
     pass_names: Sequence[str],
+    shapes: Sequence[str],
+    many_count: int,
     scoring_case_names: Sequence[str],
     seed: int,
 ) -> None:
@@ -1278,15 +1676,18 @@ def _print_table(
     print(
         f"# query_length={query_length} target_length={target_length} "
         f"short_length={short_length} passes={','.join(pass_names)} "
+        f"shapes={','.join(shapes)} many_count={many_count} "
         f"cases={','.join(scoring_case_names)} seed={seed}"
     )
     print(
         "# generator distinguishes score-only from path-producing calls; "
-        "output distinguishes native path materialization from parasail trace/cigar."
+        "output distinguishes native path materialization from parasail trace/cigar; "
+        "1:many score is the sum across targets."
     )
     headers = (
         "pass",
         "case",
+        "shape",
         "backend",
         "variant",
         "generator",
@@ -1305,6 +1706,7 @@ def _print_table(
             (
                 result.pass_name,
                 result.case_name,
+                result.shape,
                 result.backend,
                 result.variant,
                 result.generator,
@@ -1334,13 +1736,16 @@ def _run(args: argparse.Namespace) -> list[BenchmarkResult]:
     query_length = args.length if args.query_length is None else args.query_length
     target_length = args.length if args.target_length is None else args.target_length
     pass_names = _selected_passes(args.passes)
+    shapes = _selected_shapes(args.shapes)
     benchmark_passes = _build_benchmark_passes(
         pass_names,
+        shapes,
         query_length,
         target_length,
         args.short_length,
         args.alphabet_size,
         args.seed,
+        args.many_count,
     )
     backends = _resolve_backends(args.backends)
     variants = _selected_variants(args.variants)
@@ -1350,12 +1755,15 @@ def _run(args: argparse.Namespace) -> list[BenchmarkResult]:
     for benchmark_pass in benchmark_passes:
         for scoring_case in scoring_cases:
             for variant in variants:
+                if benchmark_pass.shape == "1:many" and variant not in _SCORE_ONLY_VARIANTS:
+                    continue
                 for width in _widths_for_pass(benchmark_pass, args.widths):
+                    max_target_length = max(len(target) for target in benchmark_pass.targets)
                     _validate_width(
                         width,
                         benchmark_pass.name,
                         len(benchmark_pass.query),
-                        len(benchmark_pass.target),
+                        max_target_length,
                         scoring_case,
                     )
                     expected_score: int | None = None
@@ -1368,7 +1776,7 @@ def _run(args: argparse.Namespace) -> list[BenchmarkResult]:
                             scoring_case.name,
                             variant,
                             benchmark_pass.query,
-                            benchmark_pass.target,
+                            benchmark_pass.targets if benchmark_pass.shape == "1:many" else benchmark_pass.targets[0],
                             width,
                             args.iterations,
                             args.warmups,
@@ -1376,13 +1784,14 @@ def _run(args: argparse.Namespace) -> list[BenchmarkResult]:
                             scoring_case.mismatch_score,
                             scoring_case.gap_open_score,
                             scoring_case.gap_extend_score,
+                            benchmark_pass.shape,
                         )
                         if expected_score is None:
                             expected_score = result.score
                         elif result.score != expected_score:
                             raise BenchmarkError(
                                 f"{backend.name} {benchmark_pass.name} {scoring_case.name} "
-                                f"{variant} width {width} returned {result.score}, "
+                                f"{benchmark_pass.shape} {variant} width {width} returned {result.score}, "
                                 f"expected {expected_score}"
                             )
                         results.append(result)
@@ -1416,6 +1825,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_length,
             args.short_length,
             _selected_passes(args.passes),
+            _selected_shapes(args.shapes),
+            args.many_count,
             _selected_scoring_case_names(args.scoring_cases),
             args.seed,
         )

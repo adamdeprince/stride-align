@@ -22,6 +22,94 @@ endforeach()
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 include(CheckCXXCompilerFlag)
+include(CheckIPOSupported)
+
+option(STRIDE_ALIGN_ENABLE_LTO "Enable interprocedural/link-time optimization" OFF)
+set(STRIDE_ALIGN_PGO_MODE "OFF" CACHE STRING "PGO mode: OFF, GENERATE, or USE")
+set_property(CACHE STRIDE_ALIGN_PGO_MODE PROPERTY STRINGS OFF GENERATE USE)
+set(STRIDE_ALIGN_PGO_DIR "${CMAKE_BINARY_DIR}/pgo" CACHE PATH "Directory for PGO profile data")
+set(
+  STRIDE_ALIGN_PGO_PROFILE_FILE
+  "${STRIDE_ALIGN_PGO_DIR}/stride_align.profdata"
+  CACHE FILEPATH
+  "Clang PGO profile data file used when STRIDE_ALIGN_PGO_MODE=USE"
+)
+
+string(TOUPPER "${STRIDE_ALIGN_PGO_MODE}" STRIDE_ALIGN_PGO_MODE_NORMALIZED)
+if(NOT STRIDE_ALIGN_PGO_MODE_NORMALIZED MATCHES "^(OFF|GENERATE|USE)$")
+  message(FATAL_ERROR "STRIDE_ALIGN_PGO_MODE must be OFF, GENERATE, or USE")
+endif()
+
+set(STRIDE_ALIGN_IPO_SUPPORTED FALSE)
+if(STRIDE_ALIGN_ENABLE_LTO)
+  check_ipo_supported(
+    RESULT STRIDE_ALIGN_IPO_SUPPORTED
+    OUTPUT STRIDE_ALIGN_IPO_ERROR
+    LANGUAGES CXX
+  )
+  if(NOT STRIDE_ALIGN_IPO_SUPPORTED)
+    message(WARNING "IPO/LTO requested but unsupported: ${STRIDE_ALIGN_IPO_ERROR}")
+  endif()
+endif()
+
+function(apply_stride_align_optimization_flags target_name)
+  if(STRIDE_ALIGN_ENABLE_LTO AND STRIDE_ALIGN_IPO_SUPPORTED)
+    set_property(TARGET ${target_name} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+
+  if(STRIDE_ALIGN_PGO_MODE_NORMALIZED STREQUAL "OFF")
+    return()
+  endif()
+
+  file(MAKE_DIRECTORY "${STRIDE_ALIGN_PGO_DIR}")
+
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(STRIDE_ALIGN_PGO_MODE_NORMALIZED STREQUAL "GENERATE")
+      target_compile_options(
+        ${target_name}
+        PRIVATE
+          "-fprofile-generate=${STRIDE_ALIGN_PGO_DIR}"
+          -fprofile-update=atomic
+      )
+      target_link_options(${target_name} PRIVATE "-fprofile-generate=${STRIDE_ALIGN_PGO_DIR}")
+    elseif(STRIDE_ALIGN_PGO_MODE_NORMALIZED STREQUAL "USE")
+      target_compile_options(
+        ${target_name}
+        PRIVATE
+          "-fprofile-use=${STRIDE_ALIGN_PGO_DIR}"
+          -fprofile-correction
+          -Wno-missing-profile
+      )
+      target_link_options(${target_name} PRIVATE "-fprofile-use=${STRIDE_ALIGN_PGO_DIR}")
+    endif()
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    if(STRIDE_ALIGN_PGO_MODE_NORMALIZED STREQUAL "GENERATE")
+      target_compile_options(
+        ${target_name}
+        PRIVATE
+          "-fprofile-instr-generate=${STRIDE_ALIGN_PGO_DIR}/stride_align-%m.profraw"
+      )
+      target_link_options(
+        ${target_name}
+        PRIVATE
+          "-fprofile-instr-generate=${STRIDE_ALIGN_PGO_DIR}/stride_align-%m.profraw"
+      )
+    elseif(STRIDE_ALIGN_PGO_MODE_NORMALIZED STREQUAL "USE")
+      target_compile_options(
+        ${target_name}
+        PRIVATE
+          "-fprofile-instr-use=${STRIDE_ALIGN_PGO_PROFILE_FILE}"
+      )
+      target_link_options(
+        ${target_name}
+        PRIVATE
+          "-fprofile-instr-use=${STRIDE_ALIGN_PGO_PROFILE_FILE}"
+      )
+    endif()
+  else()
+    message(FATAL_ERROR "PGO is only configured for GNU and Clang-like C++ compilers")
+  endif()
+endfunction()
 
 function(configure_stride_align_target target_name)
   target_compile_features(${target_name} PRIVATE cxx_std_23)
@@ -34,6 +122,8 @@ function(configure_stride_align_target target_name)
   if(MSVC)
     target_compile_options(${target_name} PRIVATE /O2 /W4)
   endif()
+
+  apply_stride_align_optimization_flags(${target_name})
 endfunction()
 
 function(add_stride_align_backend module_name backend_source)

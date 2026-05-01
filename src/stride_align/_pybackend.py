@@ -979,6 +979,32 @@ smith_waterman_trace_cigar = smith_waterman_cigar
 smith_waterman_trade_cigar = smith_waterman_cigar
 
 
+def smith_waterman_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[int]:
+    return [
+        smith_waterman_score(
+            query,
+            target,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        for target in targets  # type: ignore[union-attr]
+    ]
+
+
 def smith_waterman_farrar_score(
     query: object,
     target: object,
@@ -1020,6 +1046,32 @@ def smith_waterman_farrar_score(
     )
 
 
+def smith_waterman_farrar_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[int]:
+    return [
+        smith_waterman_farrar_score(
+            query,
+            target,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        for target in targets  # type: ignore[union-attr]
+    ]
+
+
 def needleman_wunsch_score(
     query: object,
     target: object,
@@ -1059,6 +1111,32 @@ def needleman_wunsch_score(
         mismatch_score=mismatch_score,
         gap_score=gap_open,
     )
+
+
+def needleman_wunsch_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[int]:
+    return [
+        needleman_wunsch_score(
+            query,
+            target,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        for target in targets  # type: ignore[union-attr]
+    ]
 
 
 def needleman_wunsch_path(

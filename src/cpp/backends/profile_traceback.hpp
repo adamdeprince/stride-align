@@ -31,6 +31,32 @@ enum class Direction : std::uint8_t {
   left,
 };
 
+inline constexpr std::uint8_t direction_mask = 0x03U;
+inline constexpr std::uint8_t up_continue_bit = 0x04U;
+inline constexpr std::uint8_t left_continue_bit = 0x08U;
+
+inline std::uint8_t pack_trace(
+    Direction direction,
+    bool up_continues,
+    bool left_continues) noexcept {
+  return static_cast<std::uint8_t>(
+      static_cast<std::uint8_t>(direction) |
+      (up_continues ? up_continue_bit : 0U) |
+      (left_continues ? left_continue_bit : 0U));
+}
+
+inline Direction trace_direction(std::uint8_t trace) noexcept {
+  return static_cast<Direction>(trace & direction_mask);
+}
+
+inline bool trace_up_continues(std::uint8_t trace) noexcept {
+  return (trace & up_continue_bit) != 0;
+}
+
+inline bool trace_left_continues(std::uint8_t trace) noexcept {
+  return (trace & left_continue_bit) != 0;
+}
+
 enum class AffineState : std::uint8_t {
   h,
   up,
@@ -290,17 +316,14 @@ AlignmentPath affine_path_info(
   std::vector<Cell> current_h(columns, LocalAlignment ? Cell{0} : negative_infinity_v<Cell>);
   std::vector<Cell> previous_up(columns, negative_infinity_v<Cell>);
   std::vector<Cell> current_up(columns, negative_infinity_v<Cell>);
-  std::vector<Direction> h_source(cell_count, Direction::stop);
-  std::vector<std::uint8_t> up_continues(cell_count, 0);
-  std::vector<std::uint8_t> left_continues(cell_count, 0);
+  std::vector<std::uint8_t> trace(cell_count, pack_trace(Direction::stop, false, false));
 
   previous_h[0] = 0;
   if constexpr (!LocalAlignment) {
     for (std::size_t column = 1; column < columns; ++column) {
       const std::size_t cell_index = matrix_index(0, column, columns);
       previous_h[column] = gap_cost<Cell>(column, gap_open_score, gap_extend_score);
-      h_source[cell_index] = Direction::left;
-      left_continues[cell_index] = column > 1U ? 1U : 0U;
+      trace[cell_index] = pack_trace(Direction::left, false, column > 1U);
     }
   }
 
@@ -316,8 +339,7 @@ AlignmentPath affine_path_info(
       const std::size_t row_index = matrix_index(row, 0, columns);
       current_h[0] = gap_cost<Cell>(row, gap_open_score, gap_extend_score);
       current_up[0] = current_h[0];
-      h_source[row_index] = Direction::up;
-      up_continues[row_index] = row > 1U ? 1U : 0U;
+      trace[row_index] = pack_trace(Direction::up, row > 1U, false);
     }
 
     Cell left_score = negative_infinity_v<Cell>;
@@ -326,12 +348,12 @@ AlignmentPath affine_path_info(
       const Cell up_open = safe_add<Cell>(previous_h[column], gap_open_score);
       const Cell up_extend = safe_add<Cell>(previous_up[column], gap_extend_score);
       const Cell up_score = std::max(up_open, up_extend);
-      up_continues[cell_index] = up_extend >= up_open ? 1U : 0U;
+      const bool up_continues_gap = up_extend >= up_open;
 
       const Cell left_open = safe_add<Cell>(current_h[column - 1U], gap_open_score);
       const Cell left_extend = safe_add<Cell>(left_score, gap_extend_score);
       left_score = std::max(left_open, left_extend);
-      left_continues[cell_index] = left_extend >= left_open ? 1U : 0U;
+      const bool left_continues_gap = left_extend >= left_open;
 
       const Cell diagonal = safe_add<Cell>(
           previous_h[column - 1U],
@@ -360,7 +382,7 @@ AlignmentPath affine_path_info(
 
       current_h[column] = cell;
       current_up[column] = up_score;
-      h_source[cell_index] = source;
+      trace[cell_index] = pack_trace(source, up_continues_gap, left_continues_gap);
 
       if constexpr (LocalAlignment) {
         if (cell > best_score) {
@@ -388,8 +410,9 @@ AlignmentPath affine_path_info(
 
   while (row > 0 || column > 0) {
     const std::size_t cell_index = matrix_index(row, column, columns);
+    const std::uint8_t trace_cell = trace[cell_index];
     if constexpr (LocalAlignment) {
-      if (state == AffineState::h && h_source[cell_index] == Direction::stop) {
+      if (state == AffineState::h && trace_direction(trace_cell) == Direction::stop) {
         break;
       }
     }
@@ -404,7 +427,7 @@ AlignmentPath affine_path_info(
         continue;
       }
 
-      const Direction source = h_source[cell_index];
+      const Direction source = trace_direction(trace_cell);
       if (source == Direction::diagonal) {
         operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
         --row;
@@ -424,14 +447,14 @@ AlignmentPath affine_path_info(
 
     if (state == AffineState::up) {
       operations.push_back('D');
-      const bool continues_gap = row > 1U && up_continues[cell_index] != 0;
+      const bool continues_gap = row > 1U && trace_up_continues(trace_cell);
       --row;
       state = continues_gap ? AffineState::up : AffineState::h;
       continue;
     }
 
     operations.push_back('I');
-    const bool continues_gap = column > 1U && left_continues[cell_index] != 0;
+    const bool continues_gap = column > 1U && trace_left_continues(trace_cell);
     --column;
     state = continues_gap ? AffineState::left : AffineState::h;
   }

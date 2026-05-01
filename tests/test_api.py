@@ -8,6 +8,7 @@ from stride_align import (
     AlignmentPath,
     AlignmentResult,
     BackendKind,
+    Scores,
     available_backends,
     backend_is_available,
     detect_best_backend,
@@ -15,13 +16,16 @@ from stride_align import (
     needleman_wunsch_path,
     needleman_wunsch_path_info,
     needleman_wunsch_score,
+    needleman_wunsch_scores,
     needleman_wunsch_trace_cigar,
     needleman_wunsch_trade_cigar,
     smith_waterman_cigar,
     smith_waterman_farrar_score,
+    smith_waterman_farrar_scores,
     smith_waterman_path,
     smith_waterman_path_info,
     smith_waterman_score,
+    smith_waterman_scores,
     smith_waterman_trace_cigar,
     smith_waterman_trade_cigar,
 )
@@ -48,6 +52,41 @@ def test_swar_backend_is_not_auto_selected() -> None:
 
 def test_backend_is_available_for_detected_backend() -> None:
     assert backend_is_available(detect_best_backend())
+
+
+def test_scores_batch_api_matches_scalar_scores() -> None:
+    query = "foo"
+    targets = ["foo", "bar", "food"]
+
+    assert Scores(query).compare(targets) == [
+        smith_waterman_score(query, target) for target in targets
+    ]
+    assert Scores(query, variant="needleman_wunsch").compare(targets) == [
+        needleman_wunsch_score(query, target) for target in targets
+    ]
+    assert Scores(query, variant="farrar").compare(targets) == [
+        smith_waterman_farrar_score(query, target) for target in targets
+    ]
+
+
+def test_public_plural_score_functions_match_scalar_scores() -> None:
+    query = "foo"
+    targets = ["foo", "bar", "food"]
+
+    assert smith_waterman_scores(query, targets) == [
+        smith_waterman_score(query, target) for target in targets
+    ]
+    assert needleman_wunsch_scores(query, targets) == [
+        needleman_wunsch_score(query, target) for target in targets
+    ]
+    assert smith_waterman_farrar_scores(query, targets) == [
+        smith_waterman_farrar_score(query, target) for target in targets
+    ]
+
+
+def test_scores_batch_api_rejects_single_string_target_collection() -> None:
+    with pytest.raises(TypeError, match="targets must be an iterable"):
+        Scores("foo").compare("bar")
 
 
 def test_public_dispatch_uses_profile_simd_for_long_linear_scores(monkeypatch) -> None:
@@ -481,15 +520,16 @@ def test_benchmark_cli_defaults_include_short_8_bit_english(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.out.splitlines()[0].startswith(
-        "pass,case,backend,variant,generator,output,score_width"
+        "pass,case,shape,backend,variant,generator,output,score_width"
     )
-    assert "\nenglish-short,linear,generic,sw-farrar-score,score-only,score,8," in captured.out
-    assert "\nenglish-short,linear,generic,sw-score,score-only,score,8," in captured.out
-    assert "\nenglish-short,linear,generic,nw-score,score-only,score,8," in captured.out
-    assert "\nenglish-short,linear,generic,sw-path-info,path,path-info,8," in captured.out
-    assert "\nenglish-short,linear,generic,nw-path-info,path,path-info,8," in captured.out
-    assert "\nenglish,linear,generic,sw-farrar-score,score-only,score,16," in captured.out
-    assert "\nchinese,linear,generic,sw-farrar-score,score-only,score,32," in captured.out
+    assert "\nenglish-short,linear,1:1,generic,sw-farrar-score,score-only,score,8," in captured.out
+    assert "\nenglish-short,linear,1:1,generic,sw-score,score-only,score,8," in captured.out
+    assert "\nenglish-short,linear,1:1,generic,nw-score,score-only,score,8," in captured.out
+    assert "\nenglish-short,linear,1:1,generic,sw-path-info,path,path-info,8," in captured.out
+    assert "\nenglish-short,linear,1:1,generic,nw-path-info,path,path-info,8," in captured.out
+    assert "\nenglish-short,linear,1:many,generic,sw-score,score-only,score,8," in captured.out
+    assert "\nenglish,linear,1:1,generic,sw-farrar-score,score-only,score,16," in captured.out
+    assert "\nchinese,linear,1:1,generic,sw-farrar-score,score-only,score,32," in captured.out
 
 
 def test_benchmark_cli_supports_path_info_variants(capsys) -> None:
@@ -519,8 +559,43 @@ def test_benchmark_cli_supports_path_info_variants(capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "\nenglish,linear,generic,sw-path-info,path,path-info,16," in captured.out
-    assert "\nenglish,linear,generic,nw-path-info,path,path-info,16," in captured.out
+    assert "\nenglish,linear,1:1,generic,sw-path-info,path,path-info,16," in captured.out
+    assert "\nenglish,linear,1:1,generic,nw-path-info,path,path-info,16," in captured.out
+
+
+def test_benchmark_cli_supports_one_to_many_shape(capsys) -> None:
+    from stride_align.benchmark import main
+
+    exit_code = main(
+        [
+            "--backends",
+            "generic",
+            "--variants",
+            "score",
+            "--passes",
+            "english",
+            "--shapes",
+            "1:many",
+            "--many-count",
+            "3",
+            "--widths",
+            "16",
+            "--length",
+            "16",
+            "--iterations",
+            "1",
+            "--warmups",
+            "0",
+            "--format",
+            "csv",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "\nenglish,linear,1:many,generic,sw-score,score-only,score,16," in captured.out
+    assert "\nenglish,linear,1:many,generic,nw-score,score-only,score,16," in captured.out
+    assert ",sw-path-info," not in captured.out
 
 
 def test_benchmark_labels_score_and_path_outputs() -> None:
@@ -565,7 +640,7 @@ def test_benchmark_cli_defaults_to_current_machine_backends(capsys) -> None:
 
     captured = capsys.readouterr()
     observed_backends = {
-        line.split(",")[2] for line in captured.out.splitlines()[1:] if line
+        line.split(",")[3] for line in captured.out.splitlines()[1:] if line
     }
     assert exit_code == 0
     assert observed_backends == expected_backends
@@ -707,19 +782,21 @@ def test_benchmark_parasail_adapter_uses_safe_translated_inputs() -> None:
             self.calls = []
             self.last_result: FakeParasailResult | None = None
 
-        def matrix_create(self, alphabet: str, match_score: int, mismatch_score: int):
+        def matrix_create(self, alphabet: bytes, match_score: int, mismatch_score: int):
             return (alphabet, match_score, mismatch_score)
 
         def sw_trace_striped_16(
             self,
-            query: str,
-            target: str,
+            query: bytes,
+            target: bytes,
             gap_open: int,
             gap_extend: int,
             matrix,
         ) -> FakeParasailResult:
-            assert "\x00" not in query
-            assert "\x00" not in target
+            assert b"\x00" not in query
+            assert b"\x00" not in target
+            assert b"\\" not in query
+            assert b"\\" not in target
             assert gap_open == 1
             assert gap_extend == 1
             self.calls.append((query, target, matrix))
@@ -1075,6 +1152,37 @@ def test_direct_backends_affine_farrar_matches_score_across_stripes(
     expected = module.smith_waterman_score(query, target, width=width, **kwargs)
 
     assert module.smith_waterman_farrar_score(query, target, width=width, **kwargs) == expected
+
+
+@pytest.mark.parametrize("width", [16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_affine_traceback_lazy_f_cross_lane_regression(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    generic = pytest.importorskip("stride_align._generic")
+    module = pytest.importorskip(module_name)
+    query = "TATCAGTGCGTACTT"
+    target = "CCCAATCTTTATGATGACTTTCCTCCCGG"
+    kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "gap_open_score": -3,
+        "gap_extend_score": -1,
+        "width": width,
+    }
+
+    expected = generic.smith_waterman_path_info(query, target, **kwargs)
+    observed = module.smith_waterman_path_info(query, target, **kwargs)
+
+    assert observed.score == expected.score
+    assert observed.operations == expected.operations
+    assert module.smith_waterman_score(query, target, **kwargs) == expected.score
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])

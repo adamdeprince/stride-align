@@ -29,6 +29,32 @@ enum class TraceState : std::uint8_t {
   f,
 };
 
+inline constexpr std::uint8_t direction_mask = 0x03U;
+inline constexpr std::uint8_t e_extend_bit = 0x04U;
+inline constexpr std::uint8_t f_extend_bit = 0x08U;
+
+inline std::uint8_t pack_trace(
+    generic_detail::TraceDirection direction,
+    bool e_extends,
+    bool f_extends) noexcept {
+  return static_cast<std::uint8_t>(
+      static_cast<std::uint8_t>(direction) |
+      (e_extends ? e_extend_bit : 0U) |
+      (f_extends ? f_extend_bit : 0U));
+}
+
+inline generic_detail::TraceDirection trace_direction(std::uint8_t trace) noexcept {
+  return static_cast<generic_detail::TraceDirection>(trace & direction_mask);
+}
+
+inline bool trace_e_extends(std::uint8_t trace) noexcept {
+  return (trace & e_extend_bit) != 0;
+}
+
+inline bool trace_f_extends(std::uint8_t trace) noexcept {
+  return (trace & f_extend_bit) != 0;
+}
+
 template <typename Cell>
 struct ScoreToken;
 
@@ -204,9 +230,7 @@ bool local_best_is_better(
 
 template <bool TrackDirections>
 struct DirectionStorage {
-  std::vector<generic_detail::TraceDirection> h_sources;
-  std::vector<std::uint8_t> e_extends;
-  std::vector<std::uint8_t> f_extends;
+  std::vector<std::uint8_t> trace;
 };
 
 template <bool TrackDirections, bool LocalAlignment>
@@ -215,19 +239,17 @@ void initialize_boundaries(
     std::size_t row_count,
     std::size_t column_count) {
   if constexpr (TrackDirections) {
-    directions.h_sources.assign(
+    directions.trace.assign(
         row_count * column_count,
-        generic_detail::TraceDirection::stop);
-    directions.e_extends.assign(row_count * column_count, 0);
-    directions.f_extends.assign(row_count * column_count, 0);
+        pack_trace(generic_detail::TraceDirection::stop, false, false));
     if constexpr (!LocalAlignment) {
       for (std::size_t row = 1; row < row_count; ++row) {
-        directions.h_sources[row * column_count] = generic_detail::TraceDirection::up;
-        directions.e_extends[row * column_count] = row > 1 ? 1 : 0;
+        directions.trace[row * column_count] =
+            pack_trace(generic_detail::TraceDirection::up, row > 1, false);
       }
       for (std::size_t column = 1; column < column_count; ++column) {
-        directions.h_sources[column] = generic_detail::TraceDirection::left;
-        directions.f_extends[column] = column > 1 ? 1 : 0;
+        directions.trace[column] =
+            pack_trace(generic_detail::TraceDirection::left, false, column > 1);
       }
     }
   }
@@ -259,8 +281,9 @@ generic_detail::TracebackResult traceback_result(
 
   while (row > 0 || column > 0) {
     const std::size_t cell_index = index(row, column);
+    const std::uint8_t trace_cell = directions.trace[cell_index];
     if (state == TraceState::h) {
-      const auto direction = directions.h_sources[cell_index];
+      const auto direction = trace_direction(trace_cell);
       if (direction == generic_detail::TraceDirection::stop) {
         break;
       }
@@ -276,14 +299,14 @@ generic_detail::TracebackResult traceback_result(
 
     if (state == TraceState::e) {
       result.operations.push_back('D');
-      const bool continues_gap = directions.e_extends[cell_index] != 0;
+      const bool continues_gap = trace_e_extends(trace_cell);
       --row;
       state = continues_gap ? TraceState::e : TraceState::h;
       continue;
     }
 
     result.operations.push_back('I');
-    const bool continues_gap = directions.f_extends[cell_index] != 0;
+    const bool continues_gap = trace_f_extends(trace_cell);
     --column;
     state = continues_gap ? TraceState::f : TraceState::h;
   }
@@ -474,9 +497,8 @@ std::conditional_t<TrackDirections, generic_detail::TracebackResult, Score> run_
 
         if constexpr (TrackDirections) {
           const auto cell_index = direction_index(row, column);
-          directions.h_sources[cell_index] = direction;
-          directions.e_extends[cell_index] = e_extends[lane] ? 1 : 0;
-          directions.f_extends[cell_index] = f_extends[lane] ? 1 : 0;
+          directions.trace[cell_index] =
+              pack_trace(direction, e_extends[lane], f_extends[lane]);
         }
 
         if constexpr (LocalAlignment) {
@@ -692,6 +714,143 @@ AlignmentResult dispatch_traceback(
               static_cast<std::int64_t>(gap_extend_score)),
           query,
           target);
+    }
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported affine kernel width");
+  throw nb::python_error();
+}
+
+inline AlignmentPath make_path(const generic_detail::TracebackResult& trace) {
+  return make_alignment_path(
+      trace.score,
+      trace.query_start,
+      trace.query_end,
+      trace.target_start,
+      trace.target_end,
+      trace.operations);
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+AlignmentPath dispatch_path_info(
+    const PreparedAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  switch (prepared.kernel_bits) {
+    case KernelBits::bits8: {
+      const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
+      return make_path(run_kernel<OpsTemplate, std::uint8_t, std::int8_t, LocalAlignment, true>(
+          std::span<const std::uint8_t>(query.data(), query.size()),
+          std::span<const std::uint8_t>(target.data(), target.size()),
+          static_cast<std::int8_t>(match_score),
+          static_cast<std::int8_t>(mismatch_score),
+          static_cast<std::int8_t>(gap_open_score),
+          static_cast<std::int8_t>(gap_extend_score)));
+    }
+    case KernelBits::bits16: {
+      const auto& query = std::get<std::vector<std::uint16_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint16_t>>(prepared.target_tokens);
+      return make_path(
+          run_kernel<OpsTemplate, std::uint16_t, std::int16_t, LocalAlignment, true>(
+              std::span<const std::uint16_t>(query.data(), query.size()),
+              std::span<const std::uint16_t>(target.data(), target.size()),
+              static_cast<std::int16_t>(match_score),
+              static_cast<std::int16_t>(mismatch_score),
+              static_cast<std::int16_t>(gap_open_score),
+              static_cast<std::int16_t>(gap_extend_score)));
+    }
+    case KernelBits::bits32: {
+      const auto& query = std::get<std::vector<std::uint32_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint32_t>>(prepared.target_tokens);
+      return make_path(
+          run_kernel<OpsTemplate, std::uint32_t, std::int32_t, LocalAlignment, true>(
+              std::span<const std::uint32_t>(query.data(), query.size()),
+              std::span<const std::uint32_t>(target.data(), target.size()),
+              static_cast<std::int32_t>(match_score),
+              static_cast<std::int32_t>(mismatch_score),
+              static_cast<std::int32_t>(gap_open_score),
+              static_cast<std::int32_t>(gap_extend_score)));
+    }
+    case KernelBits::bits64: {
+      const auto& query = std::get<std::vector<std::uint64_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint64_t>>(prepared.target_tokens);
+      return make_path(
+          run_kernel<OpsTemplate, std::uint64_t, std::int64_t, LocalAlignment, true>(
+              std::span<const std::uint64_t>(query.data(), query.size()),
+              std::span<const std::uint64_t>(target.data(), target.size()),
+              static_cast<std::int64_t>(match_score),
+              static_cast<std::int64_t>(mismatch_score),
+              static_cast<std::int64_t>(gap_open_score),
+              static_cast<std::int64_t>(gap_extend_score)));
+    }
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported affine kernel width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+std::string dispatch_cigar(
+    const PreparedAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  switch (prepared.kernel_bits) {
+    case KernelBits::bits8: {
+      const auto& query = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
+      const auto trace =
+          run_kernel<OpsTemplate, std::uint8_t, std::int8_t, LocalAlignment, true>(
+              std::span<const std::uint8_t>(query.data(), query.size()),
+              std::span<const std::uint8_t>(target.data(), target.size()),
+              static_cast<std::int8_t>(match_score),
+              static_cast<std::int8_t>(mismatch_score),
+              static_cast<std::int8_t>(gap_open_score),
+              static_cast<std::int8_t>(gap_extend_score));
+      return build_cigar(trace.operations);
+    }
+    case KernelBits::bits16: {
+      const auto& query = std::get<std::vector<std::uint16_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint16_t>>(prepared.target_tokens);
+      const auto trace =
+          run_kernel<OpsTemplate, std::uint16_t, std::int16_t, LocalAlignment, true>(
+              std::span<const std::uint16_t>(query.data(), query.size()),
+              std::span<const std::uint16_t>(target.data(), target.size()),
+              static_cast<std::int16_t>(match_score),
+              static_cast<std::int16_t>(mismatch_score),
+              static_cast<std::int16_t>(gap_open_score),
+              static_cast<std::int16_t>(gap_extend_score));
+      return build_cigar(trace.operations);
+    }
+    case KernelBits::bits32: {
+      const auto& query = std::get<std::vector<std::uint32_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint32_t>>(prepared.target_tokens);
+      const auto trace =
+          run_kernel<OpsTemplate, std::uint32_t, std::int32_t, LocalAlignment, true>(
+              std::span<const std::uint32_t>(query.data(), query.size()),
+              std::span<const std::uint32_t>(target.data(), target.size()),
+              static_cast<std::int32_t>(match_score),
+              static_cast<std::int32_t>(mismatch_score),
+              static_cast<std::int32_t>(gap_open_score),
+              static_cast<std::int32_t>(gap_extend_score));
+      return build_cigar(trace.operations);
+    }
+    case KernelBits::bits64: {
+      const auto& query = std::get<std::vector<std::uint64_t>>(prepared.query_tokens);
+      const auto& target = std::get<std::vector<std::uint64_t>>(prepared.target_tokens);
+      const auto trace =
+          run_kernel<OpsTemplate, std::uint64_t, std::int64_t, LocalAlignment, true>(
+              std::span<const std::uint64_t>(query.data(), query.size()),
+              std::span<const std::uint64_t>(target.data(), target.size()),
+              static_cast<std::int64_t>(match_score),
+              static_cast<std::int64_t>(mismatch_score),
+              static_cast<std::int64_t>(gap_open_score),
+              static_cast<std::int64_t>(gap_extend_score));
+      return build_cigar(trace.operations);
     }
   }
 

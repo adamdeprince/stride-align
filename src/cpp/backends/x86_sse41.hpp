@@ -744,6 +744,22 @@ struct Implementation {
         gap_score);
   }
 
+  static std::vector<Score> smith_waterman_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_batch_alignment(query, targets, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score_many<detail::SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
   static AlignmentResult smith_waterman_path(
       nb::handle query,
       nb::handle target,
@@ -774,6 +790,23 @@ struct Implementation {
         mismatch_score,
         gap_score,
         width);
+  }
+
+  static std::string smith_waterman_linear_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return profile_traceback::linear_path_info<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width)
+        .cigar;
   }
 
   static Score smith_waterman_farrar_score(
@@ -813,6 +846,22 @@ struct Implementation {
     return farrar_fixed_kernel::detail::dispatch_prepared_score<detail::SimdOps>(prepared);
   }
 
+  static std::vector<Score> smith_waterman_farrar_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return smith_waterman_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
   static Score smith_waterman_affine_score(
       nb::handle query,
       nb::handle target,
@@ -847,6 +896,30 @@ struct Implementation {
         width);
   }
 
+  static std::vector<Score> smith_waterman_affine_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_batch_alignment(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::dispatch_affine_score_many<detail::SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
   static AlignmentResult smith_waterman_affine_path(
       nb::handle query,
       nb::handle target,
@@ -855,7 +928,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path<true>(
+    const auto output_prepared = prepare_alignment(
         query,
         target,
         match_score,
@@ -863,6 +936,21 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    const auto path = farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<detail::SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+    return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
   }
 
   static AlignmentPath smith_waterman_affine_path_info(
@@ -873,7 +961,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path_info<true>(
+    const auto prepared = prepare_farrar_alignment(
         query,
         target,
         match_score,
@@ -881,6 +969,36 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<detail::SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static std::string smith_waterman_affine_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::dispatch_affine_striped_cigar<detail::SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 
   static Score smith_waterman_affine_farrar_score(
@@ -957,6 +1075,24 @@ struct Implementation {
     return smith_waterman_affine_score_prepared(prepared);
   }
 
+  static std::vector<Score> smith_waterman_affine_farrar_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return smith_waterman_affine_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
   static PreparedAffineScore prepare_needleman_wunsch_affine_score(
       nb::handle query,
       nb::handle target,
@@ -1006,6 +1142,22 @@ struct Implementation {
         gap_score);
   }
 
+  static std::vector<Score> needleman_wunsch_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_batch_alignment(query, targets, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::dispatch_score_many<detail::SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
   static AlignmentResult needleman_wunsch_path(
       nb::handle query,
       nb::handle target,
@@ -1038,6 +1190,23 @@ struct Implementation {
         width);
   }
 
+  static std::string needleman_wunsch_linear_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return profile_traceback::linear_path_info<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width)
+        .cigar;
+  }
+
   static Score needleman_wunsch_affine_score(
       nb::handle query,
       nb::handle target,
@@ -1062,6 +1231,30 @@ struct Implementation {
         gap_extend_score);
   }
 
+  static std::vector<Score> needleman_wunsch_affine_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_batch_alignment(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::dispatch_affine_score_many<detail::SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
   static AlignmentResult needleman_wunsch_affine_path(
       nb::handle query,
       nb::handle target,
@@ -1070,7 +1263,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path<false>(
+    const auto output_prepared = prepare_alignment(
         query,
         target,
         match_score,
@@ -1078,6 +1271,21 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    const auto path = farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<detail::SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+    return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
   }
 
   static AlignmentPath needleman_wunsch_affine_path_info(
@@ -1088,7 +1296,7 @@ struct Implementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path_info<false>(
+    const auto prepared = prepare_farrar_alignment(
         query,
         target,
         match_score,
@@ -1096,6 +1304,36 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<detail::SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static std::string needleman_wunsch_affine_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::dispatch_affine_striped_cigar<detail::SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
   }
 };
 
