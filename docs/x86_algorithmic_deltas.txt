@@ -1,0 +1,692 @@
+X86 algorithmic deltas not yet carried to other architecture backends
+====================================================================
+
+Snapshot date: 2026-05-01
+
+Purpose
+-------
+
+This note records the algorithmic/backend-routing changes that are present in
+the x86 backends but are not yet wired into Loongson, ARM, PowerPC, or RISC-V
+backends. It is intended as a porting checklist for a Loongson laptop bring-up.
+
+Important scope note: most of the reusable implementation lives in shared
+headers, especially src/cpp/backends/farrar_fixed_kernel.hpp. The x86-only part
+is mostly which backend entry points route into those shared helpers.
+
+
+X86 backends that received the affine striped traceback routing
+---------------------------------------------------------------
+
+The following backends route affine path-producing calls through the shared
+striped Farrar traceback implementation:
+
+- src/cpp/backends/x86_sse41.hpp
+- src/cpp/backends/x86_avx2.hpp
+- src/cpp/backends/x86_avx512bwvl.hpp
+
+The following x86 backend files have NOT been moved to this path yet:
+
+- src/cpp/backends/x86_avx10_256.hpp
+- src/cpp/backends/x86_avx10_512.hpp
+
+The same SSE4.1/AVX2/AVX512BWVL set also now has x86-only batch score routing
+for the public plural score APIs. AVX10 and non-x86 backends still use the
+generic binding fallback for plural score calls unless they define their own
+methods.
+
+
+1. Affine path/path-info now uses striped Farrar traceback on SSE4.1/AVX2/AVX512
+--------------------------------------------------------------------------------
+
+For x86_sse41, x86_avx2, and x86_avx512bwvl, these APIs now call:
+
+  farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<SimdOps, true>
+  farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<SimdOps, false>
+
+Affected API points:
+
+- smith_waterman_affine_path
+- smith_waterman_affine_path_info
+- needleman_wunsch_affine_path
+- needleman_wunsch_affine_path_info
+
+The old path for those APIs was:
+
+  profile_traceback::affine_path<...>
+  profile_traceback::affine_path_info<...>
+
+For full AlignmentResult materialization, x86 now does two preparations:
+
+- prepare_alignment(...) for output materialization in original Python object space
+- prepare_farrar_alignment(...) for compact uint8 token/profile striped DP
+
+Then it converts the compact AlignmentPath back to an AlignmentResult with:
+
+  profile_traceback::detail::materialize_alignment_result(output_prepared, path)
+
+Current non-x86 state:
+
+- Loongson LSX/LASX still call profile_traceback::affine_path and
+  profile_traceback::affine_path_info for affine path-producing work.
+- ARM, PowerPC, RISC-V, and AVX10 backends also still use profile_traceback for
+  affine path-producing work.
+
+
+2. Direct affine CIGAR entry points exist only on SSE4.1/AVX2/AVX512
+--------------------------------------------------------------------
+
+For x86_sse41, x86_avx2, and x86_avx512bwvl, these backend methods were added:
+
+- smith_waterman_affine_cigar
+- needleman_wunsch_affine_cigar
+
+They call:
+
+  profile_traceback::affine_cigar<true>
+  profile_traceback::affine_cigar<false>
+
+This was changed after benchmarking showed the striped affine trace route was
+slower for CIGAR-only output. The profile_traceback CIGAR path is scalar, but it
+builds the CIGAR directly with ReverseCigarBuilder and avoids AlignmentPath plus
+operations string materialization.
+
+Current non-x86 state:
+
+- Loongson LSX/LASX do not currently define affine_cigar backend methods.
+- The nanobind helper now falls back to profile_traceback::affine_cigar when a
+  backend does not provide an affine_cigar method, so non-x86 backends get the
+  CIGAR-first scalar fallback automatically.
+
+
+3. Shared striped affine traceback helper used by x86
+----------------------------------------------------
+
+The implementation lives in:
+
+  src/cpp/backends/farrar_fixed_kernel.hpp
+
+Core pieces:
+
+- TraceDirection: stop, diagonal, up, left
+- TraceState: h, up, left
+- One byte per trace cell:
+  - low two bits: H-state source direction
+  - trace_up_continue_bit: affine deletion/up gap continues
+  - trace_left_continue_bit: affine insertion/left gap continues
+- Striped trace storage:
+  - index = column * state_cell_count + segment * lane_count + lane
+  - row -> segment/lane via the same striped query mapping used by Farrar DP
+- build_affine_path_from_striped_trace(...) walks H/up/left states and emits
+  M/X/I/D operations.
+- boundary_affine_path(...) handles empty-query/empty-target cases.
+- local_trace_best_is_better(...) keeps deterministic local alignment
+  tie-breaking: higher score wins; equal positive score chooses the earlier
+  row/column.
+
+The DP path computes diagonal, E, F, and H in the striped profile loop, records
+the selected H source and affine continuation bits, and then applies lazy-F
+corrections when F propagates after the initial segment pass.
+
+Important caveat: trace emission in this helper is still scalar per lane inside
+the vectorized DP loop. The scores are SIMD-computed, but the trace byte packing
+has not yet been converted to architecture-specific vector stores.
+
+
+4. Lazy-F propagation changes used by striped affine traceback
+-------------------------------------------------------------
+
+The shared fixed Farrar kernel now has separate lazy-F scanning helpers:
+
+- scan_lazy_f(...)
+- scan_global_lazy_f(...)
+- local_lazy_f_prefix_carry(...)
+- global_lazy_f_prefix_carry(...)
+- trace_lazy_f_prefix_carry(...)
+
+The x86 affine striped traceback route depends on these for correctness and
+performance. The key behavior:
+
+- The lazy-F scan no longer stops just because one segment had no immediate
+  propagation. That early stop was invalid for cross-lane/cross-segment gaps.
+- For the normal negative affine-gap case:
+
+    gap_open_score <= gap_extend_score <= 0
+
+  the prefix-carry helper propagates the carry across vector lanes first, then
+  runs a scan only when needed.
+- The trace version carries the up-gap continuation flags with the F values so
+  traceback sees the same gap chain that score computation used.
+
+Shared-code caveat:
+
+- These helpers are in farrar_fixed_kernel.hpp, not in x86 files.
+- Score-only backends that already use farrar_fixed_kernel may already benefit.
+- The x86-only part is that SSE4.1/AVX2/AVX512 affine path/path-info/CIGAR now
+  route through the striped traceback code that relies on these helpers.
+
+
+5. What is NOT an x86-only delta
+-------------------------------
+
+Do not port these as if they were x86-specific:
+
+- The score-only Farrar/striped profile kernels in farrar_fixed_kernel.hpp are
+  shared. Loongson LSX/LASX already call farrar_fixed_kernel::detail::dispatch_score
+  and dispatch_global_score for non-positive linear gaps.
+- Prepared affine score profiles are shared. Loongson already has
+  PreparedAffineScore and uses farrar_fixed_kernel prepared-score dispatch for
+  affine score-only prepared calls.
+- The compact affine score-only helper in affine_fixed_kernel.hpp is shared.
+  Loongson and x86 both use affine_fixed_kernel::detail::dispatch_compact_byte_score
+  for local affine score-only in common negative-gap cases.
+- The Python batch score API and benchmark "shape" column are frontend/benchmark
+  changes, not x86 algorithm changes.
+- The packed trace-byte representation in affine_fixed_kernel.hpp is shared
+  generic fixed-kernel work, not only x86.
+- The profile traceback trace-table initialization reduction is shared. In
+  src/cpp/backends/profile_traceback.hpp, linear and affine path-info/CIGAR now
+  allocate trace tables without zero-filling the full matrix, then explicitly
+  initialize only the traceback boundary cells that may be read before interior
+  DP writes occur. This keeps byte-addressable trace cells and avoids the
+  bit-packing regression seen in the hot cell loop while reducing one full
+  trace-table write pass.
+- The text preprocessing bulk-copy path is shared. bytes and direct-width
+  Unicode copies use memcpy in src/cpp/preprocess.hpp, and the compact Farrar
+  Unicode path in src/cpp/farrar_preprocess.hpp uses direct 256-entry or
+  65536-entry lookup tables for PyUnicode 1-byte and 2-byte strings instead of
+  hashing every English/Chinese codepoint through unordered_map.
+- The experimental linear-space CIGAR route in
+  src/cpp/backends/profile_traceback.hpp is shared and intentionally global-only.
+  It uses Hirschberg-style divide-and-conquer for Needleman-Wunsch linear CIGAR
+  above a high threshold. It is not routed for Smith-Waterman because the local
+  endpoint-anchored reverse pass needs a separate, correctness-specific design.
+  At 1024x1024 it was slower than the byte trace table, so the threshold is set
+  high enough to reserve it for large memory-pressure cases.
+
+
+Loongson LSX/LASX porting status
+---------------------------------
+
+Use x86_avx2.hpp as the clearest reference for the backend routing style.
+
+Completed in this pass:
+
+- src/cpp/backends/linux_loongarch64_lsx.hpp and
+  src/cpp/backends/linux_loongarch64_lasx.hpp now route affine path-producing
+  TargetImplementation methods through the shared striped affine traceback
+  helper:
+
+  - smith_waterman_affine_path:
+    - builds output_prepared with prepare_alignment(...)
+    - builds compact prepared with prepare_farrar_alignment(...)
+    - calls dispatch_affine_striped_path_info<SimdOps, true>(...)
+    - materializes with profile_traceback::detail::materialize_alignment_result(...)
+
+  - smith_waterman_affine_path_info:
+    - builds compact prepared with prepare_farrar_alignment(...)
+    - calls dispatch_affine_striped_path_info<SimdOps, true>(...)
+
+  - needleman_wunsch_affine_path:
+    - same pattern, but LocalAlignment=false
+
+  - needleman_wunsch_affine_path_info:
+    - same pattern, but LocalAlignment=false
+
+- Duplicate invalid TargetImplementation path_info definitions that attempted
+  to call ensure_supported() from inside TargetImplementation were removed.
+  The outer Implementation wrappers now provide ensure_supported() guards for
+  linear and affine path_info methods.
+
+- Score-only routing was intentionally left unchanged. The main missing
+  Loongson work was affine traceback routing, not linear or affine score-only
+  routing.
+
+- The benchmark already separates 1:1 and 1:many shapes with a shape column and
+  --shapes selection. The current 1:many API is score-only and does not prove
+  path traceback performance.
+
+Still optional:
+
+1. Add direct affine CIGAR methods to TargetImplementation:
+
+   - smith_waterman_affine_cigar
+   - needleman_wunsch_affine_cigar
+
+   Current x86 routes these to:
+
+     profile_traceback::affine_cigar<true/false>(...)
+
+   Do not route LSX/LASX CIGAR through dispatch_affine_striped_cigar unless
+   local benchmarking proves it is faster than the profile CIGAR-first fallback.
+
+2. Run correctness tests that specifically exercise cross-lane lazy-F traceback:
+
+   tests/test_api.py::test_direct_backends_affine_traceback_lazy_f_cross_lane_regression
+
+   Also run randomized affine score/path equivalence against _generic for LSX and
+   LASX once the hardware is available.
+
+
+Additional x86 deltas from the batch/benchmark pass
+---------------------------------------------------
+
+7. Prepared batch score routing is wired only on SSE4.1/AVX2/AVX512BWVL
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The shared implementation lives in:
+
+  src/cpp/farrar_preprocess.hpp
+  src/cpp/backends/farrar_fixed_kernel.hpp
+
+The x86-only part is that these backend entry points now exist on
+x86_sse41.hpp, x86_avx2.hpp, and x86_avx512bwvl.hpp:
+
+- smith_waterman_scores
+- smith_waterman_farrar_scores
+- smith_waterman_affine_scores
+- smith_waterman_affine_farrar_scores
+- needleman_wunsch_scores
+- needleman_wunsch_affine_scores
+
+Those methods call:
+
+  prepare_farrar_batch_alignment(...)
+  dispatch_score_many<SimdOps, true/false>(...)
+  dispatch_affine_score_many<SimdOps, true/false>(...)
+
+The batch preparation builds one compact query plus a list of compact targets.
+The fixed-kernel batch state builds one shared query profile over the union of
+all target symbols, then swaps target profile offsets and target length for each
+target. This is the implementation behind Scores(query).compare([...]) and the
+public plural score functions when the selected backend provides these methods.
+
+Current non-x86 state:
+
+- Loongson LSX/LASX and the other non-x86 backends do not currently define these
+  plural score methods, so nanobind falls back to looping over scalar calls.
+- To port this, copy the x86_avx2.hpp method signatures and call the same shared
+  dispatch_*_many helpers with the backend's SimdOps.
+
+
+8. Global affine batch score uses the shared striped affine scorer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The new x86 needleman_wunsch_affine_scores method routes to:
+
+  dispatch_affine_score_many<SimdOps, false>(...)
+
+That reuses the prepared affine batch state and the global affine score dispatch
+instead of calling one scalar/prepared alignment at a time from Python. This is
+important for one-query/many-target English and Chinese text cases.
+
+Current non-x86 state:
+
+- Non-x86 backends can use the same helper if their SimdOps already support the
+  fixed Farrar affine score path.
+
+
+9. AVX512BWVL has fixed-width reduce_max hooks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/cpp/backends/x86_avx512bwvl.hpp now defines SimdOps::reduce_max for 8, 16,
+32, and 64 bit score lanes.
+
+For 32 and 64 bit lanes it uses the compiler-provided AVX512 reductions. GCC on
+this machine does not expose _mm512_reduce_max_epi8 or _mm512_reduce_max_epi16,
+so those widths reduce 512-bit vectors down to one 128-bit lane with AVX512
+max/shuffle operations and then do a small scalar fold. This avoids the generic
+fixed-kernel full-vector spill path in the common max-score reduction.
+
+Current non-x86 state:
+
+- This is AVX512-specific. Do not port it directly to Loongson; implement the
+  equivalent LSX/LASX horizontal max in that backend's SimdOps if benchmarking
+  shows the same spill/reduction cost.
+
+
+10. Linear traceback is intentionally not routed through affine striped trace
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+During this pass, linear path-info/CIGAR was briefly routed through
+dispatch_affine_striped_path_info with gap_open == gap_extend == gap_score. It
+was correct but slower for English/Chinese path and CIGAR benchmarks because the
+affine trace records extra E/F state and lazy-F trace data that linear traceback
+does not need.
+
+The current x86 state is therefore:
+
+- linear path/path-info still uses profile_traceback::linear_path and
+  profile_traceback::linear_path_info.
+- direct linear CIGAR backend methods exist on SSE4.1/AVX2/AVX512BWVL only so
+  the nanobind API has explicit C++ entry points. They now call
+  profile_traceback::linear_cigar(...), which traces into a reverse run-length
+  CIGAR builder directly instead of creating AlignmentPath, an operations
+  string, and then a second CIGAR string.
+- affine path/path-info/CIGAR remains routed through the striped affine trace
+  kernel.
+
+Porting note:
+
+- Do not copy the affine trace route for linear traceback on LSX/LASX. A real
+  linear striped traceback needs a linear-specific trace kernel, not the affine
+  kernel with equal open/extend penalties.
+
+
+11. Traceback tie-order was aligned with profile_traceback
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The shared affine striped traceback cell-source selection now prefers:
+
+  diagonal, then up, then left
+
+when scores tie. This matches profile_traceback's linear/affine tie policy more
+closely than the previous diagonal, then left, then up behavior. This is shared
+code in farrar_fixed_kernel.hpp, but it matters most for x86 today because x86
+is the only family routing affine path/CIGAR through that helper.
+
+
+12. Direct CIGAR construction avoids path-info/operations materialization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The CIGAR API path has a CIGAR-first builder now:
+
+  include/stride_align/alignment.hpp
+    ReverseCigarBuilder
+
+  src/cpp/backends/profile_traceback.hpp
+    profile_traceback::linear_cigar<LocalAlignment>(...)
+    profile_traceback::affine_cigar<LocalAlignment>(...)
+
+  src/cpp/backends/farrar_fixed_kernel.hpp
+    build_affine_cigar_from_striped_trace(...)
+    affine_striped_cigar(...)
+    dispatch_affine_striped_cigar(...)
+
+The important x86 behavior:
+
+- SSE4.1/AVX2/AVX512BWVL linear CIGAR calls profile_traceback::linear_cigar
+  rather than profile_traceback::linear_path_info(...).cigar.
+- SSE4.1/AVX2/AVX512BWVL affine CIGAR calls profile_traceback::affine_cigar
+  rather than dispatch_affine_striped_cigar because the scalar CIGAR-first route
+  is faster for the current English/Chinese CIGAR-only benchmarks.
+- The nanobind fallback for linear CIGAR also calls profile_traceback::linear_cigar
+  for non-positive linear gaps when a backend does not define a linear_cigar
+  method.
+- The nanobind fallback for affine CIGAR calls profile_traceback::affine_cigar
+  when a backend does not define an affine_cigar method.
+
+Scope limitation:
+
+- This is CIGAR-first output construction, not a trace-table-free algorithm.
+  Linear CIGAR still stores a one-byte direction table. Affine CIGAR currently
+  uses the profile traceback's one-byte trace table by default; the striped
+  affine CIGAR builder remains available in farrar_fixed_kernel.hpp but is not
+  the x86 default. The removed cost is operations string materialization,
+  AlignmentPath construction/counting, and build_cigar's second pass over
+  operations.
+- To close the remaining parasail gap on SW CIGAR, the next target is a true
+  CIGAR-only trace representation and/or a checkpointed traceback strategy that
+  reduces trace-table traffic itself without adding multiple full DP passes.
+
+
+13. Experimental trace-free Smith-Waterman trade_cigar route
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/cpp/backends/profile_traceback.hpp now has a shared linear-space local
+Smith-Waterman CIGAR route used by smith_waterman_trade_cigar for non-positive
+linear gaps:
+
+  profile_traceback::linear_trace_free_cigar<true>(...)
+
+The route is correctness-oriented:
+
+- Run a forward Smith-Waterman score pass to find the best local endpoint.
+- Run an anchored reverse global pass from that endpoint to find a start whose
+  anchored score exactly equals the forward endpoint score.
+- Verify the selected local window with a score-only global pass.
+- Run Hirschberg over that window and build the CIGAR directly.
+
+This avoids materializing the full byte trace table, but it is not faster for
+the current 1024x1024 English/Chinese benchmark shape. Focused benchmark output
+was written to:
+
+  /tmp/stride-align-sw-trace-free-cigar.csv
+
+Observed result:
+
+- The trace-free smith_waterman_trade_cigar route was roughly 3x slower than
+  the default trace-table smith_waterman_cigar route on English/Chinese 1:1
+  linear CIGAR cases.
+- It was also much slower than parasail on those cases.
+
+Current routing decision:
+
+- Keep this as the explicit "trade" API path for memory-pressure experiments.
+- Do not promote it to the default Smith-Waterman CIGAR implementation.
+- The next implementation target should be checkpointed striped traceback or a
+  sparse CIGAR-first trace representation, not pure multi-pass Hirschberg for
+  the common 1024x1024 text-processing case.
+
+Scope note:
+
+- This route is shared profile_traceback code, not an x86-only backend delta.
+  It is documented here because it directly affects the x86/parasail comparison
+  and the future Loongson porting plan.
+
+
+14. Experimental AVX2 checkpointed linear Smith-Waterman CIGAR
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/cpp/backends/farrar_fixed_kernel.hpp now contains a shared checkpointed
+linear local CIGAR helper:
+
+  farrar_fixed_kernel::detail::dispatch_linear_sw_checkpointed_cigar<SimdOps>(...)
+
+The implementation:
+
+- Runs the striped Smith-Waterman score loop and stores sparse H/E checkpoints.
+- Recomputes only the traceback block that contains the current target column.
+- Stores a temporary one-byte linear direction table for that block.
+- Emits directly with ReverseCigarBuilder.
+
+AVX2 wiring:
+
+- This helper was briefly routed from src/cpp/backends/x86_avx2.hpp, then
+  disabled after benchmarking. AVX2 smith_waterman_linear_cigar currently stays
+  on profile_traceback::linear_cigar<true>(...) for all normal linear cases.
+
+Measured result on the 1024x1024 English/Chinese CIGAR shape:
+
+- With 64-column checkpoints, the ungated AVX2 route was about 3x to 5x slower
+  than the scalar CIGAR route.
+- With 256-column checkpoints, it was still slower and generally worse than the
+  64-column setting.
+- Benchmark files:
+
+    /tmp/stride-align-avx2-checkpoint-sw-cigar.csv
+    /tmp/stride-align-avx2-checkpoint-sw-cigar-block256.csv
+    /tmp/stride-align-avx2-checkpoint-gated-sw-cigar.csv
+
+Current routing decision:
+
+- Do not use this route for the normal English/Chinese 1024x1024 benchmark
+  shape.
+- Do not port the same route to AVX512. The user-requested condition was to port
+  after AVX2 wins, and AVX2 did not win.
+
+Performance conclusion:
+
+- Sparse checkpointing reduces persistent trace memory, but for the common text
+  shape it adds too much extra DP work and temporary trace recomputation.
+- The next speed-oriented SW CIGAR target should be a one-pass linear-specific
+  striped trace kernel or a packed trace representation, not checkpointed
+  recomputation.
+
+
+15. Experimental one-pass striped trace and packed scalar trace
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The next attempt tested the two alternatives from section 14.
+
+One-pass striped linear trace:
+
+- src/cpp/backends/farrar_fixed_kernel.hpp contains:
+
+    farrar_fixed_kernel::detail::dispatch_linear_sw_striped_cigar<SimdOps>(...)
+
+- It runs the striped Smith-Waterman score loop once, stores a linear
+  stop/diagonal/up/left trace byte in striped order, applies lazy-F trace
+  corrections, and emits CIGAR directly.
+- It was wired to AVX2 for benchmarking, then disabled because it lost.
+
+Packed scalar trace:
+
+- A 2-bit row-major scalar trace table was tested in profile_traceback linear
+  CIGAR. It reduced trace storage, but the per-cell bit read/modify/write cost
+  was worse than the current byte table.
+- The active profile_traceback linear CIGAR route is back on the byte direction
+  table.
+
+Measured result:
+
+- AVX2 one-pass striped trace was about 3x to 4x slower than the scalar byte
+  trace route on English/Chinese 1024x1024 SW CIGAR.
+- The packed scalar trace route was also slower than the scalar byte trace route.
+- Benchmark files:
+
+    /tmp/stride-align-avx2-striped-trace-sw-cigar.csv
+    /tmp/stride-align-linear-sw-cigar-packed-and-striped.csv
+    /tmp/stride-align-linear-sw-cigar-restored-2.csv
+
+Current routing decision:
+
+- Do not route AVX2 or AVX512 linear SW CIGAR through the one-pass striped trace
+  helper.
+- Do not use the packed scalar trace table for linear CIGAR.
+- The old decision was to keep profile_traceback::linear_cigar<true>(...) as
+  the active x86 linear SW CIGAR implementation. That has been superseded for
+  AVX2 only by the mask-packed route in section 17. AVX512 and other backends
+  still use profile_traceback for this path.
+
+Performance conclusion:
+
+- The scalar byte trace route was hard to beat because its inner loop is simple
+  and cache-friendly.
+- The first striped trace route lost because it scalarized per-lane trace
+  emission. The section 17 route fixes that by packing trace directions from
+  SIMD masks at segment granularity.
+
+
+16. Current build/benchmark notes from the 2026-05-01 optimization pass
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Build flags:
+
+- The normal scikit-build Release build already compiles C++ targets with -O3.
+- CMake exposes STRIDE_ALIGN_ENABLE_LTO and STRIDE_ALIGN_PGO_MODE, but the
+  default pyproject build leaves both off.
+
+Benchmarks run after the shared preprocessing and trace-table changes:
+
+- /tmp/stride-align-do-1-6-normal.csv
+- /tmp/stride-align-do-1-6-lto.csv
+- /tmp/stride-align-do-1-6-pgo-lto.csv
+
+Observed result:
+
+- LTO-only improved the full English/Chinese matrix by about 1.13x geometric
+  mean versus the normal -O3 build.
+- PGO+LTO regressed the same matrix to about 0.94x geometric mean versus normal
+  and about 0.83x versus LTO-only. The short training run improved some affine
+  and Chinese path rows but hurt enough linear traceback rows that it should not
+  be used as the default without a better training corpus or per-module PGO.
+
+Current performance shape:
+
+- x86 AVX512/AVX2 beat parasail for most English/Chinese 1:many score-only
+  workloads, including affine Smith-Waterman.
+- x86 also beats parasail for linear Needleman-Wunsch CIGAR/path-info at 1:1.
+- AVX2 now uses a mask-packed linear Smith-Waterman traceback route for
+  non-positive linear gaps. It beats generic by about 1.35x to 2.20x on the
+  focused English/Chinese 1024x1024 SW path/path-info/CIGAR rows. It beats
+  parasail on several English rows and width-32 English CIGAR/path rows, but
+  still trails parasail on Chinese trace/cigar rows.
+- The main remaining parasail gaps are Smith-Waterman CIGAR/path-info and
+  affine path-producing output. Those gaps are trace-table traffic, endpoint
+  selection, and traceback representation issues, not score-kernel throughput
+  issues.
+
+
+17. AVX2 mask-packed linear Smith-Waterman traceback
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This pass added a new shared helper in src/cpp/backends/farrar_fixed_kernel.hpp:
+
+  farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(...)
+  farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar<SimdOps>(...)
+
+AVX2 routing:
+
+- src/cpp/backends/x86_avx2.hpp routes non-positive linear
+  smith_waterman_path, smith_waterman_path_info, and
+  smith_waterman_linear_cigar through the new masked helper.
+- Positive linear gaps still fall back to profile_traceback.
+- AVX512BWVL is not routed yet. The previous condition was to port after AVX2
+  wins; AVX2 now wins over the generic scalar trace route, but not over parasail
+  uniformly.
+
+Key implementation difference from the older striped trace experiment:
+
+- The hot loop no longer emits trace one lane at a time.
+- Each segment/column stores three SIMD-derived lane masks: diagonal, up, and
+  left.
+- Lazy-F correction overwrites trace with a mask operation:
+
+    trace.force_up(column, segment, propagated_mask)
+
+- Lazy-F tie repair also uses masks. Equal positive F/H ties overwrite left
+  directions to up only when the cell was not diagonal, preserving the generic
+  traceback priority:
+
+    diagonal > up > left
+
+- Endpoint selection only stores/scans lanes when a SIMD mask says a segment has
+  a candidate greater than, or tying, the current best score. This keeps the
+  common trace-emission path vector/mask based.
+
+Measured focused result:
+
+  /tmp/stride-align-avx2-masked-linear-sw-trace.csv
+  /tmp/stride-align-avx2-masked-linear-sw-trace-tie-fixed.csv
+
+Representative median results from the tie-fixed run:
+
+- English 1024x1024, width 32:
+  - sw-path: AVX2 0.00125s vs generic 0.00205s vs parasail 0.00118s.
+  - sw-path-info: AVX2 0.00118s vs generic 0.00207s vs parasail 0.00119s.
+  - sw-cigar: AVX2 0.00119s vs generic 0.00178s vs parasail 0.00114s.
+
+- Chinese 1024x1024, width 32:
+  - sw-path: AVX2 0.00121s vs generic 0.00191s vs parasail 0.00084s.
+  - sw-path-info: AVX2 0.00120s vs generic 0.00194s vs parasail 0.00087s.
+  - sw-cigar: AVX2 0.00118s vs generic 0.00164s vs parasail 0.00084s.
+
+Current decision:
+
+- Keep the AVX2 masked route active for linear Smith-Waterman traceback.
+- Do not remove profile_traceback; it remains the fallback for positive gaps,
+  other architectures, and as a simple correctness reference.
+- Next x86 target should either port this structure to AVX512BWVL or reduce the
+  remaining CIGAR/path overhead by improving endpoint selection and traceback
+  decode locality.
+
+
+Expected Loongson result after port
+-----------------------------------
+
+After wiring LSX/LASX affine path/path-info/CIGAR to the striped traceback
+helper, Loongson should no longer use profile_traceback for affine path-producing
+work in the common text-processing negative-gap cases. Its behavior should match
+the x86 SSE4.1/AVX2/AVX512 route at the API level, while using LSX/LASX SimdOps
+for the actual vector operations.

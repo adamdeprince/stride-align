@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -440,7 +441,7 @@ AlignedVector<Cell> build_profile(
   return profile;
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
+template <template <typename, typename> class OpsTemplate, typename Cell, bool UseFastPath = true>
 PreparedScoreState<Cell> prepare_score_state(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
@@ -462,18 +463,20 @@ PreparedScoreState<Cell> prepare_score_state(
   state.gap_score = static_cast<Cell>(gap_score);
   state.query_size = query.size();
   state.target_size = target.size();
-  state.fast_score = score_fast_paths::fast_score_only<
-      std::uint8_t,
-      std::int64_t,
-      true>(
-      query,
-      target,
-      static_cast<std::int64_t>(match_score),
-      static_cast<std::int64_t>(mismatch_score),
-      static_cast<std::int64_t>(gap_score));
-  if (state.fast_score.has_value()) {
-    state.profile_indices.fill(missing_profile_index);
-    return state;
+  if constexpr (UseFastPath) {
+    state.fast_score = score_fast_paths::fast_score_only<
+        std::uint8_t,
+        std::int64_t,
+        true>(
+        query,
+        target,
+        static_cast<std::int64_t>(match_score),
+        static_cast<std::int64_t>(mismatch_score),
+        static_cast<std::int64_t>(gap_score));
+    if (state.fast_score.has_value()) {
+      state.profile_indices.fill(missing_profile_index);
+      return state;
+    }
   }
 
   if (query.empty() || target.empty()) {
@@ -2263,6 +2266,1291 @@ Score global_score(
       mismatch_score,
       gap_score);
   return global_score_state<OpsTemplate, Cell>(state);
+}
+
+struct LinearLocalEndpoint {
+  Score score = 0;
+  std::size_t row = 0;
+  std::size_t column = 0;
+};
+
+template <typename Cell>
+struct LinearCigarCheckpoints {
+  std::size_t block_size = 64U;
+  std::size_t checkpoint_count = 0;
+  std::size_t state_cell_count = 0;
+  AlignedVector<Cell> h;
+  AlignedVector<Cell> e;
+
+  const Cell* h_at(std::size_t index) const noexcept {
+    return h.data() + index * state_cell_count;
+  }
+
+  const Cell* e_at(std::size_t index) const noexcept {
+    return e.data() + index * state_cell_count;
+  }
+
+  Cell* h_at(std::size_t index) noexcept {
+    return h.data() + index * state_cell_count;
+  }
+
+  Cell* e_at(std::size_t index) noexcept {
+    return e.data() + index * state_cell_count;
+  }
+};
+
+inline std::size_t linear_sw_cigar_checkpoint_block_size(
+    std::size_t query_size,
+    std::size_t target_size) noexcept {
+  (void) query_size;
+  (void) target_size;
+  return 64U;
+}
+
+template <typename Cell>
+LinearCigarCheckpoints<Cell> make_linear_cigar_checkpoints(
+    std::size_t query_size,
+    std::size_t target_size,
+    std::size_t state_cell_count) {
+  LinearCigarCheckpoints<Cell> checkpoints;
+  checkpoints.block_size = linear_sw_cigar_checkpoint_block_size(query_size, target_size);
+  checkpoints.checkpoint_count = (target_size + checkpoints.block_size - 1U) /
+          checkpoints.block_size +
+      1U;
+  checkpoints.state_cell_count = state_cell_count;
+  checkpoints.h.resize(checkpoints.checkpoint_count * state_cell_count);
+  checkpoints.e.resize(checkpoints.checkpoint_count * state_cell_count);
+  return checkpoints;
+}
+
+template <typename Cell>
+void save_linear_cigar_checkpoint(
+    LinearCigarCheckpoints<Cell>& checkpoints,
+    std::size_t checkpoint_index,
+    const Cell* h_values,
+    const Cell* e_values) {
+  std::copy_n(
+      h_values,
+      checkpoints.state_cell_count,
+      checkpoints.h_at(checkpoint_index));
+  std::copy_n(
+      e_values,
+      checkpoints.state_cell_count,
+      checkpoints.e_at(checkpoint_index));
+}
+
+template <typename Ops, typename Cell>
+void update_linear_local_endpoint_from_lanes(
+    const Cell* h_scores,
+    std::size_t segment,
+    std::size_t column,
+    std::size_t query_size,
+    std::size_t segment_count,
+    LinearLocalEndpoint& best) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+  for (std::size_t lane = 0; lane < lane_count; ++lane) {
+    const std::size_t query_index = lane * segment_count + segment;
+    if (query_index >= query_size) {
+      continue;
+    }
+
+    const Score cell_score = static_cast<Score>(h_scores[lane]);
+    const std::size_t row = query_index + 1U;
+    if (local_trace_best_is_better(
+            cell_score,
+            row,
+            column,
+            best.score,
+            best.row,
+            best.column)) {
+      best = {cell_score, row, column};
+    }
+  }
+}
+
+struct LinearMaskedTrace {
+  std::size_t segment_count = 0;
+  std::vector<std::uint64_t> diagonal;
+  std::vector<std::uint64_t> up;
+  std::vector<std::uint64_t> left;
+
+  LinearMaskedTrace(std::size_t target_size, std::size_t segments)
+      : segment_count(segments),
+        diagonal(target_size * segments, 0),
+        up(target_size * segments, 0),
+        left(target_size * segments, 0) {}
+
+  std::size_t index(std::size_t column, std::size_t segment) const noexcept {
+    return (column - 1U) * segment_count + segment;
+  }
+
+  void set(
+      std::size_t column,
+      std::size_t segment,
+      std::uint64_t diagonal_mask,
+      std::uint64_t up_mask,
+      std::uint64_t left_mask) noexcept {
+    const std::size_t mask_index = index(column, segment);
+    diagonal[mask_index] = diagonal_mask;
+    up[mask_index] = up_mask;
+    left[mask_index] = left_mask;
+  }
+
+  void force_up(std::size_t column, std::size_t segment, std::uint64_t mask) noexcept {
+    const std::size_t mask_index = index(column, segment);
+    diagonal[mask_index] &= ~mask;
+    left[mask_index] &= ~mask;
+    up[mask_index] |= mask;
+  }
+
+  void force_up_when_not_diagonal(
+      std::size_t column,
+      std::size_t segment,
+      std::uint64_t mask) noexcept {
+    const std::size_t mask_index = index(column, segment);
+    mask &= ~diagonal[mask_index];
+    left[mask_index] &= ~mask;
+    up[mask_index] |= mask;
+  }
+
+  TraceDirection direction(
+      std::size_t row,
+      std::size_t column,
+      std::size_t lane_count) const noexcept {
+    const std::size_t query_index = row - 1U;
+    const std::size_t lane = query_index / segment_count;
+    const std::size_t segment = query_index % segment_count;
+    if (lane >= lane_count) {
+      return TraceDirection::stop;
+    }
+
+    const std::uint64_t mask = std::uint64_t{1} << lane;
+    const std::size_t mask_index = index(column, segment);
+    if ((up[mask_index] & mask) != 0) {
+      return TraceDirection::up;
+    }
+    if ((left[mask_index] & mask) != 0) {
+      return TraceDirection::left;
+    }
+    if ((diagonal[mask_index] & mask) != 0) {
+      return TraceDirection::diagonal;
+    }
+    return TraceDirection::stop;
+  }
+};
+
+inline std::vector<std::uint64_t> make_striped_valid_lane_masks(
+    std::size_t query_size,
+    std::size_t segment_count,
+    std::size_t lane_count) {
+  std::vector<std::uint64_t> masks(segment_count, 0);
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    std::uint64_t mask = 0;
+    for (std::size_t lane = 0; lane < lane_count; ++lane) {
+      const std::size_t query_index = lane * segment_count + segment;
+      if (query_index < query_size) {
+        mask |= std::uint64_t{1} << lane;
+      }
+    }
+    masks[segment] = mask;
+  }
+  return masks;
+}
+
+template <typename Ops>
+std::uint64_t trace_mask_gt(typename Ops::vector_type lhs, typename Ops::vector_type rhs) {
+  if constexpr (requires { Ops::trace_mask_gt(lhs, rhs); }) {
+    return Ops::trace_mask_gt(lhs, rhs);
+  } else {
+    static_assert(sizeof(Ops) == 0, "SimdOps must provide trace_mask_gt for masked traceback");
+  }
+}
+
+template <typename Ops>
+std::uint64_t trace_mask_eq(typename Ops::vector_type lhs, typename Ops::vector_type rhs) {
+  if constexpr (requires { Ops::trace_mask_eq(lhs, rhs); }) {
+    return Ops::trace_mask_eq(lhs, rhs);
+  } else {
+    static_assert(sizeof(Ops) == 0, "SimdOps must provide trace_mask_eq for masked traceback");
+  }
+}
+
+template <typename Ops, typename Cell>
+void update_linear_local_endpoint_from_vector(
+    typename Ops::vector_type h_scores_vector,
+    std::uint64_t candidate_mask,
+    std::size_t segment,
+    std::size_t column,
+    std::size_t query_size,
+    std::size_t segment_count,
+    LinearLocalEndpoint& best) {
+  if (candidate_mask == 0) {
+    return;
+  }
+
+  const auto best_vector = Ops::set1(static_cast<Cell>(best.score));
+  std::uint64_t interesting_mask =
+      trace_mask_gt<Ops>(h_scores_vector, best_vector) & candidate_mask;
+  if (best.score > 0) {
+    interesting_mask |= trace_mask_eq<Ops>(h_scores_vector, best_vector) & candidate_mask;
+  }
+  if (interesting_mask == 0) {
+    return;
+  }
+
+  alignas(Ops::alignment) Cell h_scores[Ops::lane_count] = {};
+  Ops::store_cells(h_scores, h_scores_vector);
+  while (interesting_mask != 0) {
+    const auto lane = static_cast<std::size_t>(std::countr_zero(interesting_mask));
+    interesting_mask &= interesting_mask - 1U;
+
+    const std::size_t query_index = lane * segment_count + segment;
+    if (query_index >= query_size) {
+      continue;
+    }
+
+    const Score cell_score = static_cast<Score>(h_scores[lane]);
+    const std::size_t row = query_index + 1U;
+    if (local_trace_best_is_better(
+            cell_score,
+            row,
+            column,
+            best.score,
+            best.row,
+            best.column)) {
+      best = {cell_score, row, column};
+    }
+  }
+}
+
+inline std::string build_linear_operations_from_masked_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const LinearMaskedTrace& trace,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t lane_count,
+    std::size_t& query_start,
+    std::size_t& target_start) {
+  std::string operations;
+  operations.reserve(best_row + best_column);
+
+  std::size_t row = best_row;
+  std::size_t column = best_column;
+  while (row > 0 && column > 0) {
+    const auto direction = trace.direction(row, column, lane_count);
+    if (direction == TraceDirection::stop) {
+      break;
+    }
+    if (direction == TraceDirection::diagonal) {
+      operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      --row;
+      --column;
+      continue;
+    }
+    if (direction == TraceDirection::up) {
+      operations.push_back('D');
+      --row;
+      continue;
+    }
+    if (direction == TraceDirection::left) {
+      operations.push_back('I');
+      --column;
+      continue;
+    }
+    break;
+  }
+
+  std::reverse(operations.begin(), operations.end());
+  query_start = row;
+  target_start = column;
+  return operations;
+}
+
+inline AlignmentPath build_linear_path_from_masked_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const LinearMaskedTrace& trace,
+    Score score,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t lane_count) {
+  std::size_t query_start = best_row;
+  std::size_t target_start = best_column;
+  const auto operations = build_linear_operations_from_masked_trace(
+      query,
+      target,
+      trace,
+      best_row,
+      best_column,
+      lane_count,
+      query_start,
+      target_start);
+  return make_alignment_path(
+      score,
+      query_start,
+      best_row,
+      target_start,
+      best_column,
+      operations);
+}
+
+inline std::string build_linear_cigar_from_masked_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const LinearMaskedTrace& trace,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t lane_count) {
+  ReverseCigarBuilder cigar;
+
+  std::size_t row = best_row;
+  std::size_t column = best_column;
+  while (row > 0 && column > 0) {
+    const auto direction = trace.direction(row, column, lane_count);
+    if (direction == TraceDirection::stop) {
+      break;
+    }
+    if (direction == TraceDirection::diagonal) {
+      cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      --row;
+      --column;
+      continue;
+    }
+    if (direction == TraceDirection::up) {
+      cigar.push('D');
+      --row;
+      continue;
+    }
+    if (direction == TraceDirection::left) {
+      cigar.push('I');
+      --column;
+      continue;
+    }
+    break;
+  }
+
+  return cigar.str();
+}
+
+template <
+    template <typename, typename> class OpsTemplate,
+    typename Cell,
+    bool CigarOnly>
+auto linear_sw_masked_trace_state(
+    PreparedScoreState<Cell>& state,
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  if (query.empty() || target.empty() || state.segment_count == 0) {
+    if constexpr (CigarOnly) {
+      return std::string();
+    } else {
+      return make_alignment_path(0, 0, 0, 0, 0, "");
+    }
+  }
+
+  LinearMaskedTrace trace(target.size(), state.segment_count);
+  const auto valid_masks = make_striped_valid_lane_masks(
+      state.query_size,
+      state.segment_count,
+      lane_count);
+
+  std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(state.gap_score);
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+  LinearLocalEndpoint best;
+
+  for (std::size_t target_index = 0; target_index < state.target_profile_offsets.size();
+       ++target_index) {
+    const std::size_t column = target_index + 1U;
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_zero<Ops, Cell>(
+        load_state_cells<Ops, Cell>(h_load_data + ((state.segment_count - 1U) * lane_count)));
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + state.target_profile_offsets[target_index];
+
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* h_store_segment = h_store_data + segment * lane_count;
+      Cell* h_load_segment = h_load_data + segment * lane_count;
+      Cell* e_segment = e_store_data + segment * lane_count;
+      const Cell* profile_segment = profile_row + segment * lane_count;
+      const std::uint64_t valid_mask = valid_masks[segment];
+
+      const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+      auto v_e = load_state_cells<Ops, Cell>(e_segment);
+      const auto v_diagonal = Ops::add(v_h, v_profile);
+      const std::uint64_t up_better_mask =
+          trace_mask_gt<Ops>(v_f, v_diagonal) & valid_mask;
+      auto v_selected = Ops::max(v_diagonal, v_f);
+      const std::uint64_t left_better_mask =
+          trace_mask_gt<Ops>(v_e, v_selected) & valid_mask;
+      v_selected = Ops::max(v_selected, v_e);
+      auto v_cell = Ops::max(v_selected, zero_vector);
+      store_state_cells<Ops, Cell>(h_store_segment, v_cell);
+
+      const std::uint64_t positive_mask =
+          trace_mask_gt<Ops>(v_cell, zero_vector) & valid_mask;
+      const std::uint64_t left_mask = positive_mask & left_better_mask;
+      const std::uint64_t up_mask = positive_mask & up_better_mask & ~left_better_mask;
+      const std::uint64_t diagonal_mask = positive_mask & ~(up_mask | left_mask);
+      trace.set(column, segment, diagonal_mask, up_mask, left_mask);
+
+      update_linear_local_endpoint_from_vector<Ops, Cell>(
+          v_cell,
+          positive_mask,
+          segment,
+          column,
+          state.query_size,
+          state.segment_count,
+          best);
+
+      const auto v_h_gap = Ops::add(v_cell, gap_vector);
+      v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
+      store_state_cells<Ops, Cell>(e_segment, v_e);
+      v_f = Ops::max(Ops::add(v_f, gap_vector), v_h_gap);
+      v_h = load_state_cells<Ops, Cell>(h_load_segment);
+    }
+
+    for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+      v_f = shift_left_zero<Ops, Cell>(v_f);
+      bool propagated = false;
+
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        const std::uint64_t valid_mask = valid_masks[segment];
+        const auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+        const std::uint64_t propagated_mask =
+            trace_mask_gt<Ops>(v_f, v_h_previous) & valid_mask;
+        const std::uint64_t tied_up_mask =
+            trace_mask_eq<Ops>(v_f, v_h_previous) &
+            trace_mask_gt<Ops>(v_f, zero_vector) &
+            valid_mask;
+        propagated = propagated || propagated_mask != 0;
+        auto v_h_updated = Ops::max(v_h_previous, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h_updated);
+
+        if (propagated_mask != 0) {
+          trace.force_up(column, segment, propagated_mask);
+          update_linear_local_endpoint_from_vector<Ops, Cell>(
+              v_h_updated,
+              propagated_mask,
+              segment,
+              column,
+              state.query_size,
+              state.segment_count,
+              best);
+        }
+        if (tied_up_mask != 0) {
+          trace.force_up_when_not_diagonal(column, segment, tied_up_mask);
+        }
+
+        v_f = Ops::add(v_h_updated, gap_vector);
+      }
+
+      if (state.gap_score <= 0 && !propagated) {
+        break;
+      }
+    }
+  }
+
+  if (best.score <= 0) {
+    if constexpr (CigarOnly) {
+      return std::string();
+    } else {
+      return make_alignment_path(0, 0, 0, 0, 0, "");
+    }
+  }
+
+  if constexpr (CigarOnly) {
+    return build_linear_cigar_from_masked_trace(
+        query,
+        target,
+        trace,
+        best.row,
+        best.column,
+        lane_count);
+  } else {
+    return build_linear_path_from_masked_trace(
+        query,
+        target,
+        trace,
+        best.score,
+        best.row,
+        best.column,
+        lane_count);
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+AlignmentPath linear_sw_masked_path_info(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return linear_sw_masked_trace_state<OpsTemplate, Cell, false>(state, query, target);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::string linear_sw_masked_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return linear_sw_masked_trace_state<OpsTemplate, Cell, true>(state, query, target);
+}
+
+template <template <typename, typename> class OpsTemplate>
+AlignmentPath dispatch_linear_sw_masked_path_info(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_masked_path_info<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_masked_path_info<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_masked_path_info<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_masked_path_info<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported masked linear SW traceback width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+std::string dispatch_linear_sw_masked_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_masked_cigar<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_masked_cigar<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_masked_cigar<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_masked_cigar<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported masked linear SW CIGAR width");
+  throw nb::python_error();
+}
+
+template <typename Cell>
+std::string build_linear_cigar_from_striped_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::vector<std::uint8_t>& trace,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t segment_count,
+    std::size_t lane_count) {
+  const std::size_t state_cell_count = segment_count * lane_count;
+  ReverseCigarBuilder cigar;
+
+  std::size_t row = best_row;
+  std::size_t column = best_column;
+  while (row > 0 && column > 0) {
+    const auto direction = static_cast<TraceDirection>(
+        trace[trace_striped_index(row, column, segment_count, lane_count, state_cell_count)]);
+    if (direction == TraceDirection::stop) {
+      break;
+    }
+    if (direction == TraceDirection::diagonal) {
+      cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      --row;
+      --column;
+      continue;
+    }
+    if (direction == TraceDirection::up) {
+      cigar.push('D');
+      --row;
+      continue;
+    }
+    if (direction == TraceDirection::left) {
+      cigar.push('I');
+      --column;
+      continue;
+    }
+    break;
+  }
+
+  return cigar.str();
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::string linear_sw_striped_cigar_state(
+    PreparedScoreState<Cell>& state,
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  if (query.empty() || target.empty() || state.segment_count == 0) {
+    return "";
+  }
+
+  const std::size_t state_cell_count = state.segment_count * lane_count;
+  std::vector<std::uint8_t> trace(
+      (target.size() + 1U) * state_cell_count,
+      static_cast<std::uint8_t>(TraceDirection::stop));
+
+  std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(state.gap_score);
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+  LinearLocalEndpoint best;
+
+  alignas(Ops::alignment) Cell diagonal_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell e_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell f_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell h_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell previous_h_scores[lane_count] = {};
+
+  for (std::size_t target_index = 0; target_index < state.target_profile_offsets.size();
+       ++target_index) {
+    const std::size_t column = target_index + 1U;
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_zero<Ops, Cell>(
+        load_state_cells<Ops, Cell>(h_load_data + ((state.segment_count - 1U) * lane_count)));
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + state.target_profile_offsets[target_index];
+
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* h_store_segment = h_store_data + segment * lane_count;
+      Cell* h_load_segment = h_load_data + segment * lane_count;
+      Cell* e_segment = e_store_data + segment * lane_count;
+      const Cell* profile_segment = profile_row + segment * lane_count;
+
+      const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+      auto v_e = load_state_cells<Ops, Cell>(e_segment);
+      const auto v_diagonal = Ops::add(v_h, v_profile);
+      auto v_cell = Ops::max(v_diagonal, v_e);
+      v_cell = Ops::max(v_cell, v_f);
+      v_cell = Ops::max(v_cell, zero_vector);
+      store_state_cells<Ops, Cell>(h_store_segment, v_cell);
+
+      Ops::store_cells(diagonal_scores, v_diagonal);
+      Ops::store_cells(e_scores, v_e);
+      Ops::store_cells(f_scores, v_f);
+      Ops::store_cells(h_scores, v_cell);
+
+      for (std::size_t lane = 0; lane < lane_count; ++lane) {
+        const std::size_t query_index = lane * state.segment_count + segment;
+        if (query_index >= query.size()) {
+          continue;
+        }
+
+        Cell selected_score = diagonal_scores[lane];
+        TraceDirection direction = TraceDirection::diagonal;
+        if (f_scores[lane] > selected_score) {
+          selected_score = f_scores[lane];
+          direction = TraceDirection::up;
+        }
+        if (e_scores[lane] > selected_score) {
+          selected_score = e_scores[lane];
+          direction = TraceDirection::left;
+        }
+        if (selected_score <= 0) {
+          direction = TraceDirection::stop;
+        }
+
+        const std::size_t row = query_index + 1U;
+        trace[trace_striped_index(
+            row,
+            column,
+            state.segment_count,
+            lane_count,
+            state_cell_count)] = static_cast<std::uint8_t>(direction);
+      }
+
+      update_linear_local_endpoint_from_lanes<Ops, Cell>(
+          h_scores,
+          segment,
+          column,
+          state.query_size,
+          state.segment_count,
+          best);
+
+      const auto v_h_gap = Ops::add(v_cell, gap_vector);
+      v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
+      store_state_cells<Ops, Cell>(e_segment, v_e);
+      v_f = Ops::max(Ops::add(v_f, gap_vector), v_h_gap);
+      v_h = load_state_cells<Ops, Cell>(h_load_segment);
+    }
+
+    for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+      v_f = shift_left_zero<Ops, Cell>(v_f);
+      bool propagated = false;
+
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+        propagated = propagated || any_greater<Ops, Cell>(v_f, v_h_previous);
+        auto v_h_updated = Ops::max(v_h_previous, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h_updated);
+
+        Ops::store_cells(previous_h_scores, v_h_previous);
+        Ops::store_cells(f_scores, v_f);
+        Ops::store_cells(h_scores, v_h_updated);
+        for (std::size_t lane = 0; lane < lane_count; ++lane) {
+          const std::size_t query_index = lane * state.segment_count + segment;
+          if (query_index >= query.size()) {
+            continue;
+          }
+          if (f_scores[lane] > previous_h_scores[lane]) {
+            const std::size_t row = query_index + 1U;
+            trace[trace_striped_index(
+                row,
+                column,
+                state.segment_count,
+                lane_count,
+                state_cell_count)] = static_cast<std::uint8_t>(TraceDirection::up);
+          }
+        }
+
+        update_linear_local_endpoint_from_lanes<Ops, Cell>(
+            h_scores,
+            segment,
+            column,
+            state.query_size,
+            state.segment_count,
+            best);
+
+        v_f = Ops::add(v_f, gap_vector);
+      }
+
+      if (state.gap_score <= 0 && !propagated) {
+        break;
+      }
+    }
+  }
+
+  if (best.score <= 0) {
+    return "";
+  }
+
+  return build_linear_cigar_from_striped_trace<Cell>(
+      query,
+      target,
+      trace,
+      best.row,
+      best.column,
+      state.segment_count,
+      lane_count);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::string linear_sw_striped_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return linear_sw_striped_cigar_state<OpsTemplate, Cell>(state, query, target);
+}
+
+template <template <typename, typename> class OpsTemplate>
+std::string dispatch_linear_sw_striped_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_striped_cigar<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_striped_cigar<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_striped_cigar<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_striped_cigar<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported linear SW striped CIGAR width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+LinearLocalEndpoint linear_sw_checkpoint_forward(
+    PreparedScoreState<Cell>& state,
+    LinearCigarCheckpoints<Cell>& checkpoints) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  LinearLocalEndpoint best;
+  const std::size_t state_cell_count = state.segment_count * lane_count;
+  std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(state.gap_score);
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+  alignas(Ops::alignment) Cell h_scores[lane_count] = {};
+
+  save_linear_cigar_checkpoint(checkpoints, 0U, h_store_data, e_store_data);
+
+  for (std::size_t target_index = 0; target_index < state.target_profile_offsets.size();
+       ++target_index) {
+    const std::size_t column = target_index + 1U;
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_zero<Ops, Cell>(
+        load_state_cells<Ops, Cell>(h_load_data + ((state.segment_count - 1U) * lane_count)));
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + state.target_profile_offsets[target_index];
+
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* h_store_segment = h_store_data + segment * lane_count;
+      Cell* h_load_segment = h_load_data + segment * lane_count;
+      Cell* e_segment = e_store_data + segment * lane_count;
+      const Cell* profile_segment = profile_row + segment * lane_count;
+
+      const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+      auto v_e = load_state_cells<Ops, Cell>(e_segment);
+      v_h = Ops::add(v_h, v_profile);
+      v_h = Ops::max(v_h, v_e);
+      v_h = Ops::max(v_h, v_f);
+      v_h = Ops::max(v_h, zero_vector);
+      store_state_cells<Ops, Cell>(h_store_segment, v_h);
+
+      Ops::store_cells(h_scores, v_h);
+      update_linear_local_endpoint_from_lanes<Ops, Cell>(
+          h_scores,
+          segment,
+          column,
+          state.query_size,
+          state.segment_count,
+          best);
+
+      const auto v_h_gap = Ops::add(v_h, gap_vector);
+      v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
+      store_state_cells<Ops, Cell>(e_segment, v_e);
+      v_f = Ops::max(Ops::add(v_f, gap_vector), v_h_gap);
+      v_h = load_state_cells<Ops, Cell>(h_load_segment);
+    }
+
+    for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+      v_f = shift_left_zero<Ops, Cell>(v_f);
+      bool propagated = false;
+
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
+        propagated = propagated || any_greater<Ops, Cell>(v_f, v_h_segment);
+        v_h_segment = Ops::max(v_h_segment, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
+
+        Ops::store_cells(h_scores, v_h_segment);
+        update_linear_local_endpoint_from_lanes<Ops, Cell>(
+            h_scores,
+            segment,
+            column,
+            state.query_size,
+            state.segment_count,
+            best);
+
+        v_f = Ops::add(v_f, gap_vector);
+      }
+
+      if (state.gap_score <= 0 && !propagated) {
+        break;
+      }
+    }
+
+    if (column % checkpoints.block_size == 0) {
+      save_linear_cigar_checkpoint(
+          checkpoints,
+          column / checkpoints.block_size,
+          h_store_data,
+          e_store_data);
+    }
+  }
+
+  if (state.target_size % checkpoints.block_size != 0) {
+    save_linear_cigar_checkpoint(
+        checkpoints,
+        checkpoints.checkpoint_count - 1U,
+        h_store_data,
+        e_store_data);
+  }
+
+  (void) state_cell_count;
+  return best;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+void linear_sw_recompute_trace_block(
+    PreparedScoreState<Cell>& state,
+    const LinearCigarCheckpoints<Cell>& checkpoints,
+    std::size_t block_start,
+    std::size_t block_end,
+    std::vector<std::uint8_t>& trace) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  const std::size_t state_cell_count = state.segment_count * lane_count;
+  const std::size_t block_width = block_end - block_start;
+
+  trace.resize((block_width + 1U) * state_cell_count);
+  const std::size_t checkpoint_index = block_start / checkpoints.block_size;
+  std::copy_n(checkpoints.h_at(checkpoint_index), state_cell_count, state.h_store.data());
+  std::copy_n(checkpoints.e_at(checkpoint_index), state_cell_count, state.e_store.data());
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(state.gap_score);
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+
+  alignas(Ops::alignment) Cell diagonal_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell e_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell f_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell h_scores[lane_count] = {};
+  alignas(Ops::alignment) Cell previous_h_scores[lane_count] = {};
+
+  for (std::size_t target_index = block_start; target_index < block_end; ++target_index) {
+    const std::size_t local_column = target_index - block_start + 1U;
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_zero<Ops, Cell>(
+        load_state_cells<Ops, Cell>(h_load_data + ((state.segment_count - 1U) * lane_count)));
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + state.target_profile_offsets[target_index];
+
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* h_store_segment = h_store_data + segment * lane_count;
+      Cell* h_load_segment = h_load_data + segment * lane_count;
+      Cell* e_segment = e_store_data + segment * lane_count;
+      const Cell* profile_segment = profile_row + segment * lane_count;
+
+      const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+      auto v_e = load_state_cells<Ops, Cell>(e_segment);
+      const auto v_diagonal = Ops::add(v_h, v_profile);
+      auto v_cell = Ops::max(v_diagonal, v_e);
+      v_cell = Ops::max(v_cell, v_f);
+      v_cell = Ops::max(v_cell, zero_vector);
+      store_state_cells<Ops, Cell>(h_store_segment, v_cell);
+
+      Ops::store_cells(diagonal_scores, v_diagonal);
+      Ops::store_cells(e_scores, v_e);
+      Ops::store_cells(f_scores, v_f);
+      Ops::store_cells(h_scores, v_cell);
+
+      for (std::size_t lane = 0; lane < lane_count; ++lane) {
+        const std::size_t query_index = lane * state.segment_count + segment;
+        if (query_index >= state.query_size) {
+          continue;
+        }
+
+        Cell selected_score = diagonal_scores[lane];
+        TraceDirection direction = TraceDirection::diagonal;
+        if (f_scores[lane] > selected_score) {
+          selected_score = f_scores[lane];
+          direction = TraceDirection::up;
+        }
+        if (e_scores[lane] > selected_score) {
+          selected_score = e_scores[lane];
+          direction = TraceDirection::left;
+        }
+        if (selected_score <= 0) {
+          direction = TraceDirection::stop;
+        }
+
+        const std::size_t row = query_index + 1U;
+        trace[trace_striped_index(
+            row,
+            local_column,
+            state.segment_count,
+            lane_count,
+            state_cell_count)] = static_cast<std::uint8_t>(direction);
+      }
+
+      const auto v_h_gap = Ops::add(v_cell, gap_vector);
+      v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
+      store_state_cells<Ops, Cell>(e_segment, v_e);
+      v_f = Ops::max(Ops::add(v_f, gap_vector), v_h_gap);
+      v_h = load_state_cells<Ops, Cell>(h_load_segment);
+    }
+
+    for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+      v_f = shift_left_zero<Ops, Cell>(v_f);
+      bool propagated = false;
+
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+        propagated = propagated || any_greater<Ops, Cell>(v_f, v_h_previous);
+        auto v_h_updated = Ops::max(v_h_previous, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h_updated);
+
+        Ops::store_cells(previous_h_scores, v_h_previous);
+        Ops::store_cells(f_scores, v_f);
+        Ops::store_cells(h_scores, v_h_updated);
+        for (std::size_t lane = 0; lane < lane_count; ++lane) {
+          const std::size_t query_index = lane * state.segment_count + segment;
+          if (query_index >= state.query_size) {
+            continue;
+          }
+          if (f_scores[lane] > previous_h_scores[lane]) {
+            const std::size_t row = query_index + 1U;
+            trace[trace_striped_index(
+                row,
+                local_column,
+                state.segment_count,
+                lane_count,
+                state_cell_count)] = static_cast<std::uint8_t>(TraceDirection::up);
+          }
+        }
+
+        v_f = Ops::add(v_f, gap_vector);
+      }
+
+      if (state.gap_score <= 0 && !propagated) {
+        break;
+      }
+    }
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::string linear_sw_checkpointed_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  if (prepared.query_tokens.empty() || prepared.target_tokens.empty()) {
+    return "";
+  }
+
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
+    return "";
+  }
+
+  auto checkpoints = make_linear_cigar_checkpoints<Cell>(
+      state.query_size,
+      state.target_size,
+      state.segment_count * ScoreOps<OpsTemplate, Cell>::lane_count);
+  const LinearLocalEndpoint endpoint =
+      linear_sw_checkpoint_forward<OpsTemplate, Cell>(state, checkpoints);
+  if (endpoint.score <= 0) {
+    return "";
+  }
+
+  ReverseCigarBuilder cigar;
+  std::vector<std::uint8_t> trace;
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  const std::size_t state_cell_count = state.segment_count * lane_count;
+
+  std::size_t row = endpoint.row;
+  std::size_t column = endpoint.column;
+  bool done = false;
+  while (row > 0 && column > 0 && !done) {
+    const std::size_t block_start =
+        ((column - 1U) / checkpoints.block_size) * checkpoints.block_size;
+    const std::size_t block_end = std::min(block_start + checkpoints.block_size, target.size());
+    linear_sw_recompute_trace_block<OpsTemplate, Cell>(
+        state,
+        checkpoints,
+        block_start,
+        block_end,
+        trace);
+
+    while (row > 0 && column > block_start) {
+      const std::size_t local_column = column - block_start;
+      const auto direction = static_cast<TraceDirection>(
+          trace[trace_striped_index(
+              row,
+              local_column,
+              state.segment_count,
+              lane_count,
+              state_cell_count)]);
+      if (direction == TraceDirection::stop) {
+        done = true;
+        break;
+      }
+      if (direction == TraceDirection::diagonal) {
+        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        --row;
+        --column;
+        continue;
+      }
+      if (direction == TraceDirection::up) {
+        cigar.push('D');
+        --row;
+        continue;
+      }
+      if (direction == TraceDirection::left) {
+        cigar.push('I');
+        --column;
+        continue;
+      }
+      done = true;
+      break;
+    }
+
+    if (block_start == 0 && column == 0) {
+      break;
+    }
+  }
+
+  return cigar.str();
+}
+
+template <template <typename, typename> class OpsTemplate>
+std::string dispatch_linear_sw_checkpointed_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_checkpointed_cigar<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_checkpointed_cigar<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_checkpointed_cigar<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_checkpointed_cigar<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported checkpointed SW CIGAR width");
+  throw nb::python_error();
 }
 
 template <template <typename, typename> class OpsTemplate>

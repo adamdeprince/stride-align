@@ -538,6 +538,48 @@ std::string call_smith_waterman_cigar(
 }
 
 template <typename Implementation>
+std::string call_smith_waterman_trade_cigar(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  if (gap_open_score != gap_extend_score || gap_open_score > 0) {
+    return call_smith_waterman_cigar<Implementation>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  ensure_backend_supported_for_fallback<Implementation>();
+  if (auto cigar = profile_traceback::linear_trace_free_cigar<true>(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          width);
+      cigar.has_value()) {
+    return *cigar;
+  }
+
+  return call_smith_waterman_cigar<Implementation>(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      width);
+}
+
+template <typename Implementation>
 std::string call_needleman_wunsch_cigar(
     nb::handle query,
     nb::handle target,
@@ -901,7 +943,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          nb::object width) {
         const unsigned int forced_width = width.is_none() ? 0U : nb::cast<unsigned int>(width);
         const auto gaps = resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
-        return call_smith_waterman_cigar<Implementation>(
+        return call_smith_waterman_trade_cigar<Implementation>(
             query,
             target,
             match_score,

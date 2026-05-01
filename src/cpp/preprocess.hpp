@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <string>
@@ -206,9 +207,8 @@ inline TokenStorage copy_bytes_tokens(PyObject* bytes_object, std::uint64_t& sym
   }
 
   std::vector<std::uint8_t> tokens(static_cast<std::size_t>(size));
-  for (Py_ssize_t index = 0; index < size; ++index) {
-    tokens[static_cast<std::size_t>(index)] =
-        static_cast<std::uint8_t>(static_cast<unsigned char>(raw_data[index]));
+  if (size > 0) {
+    std::memcpy(tokens.data(), raw_data, static_cast<std::size_t>(size));
   }
   symbol_limit = max_symbol_value<std::uint8_t>(tokens);
   return tokens;
@@ -224,8 +224,8 @@ inline TokenStorage copy_unicode_tokens(PyObject* unicode_object, std::uint64_t&
     case PyUnicode_1BYTE_KIND: {
       const auto* data = PyUnicode_1BYTE_DATA(unicode_object);
       std::vector<std::uint8_t> tokens(size);
-      for (std::size_t index = 0; index < size; ++index) {
-        tokens[index] = data[index];
+      if (size > 0) {
+        std::memcpy(tokens.data(), data, size * sizeof(std::uint8_t));
       }
       symbol_limit = max_symbol_value<std::uint8_t>(tokens);
       return tokens;
@@ -233,8 +233,8 @@ inline TokenStorage copy_unicode_tokens(PyObject* unicode_object, std::uint64_t&
     case PyUnicode_2BYTE_KIND: {
       const auto* data = PyUnicode_2BYTE_DATA(unicode_object);
       std::vector<std::uint16_t> tokens(size);
-      for (std::size_t index = 0; index < size; ++index) {
-        tokens[index] = data[index];
+      if (size > 0) {
+        std::memcpy(tokens.data(), data, size * sizeof(std::uint16_t));
       }
       symbol_limit = max_symbol_value<std::uint16_t>(tokens);
       return tokens;
@@ -242,8 +242,8 @@ inline TokenStorage copy_unicode_tokens(PyObject* unicode_object, std::uint64_t&
     case PyUnicode_4BYTE_KIND: {
       const auto* data = PyUnicode_4BYTE_DATA(unicode_object);
       std::vector<std::uint32_t> tokens(size);
-      for (std::size_t index = 0; index < size; ++index) {
-        tokens[index] = data[index];
+      if (size > 0) {
+        std::memcpy(tokens.data(), data, size * sizeof(std::uint32_t));
       }
       symbol_limit = max_symbol_value<std::uint32_t>(tokens);
       return tokens;

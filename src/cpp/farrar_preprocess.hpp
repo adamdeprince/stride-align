@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -68,9 +69,8 @@ inline std::vector<std::uint8_t> copy_bytes_tokens_8(PyObject* bytes_object) {
   }
 
   std::vector<std::uint8_t> tokens(static_cast<std::size_t>(size));
-  for (Py_ssize_t index = 0; index < size; ++index) {
-    tokens[static_cast<std::size_t>(index)] =
-        static_cast<std::uint8_t>(static_cast<unsigned char>(raw_data[index]));
+  if (size > 0) {
+    std::memcpy(tokens.data(), raw_data, static_cast<std::size_t>(size));
   }
   return tokens;
 }
@@ -141,6 +141,54 @@ inline std::vector<std::uint8_t> compact_unicode_tokens(
   }
   return tokens;
 }
+
+inline std::size_t direct_unicode_lookup_size(PyObject* unicode_object) {
+  if (PyUnicode_READY(unicode_object) != 0) {
+    throw nb::python_error();
+  }
+
+  switch (PyUnicode_KIND(unicode_object)) {
+    case PyUnicode_1BYTE_KIND:
+      return 256U;
+    case PyUnicode_2BYTE_KIND:
+      return 65536U;
+    default:
+      return 0U;
+  }
+}
+
+struct DirectUnicodeTokenMap {
+  static constexpr std::uint16_t missing = std::numeric_limits<std::uint16_t>::max();
+
+  explicit DirectUnicodeTokenMap(std::size_t lookup_size) : lookup(lookup_size, missing) {}
+
+  std::vector<std::uint8_t> encode(PyObject* unicode_object) {
+    if (PyUnicode_READY(unicode_object) != 0) {
+      throw nb::python_error();
+    }
+
+    const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(unicode_object));
+    const int kind = PyUnicode_KIND(unicode_object);
+    void* data = PyUnicode_DATA(unicode_object);
+
+    std::vector<std::uint8_t> tokens;
+    tokens.reserve(size);
+    for (std::size_t index = 0; index < size; ++index) {
+      const auto codepoint = static_cast<std::size_t>(
+          PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(index)));
+      std::uint16_t& entry = lookup[codepoint];
+      if (entry == missing) {
+        entry = next_compact_token(symbol_count);
+        ++symbol_count;
+      }
+      tokens.push_back(static_cast<std::uint8_t>(entry));
+    }
+    return tokens;
+  }
+
+  std::vector<std::uint16_t> lookup;
+  std::size_t symbol_count = 0;
+};
 
 inline std::vector<nb::object> sequence_items(nb::handle input, std::string_view argument_name) {
   const std::string message =
@@ -270,10 +318,22 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
     prepared.symbol_count =
         farrar_detail::byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
   } else if (query_is_unicode && target_is_unicode) {
-    std::unordered_map<Py_UCS4, std::uint8_t> token_map;
-    prepared.query_tokens = farrar_detail::compact_unicode_tokens(query.ptr(), token_map);
-    prepared.target_tokens = farrar_detail::compact_unicode_tokens(target.ptr(), token_map);
-    prepared.symbol_count = token_map.size();
+    const std::size_t query_lookup_size = farrar_detail::direct_unicode_lookup_size(query.ptr());
+    const std::size_t target_lookup_size = farrar_detail::direct_unicode_lookup_size(target.ptr());
+    const std::size_t lookup_size = query_lookup_size != 0U && target_lookup_size != 0U
+        ? std::max(query_lookup_size, target_lookup_size)
+        : 0U;
+    if (lookup_size != 0U) {
+      farrar_detail::DirectUnicodeTokenMap token_map(lookup_size);
+      prepared.query_tokens = token_map.encode(query.ptr());
+      prepared.target_tokens = token_map.encode(target.ptr());
+      prepared.symbol_count = token_map.symbol_count;
+    } else {
+      std::unordered_map<Py_UCS4, std::uint8_t> token_map;
+      prepared.query_tokens = farrar_detail::compact_unicode_tokens(query.ptr(), token_map);
+      prepared.target_tokens = farrar_detail::compact_unicode_tokens(target.ptr(), token_map);
+      prepared.symbol_count = token_map.size();
+    }
   } else {
     auto query_items = farrar_detail::sequence_items(query, "query");
     auto target_items = farrar_detail::sequence_items(target, "target");
@@ -356,13 +416,33 @@ inline PreparedFarrarBatchAlignment prepare_farrar_batch_alignment(
     prepared.symbol_count =
         farrar_detail::byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
   } else if (query_is_unicode && all_targets_unicode) {
-    std::unordered_map<Py_UCS4, std::uint8_t> token_map;
-    prepared.query_tokens = farrar_detail::compact_unicode_tokens(query.ptr(), token_map);
-    for (std::size_t index = 0; index < target_count; ++index) {
-      prepared.target_tokens.push_back(
-          farrar_detail::compact_unicode_tokens(items[index], token_map));
+    std::size_t lookup_size = farrar_detail::direct_unicode_lookup_size(query.ptr());
+    for (std::size_t index = 0; index < target_count && lookup_size != 0U; ++index) {
+      const std::size_t target_lookup_size =
+          farrar_detail::direct_unicode_lookup_size(items[index]);
+      if (target_lookup_size == 0U) {
+        lookup_size = 0U;
+        break;
+      }
+      lookup_size = std::max(lookup_size, target_lookup_size);
     }
-    prepared.symbol_count = token_map.size();
+
+    if (lookup_size != 0U) {
+      farrar_detail::DirectUnicodeTokenMap token_map(lookup_size);
+      prepared.query_tokens = token_map.encode(query.ptr());
+      for (std::size_t index = 0; index < target_count; ++index) {
+        prepared.target_tokens.push_back(token_map.encode(items[index]));
+      }
+      prepared.symbol_count = token_map.symbol_count;
+    } else {
+      std::unordered_map<Py_UCS4, std::uint8_t> token_map;
+      prepared.query_tokens = farrar_detail::compact_unicode_tokens(query.ptr(), token_map);
+      for (std::size_t index = 0; index < target_count; ++index) {
+        prepared.target_tokens.push_back(
+            farrar_detail::compact_unicode_tokens(items[index], token_map));
+      }
+      prepared.symbol_count = token_map.size();
+    }
   } else {
     nb::dict token_map;
     auto query_items = farrar_detail::sequence_items(query, "query");

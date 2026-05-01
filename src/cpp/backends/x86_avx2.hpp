@@ -36,6 +36,20 @@ inline __m256i shift_left_zero_256(__m256i vector) {
   return _mm256_or_si256(shifted, carry);
 }
 
+inline std::uint32_t compress_even_bits_32(std::uint32_t mask) {
+  mask &= 0x55555555U;
+  mask = (mask | (mask >> 1U)) & 0x33333333U;
+  mask = (mask | (mask >> 2U)) & 0x0F0F0F0FU;
+  mask = (mask | (mask >> 4U)) & 0x00FF00FFU;
+  mask = (mask | (mask >> 8U)) & 0x0000FFFFU;
+  return mask;
+}
+
+inline std::uint32_t lane_mask_epi16_256(__m256i mask) {
+  return compress_even_bits_32(
+      static_cast<std::uint32_t>(_mm256_movemask_epi8(mask)) >> 1U);
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -98,6 +112,14 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static vector_type greater_mask(vector_type lhs, vector_type rhs) {
     return _mm256_cmpgt_epi8(lhs, rhs);
+  }
+
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi8(lhs, rhs)));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(lhs, rhs)));
   }
 
   static vector_type bit_or(vector_type lhs, vector_type rhs) {
@@ -179,6 +201,14 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm256_cmpgt_epi16(lhs, rhs);
   }
 
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return lane_mask_epi16_256(_mm256_cmpgt_epi16(lhs, rhs));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return lane_mask_epi16_256(_mm256_cmpeq_epi16(lhs, rhs));
+  }
+
   static vector_type bit_or(vector_type lhs, vector_type rhs) {
     return _mm256_or_si256(lhs, rhs);
   }
@@ -256,6 +286,16 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static vector_type greater_mask(vector_type lhs, vector_type rhs) {
     return _mm256_cmpgt_epi32(lhs, rhs);
+  }
+
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint32_t>(
+        _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(lhs, rhs))));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint32_t>(
+        _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(lhs, rhs))));
   }
 
   static vector_type bit_or(vector_type lhs, vector_type rhs) {
@@ -338,6 +378,16 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return _mm256_cmpgt_epi64(lhs, rhs);
   }
 
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint32_t>(
+        _mm256_movemask_pd(_mm256_castsi256_pd(_mm256_cmpgt_epi64(lhs, rhs))));
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    return static_cast<std::uint32_t>(
+        _mm256_movemask_pd(_mm256_castsi256_pd(_mm256_cmpeq_epi64(lhs, rhs))));
+  }
+
   static vector_type bit_or(vector_type lhs, vector_type rhs) {
     return _mm256_or_si256(lhs, rhs);
   }
@@ -410,6 +460,18 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto output_prepared =
+          prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto path = farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
+    }
     return profile_traceback::linear_path<true>(
         query,
         target,
@@ -426,6 +488,15 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     return profile_traceback::linear_path_info<true>(
         query,
         target,
@@ -442,6 +513,15 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     return profile_traceback::linear_cigar<true>(
         query,
         target,

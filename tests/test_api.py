@@ -358,6 +358,49 @@ def test_smith_waterman_cigar_apis_return_cigar_only() -> None:
     assert smith_waterman_trade_cigar(b"ACCGT", b"CCG") == expected
 
 
+def _linear_cigar_score(
+    cigar: str,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+) -> int:
+    score = 0
+    count = 0
+    for character in cigar:
+        if character.isdigit():
+            count = count * 10 + int(character)
+            continue
+        if character == "M":
+            score += count * match_score
+        elif character == "X":
+            score += count * mismatch_score
+        elif character in {"I", "D"}:
+            score += count * gap_score
+        else:
+            raise AssertionError(f"unexpected CIGAR operation {character!r}")
+        count = 0
+    assert count == 0
+    return score
+
+
+def test_smith_waterman_trade_cigar_trace_free_score_matches_score() -> None:
+    cases = [
+        (
+            "the city wakes under a grey sky while people cross the station concourse",
+            "the city wakes under a blue sky while people cross a quiet station concourse",
+        ),
+        (
+            "清晨的城市慢慢醒来，行人穿过路口，语言结构也慢慢清楚",
+            "清晨的城市慢慢亮起来，行人穿过路口，文字结构也慢慢清楚",
+        ),
+    ]
+
+    for query, target in cases:
+        cigar = smith_waterman_trade_cigar(query, target, width=16)
+        assert _linear_cigar_score(cigar) == smith_waterman_score(query, target, width=16)
+
+
 def test_direct_bytes_and_str_pair_raises_type_error() -> None:
     with pytest.raises(TypeError, match="bytes and str inputs"):
         needleman_wunsch_score(b"ABC", "ABC")
