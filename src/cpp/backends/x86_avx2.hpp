@@ -707,7 +707,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_cigar<true>(
+    const Score expected_score = smith_waterman_affine_score(
         query,
         target,
         match_score,
@@ -715,6 +715,15 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return profile_traceback::affine_cigar_with_score<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width,
+        expected_score);
   }
 
   static Score smith_waterman_affine_farrar_score(
@@ -1039,7 +1048,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_cigar<false>(
+    const Score expected_score = needleman_wunsch_affine_score(
         query,
         target,
         match_score,
@@ -1047,6 +1056,15 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return profile_traceback::affine_cigar_with_score<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width,
+        expected_score);
   }
 };
 

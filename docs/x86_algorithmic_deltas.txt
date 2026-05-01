@@ -768,6 +768,200 @@ Compared with /tmp/stride-align-path-traceback-split-linear-sw.csv, this was a
 modest AVX2 win by geometric mean and roughly neutral for AVX512 on the focused
 English/Chinese SW path/path-info/CIGAR rows.
 
+20. CIGAR output-formatting allocation attempts rejected
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After the direct two-bitplane CIGAR decoder lost, the next measurement pass
+targeted only allocation and output formatting in ReverseCigarBuilder. Direction
+lookup and traceback semantics were left unchanged.
+
+The benchmark CIGARs for the focused 1024x1024 English/Chinese Smith-Waterman
+rows have roughly 40-43 output runs, so three CIGAR-builder variants were tested:
+
+- small inline run storage with exact output reservation and to_chars formatting
+- vector-backed runs with exact output reservation and to_chars formatting
+- vector-backed runs with a coarse run-count-based output reserve and existing
+  std::to_string formatting
+
+All three variants regressed enough focused English/Chinese SW/NW CIGAR rows
+that none were kept. The active CIGAR builder remains the original vector-backed
+run collector with std::to_string formatting and no explicit output reservation.
+
+Conclusion: CIGAR output allocation/formatting is not currently the limiting
+piece for these rows. The remaining CIGAR gap should stay focused on trace
+generation/traceback locality or Python return conversion costs, not another
+ReverseCigarBuilder formatting rewrite.
+
+21. Packed affine profile trace attempt rejected
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A shared profile_traceback affine trace-table experiment replaced the one-byte
+trace cell with a two-cells-per-byte nibble table. The encoding was unchanged:
+two direction bits plus up/left continuation bits. Two variants were tested:
+
+- packed nibble writes with a read/modify/write on odd cells
+- row-major sequential writes that avoid the odd-cell read/modify/write
+
+Both variants were correct, but neither should be kept:
+
+- The first packed version was slightly positive on some affine path-info rows
+  but regressed affine CIGAR enough to lose overall:
+  /tmp/stride-align-affine-packed-trace.csv
+- The sequential-write version was worse, especially for affine CIGAR:
+  /tmp/stride-align-affine-packed-trace-sequential.csv
+
+Conclusion: simply packing the existing affine trace byte into nibbles does not
+fix the worst affine traceback cases. The trace-table bandwidth reduction is
+not worth the extra bit packing and decode work in the current scalar profile
+traceback algorithm. The next affine attempt needs a different trace layout or
+algorithmic change, not a narrower representation of the same per-cell trace.
+
+22. Retesting x86 striped affine CIGAR rejected
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After the packed affine profile trace failed, AVX2 and AVX512BWVL affine CIGAR
+were briefly routed through:
+
+  farrar_fixed_kernel::detail::dispatch_affine_striped_cigar<SimdOps, ...>(...)
+
+for normal non-positive affine gap penalties. This retested the existing striped
+affine traceback algorithm as an algorithmic alternative to the scalar
+profile_traceback affine CIGAR path.
+
+Correctness passed, but focused affine English/Chinese CIGAR benchmarks showed
+large regressions:
+
+- AVX2 affine CIGAR geomean old/new: about 0.47x
+- AVX512BWVL affine CIGAR geomean old/new: about 0.50x
+- benchmark file: /tmp/stride-align-x86-striped-affine-cigar.csv
+
+The route was reverted. The active x86 affine CIGAR path remains
+profile_traceback::affine_cigar. Do not promote dispatch_affine_striped_cigar
+for CIGAR-only output unless a future implementation substantially changes its
+trace generation cost.
+
+23. CIGAR return conversion and affine checkpoint traceback measured
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The next affine CIGAR investigation split C++ CIGAR generation from nanobind
+string return conversion by adding private benchmark-only digest endpoints. The
+digest endpoints call the exact same C++ CIGAR generator and hash the resulting
+std::string before returning a uint64_t to Python.
+
+Focused 1024x1024 English/Chinese affine CIGAR measurements showed normal
+string return and digest return are effectively identical:
+
+- most rows were within roughly 1%
+- one AVX2 Smith-Waterman row was noisy in the wrong direction, with digest
+  slower than string return
+- CIGAR lengths were only about 102-108 characters for these text cases
+
+Conclusion: Python string return conversion and CIGAR output formatting are not
+the affine CIGAR bottleneck for the current English/Chinese workloads.
+
+After that, a row-checkpointed affine CIGAR prototype was implemented. It keeps
+only periodic H/up row checkpoints during a first score-only pass, then
+recomputes a small trace block while walking traceback. This was intended to
+avoid keeping a full resident trace table.
+
+The prototype was correct against the active CIGAR implementation, but it lost:
+
+- generic/x86 AVX2/x86 AVX512 English and Chinese SW CIGAR: usually about
+  1.5-1.6x slower than the current full-byte trace table
+- generic/x86 AVX2/x86 AVX512 English and Chinese NW CIGAR: usually about
+  1.75-1.8x slower than the current full-byte trace table
+
+The reason is straightforward: for these dense text alignments the traceback
+crosses nearly every row block, so recomputation touches almost the whole DP
+matrix after the first score-only pass. That doubles a large part of the scalar
+DP work while still writing block-local trace bytes.
+
+Do not route affine CIGAR to row-checkpoint recomputation for the current
+English/Chinese use case. The active public affine CIGAR path should remain the
+single-pass profile_traceback::affine_cigar byte-trace implementation.
+
+24. Prepared affine CIGAR profile API and preprocess/DP split
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Affine CIGAR now has private prepared-profile hooks on backend modules:
+
+- _prepare_smith_waterman_affine_cigar
+- _smith_waterman_affine_cigar_prepared
+- _prepare_needleman_wunsch_affine_cigar
+- _needleman_wunsch_affine_cigar_prepared
+
+These hooks reuse the same compact Farrar preprocessing/tokenization as the
+normal profile_traceback affine CIGAR path. The backend-specific prepare
+wrappers also compute and store the verified affine score, so the prepared
+CIGAR call can time only the CIGAR DP/trace/decode body instead of also running
+score verification. They do not change the public smith_waterman_cigar /
+needleman_wunsch_cigar API and they do not route through the rejected
+row-checkpointed affine CIGAR prototype.
+
+The benchmark --timing-split mode now reports:
+
+- preprocess_s: total direct CIGAR median minus prepared CIGAR median
+- dp_trace_s: prepared affine CIGAR median
+
+Because preprocess_s is currently a difference between independent medians, it
+can be slightly negative on noisy or tiny runs. Use dp_trace_s as the stable
+measurement of the affine CIGAR DP/trace/decode body, and use preprocess_s as a
+coarse signal only on longer benchmark runs.
+
+25. CIGAR timing split cleanup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The benchmark --timing-split path no longer reports path_info_s or
+materialize_s for CIGAR rows. Those columns compare full path materialization
+against path-info output, and CIGAR no longer runs as "path-info plus
+materialize" in the relevant affine experiments.
+
+CIGAR rows still report:
+
+- score_base_s: the matching score-only median
+- trace_over_s: total CIGAR median minus score_base_s
+- preprocess_s: total direct affine CIGAR median minus prepared affine CIGAR
+  median, when prepared affine CIGAR hooks exist
+- dp_trace_s: prepared affine CIGAR median, when prepared affine CIGAR hooks
+  exist
+
+This makes the table less convenient for CIGAR/path-info side-by-side deltas,
+but it avoids negative or misleading "materialization" numbers for algorithms
+that do not share the same trace representation.
+
+26. Exact banded affine CIGAR fast path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+profile_traceback now has an affine_banded_cigar fast path used by
+affine_cigar_fast. It computes affine DP and byte trace only inside a diagonal
+band with a default radius of:
+
+- abs(query_length - target_length)
+- plus a slack of clamp(max_length / 16, 32, 128)
+
+The banded path is exact, not heuristic: it only returns when the score computed
+inside the band equals the independently verified full affine score. If the band
+does not cover an optimal alignment, or the sequence is small enough that the
+band would cover the full matrix, execution falls back to the existing full
+profile_traceback::affine_cigar byte-trace implementation.
+
+x86-specific difference:
+
+- SSE4.1, AVX2 and AVX512BWVL affine CIGAR wrappers now compute the expected
+  affine score through their existing SIMD affine score kernels and pass that
+  score into profile_traceback::affine_cigar_with_score.
+- The generic prepared affine CIGAR path and non-x86 fallback path can still
+  verify by running the scalar profile_traceback affine score first when no
+  prepared or backend-provided expected score is available.
+- Prepared affine CIGAR objects now carry an optional expected score. Backend
+  prepare hooks fill it from their affine score route, which keeps dp_trace_s
+  focused on the banded CIGAR kernel rather than scalar score verification.
+
+Expected effect for English/Chinese text workloads: near-diagonal affine CIGARs
+should write much less trace data while preserving exact fallback behavior.
+Large shifts, long indel runs, or small inputs will naturally fall back to the
+full trace-table kernel.
+
 
 Expected Loongson result after port
 -----------------------------------

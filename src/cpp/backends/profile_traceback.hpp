@@ -24,6 +24,15 @@ namespace stride_align::profile_traceback {
 
 namespace nb = nanobind;
 
+struct PreparedAffineCigar {
+  PreparedFarrarAlignment prepared;
+  Score match_score = 2;
+  Score mismatch_score = -1;
+  Score gap_open_score = -1;
+  Score gap_extend_score = -1;
+  std::optional<Score> expected_score = std::nullopt;
+};
+
 namespace detail {
 
 enum class Direction : std::uint8_t {
@@ -121,6 +130,18 @@ inline std::size_t matrix_index(
     std::size_t column,
     std::size_t columns) noexcept {
   return row * columns + column;
+}
+
+inline std::size_t absolute_difference(std::size_t lhs, std::size_t rhs) noexcept {
+  return lhs >= rhs ? lhs - rhs : rhs - lhs;
+}
+
+inline std::size_t default_affine_cigar_band_radius(
+    std::size_t query_size,
+    std::size_t target_size) noexcept {
+  const std::size_t maximum_size = std::max(query_size, target_size);
+  const std::size_t slack = std::clamp<std::size_t>(maximum_size / 16U, 32U, 128U);
+  return absolute_difference(query_size, target_size) + slack;
 }
 
 struct TokenRange {
@@ -1198,6 +1219,602 @@ std::string affine_cigar(
   return cigar.str();
 }
 
+template <typename Cell, bool LocalAlignment>
+std::optional<std::string> affine_banded_cigar(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score,
+    Score expected_score) {
+  if constexpr (LocalAlignment) {
+    if (expected_score <= 0) {
+      return std::string();
+    }
+  }
+
+  const std::size_t query_size = query.size();
+  const std::size_t target_size = target.size();
+  const std::size_t radius = default_affine_cigar_band_radius(query_size, target_size);
+  if (radius >= std::max(query_size, target_size)) {
+    return std::nullopt;
+  }
+
+  const std::size_t rows = query_size + 1U;
+  const std::size_t columns = target_size + 1U;
+  const std::size_t cell_count = rows * columns;
+  constexpr Cell negative_infinity = negative_infinity_v<Cell>;
+
+  std::vector<Cell> previous_h(columns, negative_infinity);
+  std::vector<Cell> current_h(columns, negative_infinity);
+  std::vector<Cell> previous_up(columns, negative_infinity);
+  std::vector<Cell> current_up(columns, negative_infinity);
+  TraceTable<std::uint8_t> trace(cell_count);
+
+  const std::size_t first_row_max = std::min(target_size, radius);
+  previous_h[0] = 0;
+  trace[matrix_index(0, 0, columns)] = pack_trace(Direction::stop, false, false);
+  if constexpr (!LocalAlignment) {
+    for (std::size_t column = 1U; column <= first_row_max; ++column) {
+      previous_h[column] = gap_cost<Cell>(column, gap_open_score, gap_extend_score);
+      trace[matrix_index(0, column, columns)] =
+          pack_trace(Direction::left, false, column > 1U);
+    }
+  } else {
+    for (std::size_t column = 1U; column <= first_row_max; ++column) {
+      previous_h[column] = 0;
+      trace[matrix_index(0, column, columns)] = pack_trace(Direction::stop, false, false);
+    }
+  }
+
+  Cell best_score = 0;
+  std::size_t best_row = 0;
+  std::size_t best_column = 0;
+
+  for (std::size_t row = 1U; row <= query_size; ++row) {
+    const std::size_t row_min = row > radius ? row - radius : 0U;
+    const std::size_t row_max = std::min(target_size, row + radius);
+    if (row_min > row_max) {
+      return std::nullopt;
+    }
+
+    const std::size_t clear_begin = row_min > 0U ? row_min - 1U : 0U;
+    const std::size_t clear_end = std::min(columns, row_max + 2U);
+    std::fill(current_h.begin() + static_cast<std::ptrdiff_t>(clear_begin),
+              current_h.begin() + static_cast<std::ptrdiff_t>(clear_end),
+              negative_infinity);
+    std::fill(current_up.begin() + static_cast<std::ptrdiff_t>(clear_begin),
+              current_up.begin() + static_cast<std::ptrdiff_t>(clear_end),
+              negative_infinity);
+
+    if (row_min == 0U) {
+      if constexpr (LocalAlignment) {
+        current_h[0] = 0;
+        current_up[0] = negative_infinity;
+        trace[matrix_index(row, 0, columns)] = pack_trace(Direction::stop, false, false);
+      } else {
+        current_h[0] = gap_cost<Cell>(row, gap_open_score, gap_extend_score);
+        current_up[0] = current_h[0];
+        trace[matrix_index(row, 0, columns)] =
+            pack_trace(Direction::up, row > 1U, false);
+      }
+    }
+
+    Cell left_score = negative_infinity;
+    const std::size_t start_column = std::max<std::size_t>(1U, row_min);
+    for (std::size_t column = start_column; column <= row_max; ++column) {
+      const Cell up_open = safe_add<Cell>(previous_h[column], gap_open_score);
+      const Cell up_extend = safe_add<Cell>(previous_up[column], gap_extend_score);
+      const Cell up_score = std::max(up_open, up_extend);
+      const bool up_continues_gap = up_extend >= up_open;
+
+      const Cell left_open = safe_add<Cell>(current_h[column - 1U], gap_open_score);
+      const Cell left_extend = safe_add<Cell>(left_score, gap_extend_score);
+      left_score = std::max(left_open, left_extend);
+      const bool left_continues_gap = left_extend >= left_open;
+
+      const Cell diagonal = safe_add<Cell>(
+          previous_h[column - 1U],
+          substitution_score<std::uint8_t, Cell>(
+              query[row - 1U],
+              target[column - 1U],
+              match_score,
+              mismatch_score));
+
+      Cell cell = diagonal;
+      Direction source = Direction::diagonal;
+      if (up_score > cell) {
+        cell = up_score;
+        source = Direction::up;
+      }
+      if (left_score > cell) {
+        cell = left_score;
+        source = Direction::left;
+      }
+      if constexpr (LocalAlignment) {
+        if (cell <= 0) {
+          cell = 0;
+          source = Direction::stop;
+        }
+      }
+
+      current_h[column] = cell;
+      current_up[column] = up_score;
+      trace[matrix_index(row, column, columns)] =
+          pack_trace(source, up_continues_gap, left_continues_gap);
+
+      if constexpr (LocalAlignment) {
+        if (cell > best_score) {
+          best_score = cell;
+          best_row = row;
+          best_column = column;
+        }
+      }
+    }
+
+    std::swap(previous_h, current_h);
+    std::swap(previous_up, current_up);
+  }
+
+  if constexpr (!LocalAlignment) {
+    best_score = previous_h[target_size];
+    best_row = query_size;
+    best_column = target_size;
+  }
+  if (best_score == negative_infinity || static_cast<Score>(best_score) != expected_score) {
+    return std::nullopt;
+  }
+
+  ReverseCigarBuilder cigar;
+  std::size_t row = best_row;
+  std::size_t column = best_column;
+  AffineState state = AffineState::h;
+
+  while (row > 0 || column > 0) {
+    if (absolute_difference(row, column) > radius) {
+      return std::nullopt;
+    }
+
+    const std::uint8_t trace_cell = trace[matrix_index(row, column, columns)];
+    if constexpr (LocalAlignment) {
+      if (state == AffineState::h && trace_direction(trace_cell) == Direction::stop) {
+        break;
+      }
+    }
+
+    if (state == AffineState::h) {
+      if (row == 0 && column > 0) {
+        state = AffineState::left;
+        continue;
+      }
+      if (column == 0 && row > 0) {
+        state = AffineState::up;
+        continue;
+      }
+
+      const Direction source = trace_direction(trace_cell);
+      if (source == Direction::diagonal) {
+        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        --row;
+        --column;
+        continue;
+      }
+      if (source == Direction::up) {
+        state = AffineState::up;
+        continue;
+      }
+      if (source == Direction::left) {
+        state = AffineState::left;
+        continue;
+      }
+      return std::nullopt;
+    }
+
+    if (state == AffineState::up) {
+      if (row == 0U) {
+        return std::nullopt;
+      }
+      cigar.push('D');
+      const bool continues_gap = row > 1U && trace_up_continues(trace_cell);
+      --row;
+      state = continues_gap ? AffineState::up : AffineState::h;
+      continue;
+    }
+
+    if (column == 0U) {
+      return std::nullopt;
+    }
+    cigar.push('I');
+    const bool continues_gap = column > 1U && trace_left_continues(trace_cell);
+    --column;
+    state = continues_gap ? AffineState::left : AffineState::h;
+  }
+
+  return cigar.str();
+}
+
+template <typename Cell, bool LocalAlignment>
+std::string affine_cigar_fast(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score,
+    std::optional<Score> expected_score = std::nullopt) {
+  const Score verified_score = expected_score.has_value()
+      ? *expected_score
+      : affine_score<Cell, LocalAlignment>(
+            query,
+            target,
+            match_score,
+            mismatch_score,
+            gap_open_score,
+            gap_extend_score);
+  if (auto cigar = affine_banded_cigar<Cell, LocalAlignment>(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score,
+          verified_score);
+      cigar.has_value()) {
+    return *cigar;
+  }
+  return affine_cigar<Cell, LocalAlignment>(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score);
+}
+
+template <typename Cell>
+struct AffineCigarCheckpoints {
+  std::size_t block_size = 0;
+  std::size_t checkpoint_count = 0;
+  std::size_t columns = 0;
+  std::vector<Cell> h;
+  std::vector<Cell> up;
+
+  Cell* h_at(std::size_t checkpoint_index) noexcept {
+    return h.data() + checkpoint_index * columns;
+  }
+
+  const Cell* h_at(std::size_t checkpoint_index) const noexcept {
+    return h.data() + checkpoint_index * columns;
+  }
+
+  Cell* up_at(std::size_t checkpoint_index) noexcept {
+    return up.data() + checkpoint_index * columns;
+  }
+
+  const Cell* up_at(std::size_t checkpoint_index) const noexcept {
+    return up.data() + checkpoint_index * columns;
+  }
+};
+
+inline std::size_t affine_cigar_checkpoint_block_size(std::size_t columns) noexcept {
+  constexpr std::size_t target_trace_bytes = 64U * 1024U;
+  const std::size_t raw_block_size = std::max<std::size_t>(1U, target_trace_bytes / columns);
+  return std::clamp<std::size_t>(raw_block_size, 16U, 128U);
+}
+
+template <typename Cell>
+AffineCigarCheckpoints<Cell> make_affine_cigar_checkpoints(
+    std::size_t query_size,
+    std::size_t target_size) {
+  AffineCigarCheckpoints<Cell> checkpoints;
+  checkpoints.columns = target_size + 1U;
+  checkpoints.block_size = affine_cigar_checkpoint_block_size(checkpoints.columns);
+  checkpoints.checkpoint_count = query_size / checkpoints.block_size + 1U;
+  checkpoints.h.resize(checkpoints.checkpoint_count * checkpoints.columns);
+  checkpoints.up.resize(checkpoints.checkpoint_count * checkpoints.columns);
+  return checkpoints;
+}
+
+template <typename Cell>
+void save_affine_cigar_checkpoint(
+    AffineCigarCheckpoints<Cell>& checkpoints,
+    std::size_t checkpoint_index,
+    const std::vector<Cell>& h,
+    const std::vector<Cell>& up) {
+  std::copy_n(h.data(), checkpoints.columns, checkpoints.h_at(checkpoint_index));
+  std::copy_n(up.data(), checkpoints.columns, checkpoints.up_at(checkpoint_index));
+}
+
+template <typename Cell, bool LocalAlignment>
+LocalEndpoint<Cell> affine_cigar_checkpoint_forward(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score,
+    AffineCigarCheckpoints<Cell>& checkpoints) {
+  const std::size_t columns = target.size() + 1U;
+  std::vector<Cell> previous_h(columns, LocalAlignment ? Cell{0} : negative_infinity_v<Cell>);
+  std::vector<Cell> current_h(columns, LocalAlignment ? Cell{0} : negative_infinity_v<Cell>);
+  std::vector<Cell> previous_up(columns, negative_infinity_v<Cell>);
+  std::vector<Cell> current_up(columns, negative_infinity_v<Cell>);
+
+  previous_h[0] = 0;
+  if constexpr (!LocalAlignment) {
+    for (std::size_t column = 1; column < columns; ++column) {
+      previous_h[column] = gap_cost<Cell>(column, gap_open_score, gap_extend_score);
+    }
+  }
+  save_affine_cigar_checkpoint(checkpoints, 0U, previous_h, previous_up);
+
+  LocalEndpoint<Cell> endpoint;
+  if constexpr (!LocalAlignment) {
+    endpoint = {previous_h.back(), query.size(), target.size()};
+  }
+
+  for (std::size_t row = 1; row <= query.size(); ++row) {
+    if constexpr (LocalAlignment) {
+      current_h[0] = 0;
+      current_up[0] = negative_infinity_v<Cell>;
+    } else {
+      current_h[0] = gap_cost<Cell>(row, gap_open_score, gap_extend_score);
+      current_up[0] = current_h[0];
+    }
+
+    Cell left_score = negative_infinity_v<Cell>;
+    for (std::size_t column = 1; column < columns; ++column) {
+      const Cell diagonal = safe_add<Cell>(
+          previous_h[column - 1U],
+          substitution_score<std::uint8_t, Cell>(
+              query[row - 1U],
+              target[column - 1U],
+              match_score,
+              mismatch_score));
+      const Cell up_score = std::max(
+          safe_add<Cell>(previous_h[column], gap_open_score),
+          safe_add<Cell>(previous_up[column], gap_extend_score));
+      left_score = std::max(
+          safe_add<Cell>(current_h[column - 1U], gap_open_score),
+          safe_add<Cell>(left_score, gap_extend_score));
+
+      Cell cell = std::max({diagonal, up_score, left_score});
+      if constexpr (LocalAlignment) {
+        cell = std::max<Cell>(0, cell);
+        if (cell > endpoint.score) {
+          endpoint = {cell, row, column};
+        }
+      }
+
+      current_h[column] = cell;
+      current_up[column] = up_score;
+    }
+
+    std::swap(previous_h, current_h);
+    std::swap(previous_up, current_up);
+    if (row % checkpoints.block_size == 0) {
+      save_affine_cigar_checkpoint(
+          checkpoints,
+          row / checkpoints.block_size,
+          previous_h,
+          previous_up);
+    }
+  }
+
+  if constexpr (!LocalAlignment) {
+    endpoint = {previous_h.back(), query.size(), target.size()};
+  }
+  return endpoint;
+}
+
+template <typename Cell, bool LocalAlignment>
+void affine_cigar_recompute_trace_block(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score,
+    const AffineCigarCheckpoints<Cell>& checkpoints,
+    std::size_t block_start,
+    std::size_t block_end,
+    std::vector<std::uint8_t>& block_trace) {
+  const std::size_t columns = target.size() + 1U;
+  const std::size_t block_rows = block_end - block_start;
+  block_trace.resize(block_rows * columns);
+
+  std::vector<Cell> previous_h(columns, LocalAlignment ? Cell{0} : negative_infinity_v<Cell>);
+  std::vector<Cell> current_h(columns, LocalAlignment ? Cell{0} : negative_infinity_v<Cell>);
+  std::vector<Cell> previous_up(columns, negative_infinity_v<Cell>);
+  std::vector<Cell> current_up(columns, negative_infinity_v<Cell>);
+
+  const std::size_t checkpoint_index = block_start / checkpoints.block_size;
+  std::copy_n(checkpoints.h_at(checkpoint_index), columns, previous_h.data());
+  std::copy_n(checkpoints.up_at(checkpoint_index), columns, previous_up.data());
+
+  for (std::size_t row = block_start + 1U; row <= block_end; ++row) {
+    const std::size_t trace_row_offset = (row - block_start - 1U) * columns;
+    if constexpr (LocalAlignment) {
+      current_h[0] = 0;
+      current_up[0] = negative_infinity_v<Cell>;
+      block_trace[trace_row_offset] = pack_trace(Direction::stop, false, false);
+    } else {
+      current_h[0] = gap_cost<Cell>(row, gap_open_score, gap_extend_score);
+      current_up[0] = current_h[0];
+      block_trace[trace_row_offset] = pack_trace(Direction::up, row > 1U, false);
+    }
+
+    Cell left_score = negative_infinity_v<Cell>;
+    for (std::size_t column = 1; column < columns; ++column) {
+      const Cell up_open = safe_add<Cell>(previous_h[column], gap_open_score);
+      const Cell up_extend = safe_add<Cell>(previous_up[column], gap_extend_score);
+      const Cell up_score = std::max(up_open, up_extend);
+      const bool up_continues_gap = up_extend >= up_open;
+
+      const Cell left_open = safe_add<Cell>(current_h[column - 1U], gap_open_score);
+      const Cell left_extend = safe_add<Cell>(left_score, gap_extend_score);
+      left_score = std::max(left_open, left_extend);
+      const bool left_continues_gap = left_extend >= left_open;
+
+      const Cell diagonal = safe_add<Cell>(
+          previous_h[column - 1U],
+          substitution_score<std::uint8_t, Cell>(
+              query[row - 1U],
+              target[column - 1U],
+              match_score,
+              mismatch_score));
+
+      Cell cell = diagonal;
+      Direction source = Direction::diagonal;
+      if (up_score > cell) {
+        cell = up_score;
+        source = Direction::up;
+      }
+      if (left_score > cell) {
+        cell = left_score;
+        source = Direction::left;
+      }
+      if constexpr (LocalAlignment) {
+        if (cell <= 0) {
+          cell = 0;
+          source = Direction::stop;
+        }
+      }
+
+      current_h[column] = cell;
+      current_up[column] = up_score;
+      block_trace[trace_row_offset + column] =
+          pack_trace(source, up_continues_gap, left_continues_gap);
+    }
+
+    std::swap(previous_h, current_h);
+    std::swap(previous_up, current_up);
+  }
+}
+
+template <typename Cell, bool LocalAlignment>
+std::string affine_checkpointed_cigar(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score) {
+  if constexpr (LocalAlignment) {
+    if (query.empty() || target.empty()) {
+      return std::string();
+    }
+  }
+
+  auto checkpoints = make_affine_cigar_checkpoints<Cell>(query.size(), target.size());
+  const LocalEndpoint<Cell> endpoint = affine_cigar_checkpoint_forward<Cell, LocalAlignment>(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      checkpoints);
+  if constexpr (LocalAlignment) {
+    if (endpoint.score <= 0) {
+      return std::string();
+    }
+  }
+
+  ReverseCigarBuilder cigar;
+  std::vector<std::uint8_t> block_trace;
+  std::size_t row = endpoint.row;
+  std::size_t column = endpoint.column;
+  AffineState state = AffineState::h;
+
+  while (row > 0 || column > 0) {
+    if constexpr (LocalAlignment) {
+      if (row == 0 || column == 0) {
+        break;
+      }
+    } else {
+      if (row == 0) {
+        while (column > 0) {
+          cigar.push('I');
+          --column;
+        }
+        break;
+      }
+      if (column == 0) {
+        while (row > 0) {
+          cigar.push('D');
+          --row;
+        }
+        break;
+      }
+    }
+
+    const std::size_t block_start =
+        ((row - 1U) / checkpoints.block_size) * checkpoints.block_size;
+    const std::size_t block_end = std::min(block_start + checkpoints.block_size, query.size());
+    affine_cigar_recompute_trace_block<Cell, LocalAlignment>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        checkpoints,
+        block_start,
+        block_end,
+        block_trace);
+
+    while (row > block_start) {
+      const std::size_t trace_index = (row - block_start - 1U) * checkpoints.columns + column;
+      const std::uint8_t trace_cell = block_trace[trace_index];
+      if constexpr (LocalAlignment) {
+        if (state == AffineState::h && trace_direction(trace_cell) == Direction::stop) {
+          row = 0;
+          column = 0;
+          break;
+        }
+      }
+
+      if (state == AffineState::h) {
+        const Direction source = trace_direction(trace_cell);
+        if (source == Direction::diagonal) {
+          cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+          --row;
+          --column;
+          continue;
+        }
+        if (source == Direction::up) {
+          state = AffineState::up;
+          continue;
+        }
+        if (source == Direction::left) {
+          state = AffineState::left;
+          continue;
+        }
+        row = 0;
+        column = 0;
+        break;
+      }
+
+      if (state == AffineState::up) {
+        cigar.push('D');
+        const bool continues_gap = row > 1U && trace_up_continues(trace_cell);
+        --row;
+        state = continues_gap ? AffineState::up : AffineState::h;
+        continue;
+      }
+
+      cigar.push('I');
+      const bool continues_gap = column > 1U && trace_left_continues(trace_cell);
+      --column;
+      state = continues_gap ? AffineState::left : AffineState::h;
+    }
+  }
+
+  return cigar.str();
+}
+
 template <typename Token, typename Path>
 AlignmentResult materialize_alignment_result(
     const PreparedAlignment& prepared,
@@ -1480,7 +2097,116 @@ std::string affine_cigar(
       [&]<typename Cell>(
           std::span<const std::uint8_t> query_tokens,
           std::span<const std::uint8_t> target_tokens) {
-        return detail::affine_cigar<Cell, LocalAlignment>(
+        return detail::affine_cigar_fast<Cell, LocalAlignment>(
+            query_tokens,
+            target_tokens,
+            static_cast<Cell>(match_score),
+            static_cast<Cell>(mismatch_score),
+            static_cast<Cell>(gap_open_score),
+            static_cast<Cell>(gap_extend_score));
+      });
+}
+
+template <bool LocalAlignment>
+std::string affine_cigar_with_score(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width,
+    Score expected_score) {
+  const auto prepared = prepare_farrar_alignment(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      width);
+  return detail::dispatch_profile_width(
+      prepared,
+      [&]<typename Cell>(
+          std::span<const std::uint8_t> query_tokens,
+          std::span<const std::uint8_t> target_tokens) {
+        return detail::affine_cigar_fast<Cell, LocalAlignment>(
+            query_tokens,
+            target_tokens,
+            static_cast<Cell>(match_score),
+            static_cast<Cell>(mismatch_score),
+            static_cast<Cell>(gap_open_score),
+            static_cast<Cell>(gap_extend_score),
+            expected_score);
+      });
+}
+
+inline PreparedAffineCigar prepare_affine_cigar(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width,
+    std::optional<Score> expected_score = std::nullopt) {
+  return PreparedAffineCigar{
+      prepare_farrar_alignment(
+          query,
+          target,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score,
+          width),
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      expected_score};
+}
+
+template <bool LocalAlignment>
+std::string affine_cigar_prepared(PreparedAffineCigar& prepared) {
+  return detail::dispatch_profile_width(
+      prepared.prepared,
+      [&]<typename Cell>(
+          std::span<const std::uint8_t> query_tokens,
+          std::span<const std::uint8_t> target_tokens) {
+        return detail::affine_cigar_fast<Cell, LocalAlignment>(
+            query_tokens,
+            target_tokens,
+            static_cast<Cell>(prepared.match_score),
+            static_cast<Cell>(prepared.mismatch_score),
+            static_cast<Cell>(prepared.gap_open_score),
+            static_cast<Cell>(prepared.gap_extend_score),
+            prepared.expected_score);
+      });
+}
+
+template <bool LocalAlignment>
+std::string affine_checkpointed_cigar(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  const auto prepared = prepare_farrar_alignment(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      width);
+  return detail::dispatch_profile_width(
+      prepared,
+      [&]<typename Cell>(
+          std::span<const std::uint8_t> query_tokens,
+          std::span<const std::uint8_t> target_tokens) {
+        return detail::affine_checkpointed_cigar<Cell, LocalAlignment>(
             query_tokens,
             target_tokens,
             static_cast<Cell>(match_score),

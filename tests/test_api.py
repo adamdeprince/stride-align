@@ -606,6 +606,94 @@ def test_benchmark_cli_supports_path_info_variants(capsys) -> None:
     assert "\nenglish,linear,1:1,generic,nw-path-info,path,path-info,16," in captured.out
 
 
+def test_benchmark_cli_supports_path_trace_timing_split(capsys) -> None:
+    from stride_align.benchmark import main
+
+    exit_code = main(
+        [
+            "--backends",
+            "generic",
+            "--variants",
+            "sw-cigar",
+            "--passes",
+            "english-short",
+            "--shapes",
+            "1:1",
+            "--scoring-cases",
+            "linear",
+            "--widths",
+            "8",
+            "--short-length",
+            "8",
+            "--iterations",
+            "1",
+            "--warmups",
+            "0",
+            "--timing-split",
+            "--format",
+            "csv",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    header = lines[0].split(",")
+    row = lines[1].split(",")
+    score_baseline_index = header.index("score_baseline_s")
+    trace_over_index = header.index("path_trace_over_score_s")
+    path_info_index = header.index("path_info_baseline_s")
+    materialize_index = header.index("materialize_over_path_info_s")
+
+    assert exit_code == 0
+    assert row[4] == "sw-cigar"
+    assert float(row[score_baseline_index]) > 0.0
+    assert row[trace_over_index] != ""
+    assert row[path_info_index] == ""
+    assert row[materialize_index] == ""
+
+
+def test_benchmark_cli_reports_affine_cigar_preprocess_trace_split(capsys) -> None:
+    from stride_align.benchmark import main
+
+    exit_code = main(
+        [
+            "--backends",
+            "generic",
+            "--variants",
+            "sw-cigar",
+            "--passes",
+            "english-short",
+            "--shapes",
+            "1:1",
+            "--scoring-cases",
+            "affine",
+            "--widths",
+            "8",
+            "--short-length",
+            "8",
+            "--iterations",
+            "1",
+            "--warmups",
+            "0",
+            "--timing-split",
+            "--format",
+            "csv",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    header = lines[0].split(",")
+    row = lines[1].split(",")
+    preprocess_index = header.index("preprocess_s")
+    dp_trace_index = header.index("dp_trace_s")
+
+    assert exit_code == 0
+    assert row[4] == "sw-cigar"
+    assert row[preprocess_index] != ""
+    assert float(row[dp_trace_index]) > 0.0
+
+
 def test_benchmark_cli_supports_one_to_many_shape(capsys) -> None:
     from stride_align.benchmark import main
 
@@ -1116,6 +1204,69 @@ def test_direct_backends_prepared_affine_profiles_match_direct_scores(
     assert module._needleman_wunsch_affine_score_prepared(
         nw_prepared
     ) == module.needleman_wunsch_score(query, target, **kwargs)
+
+
+@pytest.mark.parametrize("width", [8, 16, 32, 64])
+@pytest.mark.parametrize("module_name, backend_kind", FARRAR_BACKENDS)
+def test_direct_backends_prepared_affine_cigars_match_direct_cigars(
+    module_name: str,
+    backend_kind: BackendKind | None,
+    width: int,
+) -> None:
+    if backend_kind is not None and not backend_is_available(backend_kind):
+        pytest.skip(f"{backend_kind.name} not available on this host")
+
+    module = pytest.importorskip(module_name)
+    if not hasattr(module, "_prepare_smith_waterman_affine_cigar"):
+        pytest.skip(f"{module_name} does not expose prepared affine CIGAR profiles")
+
+    query = "ABCAABBC"
+    target = "AACBBAC"
+    kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "gap_open_score": -3,
+        "gap_extend_score": -1,
+        "width": width,
+    }
+
+    sw_prepared = module._prepare_smith_waterman_affine_cigar(query, target, **kwargs)
+    nw_prepared = module._prepare_needleman_wunsch_affine_cigar(query, target, **kwargs)
+
+    assert module._smith_waterman_affine_cigar_prepared(
+        sw_prepared
+    ) == module.smith_waterman_cigar(query, target, **kwargs)
+    assert module._needleman_wunsch_affine_cigar_prepared(
+        nw_prepared
+    ) == module.needleman_wunsch_cigar(query, target, **kwargs)
+
+
+def test_generic_affine_cigar_banded_path_matches_python_backend() -> None:
+    generic = pytest.importorskip("stride_align._generic")
+    from stride_align import _pybackend
+
+    query = ("thequickbrownfoxjumpsoverthelazydog" * 5)[:160]
+    target = query[:47] + "zz" + query[47:91] + "q" + query[92:128] + query[130:]
+    kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "gap_open_score": -3,
+        "gap_extend_score": -1,
+        "width": 16,
+    }
+
+    assert generic.smith_waterman_cigar(query, target, **kwargs) == _pybackend.smith_waterman_cigar(
+        query,
+        target,
+        **kwargs,
+    )
+    assert generic.needleman_wunsch_cigar(
+        query,
+        target,
+        **kwargs,
+    ) == _pybackend.needleman_wunsch_cigar(query, target, **kwargs)
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])

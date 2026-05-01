@@ -114,6 +114,7 @@ _ALL_VARIANTS = (
     *_CIGAR_VARIANTS,
     *_FULL_PATH_VARIANTS,
 )
+_PATH_TRACE_VARIANTS = (*_PATH_INFO_VARIANTS, *_CIGAR_VARIANTS, *_FULL_PATH_VARIANTS)
 _DEFAULT_VARIANTS = (*_SCORE_ONLY_VARIANTS, *_PATH_INFO_VARIANTS)
 
 _VARIANT_ALIASES = {
@@ -219,6 +220,12 @@ class BenchmarkResult:
     mean_seconds: float
     cells_per_second: float
     speedup_vs_generic: float | None
+    score_baseline_seconds: float | None = None
+    path_trace_over_score_seconds: float | None = None
+    path_info_baseline_seconds: float | None = None
+    materialization_over_path_info_seconds: float | None = None
+    preprocess_seconds: float | None = None
+    dp_trace_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +344,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gap-score", "--gap", type=int, default=-1)
     parser.add_argument("--affine-gap-open-score", "--affine-gap-open", type=int, default=-2)
     parser.add_argument("--affine-gap-extend-score", "--affine-gap-extend", type=int, default=-1)
+    parser.add_argument(
+        "--timing-split",
+        action="store_true",
+        help=(
+            "For path/CIGAR/full-path 1:1 variants, also time the matching score-only "
+            "and path-info calls and report benchmark-level path/trace/materialization "
+            "overheads. This adds extra benchmark calls for those variants."
+        ),
+    )
     parser.add_argument("--format", choices=("table", "csv"), default="table")
     return parser
 
@@ -1227,12 +1243,32 @@ def _result_cigar(result: Any) -> str:
     return str(cigar)
 
 
-def _score_variant_for_cigar(variant: str) -> str:
+def _score_variant_for_path_trace(variant: str) -> str:
     if variant.startswith("sw-"):
         return "sw-score"
     if variant.startswith("nw-"):
         return "nw-score"
-    raise AssertionError(f"unhandled CIGAR benchmark variant {variant!r}")
+    raise AssertionError(f"unhandled path/trace benchmark variant {variant!r}")
+
+
+def _path_info_variant_for_path_trace(variant: str) -> str:
+    if variant.startswith("sw-"):
+        return "sw-path-info"
+    if variant.startswith("nw-"):
+        return "nw-path-info"
+    raise AssertionError(f"unhandled path/trace benchmark variant {variant!r}")
+
+
+def _score_variant_for_cigar(variant: str) -> str:
+    return _score_variant_for_path_trace(variant)
+
+
+def _prepared_affine_cigar_names_for_variant(variant: str) -> tuple[str, str] | None:
+    if variant in {"sw-cigar", "sw-trade-cigar"}:
+        return "_prepare_smith_waterman_affine_cigar", "_smith_waterman_affine_cigar_prepared"
+    if variant in {"nw-cigar", "nw-trade-cigar"}:
+        return "_prepare_needleman_wunsch_affine_cigar", "_needleman_wunsch_affine_cigar_prepared"
+    return None
 
 
 def _repeat_window(corpus: str, length: int, offset: int) -> str:
@@ -1415,6 +1451,7 @@ def _time_backend(
     gap_open_score: int,
     gap_extend_score: int,
     shape: str = "1:1",
+    timing_split: bool = False,
 ) -> BenchmarkResult:
     targets = tuple(target) if shape == "1:many" else (target,)
     if shape == "1:many" and variant not in _SCORE_ONLY_VARIANTS:
@@ -1582,6 +1619,112 @@ def _time_backend(
 
     median_seconds = statistics.median(timings)
     cells = len(query) * sum(len(target_item) for target_item in targets)
+    score_baseline_seconds: float | None = None
+    path_trace_over_score_seconds: float | None = None
+    path_info_baseline_seconds: float | None = None
+    materialization_over_path_info_seconds: float | None = None
+    preprocess_seconds: float | None = None
+    dp_trace_seconds: float | None = None
+
+    if timing_split and shape == "1:1" and variant in _PATH_TRACE_VARIANTS:
+        if is_affine and variant in _CIGAR_VARIANTS:
+            prepared_cigar_names = _prepared_affine_cigar_names_for_variant(variant)
+            if prepared_cigar_names is not None:
+                prepare_name, prepared_name = prepared_cigar_names
+                if hasattr(backend.module, prepare_name) and hasattr(backend.module, prepared_name):
+                    prepared = getattr(backend.module, prepare_name)(
+                        query,
+                        targets[0],
+                        match_score=match_score,
+                        mismatch_score=mismatch_score,
+                        gap_score=linear_gap_score,
+                        width=width,
+                        **extra_gap_kwargs,
+                    )
+                    run_prepared_cigar = getattr(backend.module, prepared_name)
+                    expected_prepared_cigar = _result_cigar(run_prepared_cigar(prepared))
+                    if expected_prepared_cigar != expected_cigar:
+                        raise BenchmarkError(
+                            f"{backend.name} {pass_name} {case_name} {shape} {variant} "
+                            f"width {width} prepared CIGAR returned {expected_prepared_cigar!r}, "
+                            f"but direct CIGAR returned {expected_cigar!r}"
+                        )
+
+                    for _ in range(warmups):
+                        run_prepared_cigar(prepared)
+
+                    prepared_timings: list[float] = []
+                    for _ in range(iterations):
+                        start = time.perf_counter()
+                        observed_prepared_cigar = _result_cigar(run_prepared_cigar(prepared))
+                        elapsed = time.perf_counter() - start
+                        if observed_prepared_cigar != expected_cigar:
+                            raise BenchmarkError(
+                                f"{backend.name} produced unstable prepared CIGARs for width "
+                                f"{width}: {expected_cigar!r} then {observed_prepared_cigar!r}"
+                            )
+                        prepared_timings.append(elapsed)
+
+                    dp_trace_seconds = statistics.median(prepared_timings)
+                    preprocess_seconds = median_seconds - dp_trace_seconds
+
+        score_variant = _score_variant_for_path_trace(variant)
+        score_baseline = _time_backend(
+            backend,
+            pass_name,
+            case_name,
+            score_variant,
+            query,
+            targets[0],
+            width,
+            iterations,
+            warmups,
+            match_score,
+            mismatch_score,
+            gap_open_score,
+            gap_extend_score,
+            shape,
+            False,
+        )
+        if score_baseline.score != score:
+            raise BenchmarkError(
+                f"{backend.name} {pass_name} {case_name} {shape} {variant} width {width} "
+                f"returned {score}, but score baseline {score_variant} returned "
+                f"{score_baseline.score}"
+            )
+        score_baseline_seconds = score_baseline.median_seconds
+        path_trace_over_score_seconds = median_seconds - score_baseline.median_seconds
+
+        path_info_variant = _path_info_variant_for_path_trace(variant)
+        if variant not in _CIGAR_VARIANTS and variant != path_info_variant:
+            path_info_baseline = _time_backend(
+                backend,
+                pass_name,
+                case_name,
+                path_info_variant,
+                query,
+                targets[0],
+                width,
+                iterations,
+                warmups,
+                match_score,
+                mismatch_score,
+                gap_open_score,
+                gap_extend_score,
+                shape,
+                False,
+            )
+            if path_info_baseline.score != score:
+                raise BenchmarkError(
+                    f"{backend.name} {pass_name} {case_name} {shape} {variant} width {width} "
+                    f"returned {score}, but path-info baseline {path_info_variant} returned "
+                    f"{path_info_baseline.score}"
+                )
+            path_info_baseline_seconds = path_info_baseline.median_seconds
+            materialization_over_path_info_seconds = (
+                median_seconds - path_info_baseline.median_seconds
+            )
+
     return BenchmarkResult(
         pass_name=pass_name,
         case_name=case_name,
@@ -1599,6 +1742,12 @@ def _time_backend(
         mean_seconds=statistics.fmean(timings),
         cells_per_second=cells / median_seconds if median_seconds > 0 else float("inf"),
         speedup_vs_generic=None,
+        score_baseline_seconds=score_baseline_seconds,
+        path_trace_over_score_seconds=path_trace_over_score_seconds,
+        path_info_baseline_seconds=path_info_baseline_seconds,
+        materialization_over_path_info_seconds=materialization_over_path_info_seconds,
+        preprocess_seconds=preprocess_seconds,
+        dp_trace_seconds=dp_trace_seconds,
     )
 
 
@@ -1638,26 +1787,62 @@ def _with_speedups(results: Sequence[BenchmarkResult]) -> list[BenchmarkResult]:
                 mean_seconds=result.mean_seconds,
                 cells_per_second=result.cells_per_second,
                 speedup_vs_generic=speedup,
+                score_baseline_seconds=result.score_baseline_seconds,
+                path_trace_over_score_seconds=result.path_trace_over_score_seconds,
+                path_info_baseline_seconds=result.path_info_baseline_seconds,
+                materialization_over_path_info_seconds=(
+                    result.materialization_over_path_info_seconds
+                ),
+                preprocess_seconds=result.preprocess_seconds,
+                dp_trace_seconds=result.dp_trace_seconds,
             )
         )
     return output
 
 
+def _has_timing_split(results: Sequence[BenchmarkResult]) -> bool:
+    return any(
+        result.score_baseline_seconds is not None or result.dp_trace_seconds is not None
+        for result in results
+    )
+
+
+def _format_optional_seconds(value: float | None) -> str:
+    return "" if value is None else f"{value:.9g}"
+
+
 def _print_csv(results: Sequence[BenchmarkResult]) -> None:
-    print(
+    include_split = _has_timing_split(results)
+    header = (
         "pass,case,shape,backend,variant,generator,output,score_width,score,iterations,"
         "warmups,best_seconds,median_seconds,mean_seconds,cells_per_second,"
         "speedup_vs_generic"
     )
+    if include_split:
+        header += (
+            ",score_baseline_s,path_trace_over_score_s,path_info_baseline_s,"
+            "materialize_over_path_info_s,preprocess_s,dp_trace_s"
+        )
+    print(header)
     for result in results:
         speedup = "" if result.speedup_vs_generic is None else f"{result.speedup_vs_generic:.6g}"
-        print(
+        line = (
             f"{result.pass_name},{result.case_name},{result.shape},{result.backend},{result.variant},"
             f"{result.generator},{result.output},{result.score_width},{result.score},"
             f"{result.iterations},"
             f"{result.warmups},{result.best_seconds:.9g},{result.median_seconds:.9g},"
             f"{result.mean_seconds:.9g},{result.cells_per_second:.9g},{speedup}"
         )
+        if include_split:
+            line += (
+                f",{_format_optional_seconds(result.score_baseline_seconds)}"
+                f",{_format_optional_seconds(result.path_trace_over_score_seconds)}"
+                f",{_format_optional_seconds(result.path_info_baseline_seconds)}"
+                f",{_format_optional_seconds(result.materialization_over_path_info_seconds)}"
+                f",{_format_optional_seconds(result.preprocess_seconds)}"
+                f",{_format_optional_seconds(result.dp_trace_seconds)}"
+            )
+        print(line)
 
 
 def _print_table(
@@ -1684,7 +1869,16 @@ def _print_table(
         "output distinguishes native path materialization from parasail trace/cigar; "
         "1:many score is the sum across targets."
     )
-    headers = (
+    include_split = _has_timing_split(results)
+    if include_split:
+        print(
+            "# timing split columns are benchmark-level deltas: score_base_s is the "
+            "matching score-only median, trace_over_s is total median minus score_base_s, "
+            "path_info_s/materialize_s compare full-path materialization against path-info "
+            "only, preprocess_s is total CIGAR median minus prepared affine CIGAR median, "
+            "and dp_trace_s is the prepared affine CIGAR median."
+        )
+    headers = [
         "pass",
         "case",
         "shape",
@@ -1698,27 +1892,48 @@ def _print_table(
         "best_s",
         "cells/s",
         "x_generic",
-    )
+    ]
+    if include_split:
+        headers.extend(
+            (
+                "score_base_s",
+                "trace_over_s",
+                "path_info_s",
+                "materialize_s",
+                "preprocess_s",
+                "dp_trace_s",
+            )
+        )
     rows = []
     for result in results:
         speedup = "" if result.speedup_vs_generic is None else f"{result.speedup_vs_generic:.3f}"
-        rows.append(
-            (
-                result.pass_name,
-                result.case_name,
-                result.shape,
-                result.backend,
-                result.variant,
-                result.generator,
-                result.output,
-                str(result.score_width),
-                str(result.score),
-                f"{result.median_seconds:.6g}",
-                f"{result.best_seconds:.6g}",
-                f"{result.cells_per_second:.6g}",
-                speedup,
+        row = [
+            result.pass_name,
+            result.case_name,
+            result.shape,
+            result.backend,
+            result.variant,
+            result.generator,
+            result.output,
+            str(result.score_width),
+            str(result.score),
+            f"{result.median_seconds:.6g}",
+            f"{result.best_seconds:.6g}",
+            f"{result.cells_per_second:.6g}",
+            speedup,
+        ]
+        if include_split:
+            row.extend(
+                (
+                    _format_optional_seconds(result.score_baseline_seconds),
+                    _format_optional_seconds(result.path_trace_over_score_seconds),
+                    _format_optional_seconds(result.path_info_baseline_seconds),
+                    _format_optional_seconds(result.materialization_over_path_info_seconds),
+                    _format_optional_seconds(result.preprocess_seconds),
+                    _format_optional_seconds(result.dp_trace_seconds),
+                )
             )
-        )
+        rows.append(row)
 
     widths = [max(len(row[index]) for row in (headers, *rows)) for index in range(len(headers))]
     print("  ".join(value.ljust(widths[index]) for index, value in enumerate(headers)))
@@ -1785,6 +2000,7 @@ def _run(args: argparse.Namespace) -> list[BenchmarkResult]:
                             scoring_case.gap_open_score,
                             scoring_case.gap_extend_score,
                             benchmark_pass.shape,
+                            args.timing_split,
                         )
                         if expected_score is None:
                             expected_score = result.score
