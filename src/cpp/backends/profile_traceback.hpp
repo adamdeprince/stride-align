@@ -1198,10 +1198,10 @@ std::string affine_cigar(
   return cigar.str();
 }
 
-template <typename Token>
+template <typename Token, typename Path>
 AlignmentResult materialize_alignment_result(
     const PreparedAlignment& prepared,
-    const AlignmentPath& path,
+    const Path& path,
     const std::vector<Token>& query_tokens,
     const std::vector<Token>& target_tokens) {
   AlignmentResult result;
@@ -1224,30 +1224,44 @@ AlignmentResult materialize_alignment_result(
   return result;
 }
 
+template <typename Token>
+AlignmentResult materialize_alignment_result(
+    const PreparedAlignment& prepared,
+    const AlignmentPath& path,
+    const std::vector<Token>& query_tokens,
+    const std::vector<Token>& target_tokens) {
+  return materialize_alignment_result<Token, AlignmentPath>(
+      prepared,
+      path,
+      query_tokens,
+      target_tokens);
+}
+
+template <typename Path>
 inline AlignmentResult materialize_alignment_result(
     const PreparedAlignment& prepared,
-    const AlignmentPath& path) {
+    const Path& path) {
   switch (prepared.kernel_bits) {
     case KernelBits::bits8:
-      return materialize_alignment_result<std::uint8_t>(
+      return materialize_alignment_result<std::uint8_t, Path>(
           prepared,
           path,
           std::get<std::vector<std::uint8_t>>(prepared.query_tokens),
           std::get<std::vector<std::uint8_t>>(prepared.target_tokens));
     case KernelBits::bits16:
-      return materialize_alignment_result<std::uint16_t>(
+      return materialize_alignment_result<std::uint16_t, Path>(
           prepared,
           path,
           std::get<std::vector<std::uint16_t>>(prepared.query_tokens),
           std::get<std::vector<std::uint16_t>>(prepared.target_tokens));
     case KernelBits::bits32:
-      return materialize_alignment_result<std::uint32_t>(
+      return materialize_alignment_result<std::uint32_t, Path>(
           prepared,
           path,
           std::get<std::vector<std::uint32_t>>(prepared.query_tokens),
           std::get<std::vector<std::uint32_t>>(prepared.target_tokens));
     case KernelBits::bits64:
-      return materialize_alignment_result<std::uint64_t>(
+      return materialize_alignment_result<std::uint64_t, Path>(
           prepared,
           path,
           std::get<std::vector<std::uint64_t>>(prepared.query_tokens),

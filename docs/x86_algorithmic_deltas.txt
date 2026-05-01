@@ -699,6 +699,75 @@ Current decision:
 - Next x86 target should reduce the remaining CIGAR/path overhead by improving
   endpoint selection and traceback decode locality.
 
+18. Full-path masked traceback no longer builds path-info metadata
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The AVX2 and AVX512BWVL linear Smith-Waterman full-path routes now call:
+
+  farrar_fixed_kernel::detail::dispatch_linear_sw_masked_traceback<SimdOps>(...)
+
+instead of:
+
+  farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(...)
+
+The new helper returns a lightweight traceback result:
+
+  score, query/target start/end, operations
+
+It intentionally does not build:
+
+- CIGAR
+- match/mismatch/insertion/deletion counts
+- aligned-length metadata
+
+Those fields are needed for AlignmentPath/path-info but not for AlignmentResult
+materialization. profile_traceback::detail::materialize_alignment_result(...) is
+now templated over path-like result types so both AlignmentPath and the
+lightweight traceback result can use the same output materialization code.
+
+An attempted CIGAR-only decoder that walked the two trace bitplanes directly was
+tested and rejected. It avoided division/modulo in the traceback loop, but it
+slowed the current English/Chinese SW CIGAR benchmark, so the active CIGAR route
+continues to use the simpler shared masked trace direction decoder.
+
+Focused benchmark after this split:
+
+  /tmp/stride-align-path-traceback-split-linear-sw.csv
+
+19. Mask-only equal-tie endpoint update
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The masked linear Smith-Waterman endpoint tracker now splits endpoint candidates
+into two cases:
+
+- strictly greater than the current best score
+- equal to the current best score
+
+Strictly-greater candidates still spill the SIMD score vector and scan only the
+greater-than lanes, because the exact score determines the new endpoint.
+
+Equal-score candidates no longer spill the vector. The tie policy only allows an
+equal score to replace the current endpoint when its row is strictly earlier
+than the current best row. For each striped segment, the helper computes a lane
+mask for rows earlier than best.row:
+
+  earlier_row_lane_mask(...)
+
+Then it updates from the first set lane in:
+
+  eq(score, best_score) & candidate_mask & earlier_row_lane_mask(...)
+
+This keeps the generic deterministic local tie policy while avoiding most
+scalar lane work for equal-score candidates.
+
+Focused benchmark after this change:
+
+  /tmp/stride-align-endpoint-mask-tie-linear-sw.csv
+
+Compared with /tmp/stride-align-path-traceback-split-linear-sw.csv, this was a
+modest AVX2 win by geometric mean and roughly neutral for AVX512 on the focused
+English/Chinese SW path/path-info/CIGAR rows.
+
 
 Expected Loongson result after port
 -----------------------------------

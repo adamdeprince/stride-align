@@ -2274,6 +2274,21 @@ struct LinearLocalEndpoint {
   std::size_t column = 0;
 };
 
+struct LinearTracebackResult {
+  Score score = 0;
+  std::size_t query_start = 0;
+  std::size_t query_end = 0;
+  std::size_t target_start = 0;
+  std::size_t target_end = 0;
+  std::string operations;
+};
+
+enum class LinearMaskedTraceOutput {
+  path_info,
+  traceback,
+  cigar,
+};
+
 template <typename Cell>
 struct LinearCigarCheckpoints {
   std::size_t block_size = 64U;
@@ -2467,6 +2482,25 @@ std::uint64_t trace_mask_eq(typename Ops::vector_type lhs, typename Ops::vector_
   }
 }
 
+inline std::uint64_t earlier_row_lane_mask(
+    std::size_t segment,
+    std::size_t best_row,
+    std::size_t segment_count,
+    std::size_t lane_count) noexcept {
+  if (best_row <= segment + 1U) {
+    return 0;
+  }
+
+  const std::size_t row_delta = best_row - segment - 1U;
+  std::size_t lane_count_before_best =
+      (row_delta + segment_count - 1U) / segment_count;
+  lane_count_before_best = std::min(lane_count_before_best, lane_count);
+  if (lane_count_before_best >= 64U) {
+    return ~std::uint64_t{0};
+  }
+  return (std::uint64_t{1} << lane_count_before_best) - 1U;
+}
+
 template <typename Ops, typename Cell>
 void update_linear_local_endpoint_from_vector(
     typename Ops::vector_type h_scores_vector,
@@ -2481,38 +2515,51 @@ void update_linear_local_endpoint_from_vector(
   }
 
   const auto best_vector = Ops::set1(static_cast<Cell>(best.score));
-  std::uint64_t interesting_mask =
+  std::uint64_t greater_mask =
       trace_mask_gt<Ops>(h_scores_vector, best_vector) & candidate_mask;
-  if (best.score > 0) {
-    interesting_mask |= trace_mask_eq<Ops>(h_scores_vector, best_vector) & candidate_mask;
-  }
-  if (interesting_mask == 0) {
+
+  if (greater_mask != 0) {
+    alignas(Ops::alignment) Cell h_scores[Ops::lane_count] = {};
+    Ops::store_cells(h_scores, h_scores_vector);
+    while (greater_mask != 0) {
+      const auto lane = static_cast<std::size_t>(std::countr_zero(greater_mask));
+      greater_mask &= greater_mask - 1U;
+
+      const std::size_t query_index = lane * segment_count + segment;
+      if (query_index >= query_size) {
+        continue;
+      }
+
+      const Score cell_score = static_cast<Score>(h_scores[lane]);
+      const std::size_t row = query_index + 1U;
+      if (local_trace_best_is_better(
+              cell_score,
+              row,
+              column,
+              best.score,
+              best.row,
+              best.column)) {
+        best = {cell_score, row, column};
+      }
+    }
     return;
   }
 
-  alignas(Ops::alignment) Cell h_scores[Ops::lane_count] = {};
-  Ops::store_cells(h_scores, h_scores_vector);
-  while (interesting_mask != 0) {
-    const auto lane = static_cast<std::size_t>(std::countr_zero(interesting_mask));
-    interesting_mask &= interesting_mask - 1U;
-
-    const std::size_t query_index = lane * segment_count + segment;
-    if (query_index >= query_size) {
-      continue;
-    }
-
-    const Score cell_score = static_cast<Score>(h_scores[lane]);
-    const std::size_t row = query_index + 1U;
-    if (local_trace_best_is_better(
-            cell_score,
-            row,
-            column,
-            best.score,
-            best.row,
-            best.column)) {
-      best = {cell_score, row, column};
-    }
+  if (best.score <= 0) {
+    return;
   }
+
+  const std::uint64_t tie_mask =
+      trace_mask_eq<Ops>(h_scores_vector, best_vector) &
+      candidate_mask &
+      earlier_row_lane_mask(segment, best.row, segment_count, Ops::lane_count);
+  if (tie_mask == 0) {
+    return;
+  }
+
+  const auto lane = static_cast<std::size_t>(std::countr_zero(tie_mask));
+  const std::size_t row = lane * segment_count + segment + 1U;
+  best = {best.score, row, column};
 }
 
 inline std::string build_linear_operations_from_masked_trace(
@@ -2587,6 +2634,32 @@ inline AlignmentPath build_linear_path_from_masked_trace(
       operations);
 }
 
+inline LinearTracebackResult build_linear_traceback_from_masked_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const LinearMaskedTrace& trace,
+    Score score,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t lane_count) {
+  LinearTracebackResult result;
+  result.score = score;
+  result.query_end = best_row;
+  result.target_end = best_column;
+  result.query_start = best_row;
+  result.target_start = best_column;
+  result.operations = build_linear_operations_from_masked_trace(
+      query,
+      target,
+      trace,
+      best_row,
+      best_column,
+      lane_count,
+      result.query_start,
+      result.target_start);
+  return result;
+}
+
 inline std::string build_linear_cigar_from_masked_trace(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
@@ -2628,7 +2701,7 @@ inline std::string build_linear_cigar_from_masked_trace(
 template <
     template <typename, typename> class OpsTemplate,
     typename Cell,
-    bool CigarOnly>
+    LinearMaskedTraceOutput Output>
 auto linear_sw_masked_trace_state(
     PreparedScoreState<Cell>& state,
     std::span<const std::uint8_t> query,
@@ -2637,8 +2710,10 @@ auto linear_sw_masked_trace_state(
   constexpr std::size_t lane_count = Ops::lane_count;
 
   if (query.empty() || target.empty() || state.segment_count == 0) {
-    if constexpr (CigarOnly) {
+    if constexpr (Output == LinearMaskedTraceOutput::cigar) {
       return std::string();
+    } else if constexpr (Output == LinearMaskedTraceOutput::traceback) {
+      return LinearTracebackResult{};
     } else {
       return make_alignment_path(0, 0, 0, 0, 0, "");
     }
@@ -2758,18 +2833,29 @@ auto linear_sw_masked_trace_state(
   }
 
   if (best.score <= 0) {
-    if constexpr (CigarOnly) {
+    if constexpr (Output == LinearMaskedTraceOutput::cigar) {
       return std::string();
+    } else if constexpr (Output == LinearMaskedTraceOutput::traceback) {
+      return LinearTracebackResult{};
     } else {
       return make_alignment_path(0, 0, 0, 0, 0, "");
     }
   }
 
-  if constexpr (CigarOnly) {
+  if constexpr (Output == LinearMaskedTraceOutput::cigar) {
     return build_linear_cigar_from_masked_trace(
         query,
         target,
         trace,
+        best.row,
+        best.column,
+        lane_count);
+  } else if constexpr (Output == LinearMaskedTraceOutput::traceback) {
+    return build_linear_traceback_from_masked_trace(
+        query,
+        target,
+        trace,
+        best.score,
         best.row,
         best.column,
         lane_count);
@@ -2802,7 +2888,33 @@ AlignmentPath linear_sw_masked_path_info(
   const auto target = std::span<const std::uint8_t>(
       prepared.target_tokens.data(),
       prepared.target_tokens.size());
-  return linear_sw_masked_trace_state<OpsTemplate, Cell, false>(state, query, target);
+  return linear_sw_masked_trace_state<
+      OpsTemplate,
+      Cell,
+      LinearMaskedTraceOutput::path_info>(state, query, target);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+LinearTracebackResult linear_sw_masked_traceback(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return linear_sw_masked_trace_state<
+      OpsTemplate,
+      Cell,
+      LinearMaskedTraceOutput::traceback>(state, query, target);
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
@@ -2822,7 +2934,10 @@ std::string linear_sw_masked_cigar(
   const auto target = std::span<const std::uint8_t>(
       prepared.target_tokens.data(),
       prepared.target_tokens.size());
-  return linear_sw_masked_trace_state<OpsTemplate, Cell, true>(state, query, target);
+  return linear_sw_masked_trace_state<
+      OpsTemplate,
+      Cell,
+      LinearMaskedTraceOutput::cigar>(state, query, target);
 }
 
 template <template <typename, typename> class OpsTemplate>
@@ -2852,6 +2967,43 @@ AlignmentPath dispatch_linear_sw_masked_path_info(
           gap_score);
     case KernelBits::bits64:
       return linear_sw_masked_path_info<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported masked linear SW traceback width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+LinearTracebackResult dispatch_linear_sw_masked_traceback(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_masked_traceback<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_masked_traceback<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_masked_traceback<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_masked_traceback<OpsTemplate, std::int64_t>(
           prepared,
           match_score,
           mismatch_score,

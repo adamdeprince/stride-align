@@ -507,7 +507,7 @@ struct TargetImplementation {
           prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
       const auto prepared =
           prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
-      const auto path = farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(
+      const auto path = farrar_fixed_kernel::detail::dispatch_linear_sw_masked_traceback<SimdOps>(
           prepared,
           match_score,
           mismatch_score,
