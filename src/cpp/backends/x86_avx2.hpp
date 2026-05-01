@@ -442,14 +442,13 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    return profile_traceback::linear_path_info<true>(
+    return profile_traceback::linear_cigar<true>(
         query,
         target,
         match_score,
         mismatch_score,
         gap_score,
-        width)
-        .cigar;
+        width);
   }
 
   static Score smith_waterman_farrar_score(
@@ -628,7 +627,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_farrar_alignment(
+    return profile_traceback::affine_cigar<true>(
         query,
         target,
         match_score,
@@ -636,12 +635,6 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::dispatch_affine_striped_cigar<SimdOps, true>(
-        prepared,
-        match_score,
-        mismatch_score,
-        gap_open_score,
-        gap_extend_score);
   }
 
   static Score smith_waterman_affine_farrar_score(
@@ -844,14 +837,13 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
-    return profile_traceback::linear_path_info<false>(
+    return profile_traceback::linear_cigar<false>(
         query,
         target,
         match_score,
         mismatch_score,
         gap_score,
-        width)
-        .cigar;
+        width);
   }
 
   static Score needleman_wunsch_affine_score(
@@ -967,7 +959,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_farrar_alignment(
+    return profile_traceback::affine_cigar<false>(
         query,
         target,
         match_score,
@@ -975,12 +967,6 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::dispatch_affine_striped_cigar<SimdOps, false>(
-        prepared,
-        match_score,
-        mismatch_score,
-        gap_open_score,
-        gap_extend_score);
   }
 };
 

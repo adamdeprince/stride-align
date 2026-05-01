@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <nanobind/nanobind.h>
 
@@ -61,6 +62,34 @@ inline std::string build_cigar(std::string_view operations) {
   cigar.push_back(current);
   return cigar;
 }
+
+class ReverseCigarBuilder {
+ public:
+  void push(char operation) {
+    if (!runs_.empty() && runs_.back().operation == operation) {
+      ++runs_.back().count;
+      return;
+    }
+    runs_.push_back({operation, 1U});
+  }
+
+  std::string str() const {
+    std::string cigar;
+    for (auto it = runs_.rbegin(); it != runs_.rend(); ++it) {
+      cigar += std::to_string(it->count);
+      cigar.push_back(it->operation);
+    }
+    return cigar;
+  }
+
+ private:
+  struct Run {
+    char operation;
+    std::size_t count;
+  };
+
+  std::vector<Run> runs_;
+};
 
 inline AlignmentPath make_alignment_path(
     Score score,

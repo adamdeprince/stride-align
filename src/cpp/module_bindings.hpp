@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "affine.hpp"
+#include "backends/profile_traceback.hpp"
 #include "stride_align/alignment.hpp"
 
 namespace stride_align::bindings {
@@ -487,15 +488,15 @@ std::string call_smith_waterman_cigar(
           gap_extend_score,
           width);
     }
-    return call_smith_waterman_affine_path_info<Implementation>(
+    ensure_backend_supported_for_fallback<Implementation>();
+    return profile_traceback::affine_cigar<true>(
         query,
         target,
         match_score,
         mismatch_score,
         gap_open_score,
         gap_extend_score,
-        width)
-        .cigar;
+        width);
   }
   if constexpr (requires {
                   Implementation::smith_waterman_linear_cigar(
@@ -515,6 +516,16 @@ std::string call_smith_waterman_cigar(
           gap_open_score,
           width);
     }
+  }
+  if (gap_open_score <= 0) {
+    ensure_backend_supported_for_fallback<Implementation>();
+    return profile_traceback::linear_cigar<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        width);
   }
   return call_smith_waterman_path_info<Implementation>(
       query,
@@ -555,15 +566,15 @@ std::string call_needleman_wunsch_cigar(
           gap_extend_score,
           width);
     }
-    return call_needleman_wunsch_affine_path_info<Implementation>(
+    ensure_backend_supported_for_fallback<Implementation>();
+    return profile_traceback::affine_cigar<false>(
         query,
         target,
         match_score,
         mismatch_score,
         gap_open_score,
         gap_extend_score,
-        width)
-        .cigar;
+        width);
   }
   if constexpr (requires {
                   Implementation::needleman_wunsch_linear_cigar(
@@ -583,6 +594,16 @@ std::string call_needleman_wunsch_cigar(
           gap_open_score,
           width);
     }
+  }
+  if (gap_open_score <= 0) {
+    ensure_backend_supported_for_fallback<Implementation>();
+    return profile_traceback::linear_cigar<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        width);
   }
   return call_needleman_wunsch_path_info<Implementation>(
       query,

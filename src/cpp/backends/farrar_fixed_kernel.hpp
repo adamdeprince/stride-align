@@ -1248,6 +1248,26 @@ inline AlignmentPath boundary_affine_path(
   return make_alignment_path(score, 0, query_size, 0, target_size, operations);
 }
 
+inline std::string boundary_affine_cigar(
+    std::size_t query_size,
+    std::size_t target_size,
+    bool local_alignment) {
+  if (local_alignment) {
+    return "";
+  }
+
+  std::string cigar;
+  if (query_size != 0) {
+    cigar += std::to_string(query_size);
+    cigar.push_back('D');
+  }
+  if (target_size != 0) {
+    cigar += std::to_string(target_size);
+    cigar.push_back('I');
+  }
+  return cigar;
+}
+
 template <typename Cell>
 AlignmentPath build_affine_path_from_striped_trace(
     std::span<const std::uint8_t> query,
@@ -1330,8 +1350,91 @@ AlignmentPath build_affine_path_from_striped_trace(
   return make_alignment_path(score, row, best_row, column, best_column, operations);
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell, bool LocalAlignment>
-AlignmentPath affine_striped_path_info_state(
+template <typename Cell>
+std::string build_affine_cigar_from_striped_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::vector<std::uint8_t>& trace,
+    std::size_t best_row,
+    std::size_t best_column,
+    bool local_alignment,
+    std::size_t segment_count,
+    std::size_t lane_count) {
+  const std::size_t state_cell_count = segment_count * lane_count;
+  ReverseCigarBuilder cigar;
+
+  std::size_t row = best_row;
+  std::size_t column = best_column;
+  TraceState state = TraceState::h;
+
+  while (row > 0 || column > 0) {
+    if (row == 0) {
+      if (local_alignment) {
+        break;
+      }
+      cigar.push('I');
+      --column;
+      state = column > 0 ? TraceState::left : TraceState::h;
+      continue;
+    }
+    if (column == 0) {
+      if (local_alignment) {
+        break;
+      }
+      cigar.push('D');
+      --row;
+      state = row > 0 ? TraceState::up : TraceState::h;
+      continue;
+    }
+
+    const std::uint8_t trace_cell =
+        trace[trace_striped_index(row, column, segment_count, lane_count, state_cell_count)];
+
+    if (state == TraceState::h) {
+      const TraceDirection direction = trace_direction(trace_cell);
+      if (local_alignment && direction == TraceDirection::stop) {
+        break;
+      }
+      if (direction == TraceDirection::diagonal) {
+        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        --row;
+        --column;
+        continue;
+      }
+      if (direction == TraceDirection::up) {
+        state = TraceState::up;
+        continue;
+      }
+      if (direction == TraceDirection::left) {
+        state = TraceState::left;
+        continue;
+      }
+      break;
+    }
+
+    if (state == TraceState::up) {
+      cigar.push('D');
+      const bool continues = row > 1U && trace_up_continues(trace_cell);
+      --row;
+      state = continues ? TraceState::up : TraceState::h;
+      continue;
+    }
+
+    cigar.push('I');
+    const bool continues = column > 1U && trace_left_continues(trace_cell);
+    --column;
+    state = continues ? TraceState::left : TraceState::h;
+  }
+
+  return cigar.str();
+}
+
+template <
+    template <typename, typename> class OpsTemplate,
+    typename Cell,
+    bool LocalAlignment,
+    bool CigarOnly = false>
+auto affine_striped_traceback_state(
     PreparedAffineScoreState<Cell>& state,
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target) {
@@ -1339,12 +1442,16 @@ AlignmentPath affine_striped_path_info_state(
   constexpr std::size_t lane_count = Ops::lane_count;
 
   if (query.empty() || target.empty()) {
-    return boundary_affine_path(
-        query.size(),
-        target.size(),
-        static_cast<Score>(state.gap_open_score),
-        static_cast<Score>(state.gap_extend_score),
-        LocalAlignment);
+    if constexpr (CigarOnly) {
+      return boundary_affine_cigar(query.size(), target.size(), LocalAlignment);
+    } else {
+      return boundary_affine_path(
+          query.size(),
+          target.size(),
+          static_cast<Score>(state.gap_open_score),
+          static_cast<Score>(state.gap_extend_score),
+          LocalAlignment);
+    }
   }
 
   const std::size_t state_cell_count = state.segment_count * lane_count;
@@ -1665,16 +1772,28 @@ AlignmentPath affine_striped_path_info_state(
         striped_row_value(h_store_data, state.query_size, state.segment_count, lane_count));
   }
 
-  return build_affine_path_from_striped_trace<Cell>(
-      query,
-      target,
-      trace,
-      best_score,
-      best_row,
-      best_column,
-      LocalAlignment,
-      state.segment_count,
-      lane_count);
+  if constexpr (CigarOnly) {
+    return build_affine_cigar_from_striped_trace<Cell>(
+        query,
+        target,
+        trace,
+        best_row,
+        best_column,
+        LocalAlignment,
+        state.segment_count,
+        lane_count);
+  } else {
+    return build_affine_path_from_striped_trace<Cell>(
+        query,
+        target,
+        trace,
+        best_score,
+        best_row,
+        best_column,
+        LocalAlignment,
+        state.segment_count,
+        lane_count);
+  }
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell, bool LocalAlignment>
@@ -1696,7 +1815,32 @@ AlignmentPath affine_striped_path_info(
   const auto target = std::span<const std::uint8_t>(
       prepared.target_tokens.data(),
       prepared.target_tokens.size());
-  return affine_striped_path_info_state<OpsTemplate, Cell, LocalAlignment>(
+  return affine_striped_traceback_state<OpsTemplate, Cell, LocalAlignment, false>(
+      state,
+      query,
+      target);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell, bool LocalAlignment>
+std::string affine_striped_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  auto state = prepare_affine_score_state<OpsTemplate, Cell>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score);
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return affine_striped_traceback_state<OpsTemplate, Cell, LocalAlignment, true>(
       state,
       query,
       target);
@@ -1751,13 +1895,39 @@ std::string dispatch_affine_striped_cigar(
     Score mismatch_score,
     Score gap_open_score,
     Score gap_extend_score) {
-  const auto path = dispatch_affine_striped_path_info<OpsTemplate, LocalAlignment>(
-      prepared,
-      match_score,
-      mismatch_score,
-      gap_open_score,
-      gap_extend_score);
-  return build_cigar(path.operations);
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return affine_striped_cigar<OpsTemplate, std::int8_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    case KernelBits::bits16:
+      return affine_striped_cigar<OpsTemplate, std::int16_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    case KernelBits::bits32:
+      return affine_striped_cigar<OpsTemplate, std::int32_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+    case KernelBits::bits64:
+      return affine_striped_cigar<OpsTemplate, std::int64_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported affine striped traceback width");
+  throw nb::python_error();
 }
 
 template <template <typename, typename> class OpsTemplate>
