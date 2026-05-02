@@ -2,6 +2,7 @@
 
 #include <immintrin.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -284,6 +285,255 @@ inline __m256i local_linear_sw_lazy_f_prefix_carry_i32_256(
       std::int32_t{0});
 }
 
+inline __m256i local_linear_sw_lazy_f_prefix_carry_i16_64_256(
+    __m256i final_f,
+    __m256i lane_gap_1,
+    __m256i lane_gap_2,
+    __m256i lane_gap_4,
+    __m256i lane_gap_8,
+    __m256i zero) {
+  __m256i prefix = _mm256_max_epi16(shift_left_zero_256<2>(final_f), zero);
+  __m256i candidate = _mm256_add_epi16(shift_left_zero_256<2>(prefix), lane_gap_1);
+  prefix = _mm256_max_epi16(prefix, _mm256_max_epi16(candidate, zero));
+  candidate = _mm256_add_epi16(shift_left_zero_256<4>(prefix), lane_gap_2);
+  prefix = _mm256_max_epi16(prefix, _mm256_max_epi16(candidate, zero));
+  candidate = _mm256_add_epi16(shift_left_zero_256<8>(prefix), lane_gap_4);
+  prefix = _mm256_max_epi16(prefix, _mm256_max_epi16(candidate, zero));
+  candidate = _mm256_add_epi16(shift_left_zero_256<16>(prefix), lane_gap_8);
+  return _mm256_max_epi16(prefix, _mm256_max_epi16(candidate, zero));
+}
+
+inline __m256i local_linear_sw_lazy_f_prefix_carry_i32_128_256(
+    __m256i final_f,
+    __m256i lane_gap_1,
+    __m256i lane_gap_2,
+    __m256i lane_gap_4,
+    __m256i zero) {
+  __m256i prefix = _mm256_max_epi32(shift_left_zero_256<4>(final_f), zero);
+  __m256i candidate = _mm256_add_epi32(shift_left_zero_256<4>(prefix), lane_gap_1);
+  prefix = _mm256_max_epi32(prefix, _mm256_max_epi32(candidate, zero));
+  candidate = _mm256_add_epi32(shift_left_zero_256<8>(prefix), lane_gap_2);
+  prefix = _mm256_max_epi32(prefix, _mm256_max_epi32(candidate, zero));
+  candidate = _mm256_add_epi32(shift_left_zero_256<16>(prefix), lane_gap_4);
+  return _mm256_max_epi32(prefix, _mm256_max_epi32(candidate, zero));
+}
+
+inline Score reduce_max_i16_256(__m256i value) {
+  alignas(32) std::int16_t scores[16] = {};
+  _mm256_store_si256(reinterpret_cast<__m256i*>(scores), value);
+  std::int16_t best = 0;
+  for (const auto score : scores) {
+    best = std::max(best, score);
+  }
+  return static_cast<Score>(best);
+}
+
+inline Score reduce_max_i32_256(__m256i value) {
+  alignas(32) std::int32_t scores[8] = {};
+  _mm256_store_si256(reinterpret_cast<__m256i*>(scores), value);
+  std::int32_t best = 0;
+  for (const auto score : scores) {
+    best = std::max(best, score);
+  }
+  return static_cast<Score>(best);
+}
+
+#define STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment_index) \
+  do { \
+    const __m256i v_profile = _mm256_load_si256(profile_row + (segment_index)); \
+    __m256i v_e = _mm256_load_si256(e_store + (segment_index)); \
+    v_h = _mm256_add_epi16(v_h, v_profile); \
+    v_h = _mm256_max_epi16(v_h, v_e); \
+    v_h = _mm256_max_epi16(v_h, v_f); \
+    v_h = _mm256_max_epi16(v_h, zero); \
+    _mm256_store_si256(h_store + (segment_index), v_h); \
+    best = _mm256_max_epi16(best, v_h); \
+    const __m256i v_h_gap = _mm256_add_epi16(v_h, gap); \
+    v_e = _mm256_max_epi16(_mm256_add_epi16(v_e, gap), v_h_gap); \
+    _mm256_store_si256(e_store + (segment_index), v_e); \
+    v_f = _mm256_max_epi16(_mm256_add_epi16(v_f, gap), v_h_gap); \
+    v_h = _mm256_load_si256(h_load + (segment_index)); \
+  } while (false)
+
+#define STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment_index) \
+  do { \
+    __m256i v_h_scan = _mm256_load_si256(h_store + (segment_index)); \
+    v_h_scan = _mm256_max_epi16(v_h_scan, v_f); \
+    _mm256_store_si256(h_store + (segment_index), v_h_scan); \
+    best = _mm256_max_epi16(best, v_h_scan); \
+    v_f = _mm256_add_epi16(v_f, gap); \
+  } while (false)
+
+inline Score local_sw_score_exact_fill_i16_64(
+    farrar_fixed_kernel::detail::PreparedScoreState<std::int16_t>& state) {
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
+  if (state.gap_score > 0 || state.query_size != 1024U || state.segment_count != 64U ||
+      state.target_profile_offsets.empty()) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), std::int16_t{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), std::int16_t{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), std::int16_t{0});
+
+  const __m256i zero = _mm256_setzero_si256();
+  const __m256i gap = _mm256_set1_epi16(state.gap_score);
+  const auto lane_gap = static_cast<std::int16_t>(state.gap_score * 64);
+  const __m256i lane_gap_1 = _mm256_set1_epi16(lane_gap);
+  const __m256i lane_gap_2 = _mm256_set1_epi16(static_cast<std::int16_t>(lane_gap * 2));
+  const __m256i lane_gap_4 = _mm256_set1_epi16(static_cast<std::int16_t>(lane_gap * 4));
+  const __m256i lane_gap_8 = _mm256_set1_epi16(static_cast<std::int16_t>(lane_gap * 8));
+  __m256i best = zero;
+  __m256i* h_store = reinterpret_cast<__m256i*>(state.h_store.data());
+  __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
+  __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
+  const auto* profile_cells = state.profile.data();
+
+  for (const auto profile_offset : state.target_profile_offsets) {
+    std::swap(h_store, h_load);
+
+    __m256i v_h = shift_left_zero_256<2>(_mm256_load_si256(h_load + 63));
+    __m256i v_f = zero;
+    const __m256i* profile_row =
+        reinterpret_cast<const __m256i*>(profile_cells + profile_offset);
+
+    for (std::size_t segment = 0; segment < 64U; segment += 8U) {
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 1U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 2U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 3U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 4U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 5U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 6U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP(segment + 7U);
+    }
+
+    v_f = local_linear_sw_lazy_f_prefix_carry_i16_64_256(
+        v_f,
+        lane_gap_1,
+        lane_gap_2,
+        lane_gap_4,
+        lane_gap_8,
+        zero);
+    if (_mm256_movemask_epi8(_mm256_cmpgt_epi16(v_f, zero)) != 0) {
+      for (std::size_t segment = 0; segment < 64U; segment += 8U) {
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 1U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 2U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 3U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 4U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 5U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 6U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment + 7U);
+      }
+    }
+  }
+
+  return reduce_max_i16_256(best);
+}
+
+#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN
+#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP
+
+#define STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment_index) \
+  do { \
+    const __m256i v_profile = _mm256_load_si256(profile_row + (segment_index)); \
+    __m256i v_e = _mm256_load_si256(e_store + (segment_index)); \
+    v_h = _mm256_add_epi32(v_h, v_profile); \
+    v_h = _mm256_max_epi32(v_h, v_e); \
+    v_h = _mm256_max_epi32(v_h, v_f); \
+    v_h = _mm256_max_epi32(v_h, zero); \
+    _mm256_store_si256(h_store + (segment_index), v_h); \
+    best = _mm256_max_epi32(best, v_h); \
+    const __m256i v_h_gap = _mm256_add_epi32(v_h, gap); \
+    v_e = _mm256_max_epi32(_mm256_add_epi32(v_e, gap), v_h_gap); \
+    _mm256_store_si256(e_store + (segment_index), v_e); \
+    v_f = _mm256_max_epi32(_mm256_add_epi32(v_f, gap), v_h_gap); \
+    v_h = _mm256_load_si256(h_load + (segment_index)); \
+  } while (false)
+
+#define STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment_index) \
+  do { \
+    __m256i v_h_scan = _mm256_load_si256(h_store + (segment_index)); \
+    v_h_scan = _mm256_max_epi32(v_h_scan, v_f); \
+    _mm256_store_si256(h_store + (segment_index), v_h_scan); \
+    best = _mm256_max_epi32(best, v_h_scan); \
+    v_f = _mm256_add_epi32(v_f, gap); \
+  } while (false)
+
+inline Score local_sw_score_exact_fill_i32_128(
+    farrar_fixed_kernel::detail::PreparedScoreState<std::int32_t>& state) {
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
+  if (state.gap_score > 0 || state.query_size != 1024U || state.segment_count != 128U ||
+      state.target_profile_offsets.empty()) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), std::int32_t{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), std::int32_t{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), std::int32_t{0});
+
+  const __m256i zero = _mm256_setzero_si256();
+  const __m256i gap = _mm256_set1_epi32(state.gap_score);
+  const auto lane_gap = static_cast<std::int32_t>(state.gap_score * 128);
+  const __m256i lane_gap_1 = _mm256_set1_epi32(lane_gap);
+  const __m256i lane_gap_2 = _mm256_set1_epi32(lane_gap * 2);
+  const __m256i lane_gap_4 = _mm256_set1_epi32(lane_gap * 4);
+  __m256i best = zero;
+  __m256i* h_store = reinterpret_cast<__m256i*>(state.h_store.data());
+  __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
+  __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
+  const auto* profile_cells = state.profile.data();
+
+  for (const auto profile_offset : state.target_profile_offsets) {
+    std::swap(h_store, h_load);
+
+    __m256i v_h = shift_left_zero_256<4>(_mm256_load_si256(h_load + 127));
+    __m256i v_f = zero;
+    const __m256i* profile_row =
+        reinterpret_cast<const __m256i*>(profile_cells + profile_offset);
+
+    for (std::size_t segment = 0; segment < 128U; segment += 8U) {
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 1U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 2U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 3U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 4U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 5U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 6U);
+      STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 7U);
+    }
+
+    v_f = local_linear_sw_lazy_f_prefix_carry_i32_128_256(
+        v_f,
+        lane_gap_1,
+        lane_gap_2,
+        lane_gap_4,
+        zero);
+    if (_mm256_movemask_epi8(_mm256_cmpgt_epi32(v_f, zero)) != 0) {
+      for (std::size_t segment = 0; segment < 128U; segment += 8U) {
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 1U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 2U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 3U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 4U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 5U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 6U);
+        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 7U);
+      }
+    }
+  }
+
+  return reduce_max_i32_256(best);
+}
+
+#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN
+#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP
+
 inline std::uint32_t compress_even_bits_32(std::uint32_t mask) {
   mask &= 0x55555555U;
   mask = (mask | (mask >> 1U)) & 0x33333333U;
@@ -500,6 +750,11 @@ struct SimdOps<std::uint16_t, std::int16_t> {
         gap_score);
   }
 
+  static Score local_sw_score_exact_segment64_raw(
+      farrar_fixed_kernel::detail::PreparedScoreState<std::int16_t>& state) {
+    return local_sw_score_exact_fill_i16_64(state);
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi16(lhs, rhs)) != 0;
   }
@@ -616,6 +871,11 @@ struct SimdOps<std::uint32_t, std::int32_t> {
         final_f,
         segment_count,
         gap_score);
+  }
+
+  static Score local_sw_score_exact_segment128_raw(
+      farrar_fixed_kernel::detail::PreparedScoreState<std::int32_t>& state) {
+    return local_sw_score_exact_fill_i32_128(state);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {

@@ -276,10 +276,105 @@ if(STRIDE_ALIGN_BUILD_MICROBENCH)
       src/cpp/tools/x86_microbench.cpp
       src/cpp/tools/x86_microbench_avx2.cpp
       src/cpp/tools/x86_microbench_avx512bwvl.cpp
+      src/cpp/tools/x86_microbench_parasail.cpp
     )
     configure_stride_align_target(stride_align_x86_microbench)
     nanobind_build_library(nanobind-static)
     target_link_libraries(stride_align_x86_microbench PRIVATE nanobind-static Python::Python)
+
+    execute_process(
+      COMMAND
+        "${Python_EXECUTABLE}"
+        -c
+        "import pathlib, parasail; p=pathlib.Path(parasail.__file__).resolve().parent; print(p/'include'); print(p/'libparasail.so')"
+      RESULT_VARIABLE STRIDE_ALIGN_PARASAIL_QUERY_RESULT
+      OUTPUT_VARIABLE STRIDE_ALIGN_PARASAIL_QUERY_OUTPUT
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(STRIDE_ALIGN_PARASAIL_QUERY_RESULT EQUAL 0)
+      string(REPLACE "\n" ";" STRIDE_ALIGN_PARASAIL_QUERY_LINES "${STRIDE_ALIGN_PARASAIL_QUERY_OUTPUT}")
+      list(LENGTH STRIDE_ALIGN_PARASAIL_QUERY_LINES STRIDE_ALIGN_PARASAIL_QUERY_LINE_COUNT)
+      if(STRIDE_ALIGN_PARASAIL_QUERY_LINE_COUNT GREATER_EQUAL 2)
+        list(GET STRIDE_ALIGN_PARASAIL_QUERY_LINES 0 STRIDE_ALIGN_PARASAIL_INCLUDE_DIR)
+        list(GET STRIDE_ALIGN_PARASAIL_QUERY_LINES 1 STRIDE_ALIGN_PARASAIL_LIBRARY)
+        get_filename_component(
+          STRIDE_ALIGN_PARASAIL_LIBRARY_DIR
+          "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+          DIRECTORY
+        )
+        if(
+          EXISTS "${STRIDE_ALIGN_PARASAIL_INCLUDE_DIR}/parasail.h" AND
+          EXISTS "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+        )
+          target_compile_definitions(
+            stride_align_x86_microbench
+            PRIVATE STRIDE_ALIGN_HAVE_PARASAIL_MICROBENCH=1
+          )
+          target_include_directories(
+            stride_align_x86_microbench
+            PRIVATE "${STRIDE_ALIGN_PARASAIL_INCLUDE_DIR}"
+          )
+          target_link_libraries(
+            stride_align_x86_microbench
+            PRIVATE "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+          )
+          set_property(
+            TARGET stride_align_x86_microbench
+            APPEND
+            PROPERTY BUILD_RPATH "${STRIDE_ALIGN_PARASAIL_LIBRARY_DIR};${CMAKE_CURRENT_BINARY_DIR}"
+          )
+          execute_process(
+            COMMAND
+              "${CMAKE_COMMAND}" -E create_symlink
+              "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+              "${CMAKE_CURRENT_BINARY_DIR}/libparasail.so.8"
+          )
+          set(STRIDE_ALIGN_PARASAIL_MICROBENCH_ENABLED TRUE)
+        endif()
+      endif()
+    endif()
+    if(NOT STRIDE_ALIGN_PARASAIL_MICROBENCH_ENABLED)
+      file(
+        GLOB
+        STRIDE_ALIGN_PARASAIL_VENV_DIRS
+        "${CMAKE_SOURCE_DIR}/.venv/lib/python*/site-packages/parasail"
+      )
+      if(STRIDE_ALIGN_PARASAIL_VENV_DIRS)
+        list(GET STRIDE_ALIGN_PARASAIL_VENV_DIRS 0 STRIDE_ALIGN_PARASAIL_VENV_DIR)
+        set(STRIDE_ALIGN_PARASAIL_INCLUDE_DIR "${STRIDE_ALIGN_PARASAIL_VENV_DIR}/include")
+        set(STRIDE_ALIGN_PARASAIL_LIBRARY "${STRIDE_ALIGN_PARASAIL_VENV_DIR}/libparasail.so")
+        if(
+          EXISTS "${STRIDE_ALIGN_PARASAIL_INCLUDE_DIR}/parasail.h" AND
+          EXISTS "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+        )
+          target_compile_definitions(
+            stride_align_x86_microbench
+            PRIVATE STRIDE_ALIGN_HAVE_PARASAIL_MICROBENCH=1
+          )
+          target_include_directories(
+            stride_align_x86_microbench
+            PRIVATE "${STRIDE_ALIGN_PARASAIL_INCLUDE_DIR}"
+          )
+          target_link_libraries(
+            stride_align_x86_microbench
+            PRIVATE "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+          )
+          set_property(
+            TARGET stride_align_x86_microbench
+            APPEND
+            PROPERTY BUILD_RPATH "${STRIDE_ALIGN_PARASAIL_VENV_DIR};${CMAKE_CURRENT_BINARY_DIR}"
+          )
+          execute_process(
+            COMMAND
+              "${CMAKE_COMMAND}" -E create_symlink
+              "${STRIDE_ALIGN_PARASAIL_LIBRARY}"
+              "${CMAKE_CURRENT_BINARY_DIR}/libparasail.so.8"
+          )
+          set(STRIDE_ALIGN_PARASAIL_MICROBENCH_ENABLED TRUE)
+        endif()
+      endif()
+    endif()
   else()
     message(WARNING "STRIDE_ALIGN_BUILD_MICROBENCH is currently implemented for x86 targets only")
   endif()

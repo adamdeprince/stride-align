@@ -1415,3 +1415,64 @@ Focused native AVX2 measurements on CPU 2, Chinese 1024x1024 linear SW
 Post-change perf has the samples concentrated almost entirely in
 `score_state_exact_fill_local_sw`, so the next improvements need to work inside
 that exact-fill loop rather than in dispatch, profile lookup, or Python overhead.
+
+40. AVX2 raw exact-fill score kernels and native parasail harness
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The AVX2 exact-fill Smith-Waterman Farrar score path was split again so the
+common 1024x1024 text shapes no longer go through the generic templated segment
+helper:
+
+- Width16 now dispatches to
+  `backend_avx2::local_sw_score_exact_fill_i16_64`, a raw `__m256i*` kernel
+  with fixed 64-segment loop bounds and an eight-segment unroll.
+- Width32 now dispatches to
+  `backend_avx2::local_sw_score_exact_fill_i32_128`, a raw `__m256i*` kernel
+  with fixed 128-segment loop bounds and an eight-segment unroll.
+- Dispatch is still guarded by exact stripe fill, non-positive local gap score,
+  and the exact segment count. Non-1024, padded, affine, and non-AVX2 routes
+  remain on the generic code.
+- The local lazy-F prefix carry now uses a local-SW zero-clamped prefix with
+  per-state precomputed lane-span gap vectors. This removed the older
+  `vpblendvb` mask chain and repeated per-target gap broadcasts from the exact
+  path.
+
+Perf and experiment notes:
+
+- `perf record`/`perf annotate` was run before further edits on Chinese
+  width16. About 98% of sampled cycles were in
+  `local_sw_score_exact_fill_i16_64`; annotation showed the main unrolled DP
+  body, E/H stores, and lazy-F prefix/scan as the relevant instruction-level
+  costs.
+- After the retained lazy-F change, final perf still has about 94% of samples in
+  `local_sw_score_exact_fill_i16_64`. The remaining gap is in the core DP and
+  correction scan, not Python, dispatch, or profile preparation.
+- A conditional E-store experiment was tested by clamping local E to nonnegative
+  values and skipping stores when the vector was unchanged. It lost badly:
+  Chinese width16 regressed to about 379 us and width32 to about 709 us per
+  target. Keep the branchless E store unless a different representation removes
+  the store without per-segment branches.
+
+Native parasail comparison support was added to the x86 microbench:
+
+- `stride_align_x86_microbench --backend parasail` uses the installed parasail
+  wheel's `parasail.h` and `libparasail.so` when available.
+- CMake detects parasail through the active Python environment, with a local
+  `.venv` fallback. This does not change `pyproject.toml`.
+- The native path translates arbitrary benchmark tokens through the same safe
+  alphabet strategy as the Python benchmark and supports prepared
+  `sw-farrar-score` and `nw-affine-score`.
+
+Focused pinned native 1:1 `sw-farrar-score` results after this pass, linear gap
+`-1`, 1024x1024:
+
+- Chinese width16: AVX2 about 305 us per target; native parasail about 242 us.
+- Chinese width32: AVX2 about 548 us per target; native parasail about 463 us.
+- English width16: AVX2 about 315 us per target; native parasail about 242 us.
+- English width32: AVX2 about 559 us per target; native parasail about 430 us.
+
+Python-level focused benchmark agreed with the native direction: AVX2 improved
+but still trails parasail for `sw-farrar-score`, while other score variants may
+already be competitive. The next x86 work should not target benchmark overhead;
+it should target reducing instructions and memory traffic in the exact-fill DP
+body or replacing the remaining lazy-F correction strategy.

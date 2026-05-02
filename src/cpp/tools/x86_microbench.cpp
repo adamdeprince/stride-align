@@ -54,7 +54,8 @@ void print_help(std::ostream& output) {
       << "Usage: stride_align_x86_microbench [options]\n\n"
       << "Profiles native C++ prepared affine Needleman-Wunsch score kernels.\n\n"
       << "Options:\n"
-      << "  --backend avx2|avx512bwvl        SIMD backend to run (default: avx2)\n"
+      << "  --backend avx2|avx512bwvl|parasail\n"
+      << "                                      SIMD/backend implementation to run (default: avx2)\n"
       << "  --variant nw-affine-score|sw-farrar-score|sw-cigar|sw-path-info|sw-cigar-path-info|sw-scorefirst-cigar|sw-scorefirst-path-info|sw-checkpointed-cigar\n"
       << "                                      Kernel variant to run (default: nw-affine-score)\n"
       << "  --pass english|chinese           Text-like token distribution (default: english)\n"
@@ -140,8 +141,9 @@ Options parse_options(int argc, char** argv) {
     options.query_length = 31;
     options.target_length = 31;
   }
-  if (options.backend != "avx2" && options.backend != "avx512bwvl") {
-    usage_error("--backend must be avx2 or avx512bwvl");
+  if (options.backend != "avx2" && options.backend != "avx512bwvl" &&
+      options.backend != "parasail") {
+    usage_error("--backend must be avx2, avx512bwvl, or parasail");
   }
   if (options.variant != "nw-affine-score" && options.variant != "sw-farrar-score" &&
       options.variant != "sw-cigar" && options.variant != "sw-path-info" &&
@@ -352,6 +354,13 @@ RunResult run_backend(const PreparedWorkload& prepared, const Options& options) 
       usage_error("AVX2 is not available on this machine");
     }
     return run_avx2_backend(prepared, options);
+  }
+
+  if (options.backend == "parasail") {
+    if (!supports_parasail()) {
+      usage_error("native parasail microbench support was not compiled in");
+    }
+    return run_parasail_backend(prepared, options);
   }
 
   if (!supports_avx512bwvl()) {

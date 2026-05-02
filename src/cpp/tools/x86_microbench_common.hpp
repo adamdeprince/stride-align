@@ -49,8 +49,10 @@ struct RunResult {
 
 bool supports_avx2() noexcept;
 bool supports_avx512bwvl() noexcept;
+bool supports_parasail() noexcept;
 
 RunResult run_avx2_backend(const PreparedWorkload& prepared, const Options& options);
 RunResult run_avx512bwvl_backend(const PreparedWorkload& prepared, const Options& options);
+RunResult run_parasail_backend(const PreparedWorkload& prepared, const Options& options);
 
 }  // namespace stride_align::microbench

@@ -2760,6 +2760,9 @@ Score score_state(PreparedScoreState<Cell>& state) {
     if constexpr (requires { Ops::local_sw_score_exact_segment64; }) {
       if constexpr (Ops::local_sw_score_exact_segment64) {
         if (state.segment_count == 64U) {
+          if constexpr (requires { Ops::local_sw_score_exact_segment64_raw(state); }) {
+            return Ops::local_sw_score_exact_segment64_raw(state);
+          }
           return score_state_exact_fill_local_sw<Ops, Cell, 64U>(state);
         }
       }
@@ -2767,6 +2770,9 @@ Score score_state(PreparedScoreState<Cell>& state) {
     if constexpr (requires { Ops::local_sw_score_exact_segment128; }) {
       if constexpr (Ops::local_sw_score_exact_segment128) {
         if (state.segment_count == 128U) {
+          if constexpr (requires { Ops::local_sw_score_exact_segment128_raw(state); }) {
+            return Ops::local_sw_score_exact_segment128_raw(state);
+          }
           return score_state_exact_fill_local_sw<Ops, Cell, 128U>(state);
         }
       }
