@@ -62,6 +62,15 @@ struct UseDenseGlobalLazyFScan<
     : std::bool_constant<Ops::dense_global_lazy_f_scan> {};
 
 template <typename Ops, typename = void>
+struct UseMaskedDenseGlobalLazyFScan : std::false_type {};
+
+template <typename Ops>
+struct UseMaskedDenseGlobalLazyFScan<
+    Ops,
+    std::void_t<decltype(Ops::masked_dense_global_lazy_f_scan)>>
+    : std::bool_constant<Ops::masked_dense_global_lazy_f_scan> {};
+
+template <typename Ops, typename = void>
 struct UsePlainGlobalMainFAfterFirstSegment : std::false_type {};
 
 template <typename Ops>
@@ -78,6 +87,15 @@ struct UseGlobalMainFSegment64Unroll<
     Ops,
     std::void_t<decltype(Ops::global_main_f_segment64_unroll)>>
     : std::bool_constant<Ops::global_main_f_segment64_unroll> {};
+
+template <typename Ops, typename = void>
+struct UseGlobalMainFSegment32Unroll : std::false_type {};
+
+template <typename Ops>
+struct UseGlobalMainFSegment32Unroll<
+    Ops,
+    std::void_t<decltype(Ops::global_main_f_segment32_unroll)>>
+    : std::bool_constant<Ops::global_main_f_segment32_unroll> {};
 
 template <typename T, std::size_t Alignment>
 struct AlignedAllocator {
@@ -1032,6 +1050,55 @@ void scan_global_lazy_f_no_padding_dense(
 }
 
 template <typename Ops, typename Cell>
+void scan_global_lazy_f_no_padding_dense_masked(
+    Cell* h_store_data,
+    Cell* e_store_data,
+    std::size_t segment_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_open_vector,
+    typename Ops::vector_type gap_extend_vector,
+    Cell low_score) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  if (segment_count == 0) {
+    return;
+  }
+
+  {
+    Cell* h_store_segment = h_store_data;
+    Cell* e_segment = e_store_data;
+    const auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+    const auto h_store_mask = Ops::greater_mask(v_f, v_h_previous);
+    const auto v_h = Ops::max(v_h_previous, v_f);
+    Ops::store_masked_cells(h_store_segment, h_store_mask, v_h);
+
+    const auto v_h_open = Ops::add(v_h, gap_open_vector);
+    auto v_e = load_state_cells<Ops, Cell>(e_segment);
+    const auto e_store_mask = Ops::greater_mask(v_h_open, v_e);
+    v_e = Ops::max(v_e, v_h_open);
+    Ops::store_masked_cells(e_segment, e_store_mask, v_e);
+    v_f = Ops::max(add_sentinel<Ops, Cell>(v_f, gap_extend_vector, low_score), v_h_open);
+  }
+
+  for (std::size_t segment = 1; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    Cell* e_segment = e_store_data + segment * lane_count;
+
+    const auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+    const auto h_store_mask = Ops::greater_mask(v_f, v_h_previous);
+    const auto v_h = Ops::max(v_h_previous, v_f);
+    Ops::store_masked_cells(h_store_segment, h_store_mask, v_h);
+
+    const auto v_h_open = Ops::add(v_h, gap_open_vector);
+    auto v_e = load_state_cells<Ops, Cell>(e_segment);
+    const auto e_store_mask = Ops::greater_mask(v_h_open, v_e);
+    v_e = Ops::max(v_e, v_h_open);
+    Ops::store_masked_cells(e_segment, e_store_mask, v_e);
+    v_f = Ops::max(Ops::add(v_f, gap_extend_vector), v_h_open);
+  }
+}
+
+template <typename Ops, typename Cell>
 typename Ops::vector_type global_lazy_f_prefix_carry(
     typename Ops::vector_type final_f,
     std::size_t segment_count,
@@ -1483,7 +1550,39 @@ Score global_affine_score_state_equal_length_no_padding(
       };
 
       process_first_segment();
-      if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+      if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+        if (state.segment_count == 32U) {
+          process_plain_segment(1U);
+          process_plain_segment(2U);
+          process_plain_segment(3U);
+          for (std::size_t segment = 4U; segment < 32U; segment += 4U) {
+            process_plain_segment(segment);
+            process_plain_segment(segment + 1U);
+            process_plain_segment(segment + 2U);
+            process_plain_segment(segment + 3U);
+          }
+        } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+          if (state.segment_count == 64U) {
+            process_plain_segment(1U);
+            process_plain_segment(2U);
+            process_plain_segment(3U);
+            for (std::size_t segment = 4U; segment < 64U; segment += 4U) {
+              process_plain_segment(segment);
+              process_plain_segment(segment + 1U);
+              process_plain_segment(segment + 2U);
+              process_plain_segment(segment + 3U);
+            }
+          } else {
+            for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
+              process_plain_segment(segment);
+            }
+          }
+        } else {
+          for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
+            process_plain_segment(segment);
+          }
+        }
+      } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
         if (state.segment_count == 64U) {
           process_plain_segment(1U);
           process_plain_segment(2U);
@@ -1533,14 +1632,25 @@ Score global_affine_score_state_equal_length_no_padding(
           state.gap_extend_score,
           low_score);
       if constexpr (UseDenseGlobalLazyFScan<Ops>::value) {
-        scan_global_lazy_f_no_padding_dense<Ops, Cell>(
-            h_store_data,
-            e_store_data,
-            state.segment_count,
-            v_f,
-            gap_open_vector,
-            gap_extend_vector,
-            low_score);
+        if constexpr (UseMaskedDenseGlobalLazyFScan<Ops>::value) {
+          scan_global_lazy_f_no_padding_dense_masked<Ops, Cell>(
+              h_store_data,
+              e_store_data,
+              state.segment_count,
+              v_f,
+              gap_open_vector,
+              gap_extend_vector,
+              low_score);
+        } else {
+          scan_global_lazy_f_no_padding_dense<Ops, Cell>(
+              h_store_data,
+              e_store_data,
+              state.segment_count,
+              v_f,
+              gap_open_vector,
+              gap_extend_vector,
+              low_score);
+        }
       } else {
         scan_global_lazy_f<Ops, Cell, false>(
             h_store_data,

@@ -325,6 +325,8 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t lane_count = 32;
   static constexpr bool has_vector_max = true;
   static constexpr bool dense_global_lazy_f_scan = true;
+  static constexpr bool plain_global_main_f_after_first_segment = true;
+  static constexpr bool global_main_f_segment32_unroll = true;
 
   static vector_type load_tokens(const std::uint16_t* values) {
     return _mm512_loadu_si512(values);
@@ -344,6 +346,10 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
   static void store_aligned_cells(std::int16_t* values, vector_type vector) {
     _mm512_store_si512(values, vector);
+  }
+
+  static void store_masked_cells(std::int16_t* values, mask_type mask, vector_type vector) {
+    _mm512_mask_storeu_epi16(values, mask, vector);
   }
 
   static vector_type set1(std::int16_t value) {
@@ -446,6 +452,8 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 16;
   static constexpr bool has_vector_max = true;
+  static constexpr bool plain_global_main_f_after_first_segment = true;
+  static constexpr bool global_main_f_segment64_unroll = true;
 
   static vector_type load_tokens(const std::uint32_t* values) {
     return _mm512_loadu_si512(values);
