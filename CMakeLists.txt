@@ -19,12 +19,16 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
   set(CMAKE_CXX_FLAGS_${config} "-O3")
 endforeach()
 
-find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
-find_package(nanobind CONFIG REQUIRED)
 include(CheckCXXCompilerFlag)
 include(CheckIPOSupported)
 
 option(STRIDE_ALIGN_ENABLE_LTO "Enable interprocedural/link-time optimization" OFF)
+option(STRIDE_ALIGN_BUILD_MICROBENCH "Build native C++ profiling microbenchmarks" OFF)
+option(
+  STRIDE_ALIGN_PERF_SYMBOLS
+  "Build with debug symbols, frame pointers, and unstripped nanobind modules for perf"
+  OFF
+)
 set(STRIDE_ALIGN_PGO_MODE "OFF" CACHE STRING "PGO mode: OFF, GENERATE, or USE")
 set_property(CACHE STRIDE_ALIGN_PGO_MODE PROPERTY STRINGS OFF GENERATE USE)
 set(STRIDE_ALIGN_PGO_DIR "${CMAKE_BINARY_DIR}/pgo" CACHE PATH "Directory for PGO profile data")
@@ -39,6 +43,14 @@ string(TOUPPER "${STRIDE_ALIGN_PGO_MODE}" STRIDE_ALIGN_PGO_MODE_NORMALIZED)
 if(NOT STRIDE_ALIGN_PGO_MODE_NORMALIZED MATCHES "^(OFF|GENERATE|USE)$")
   message(FATAL_ERROR "STRIDE_ALIGN_PGO_MODE must be OFF, GENERATE, or USE")
 endif()
+
+set(STRIDE_ALIGN_PYTHON_COMPONENTS Interpreter Development.Module)
+if(STRIDE_ALIGN_BUILD_MICROBENCH)
+  list(APPEND STRIDE_ALIGN_PYTHON_COMPONENTS Development.Embed)
+endif()
+
+find_package(Python REQUIRED COMPONENTS ${STRIDE_ALIGN_PYTHON_COMPONENTS})
+find_package(nanobind CONFIG REQUIRED)
 
 set(STRIDE_ALIGN_IPO_SUPPORTED FALSE)
 if(STRIDE_ALIGN_ENABLE_LTO)
@@ -123,11 +135,32 @@ function(configure_stride_align_target target_name)
     target_compile_options(${target_name} PRIVATE /O2 /W4)
   endif()
 
+  if(STRIDE_ALIGN_PERF_SYMBOLS)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(
+        ${target_name}
+        PRIVATE
+          -g
+          -fno-omit-frame-pointer
+          -fno-optimize-sibling-calls
+      )
+      target_link_options(${target_name} PRIVATE -g)
+    elseif(MSVC)
+      target_compile_options(${target_name} PRIVATE /Zi /Oy-)
+      target_link_options(${target_name} PRIVATE /DEBUG)
+    endif()
+  endif()
+
   apply_stride_align_optimization_flags(${target_name})
 endfunction()
 
+set(STRIDE_ALIGN_NANOBIND_MODULE_OPTIONS STABLE_ABI)
+if(STRIDE_ALIGN_PERF_SYMBOLS)
+  list(APPEND STRIDE_ALIGN_NANOBIND_MODULE_OPTIONS NOMINSIZE NOSTRIP)
+endif()
+
 function(add_stride_align_backend module_name backend_source)
-  nanobind_add_module(${module_name} STABLE_ABI ${backend_source})
+  nanobind_add_module(${module_name} ${STRIDE_ALIGN_NANOBIND_MODULE_OPTIONS} ${backend_source})
   configure_stride_align_target(${module_name})
   install(TARGETS ${module_name} LIBRARY DESTINATION stride_align)
 endfunction()
@@ -135,7 +168,12 @@ endfunction()
 set(STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_GENERIC=1)
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" STRIDE_ALIGN_SYSTEM_PROCESSOR)
 
-nanobind_add_module(_cpu STABLE_ABI src/cpp/cpu_module.cpp src/cpp/cpu.cpp)
+nanobind_add_module(
+  _cpu
+  ${STRIDE_ALIGN_NANOBIND_MODULE_OPTIONS}
+  src/cpp/cpu_module.cpp
+  src/cpp/cpu.cpp
+)
 configure_stride_align_target(_cpu)
 
 add_stride_align_backend(_generic src/cpp/backends/generic.cpp)
@@ -230,3 +268,19 @@ endif()
 
 target_compile_definitions(_cpu PRIVATE ${STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS})
 install(TARGETS _cpu LIBRARY DESTINATION stride_align)
+
+if(STRIDE_ALIGN_BUILD_MICROBENCH)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
+    add_executable(
+      stride_align_x86_microbench
+      src/cpp/tools/x86_microbench.cpp
+      src/cpp/tools/x86_microbench_avx2.cpp
+      src/cpp/tools/x86_microbench_avx512bwvl.cpp
+    )
+    configure_stride_align_target(stride_align_x86_microbench)
+    nanobind_build_library(nanobind-static)
+    target_link_libraries(stride_align_x86_microbench PRIVATE nanobind-static Python::Python)
+  else()
+    message(WARNING "STRIDE_ALIGN_BUILD_MICROBENCH is currently implemented for x86 targets only")
+  endif()
+endif()

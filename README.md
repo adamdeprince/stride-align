@@ -30,6 +30,7 @@ backends can replace the backend translation units later without changing the Py
 import stride_align
 
 score = stride_align.needleman_wunsch_score("ACGT", "ACCT")
+scores = stride_align.Scores("ACGT", variant="needleman_wunsch").compare(["ACCT", "AGGT"])
 result = stride_align.smith_waterman_path("ACCGT", "CCG")
 bench_result = stride_align.smith_waterman_path("ACCGT", "CCG", width=64)
 object_result = stride_align.needleman_wunsch_path(
@@ -38,10 +39,16 @@ object_result = stride_align.needleman_wunsch_path(
 )
 
 print(score)
+print(scores)
 print(result.score, result.aligned_query, result.aligned_target, result.operations)
 print(bench_result.score)
 print(object_result.aligned_query, object_result.aligned_target)
 ```
+
+Use `Scores(...).compare([...])` or the `*_scores()` functions for one-query
+against many-target score workloads. That path prepares the query/profile once
+and is the preferred performance API for repeated English/Chinese text
+comparisons.
 
 Traceback outputs preserve the paired fast-path type:
 
@@ -50,3 +57,23 @@ Traceback outputs preserve the paired fast-path type:
 - sequence/object inputs return aligned `tuple` values with `None` gaps
 
 Pass `width=8`, `16`, `32`, or `64` to force a wider kernel than automatic selection.
+
+## Native Microbench
+
+For perf profiling without Python frames or benchmark orchestration, configure a
+native x86 microbench build:
+
+```bash
+nanobind_dir="$(.venv/bin/python -m nanobind --cmake_dir)"
+cmake -S . -B build/perf \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+  -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+  -DPython_EXECUTABLE=.venv/bin/python \
+  -Dnanobind_DIR="$nanobind_dir"
+cmake --build build/perf --target stride_align_x86_microbench
+build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+```
+
+`STRIDE_ALIGN_PERF_SYMBOLS=ON` keeps nanobind modules unstripped and adds debug
+symbols plus frame pointers while preserving `-O3`.

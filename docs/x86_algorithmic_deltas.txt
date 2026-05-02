@@ -1057,6 +1057,94 @@ affine boundary arithmetic but does not change the asymptotic cost of the
 striped DP loop, so benchmark wins are expected to be small unless a workload
 does many short prepared global affine comparisons.
 
+30. Exact equal-length global affine NW score specialization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is a shared fixed-width Farrar kernel change, not x86-specific:
+
+- global_affine_score_state now has a separate equal-length/no-padding path for
+  query_size == target_size == segment_count * lane_count.
+- The loop carries the target top-row boundary as running scalar values instead
+  of recomputing affine_gap_cost for every column.
+- The cross-lane F insert uses SimdOps::shift_left_insert(low_vector, first_f)
+  directly rather than rebuilding a first-lane vector per column.
+- H/E updates use the no-padding plain vector-add path; lazy-F propagation still
+  uses sentinel-preserving arithmetic.
+- One-shot, prepared, and batch global affine score calls select this path
+  automatically when the exact shape matches.
+- AVX512BWVL and AVX2 16-bit lanes opt into a dense no-padding lazy-F scan. The
+  first scan segment still preserves the sentinel because lane zero begins at
+  -inf, but after that all lanes are valid, so the remaining segments use plain
+  vector adds and avoid the per-segment compare/branch used by the sparse scan.
+- AVX2 16-bit lanes also opt into a main-DP F update split for this exact
+  no-padding path. Segment zero still uses sentinel-preserving v_f +
+  gap_extend because only lane zero starts with a real top-row F value, but
+  v_h_open makes every lane valid after that segment, so segments 1..N use a
+  plain vpaddw before maxing against v_h_open. This removes one compare/blend
+  chain from almost every main-DP segment in the 1024x1024 width16 case.
+- AVX2 16-bit lanes have a separate no-padding lazy-F prefix carry hook. The
+  generic prefix carry remains sentinel-safe for padded cases. The no-padding
+  hook relies on the exact-fill invariant that only lane zero is sentinel after
+  the initial shift, so each log-step shift restores a known fixed number of
+  leading sentinel lanes with a static byte mask instead of using a per-lane
+  compare plus blend.
+- AVX2 16-bit lanes opt into a segment_count == 64 main-DP specialization for
+  1024-character exact fills. Segment zero is still handled once with the
+  sentinel-preserving F update, segments 1..3 are handled explicitly, and
+  segments 4..63 are unrolled by four. This keeps the exact-fill recurrence the
+  same while cutting loop branch and address-control instructions in the common
+  1024/16 benchmark shape.
+
+Expected effect: this targets common English/Chinese same-length exact stripe
+fills, especially 1024x1024 at width 16 and 32. It reduces scalar boundary work
+and per-column vector setup without changing traceback/path-producing code. The
+16-bit dense scan is intentionally target-specific because the extra stores are
+worthwhile for AVX512BWVL and AVX2 width16 exact fills; other widths keep the
+sparse scan. The main-DP F update split is currently AVX2 width16-specific
+because perf showed AVX2 was instruction/control bound there; AVX512 should be
+tested separately before opting into the same split. The AVX2 no-padding prefix
+carry is intentionally kept separate from the generic helper to avoid changing
+padded global affine behavior, where multiple sentinel lanes may be present.
+The segment-count-64 unroll is also AVX2 width16-specific; other segment counts
+fall back to the normal exact no-padding loop.
+
+31. Native x86 microbench and perf-symbol build option
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is profiling scaffolding, not an algorithmic kernel change:
+
+- CMake now has STRIDE_ALIGN_BUILD_MICROBENCH. On x86 it builds
+  stride_align_x86_microbench, a native executable that runs prepared affine
+  Needleman-Wunsch score kernels without Python frames or the Python benchmark
+  orchestrator.
+- The microbench supports --backend avx2|avx512bwvl, --shape 1:1|1:many,
+  --pass english|chinese, --width 0|8|16|32|64, and the affine scoring knobs.
+- shape=1:1 profiles the prepared single-target path:
+  prepare_affine_score<SimdOps, true>(...) plus
+  dispatch_prepared_global_affine_score<SimdOps>(...).
+- shape=1:many profiles the prepared batch path:
+  prepare_affine_score_batch_state<SimdOps, Cell, true>(...) plus
+  affine_score_batch_state<SimdOps, Cell, false>(...).
+- This preserves the prepared/batch path as the performance route for repeated
+  English/Chinese one-query-against-many-target workloads.
+- CMake now also has STRIDE_ALIGN_PERF_SYMBOLS. It adds -g,
+  -fno-omit-frame-pointer, and -fno-optimize-sibling-calls on GNU/Clang,
+  leaves -O3 in place, and passes NOMINSIZE/NOSTRIP to nanobind modules so perf
+  reports resolve symbols instead of stripped addresses.
+
+Suggested profiling build:
+
+  nanobind_dir="$(.venv/bin/python -m nanobind --cmake_dir)"
+  cmake -S . -B build/perf \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+    -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+    -DPython_EXECUTABLE=.venv/bin/python \
+    -Dnanobind_DIR="$nanobind_dir"
+  cmake --build build/perf --target stride_align_x86_microbench
+  build/perf/stride_align_x86_microbench \
+    --backend avx2 --shape 1:many --pass english --width 16
+
 
 Expected Loongson result after port
 -----------------------------------

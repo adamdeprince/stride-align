@@ -324,6 +324,7 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 32;
   static constexpr bool has_vector_max = true;
+  static constexpr bool dense_global_lazy_f_scan = true;
 
   static vector_type load_tokens(const std::uint16_t* values) {
     return _mm512_loadu_si512(values);

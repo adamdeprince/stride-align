@@ -52,6 +52,33 @@ struct ScoreToken<std::int64_t> {
 template <template <typename, typename> class OpsTemplate, typename Cell>
 using ScoreOps = OpsTemplate<typename ScoreToken<Cell>::type, Cell>;
 
+template <typename Ops, typename = void>
+struct UseDenseGlobalLazyFScan : std::false_type {};
+
+template <typename Ops>
+struct UseDenseGlobalLazyFScan<
+    Ops,
+    std::void_t<decltype(Ops::dense_global_lazy_f_scan)>>
+    : std::bool_constant<Ops::dense_global_lazy_f_scan> {};
+
+template <typename Ops, typename = void>
+struct UsePlainGlobalMainFAfterFirstSegment : std::false_type {};
+
+template <typename Ops>
+struct UsePlainGlobalMainFAfterFirstSegment<
+    Ops,
+    std::void_t<decltype(Ops::plain_global_main_f_after_first_segment)>>
+    : std::bool_constant<Ops::plain_global_main_f_after_first_segment> {};
+
+template <typename Ops, typename = void>
+struct UseGlobalMainFSegment64Unroll : std::false_type {};
+
+template <typename Ops>
+struct UseGlobalMainFSegment64Unroll<
+    Ops,
+    std::void_t<decltype(Ops::global_main_f_segment64_unroll)>>
+    : std::bool_constant<Ops::global_main_f_segment64_unroll> {};
+
 template <typename T, std::size_t Alignment>
 struct AlignedAllocator {
   using value_type = T;
@@ -960,6 +987,51 @@ bool scan_global_lazy_f(
 }
 
 template <typename Ops, typename Cell>
+void scan_global_lazy_f_no_padding_dense(
+    Cell* h_store_data,
+    Cell* e_store_data,
+    std::size_t segment_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_open_vector,
+    typename Ops::vector_type gap_extend_vector,
+    Cell low_score) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  if (segment_count == 0) {
+    return;
+  }
+
+  {
+    Cell* h_store_segment = h_store_data;
+    Cell* e_segment = e_store_data;
+    const auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+    const auto v_h = Ops::max(v_h_previous, v_f);
+    store_state_cells<Ops, Cell>(h_store_segment, v_h);
+
+    const auto v_h_open = Ops::add(v_h, gap_open_vector);
+    auto v_e = load_state_cells<Ops, Cell>(e_segment);
+    v_e = Ops::max(v_e, v_h_open);
+    store_state_cells<Ops, Cell>(e_segment, v_e);
+    v_f = Ops::max(add_sentinel<Ops, Cell>(v_f, gap_extend_vector, low_score), v_h_open);
+  }
+
+  for (std::size_t segment = 1; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    Cell* e_segment = e_store_data + segment * lane_count;
+
+    const auto v_h_previous = load_state_cells<Ops, Cell>(h_store_segment);
+    const auto v_h = Ops::max(v_h_previous, v_f);
+    store_state_cells<Ops, Cell>(h_store_segment, v_h);
+
+    const auto v_h_open = Ops::add(v_h, gap_open_vector);
+    auto v_e = load_state_cells<Ops, Cell>(e_segment);
+    v_e = Ops::max(v_e, v_h_open);
+    store_state_cells<Ops, Cell>(e_segment, v_e);
+    v_f = Ops::max(Ops::add(v_f, gap_extend_vector), v_h_open);
+  }
+}
+
+template <typename Ops, typename Cell>
 typename Ops::vector_type global_lazy_f_prefix_carry(
     typename Ops::vector_type final_f,
     std::size_t segment_count,
@@ -999,6 +1071,33 @@ typename Ops::vector_type global_lazy_f_prefix_carry(
   }
 
   return Ops::load_cells(output);
+}
+
+template <typename Ops, typename Cell>
+typename Ops::vector_type global_lazy_f_prefix_carry_no_padding(
+    typename Ops::vector_type final_f,
+    std::size_t segment_count,
+    Cell gap_extend_score,
+    Cell low_score) {
+  if constexpr (requires {
+                  Ops::global_lazy_f_prefix_carry_no_padding(
+                      final_f,
+                      segment_count,
+                      gap_extend_score,
+                      low_score);
+                }) {
+    return Ops::global_lazy_f_prefix_carry_no_padding(
+        final_f,
+        segment_count,
+        gap_extend_score,
+        low_score);
+  }
+
+  return global_lazy_f_prefix_carry<Ops, Cell>(
+      final_f,
+      segment_count,
+      gap_extend_score,
+      low_score);
 }
 
 template <typename Ops, typename Cell>
@@ -1265,11 +1364,19 @@ Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
     const bool can_prefix_lazy_f =
         state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0;
     if (can_prefix_lazy_f) {
-      v_f = global_lazy_f_prefix_carry<Ops, Cell>(
-          v_f,
-          state.segment_count,
-          state.gap_extend_score,
-          low_score);
+      if constexpr (PreserveSentinel) {
+        v_f = global_lazy_f_prefix_carry<Ops, Cell>(
+            v_f,
+            state.segment_count,
+            state.gap_extend_score,
+            low_score);
+      } else {
+        v_f = global_lazy_f_prefix_carry_no_padding<Ops, Cell>(
+            v_f,
+            state.segment_count,
+            state.gap_extend_score,
+            low_score);
+      }
       scan_global_lazy_f<Ops, Cell, PreserveSentinel>(
           h_store_data,
           e_store_data,
@@ -1300,10 +1407,186 @@ Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_affine_score_state_equal_length_no_padding(
+    PreparedAffineScoreState<Cell>& state) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  reset_global_affine_initial_column(state, lane_count);
+  std::fill(state.h_load.begin(), state.h_load.end(), std::numeric_limits<Cell>::lowest());
+
+  const auto gap_open_vector = Ops::set1(state.gap_open_score);
+  const auto gap_extend_vector = Ops::set1(state.gap_extend_score);
+  const Cell low_score = std::numeric_limits<Cell>::lowest();
+  const auto low_vector = Ops::set1(low_score);
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+  const bool can_prefix_lazy_f =
+      state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0;
+
+  Cell top_left = 0;
+  Cell next_top_left = state.gap_open_score;
+  Cell first_f = static_cast<Cell>(
+      static_cast<Score>(state.gap_open_score) +
+      static_cast<Score>(state.gap_open_score));
+
+  for (const auto profile_offset : state.target_profile_offsets) {
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_insert<Ops, Cell>(
+        load_state_cells<Ops, Cell>(h_load_data + ((state.segment_count - 1U) * lane_count)),
+        top_left);
+    auto v_f = shift_left_insert<Ops, Cell>(low_vector, first_f);
+    const Cell* profile_row = profile_data + profile_offset;
+
+    if constexpr (UsePlainGlobalMainFAfterFirstSegment<Ops>::value) {
+      auto process_first_segment = [&]() {
+        Cell* h_store_segment = h_store_data;
+        Cell* h_load_segment = h_load_data;
+        Cell* e_segment = e_store_data;
+        const Cell* profile_segment = profile_row;
+
+        const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+        auto v_e = load_state_cells<Ops, Cell>(e_segment);
+        v_h = Ops::add(v_h, v_profile);
+        v_h = Ops::max(v_h, v_e);
+        v_h = Ops::max(v_h, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h);
+
+        const auto v_h_open = Ops::add(v_h, gap_open_vector);
+        v_e = Ops::max(Ops::add(v_e, gap_extend_vector), v_h_open);
+        store_state_cells<Ops, Cell>(e_segment, v_e);
+        v_f = Ops::max(add_sentinel<Ops, Cell>(v_f, gap_extend_vector, low_score), v_h_open);
+        v_h = load_state_cells<Ops, Cell>(h_load_segment);
+      };
+
+      auto process_plain_segment = [&](std::size_t segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        Cell* h_load_segment = h_load_data + segment * lane_count;
+        Cell* e_segment = e_store_data + segment * lane_count;
+        const Cell* profile_segment = profile_row + segment * lane_count;
+
+        const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+        auto v_e = load_state_cells<Ops, Cell>(e_segment);
+        v_h = Ops::add(v_h, v_profile);
+        v_h = Ops::max(v_h, v_e);
+        v_h = Ops::max(v_h, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h);
+
+        const auto v_h_open = Ops::add(v_h, gap_open_vector);
+        v_e = Ops::max(Ops::add(v_e, gap_extend_vector), v_h_open);
+        store_state_cells<Ops, Cell>(e_segment, v_e);
+        v_f = Ops::max(Ops::add(v_f, gap_extend_vector), v_h_open);
+        v_h = load_state_cells<Ops, Cell>(h_load_segment);
+      };
+
+      process_first_segment();
+      if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+        if (state.segment_count == 64U) {
+          process_plain_segment(1U);
+          process_plain_segment(2U);
+          process_plain_segment(3U);
+          for (std::size_t segment = 4U; segment < 64U; segment += 4U) {
+            process_plain_segment(segment);
+            process_plain_segment(segment + 1U);
+            process_plain_segment(segment + 2U);
+            process_plain_segment(segment + 3U);
+          }
+        } else {
+          for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
+            process_plain_segment(segment);
+          }
+        }
+      } else {
+        for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
+          process_plain_segment(segment);
+        }
+      }
+    } else {
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        Cell* h_load_segment = h_load_data + segment * lane_count;
+        Cell* e_segment = e_store_data + segment * lane_count;
+        const Cell* profile_segment = profile_row + segment * lane_count;
+
+        const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+        auto v_e = load_state_cells<Ops, Cell>(e_segment);
+        v_h = Ops::add(v_h, v_profile);
+        v_h = Ops::max(v_h, v_e);
+        v_h = Ops::max(v_h, v_f);
+        store_state_cells<Ops, Cell>(h_store_segment, v_h);
+
+        const auto v_h_open = Ops::add(v_h, gap_open_vector);
+        v_e = Ops::max(Ops::add(v_e, gap_extend_vector), v_h_open);
+        store_state_cells<Ops, Cell>(e_segment, v_e);
+        v_f = Ops::max(add_sentinel<Ops, Cell>(v_f, gap_extend_vector, low_score), v_h_open);
+        v_h = load_state_cells<Ops, Cell>(h_load_segment);
+      }
+    }
+
+    if (can_prefix_lazy_f) {
+      v_f = global_lazy_f_prefix_carry_no_padding<Ops, Cell>(
+          v_f,
+          state.segment_count,
+          state.gap_extend_score,
+          low_score);
+      if constexpr (UseDenseGlobalLazyFScan<Ops>::value) {
+        scan_global_lazy_f_no_padding_dense<Ops, Cell>(
+            h_store_data,
+            e_store_data,
+            state.segment_count,
+            v_f,
+            gap_open_vector,
+            gap_extend_vector,
+            low_score);
+      } else {
+        scan_global_lazy_f<Ops, Cell, false>(
+            h_store_data,
+            e_store_data,
+            state.segment_count,
+            v_f,
+            gap_open_vector,
+            gap_extend_vector,
+            low_score);
+      }
+    } else {
+      for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+        v_f = shift_left_insert<Ops, Cell>(v_f, low_score);
+        const bool propagated = scan_global_lazy_f<Ops, Cell, false>(
+            h_store_data,
+            e_store_data,
+            state.segment_count,
+            v_f,
+            gap_open_vector,
+            gap_extend_vector,
+            low_score);
+
+        (void) propagated;
+      }
+    }
+
+    top_left = next_top_left;
+    next_top_left = static_cast<Cell>(
+        static_cast<Score>(next_top_left) +
+        static_cast<Score>(state.gap_extend_score));
+    first_f = static_cast<Cell>(
+        static_cast<Score>(first_f) +
+        static_cast<Score>(state.gap_extend_score));
+  }
+
+  return static_cast<Score>(h_store_data[state.segment_count * lane_count - 1U]);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
 Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   if (state.query_size != 0 &&
       state.query_size == state.segment_count * Ops::lane_count) {
+    if (state.query_size == state.target_size) {
+      return global_affine_score_state_equal_length_no_padding<OpsTemplate, Cell>(state);
+    }
     return global_affine_score_state_impl<OpsTemplate, Cell, false>(state);
   }
   return global_affine_score_state_impl<OpsTemplate, Cell, true>(state);
