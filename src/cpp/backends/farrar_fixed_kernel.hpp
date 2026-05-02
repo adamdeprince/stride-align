@@ -97,6 +97,15 @@ struct UseGlobalMainFSegment32Unroll<
     std::void_t<decltype(Ops::global_main_f_segment32_unroll)>>
     : std::bool_constant<Ops::global_main_f_segment32_unroll> {};
 
+template <typename Ops, typename = void>
+struct UseGlobalMainFSegment128Unroll : std::false_type {};
+
+template <typename Ops>
+struct UseGlobalMainFSegment128Unroll<
+    Ops,
+    std::void_t<decltype(Ops::global_main_f_segment128_unroll)>>
+    : std::bool_constant<Ops::global_main_f_segment128_unroll> {};
+
 template <typename T, std::size_t Alignment>
 struct AlignedAllocator {
   using value_type = T;
@@ -1549,59 +1558,69 @@ Score global_affine_score_state_equal_length_no_padding(
         v_h = load_state_cells<Ops, Cell>(h_load_segment);
       };
 
-      process_first_segment();
-      if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
-        if (state.segment_count == 32U) {
-          process_plain_segment(1U);
-          process_plain_segment(2U);
-          process_plain_segment(3U);
-          for (std::size_t segment = 4U; segment < 32U; segment += 4U) {
-            process_plain_segment(segment);
-            process_plain_segment(segment + 1U);
-            process_plain_segment(segment + 2U);
-            process_plain_segment(segment + 3U);
-          }
-        } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
-          if (state.segment_count == 64U) {
-            process_plain_segment(1U);
-            process_plain_segment(2U);
-            process_plain_segment(3U);
-            for (std::size_t segment = 4U; segment < 64U; segment += 4U) {
-              process_plain_segment(segment);
-              process_plain_segment(segment + 1U);
-              process_plain_segment(segment + 2U);
-              process_plain_segment(segment + 3U);
-            }
-          } else {
-            for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
-              process_plain_segment(segment);
-            }
-          }
-        } else {
-          for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
-            process_plain_segment(segment);
-          }
-        }
-      } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
-        if (state.segment_count == 64U) {
-          process_plain_segment(1U);
-          process_plain_segment(2U);
-          process_plain_segment(3U);
-          for (std::size_t segment = 4U; segment < 64U; segment += 4U) {
-            process_plain_segment(segment);
-            process_plain_segment(segment + 1U);
-            process_plain_segment(segment + 2U);
-            process_plain_segment(segment + 3U);
-          }
-        } else {
-          for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
-            process_plain_segment(segment);
-          }
-        }
-      } else {
+      auto process_plain_tail = [&]() {
         for (std::size_t segment = 1; segment < state.segment_count; ++segment) {
           process_plain_segment(segment);
         }
+      };
+
+      auto process_unrolled_plain_segments = [&](std::size_t exact_segment_count) {
+        process_plain_segment(1U);
+        process_plain_segment(2U);
+        process_plain_segment(3U);
+        for (std::size_t segment = 4U; segment < exact_segment_count; segment += 4U) {
+          process_plain_segment(segment);
+          process_plain_segment(segment + 1U);
+          process_plain_segment(segment + 2U);
+          process_plain_segment(segment + 3U);
+        }
+      };
+
+      process_first_segment();
+      if constexpr (UseGlobalMainFSegment128Unroll<Ops>::value) {
+        if (state.segment_count == 128U) {
+          process_unrolled_plain_segments(128U);
+        } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+          if (state.segment_count == 64U) {
+            process_unrolled_plain_segments(64U);
+          } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+            if (state.segment_count == 32U) {
+              process_unrolled_plain_segments(32U);
+            } else {
+              process_plain_tail();
+            }
+          } else {
+            process_plain_tail();
+          }
+        } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+          if (state.segment_count == 32U) {
+            process_unrolled_plain_segments(32U);
+          } else {
+            process_plain_tail();
+          }
+        } else {
+          process_plain_tail();
+        }
+      } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+        if (state.segment_count == 64U) {
+          process_unrolled_plain_segments(64U);
+        } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+          if (state.segment_count == 32U) {
+            process_unrolled_plain_segments(32U);
+          } else {
+            process_plain_tail();
+          }
+        } else {
+          process_plain_tail();
+        }
+      } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+        if (state.segment_count == 32U) {
+          process_unrolled_plain_segments(32U);
+        } else {
+          process_plain_tail();
+        }
+      } else {
+        process_plain_tail();
       }
     } else {
       for (std::size_t segment = 0; segment < state.segment_count; ++segment) {

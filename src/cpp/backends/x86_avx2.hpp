@@ -506,6 +506,9 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr std::size_t alignment = 32;
   static constexpr std::size_t lane_count = 8;
   static constexpr bool has_vector_max = true;
+  static constexpr bool dense_global_lazy_f_scan = true;
+  static constexpr bool plain_global_main_f_after_first_segment = true;
+  static constexpr bool global_main_f_segment128_unroll = true;
 
   static vector_type load_tokens(const std::uint32_t* values) {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));

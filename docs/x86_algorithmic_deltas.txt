@@ -1123,6 +1123,9 @@ This is profiling scaffolding, not an algorithmic kernel change:
   orchestrator.
 - The microbench supports --backend avx2|avx512bwvl, --shape 1:1|1:many,
   --pass english|chinese, --width 0|8|16|32|64, and the affine scoring knobs.
+- tools/x86_microbench_regression.py runs a pinned matrix over the native
+  microbench, prints CSV, and can write/read JSON baselines for small regression
+  checks.
 - shape=1:1 profiles the prepared single-target path:
   prepare_affine_score<SimdOps, true>(...) plus
   dispatch_prepared_global_affine_score<SimdOps>(...).
@@ -1148,6 +1151,9 @@ Suggested profiling build:
   cmake --build build/perf --target stride_align_x86_microbench
   build/perf/stride_align_x86_microbench \
     --backend avx2 --shape 1:many --pass english --width 16
+  python tools/x86_microbench_regression.py \
+    --binary build/perf/stride_align_x86_microbench \
+    --cpu 2 --backends avx2,avx512bwvl --widths 16,32
 
 32. AVX512 exact-fill affine NW score measurements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1157,9 +1163,7 @@ This is AVX512-specific follow-up to section 30:
 - AVX512BWVL width16 exact-fill affine NW score now uses the segment-zero
   sentinel-preserving F update and plain-add F updates for the remaining
   segments.
-- AVX512BWVL width32 uses the same exact-fill main-DP split, but does not opt
-  into dense lazy-F scan; perf still points at backend work and memory traffic
-  for width32.
+- AVX512BWVL width32 uses the same exact-fill main-DP split.
 - AVX512BWVL width16 uses a segment_count == 32 unroll for 1024/32 exact fills.
   AVX512BWVL width32 uses the segment_count == 64 unroll for 1024/16 exact
   fills.
@@ -1167,6 +1171,9 @@ This is AVX512-specific follow-up to section 30:
   tested on AVX512 width16, but it lost badly against branchless dense stores.
   It is not enabled. Keep the branchless dense scan as the active AVX512 width16
   route unless new perf data says otherwise.
+- A later native microbench pass showed branchless dense lazy-F scan also wins
+  for AVX512BWVL width32 exact fills. Width32 now opts into the same dense scan
+  route as width16.
 - Native perf-symbol runs now resolve the hot exact-fill function directly.
   After the AVX512 width16 split and unroll, top-down profiling shifted from
   backend-bound toward mostly retiring work. Width32 remains materially more
@@ -1186,6 +1193,67 @@ This is AVX512-specific follow-up to section 30:
 Porting note: do not copy these AVX512 settings as a bundle to LSX/LASX. Port
 the exact-fill invariants first, then separately measure dense scan, masked
 stores, and segment-count unrolls on Loongson.
+
+33. AVX2/AVX512 width32 dense exact-fill pass
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is an x86 score-only affine NW update for common English/Chinese 1024x1024
+same-length strings:
+
+- AVX2 32-bit lanes now opt into the exact-fill segment-zero/plain-add main-DP
+  split.
+- AVX2 32-bit lanes add a segment_count == 128 unroll for 1024-character exact
+  fills, because AVX2 width32 has eight lanes and therefore 128 striped
+  segments.
+- AVX2 32-bit lanes now opt into the no-padding dense lazy-F scan. This was
+  measured after the main-DP split; it improved both 1:1 and 1:many native
+  microbench runs.
+- AVX512BWVL 32-bit lanes now opt into the no-padding dense lazy-F scan. The
+  earlier masked-store dense variant remains disabled; branchless full-vector
+  stores won.
+
+Native pinned microbench deltas on the prepared affine NW score kernel:
+
+- AVX2 english width32 1:1: about 950 ns/target baseline, 839 ns after main-DP
+  split/unroll, 701 ns after dense scan.
+- AVX2 english width32 1:many: about 996 ns/target baseline, 959 ns after
+  main-DP split/unroll, 706 ns after dense scan.
+- AVX2 chinese width32 1:1 after dense scan: about 703 ns/target.
+- AVX2 chinese width32 1:many after dense scan: about 682 ns/target.
+- AVX512 english width32 1:1: about 583 ns/target baseline, 442 ns after dense
+  scan.
+- AVX512 english width32 1:many: about 552 ns/target baseline, 412 ns after
+  dense scan.
+- AVX512 chinese width32 1:1 after dense scan: about 460 ns/target.
+- AVX512 chinese width32 1:many after dense scan: about 414 ns/target.
+
+Porting note: this is not proof that dense scan is a universal win. It is a
+measured win for x86 exact-fill affine NW score after the prepared boundary and
+main-DP split work. Re-measure on LSX/LASX before enabling branchless dense
+stores there.
+
+34. Path/CIGAR worst-case status after score tuning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Pinned Python timing split after the width32 score pass shows:
+
+- Affine score-only NW is no longer the dominant x86 problem in the
+  English/Chinese 1024x1024 exact-fill workloads.
+- Affine CIGAR is competitive with or faster than parasail in the measured
+  rows. The CIGAR-first route avoids the expensive path-info metadata output.
+- Affine path-info remains the major losing case. The x86 path-info variants
+  spend almost all runtime above the score baseline in path/trace metadata
+  materialization. Parasail trace-cigar is much faster because it does not
+  produce the same native path-info structure.
+- Linear SW CIGAR/path-info is mixed: AVX512 wins many English rows, while
+  Chinese SW linear rows are close enough that output and trace decode overhead
+  dominate more than DP score work.
+
+Recommended next algorithmic target: keep the score kernels stable and focus on
+a path-info replacement that can derive the requested metadata from a compact
+CIGAR/trace representation without materializing full per-cell path-info. Do not
+spend more effort on score-only affine NW until a new benchmark shows a
+regression there.
 
 
 Expected Loongson result after port

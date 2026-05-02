@@ -73,6 +73,14 @@ cmake -S . -B build/perf \
   -Dnanobind_DIR="$nanobind_dir"
 cmake --build build/perf --target stride_align_x86_microbench
 build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+python tools/x86_microbench_regression.py \
+  --binary build/perf/stride_align_x86_microbench \
+  --cpu 2 \
+  --backends avx2,avx512bwvl \
+  --shapes 1:1,1:many \
+  --passes english,chinese \
+  --widths 16,32 \
+  --write-json /tmp/stride-align-x86-microbench.json
 ```
 
 `STRIDE_ALIGN_PERF_SYMBOLS=ON` keeps nanobind modules unstripped and adds debug

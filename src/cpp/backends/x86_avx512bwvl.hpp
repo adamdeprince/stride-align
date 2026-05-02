@@ -452,6 +452,7 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr std::size_t alignment = 64;
   static constexpr std::size_t lane_count = 16;
   static constexpr bool has_vector_max = true;
+  static constexpr bool dense_global_lazy_f_scan = true;
   static constexpr bool plain_global_main_f_after_first_segment = true;
   static constexpr bool global_main_f_segment64_unroll = true;
 
