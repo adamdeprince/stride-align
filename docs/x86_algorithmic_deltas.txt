@@ -83,13 +83,16 @@ For x86_sse41, x86_avx2, and x86_avx512bwvl, these backend methods were added:
 
 They call:
 
-  profile_traceback::affine_cigar<true>
-  profile_traceback::affine_cigar<false>
+  profile_traceback::affine_cigar_with_score<true>
+  profile_traceback::affine_cigar_with_score<false>
 
-This was changed after benchmarking showed the striped affine trace route was
-slower for CIGAR-only output. The profile_traceback CIGAR path is scalar, but it
-builds the CIGAR directly with ReverseCigarBuilder and avoids AlignmentPath plus
-operations string materialization.
+This is intentionally separate from the affine path/path-info striped traceback
+route. The x86 wrappers compute the exact affine score with the backend SIMD
+score kernel, then pass that score into the CIGAR-only score-verified banded
+kernel. Benchmarking showed the striped affine trace route was slower for
+CIGAR-only output. The profile_traceback CIGAR path builds the CIGAR directly
+with ReverseCigarBuilder and avoids AlignmentPath plus operations string
+materialization.
 
 Current non-x86 state:
 
@@ -933,8 +936,8 @@ that do not share the same trace representation.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 profile_traceback now has an affine_banded_cigar fast path used by
-affine_cigar_fast. It computes affine DP and byte trace only inside a diagonal
-band with a default radius of:
+affine_score_verified_cigar. It computes affine DP and byte trace only inside a
+diagonal band with a default radius of:
 
 - abs(query_length - target_length)
 - plus a slack of clamp(max_length / 16, 32, 128)
@@ -961,6 +964,98 @@ Expected effect for English/Chinese text workloads: near-diagonal affine CIGARs
 should write much less trace data while preserving exact fallback behavior.
 Large shifts, long indel runs, or small inputs will naturally fall back to the
 full trace-table kernel.
+
+27. Affine CIGAR split from affine path-info optimization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The affine CIGAR optimization is now explicitly separated from affine
+path/path-info optimization:
+
+- affine path and affine path-info remain routed through
+  dispatch_affine_striped_path_info on SSE4.1/AVX2/AVX512BWVL.
+- affine CIGAR routes through profile_traceback::affine_cigar_with_score on the
+  same x86 backends.
+- profile_traceback::detail::affine_full_cigar names the full byte-trace CIGAR
+  fallback.
+- profile_traceback::detail::affine_score_verified_cigar names the CIGAR-only
+  optimizer that tries exact banded CIGAR first and falls back to
+  affine_full_cigar.
+- The benchmark internal grouping was renamed from PATH_TRACE to TRACE_OUTPUT
+  so CIGAR is no longer conceptually treated as path-info materialization.
+
+Porting consequence: do not port affine CIGAR by wiring it to the affine
+path-info striped traceback route. Port path/path-info and CIGAR independently,
+then benchmark them independently.
+
+28. Global affine NW score insert-shift specialization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The shared Farrar fixed kernel now has a shift_left_insert specialization hook.
+This is used by the global affine NW striped score loop for the cross-lane H
+carry and the lazy-F carry.
+
+x86-specific difference:
+
+- SSE4.1, AVX2, AVX512BWVL, AVX10-256 and AVX10-512 implement
+  SimdOps::shift_left_insert for 8/16/32/64-bit score lanes.
+- AVX2 uses byte-lane blend masks around the existing 256-bit cross-128-bit
+  shift helper.
+- AVX512BWVL and AVX10 use native mask-blend operations for lane-zero
+  insertion.
+- Other architectures still fall back to the shared scalar store/shift/reload
+  implementation unless their SimdOps add the same hook.
+
+The shared global affine score kernel also has a no-padding specialization for
+the case where the query exactly fills the striped state. In that case H and E
+never contain padding sentinels, so valid H/E additions use plain vector add
+while the lazy-F sentinel path remains protected. This part is shared and should
+benefit any backend once its normal vector add is used by the shared kernel.
+
+AVX2 and AVX512BWVL now also implement
+SimdOps::global_lazy_f_prefix_carry. The shared kernel calls this optional hook
+instead of the scalar store/loop/reload fallback. The x86 implementation runs a
+log-step prefix max scan inside the vector:
+
+- start with the final F vector shifted left by one logical score lane and
+  low_score inserted into lane zero
+- for each power-of-two lane distance, shift by that distance, add the
+  corresponding distance * segment_count * gap_extend penalty with sentinel
+  preservation, and max with the running prefix
+- AVX512 uses whole-512 byte/64-bit-lane shifts plus mask blends
+- AVX2 uses the existing cross-128-bit 256-bit shift helper plus byte masks
+
+This removes scalar lane-prefix work from the common global affine NW score path
+for AVX2 and AVX512BWVL. SSE4.1 and non-x86 targets still use the shared scalar
+fallback until their SimdOps grow an equivalent hook.
+
+Porting consequence: implement SimdOps::shift_left_insert on LSX/LASX/NEON if
+global affine NW score is important there. The shared no-padding specialization
+will then avoid stack shift traffic and unnecessary sentinel-preserving adds in
+exact stripe-fill cases such as 1024-character English/Chinese benchmarks.
+Implement SimdOps::global_lazy_f_prefix_carry as a log-step vector prefix scan
+to remove the remaining scalar lane-prefix fallback.
+
+29. Prepared global affine boundary columns
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is a shared fixed-width Farrar kernel change, not x86-specific:
+
+- PreparedAffineScoreState now has optional global_h_initial and
+  global_e_initial buffers.
+- prepare_needleman_wunsch_affine_score and global affine 1:many batch
+  preparation populate these buffers once from the query-side affine boundary
+  column.
+- global_affine_score_state resets H/E by copying the prepared buffers when
+  present, otherwise it falls back to initialize_global_affine_column_zero.
+- one-shot global affine score calls do not precompute the extra buffers; they
+  keep the old direct initializer to avoid compute-then-copy overhead.
+- local Smith-Waterman affine prepared states do not precompute global
+  boundaries.
+
+Expected effect: this is primarily a prepared/batch cleanup. It removes repeated
+affine boundary arithmetic but does not change the asymptotic cost of the
+striped DP loop, so benchmark wins are expected to be small unless a workload
+does many short prepared global affine comparisons.
 
 
 Expected Loongson result after port

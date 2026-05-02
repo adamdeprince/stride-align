@@ -114,7 +114,7 @@ _ALL_VARIANTS = (
     *_CIGAR_VARIANTS,
     *_FULL_PATH_VARIANTS,
 )
-_PATH_TRACE_VARIANTS = (*_PATH_INFO_VARIANTS, *_CIGAR_VARIANTS, *_FULL_PATH_VARIANTS)
+_TRACE_OUTPUT_VARIANTS = (*_PATH_INFO_VARIANTS, *_CIGAR_VARIANTS, *_FULL_PATH_VARIANTS)
 _DEFAULT_VARIANTS = (*_SCORE_ONLY_VARIANTS, *_PATH_INFO_VARIANTS)
 
 _VARIANT_ALIASES = {
@@ -1626,7 +1626,7 @@ def _time_backend(
     preprocess_seconds: float | None = None
     dp_trace_seconds: float | None = None
 
-    if timing_split and shape == "1:1" and variant in _PATH_TRACE_VARIANTS:
+    if timing_split and shape == "1:1" and variant in _TRACE_OUTPUT_VARIANTS:
         if is_affine and variant in _CIGAR_VARIANTS:
             prepared_cigar_names = _prepared_affine_cigar_names_for_variant(variant)
             if prepared_cigar_names is not None:

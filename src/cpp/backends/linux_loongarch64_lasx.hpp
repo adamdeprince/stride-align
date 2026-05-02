@@ -483,7 +483,7 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps>(
+    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,

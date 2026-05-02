@@ -131,6 +131,8 @@ struct PreparedAffineScoreState {
   AlignedVector<Cell> h_store;
   AlignedVector<Cell> h_load;
   AlignedVector<Cell> e_store;
+  AlignedVector<Cell> global_h_initial;
+  AlignedVector<Cell> global_e_initial;
 };
 
 template <typename Cell>
@@ -277,6 +279,10 @@ template <typename Ops, typename Cell>
 typename Ops::vector_type shift_left_insert(
     typename Ops::vector_type vector,
     Cell inserted) {
+  if constexpr (requires { Ops::shift_left_insert(vector, inserted); }) {
+    return Ops::shift_left_insert(vector, inserted);
+  }
+
   alignas(Ops::alignment) Cell input[Ops::lane_count] = {};
   alignas(Ops::alignment) Cell output[Ops::lane_count] = {};
   Ops::store_cells(input, vector);
@@ -375,6 +381,18 @@ typename Ops::vector_type add_sentinel(
               static_cast<Score>(left[lane]) + static_cast<Score>(right[lane]));
   }
   return Ops::load_cells(output);
+}
+
+template <typename Ops, typename Cell, bool PreserveSentinel>
+typename Ops::vector_type add_valid_or_sentinel(
+    typename Ops::vector_type lhs,
+    typename Ops::vector_type rhs,
+    Cell sentinel) {
+  if constexpr (PreserveSentinel) {
+    return add_sentinel<Ops, Cell>(lhs, rhs, sentinel);
+  } else {
+    return Ops::add(lhs, rhs);
+  }
 }
 
 inline std::vector<std::uint8_t> collect_profile_tokens(
@@ -572,6 +590,57 @@ void initialize_global_affine_column_zero(
   }
 }
 
+template <typename Cell>
+void prepare_global_affine_initial_column(
+    PreparedAffineScoreState<Cell>& state,
+    std::size_t lane_count) {
+  const auto state_cells = state.segment_count * lane_count;
+  state.global_h_initial.resize(state_cells);
+  state.global_e_initial.resize(state_cells);
+  initialize_global_affine_column_zero(
+      state.global_h_initial,
+      state.global_e_initial,
+      state.query_size,
+      state.segment_count,
+      lane_count,
+      state.gap_open_score,
+      state.gap_extend_score);
+}
+
+template <typename Cell>
+void reset_global_affine_initial_column(
+    PreparedAffineScoreState<Cell>& state,
+    std::size_t lane_count) {
+  const auto state_cells = state.segment_count * lane_count;
+  if (state.h_store.size() != state_cells) {
+    state.h_store.resize(state_cells);
+  }
+  if (state.e_store.size() != state_cells) {
+    state.e_store.resize(state_cells);
+  }
+  if (state.global_h_initial.size() == state_cells &&
+      state.global_e_initial.size() == state_cells) {
+    std::copy(
+        state.global_h_initial.begin(),
+        state.global_h_initial.end(),
+        state.h_store.begin());
+    std::copy(
+        state.global_e_initial.begin(),
+        state.global_e_initial.end(),
+        state.e_store.begin());
+    return;
+  }
+
+  initialize_global_affine_column_zero(
+      state.h_store,
+      state.e_store,
+      state.query_size,
+      state.segment_count,
+      lane_count,
+      state.gap_open_score,
+      state.gap_extend_score);
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell>
 PreparedScoreState<Cell> prepare_global_score_state(
     const PreparedFarrarAlignment& prepared,
@@ -628,7 +697,10 @@ PreparedScoreState<Cell> prepare_global_score_state(
   return state;
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
+template <
+    template <typename, typename> class OpsTemplate,
+    typename Cell,
+    bool PrepareGlobalInitial = false>
 PreparedAffineScoreState<Cell> prepare_affine_score_state(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
@@ -673,6 +745,9 @@ PreparedAffineScoreState<Cell> prepare_affine_score_state(
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
   state.e_store.resize(state_cells);
+  if constexpr (PrepareGlobalInitial) {
+    prepare_global_affine_initial_column(state, lane_count);
+  }
   return state;
 }
 
@@ -745,7 +820,10 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
   return batch;
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
+template <
+    template <typename, typename> class OpsTemplate,
+    typename Cell,
+    bool PrepareGlobalInitial = false>
 PreparedAffineScoreBatchState<Cell> prepare_affine_score_batch_state(
     const PreparedFarrarBatchAlignment& prepared,
     Score match_score,
@@ -800,6 +878,9 @@ PreparedAffineScoreBatchState<Cell> prepare_affine_score_batch_state(
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
   state.e_store.resize(state_cells);
+  if constexpr (PrepareGlobalInitial) {
+    prepare_global_affine_initial_column(state, lane_count);
+  }
   return batch;
 }
 
@@ -842,7 +923,7 @@ bool scan_lazy_f(
   return propagated;
 }
 
-template <typename Ops, typename Cell>
+template <typename Ops, typename Cell, bool PreserveSentinel = true>
 bool scan_global_lazy_f(
     Cell* h_store_data,
     Cell* e_store_data,
@@ -863,7 +944,8 @@ bool scan_global_lazy_f(
     auto v_h = Ops::max(v_h_previous, v_f);
     propagated = propagated || segment_propagated;
 
-    const auto v_h_open = add_sentinel<Ops, Cell>(v_h, gap_open_vector, low_score);
+    const auto v_h_open =
+        add_valid_or_sentinel<Ops, Cell, PreserveSentinel>(v_h, gap_open_vector, low_score);
     if (segment_propagated) {
       store_state_cells<Ops, Cell>(h_store_segment, v_h);
       auto v_e = load_state_cells<Ops, Cell>(e_segment);
@@ -883,6 +965,20 @@ typename Ops::vector_type global_lazy_f_prefix_carry(
     std::size_t segment_count,
     Cell gap_extend_score,
     Cell low_score) {
+  if constexpr (requires {
+                  Ops::global_lazy_f_prefix_carry(
+                      final_f,
+                      segment_count,
+                      gap_extend_score,
+                      low_score);
+                }) {
+    return Ops::global_lazy_f_prefix_carry(
+        final_f,
+        segment_count,
+        gap_extend_score,
+        low_score);
+  }
+
   alignas(Ops::alignment) Cell output[Ops::lane_count] = {};
   alignas(Ops::alignment) Cell final_scores[Ops::lane_count] = {};
   Ops::store_cells(final_scores, final_f);
@@ -1083,8 +1179,8 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
   return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
-Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
+template <template <typename, typename> class OpsTemplate, typename Cell, bool PreserveSentinel>
+Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -1104,14 +1200,7 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
         state.gap_extend_score);
   }
 
-  initialize_global_affine_column_zero(
-      state.h_store,
-      state.e_store,
-      state.query_size,
-      state.segment_count,
-      lane_count,
-      state.gap_open_score,
-      state.gap_extend_score);
+  reset_global_affine_initial_column(state, lane_count);
   std::fill(state.h_load.begin(), state.h_load.end(), std::numeric_limits<Cell>::lowest());
 
   const auto gap_open_vector = Ops::set1(state.gap_open_score);
@@ -1150,13 +1239,24 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
 
       const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
       auto v_e = load_state_cells<Ops, Cell>(e_segment);
-      v_h = add_sentinel<Ops, Cell>(v_h, v_profile, low_score);
+      v_h = add_valid_or_sentinel<Ops, Cell, PreserveSentinel>(
+          v_h,
+          v_profile,
+          low_score);
       v_h = Ops::max(v_h, v_e);
       v_h = Ops::max(v_h, v_f);
       store_state_cells<Ops, Cell>(h_store_segment, v_h);
 
-      const auto v_h_open = add_sentinel<Ops, Cell>(v_h, gap_open_vector, low_score);
-      v_e = Ops::max(add_sentinel<Ops, Cell>(v_e, gap_extend_vector, low_score), v_h_open);
+      const auto v_h_open = add_valid_or_sentinel<Ops, Cell, PreserveSentinel>(
+          v_h,
+          gap_open_vector,
+          low_score);
+      v_e = Ops::max(
+          add_valid_or_sentinel<Ops, Cell, PreserveSentinel>(
+              v_e,
+              gap_extend_vector,
+              low_score),
+          v_h_open);
       store_state_cells<Ops, Cell>(e_segment, v_e);
       v_f = Ops::max(add_sentinel<Ops, Cell>(v_f, gap_extend_vector, low_score), v_h_open);
       v_h = load_state_cells<Ops, Cell>(h_load_segment);
@@ -1170,7 +1270,7 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
           state.segment_count,
           state.gap_extend_score,
           low_score);
-      scan_global_lazy_f<Ops, Cell>(
+      scan_global_lazy_f<Ops, Cell, PreserveSentinel>(
           h_store_data,
           e_store_data,
           state.segment_count,
@@ -1181,7 +1281,7 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
     } else {
       for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
         v_f = shift_left_insert<Ops, Cell>(v_f, low_score);
-        const bool propagated = scan_global_lazy_f<Ops, Cell>(
+        const bool propagated = scan_global_lazy_f<Ops, Cell, PreserveSentinel>(
             h_store_data,
             e_store_data,
             state.segment_count,
@@ -1197,6 +1297,16 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
 
   return static_cast<Score>(
       striped_row_value(h_store_data, state.query_size, state.segment_count, lane_count));
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  if (state.query_size != 0 &&
+      state.query_size == state.segment_count * Ops::lane_count) {
+    return global_affine_score_state_impl<OpsTemplate, Cell, false>(state);
+  }
+  return global_affine_score_state_impl<OpsTemplate, Cell, true>(state);
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
@@ -1469,14 +1579,7 @@ auto affine_striped_traceback_state(
     std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
     std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
   } else {
-    initialize_global_affine_column_zero(
-        state.h_store,
-        state.e_store,
-        state.query_size,
-        state.segment_count,
-        lane_count,
-        state.gap_open_score,
-        state.gap_extend_score);
+    reset_global_affine_initial_column(state, lane_count);
     std::fill(state.h_load.begin(), state.h_load.end(), std::numeric_limits<Cell>::lowest());
   }
 
@@ -3740,7 +3843,7 @@ PreparedScore<OpsTemplate> prepare_score(
   throw nb::python_error();
 }
 
-template <template <typename, typename> class OpsTemplate>
+template <template <typename, typename> class OpsTemplate, bool PrepareGlobalInitial = false>
 PreparedAffineScore<OpsTemplate> prepare_affine_score(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
@@ -3750,7 +3853,7 @@ PreparedAffineScore<OpsTemplate> prepare_affine_score(
   PreparedAffineScore<OpsTemplate> output;
   switch (prepared.score_bits) {
     case KernelBits::bits8:
-      output.state = prepare_affine_score_state<OpsTemplate, std::int8_t>(
+      output.state = prepare_affine_score_state<OpsTemplate, std::int8_t, PrepareGlobalInitial>(
           prepared,
           match_score,
           mismatch_score,
@@ -3758,7 +3861,7 @@ PreparedAffineScore<OpsTemplate> prepare_affine_score(
           gap_extend_score);
       return output;
     case KernelBits::bits16:
-      output.state = prepare_affine_score_state<OpsTemplate, std::int16_t>(
+      output.state = prepare_affine_score_state<OpsTemplate, std::int16_t, PrepareGlobalInitial>(
           prepared,
           match_score,
           mismatch_score,
@@ -3766,7 +3869,7 @@ PreparedAffineScore<OpsTemplate> prepare_affine_score(
           gap_extend_score);
       return output;
     case KernelBits::bits32:
-      output.state = prepare_affine_score_state<OpsTemplate, std::int32_t>(
+      output.state = prepare_affine_score_state<OpsTemplate, std::int32_t, PrepareGlobalInitial>(
           prepared,
           match_score,
           mismatch_score,
@@ -3774,7 +3877,7 @@ PreparedAffineScore<OpsTemplate> prepare_affine_score(
           gap_extend_score);
       return output;
     case KernelBits::bits64:
-      output.state = prepare_affine_score_state<OpsTemplate, std::int64_t>(
+      output.state = prepare_affine_score_state<OpsTemplate, std::int64_t, PrepareGlobalInitial>(
           prepared,
           match_score,
           mismatch_score,
@@ -3915,7 +4018,7 @@ std::vector<Score> dispatch_affine_score_many(
     Score gap_extend_score) {
   switch (prepared.score_bits) {
     case KernelBits::bits8: {
-      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int8_t>(
+      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int8_t, !LocalAlignment>(
           prepared,
           match_score,
           mismatch_score,
@@ -3924,7 +4027,7 @@ std::vector<Score> dispatch_affine_score_many(
       return affine_score_batch_state<OpsTemplate, std::int8_t, LocalAlignment>(state);
     }
     case KernelBits::bits16: {
-      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int16_t>(
+      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int16_t, !LocalAlignment>(
           prepared,
           match_score,
           mismatch_score,
@@ -3933,7 +4036,7 @@ std::vector<Score> dispatch_affine_score_many(
       return affine_score_batch_state<OpsTemplate, std::int16_t, LocalAlignment>(state);
     }
     case KernelBits::bits32: {
-      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int32_t>(
+      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int32_t, !LocalAlignment>(
           prepared,
           match_score,
           mismatch_score,
@@ -3942,7 +4045,7 @@ std::vector<Score> dispatch_affine_score_many(
       return affine_score_batch_state<OpsTemplate, std::int32_t, LocalAlignment>(state);
     }
     case KernelBits::bits64: {
-      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int64_t>(
+      auto state = prepare_affine_score_batch_state<OpsTemplate, std::int64_t, !LocalAlignment>(
           prepared,
           match_score,
           mismatch_score,

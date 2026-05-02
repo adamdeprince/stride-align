@@ -1054,7 +1054,7 @@ AlignmentPath affine_path_info(
 }
 
 template <typename Cell, bool LocalAlignment>
-std::string affine_cigar(
+std::string affine_full_cigar(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
     Cell match_score,
@@ -1219,6 +1219,8 @@ std::string affine_cigar(
   return cigar.str();
 }
 
+// CIGAR-only affine traceback. This intentionally does not share the striped
+// affine path-info route because CIGAR's winning layout is a direct byte trace.
 template <typename Cell, bool LocalAlignment>
 std::optional<std::string> affine_banded_cigar(
     std::span<const std::uint8_t> query,
@@ -1435,7 +1437,7 @@ std::optional<std::string> affine_banded_cigar(
 }
 
 template <typename Cell, bool LocalAlignment>
-std::string affine_cigar_fast(
+std::string affine_score_verified_cigar(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
     Cell match_score,
@@ -1463,7 +1465,7 @@ std::string affine_cigar_fast(
       cigar.has_value()) {
     return *cigar;
   }
-  return affine_cigar<Cell, LocalAlignment>(
+  return affine_full_cigar<Cell, LocalAlignment>(
       query,
       target,
       match_score,
@@ -2097,7 +2099,7 @@ std::string affine_cigar(
       [&]<typename Cell>(
           std::span<const std::uint8_t> query_tokens,
           std::span<const std::uint8_t> target_tokens) {
-        return detail::affine_cigar_fast<Cell, LocalAlignment>(
+        return detail::affine_score_verified_cigar<Cell, LocalAlignment>(
             query_tokens,
             target_tokens,
             static_cast<Cell>(match_score),
@@ -2130,7 +2132,7 @@ std::string affine_cigar_with_score(
       [&]<typename Cell>(
           std::span<const std::uint8_t> query_tokens,
           std::span<const std::uint8_t> target_tokens) {
-        return detail::affine_cigar_fast<Cell, LocalAlignment>(
+        return detail::affine_score_verified_cigar<Cell, LocalAlignment>(
             query_tokens,
             target_tokens,
             static_cast<Cell>(match_score),
@@ -2173,7 +2175,7 @@ std::string affine_cigar_prepared(PreparedAffineCigar& prepared) {
       [&]<typename Cell>(
           std::span<const std::uint8_t> query_tokens,
           std::span<const std::uint8_t> target_tokens) {
-        return detail::affine_cigar_fast<Cell, LocalAlignment>(
+        return detail::affine_score_verified_cigar<Cell, LocalAlignment>(
             query_tokens,
             target_tokens,
             static_cast<Cell>(prepared.match_score),

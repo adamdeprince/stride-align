@@ -25,6 +25,24 @@ namespace generic_detail = stride_align::backend_generic::detail;
 
 namespace detail {
 
+template <int LaneBytes>
+inline __m128i first_lane_mask_128() {
+  static_assert(LaneBytes == 1 || LaneBytes == 2 || LaneBytes == 4 || LaneBytes == 8);
+  if constexpr (LaneBytes == 8) {
+    return _mm_set_epi64x(0, -1LL);
+  } else {
+    return _mm_set_epi64x(0, (1LL << (LaneBytes * 8)) - 1LL);
+  }
+}
+
+template <int LaneBytes>
+inline __m128i shift_left_insert_128(__m128i vector, __m128i inserted) {
+  return _mm_blendv_epi8(
+      _mm_slli_si128(vector, LaneBytes),
+      inserted,
+      first_lane_mask_128<LaneBytes>());
+}
+
 template <typename Cell>
 struct DiagonalState {
   std::size_t row_start = 1;
@@ -84,6 +102,10 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static __m128i shift_left_zero(__m128i vector) {
     return _mm_slli_si128(vector, 1);
+  }
+
+  static __m128i shift_left_insert(__m128i vector, std::int8_t inserted) {
+    return shift_left_insert_128<1>(vector, set1(inserted));
   }
 
   static bool any_gt(__m128i lhs, __m128i rhs) {
@@ -164,6 +186,10 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return _mm_slli_si128(vector, 2);
   }
 
+  static __m128i shift_left_insert(__m128i vector, std::int16_t inserted) {
+    return shift_left_insert_128<2>(vector, set1(inserted));
+  }
+
   static bool any_gt(__m128i lhs, __m128i rhs) {
     return _mm_movemask_epi8(_mm_cmpgt_epi16(lhs, rhs)) != 0;
   }
@@ -240,6 +266,10 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static __m128i shift_left_zero(__m128i vector) {
     return _mm_slli_si128(vector, 4);
+  }
+
+  static __m128i shift_left_insert(__m128i vector, std::int32_t inserted) {
+    return shift_left_insert_128<4>(vector, set1(inserted));
   }
 
   static bool any_gt(__m128i lhs, __m128i rhs) {
@@ -326,6 +356,10 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static __m128i shift_left_zero(__m128i vector) {
     return _mm_slli_si128(vector, 8);
+  }
+
+  static __m128i shift_left_insert(__m128i vector, std::int64_t inserted) {
+    return shift_left_insert_128<8>(vector, set1(inserted));
   }
 
   static __m128i substitution(
@@ -1111,7 +1145,7 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::prepare_affine_score<detail::SimdOps>(
+    return farrar_fixed_kernel::detail::prepare_affine_score<detail::SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,

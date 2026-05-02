@@ -86,6 +86,10 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return shift_left_zero_256<1>(vector);
   }
 
+  static vector_type shift_left_insert(vector_type vector, std::int8_t inserted) {
+    return _mm256_mask_blend_epi8(0x1, shift_left_zero_256<1>(vector), set1(inserted));
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_cmpgt_epi8_mask(lhs, rhs) != 0;
   }
@@ -162,6 +166,10 @@ struct SimdOps<std::uint16_t, std::int16_t> {
 
   static vector_type shift_left_zero(vector_type vector) {
     return shift_left_zero_256<2>(vector);
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int16_t inserted) {
+    return _mm256_mask_blend_epi16(0x1, shift_left_zero_256<2>(vector), set1(inserted));
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -242,6 +250,10 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return shift_left_zero_256<4>(vector);
   }
 
+  static vector_type shift_left_insert(vector_type vector, std::int32_t inserted) {
+    return _mm256_mask_blend_epi32(0x1, shift_left_zero_256<4>(vector), set1(inserted));
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_cmpgt_epi32_mask(lhs, rhs) != 0;
   }
@@ -318,6 +330,10 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static vector_type shift_left_zero(vector_type vector) {
     return shift_left_zero_256<8>(vector);
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int64_t inserted) {
+    return _mm256_mask_blend_epi64(0x1, shift_left_zero_256<8>(vector), set1(inserted));
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -610,7 +626,7 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps>(
+    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,

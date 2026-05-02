@@ -43,6 +43,156 @@ inline __m512i shift_left_zero_512(__m512i vector) {
   }
 }
 
+template <int ByteShift>
+inline __m512i shift_left_zero_bytes_512(__m512i vector) {
+  static_assert(ByteShift == 1 || ByteShift == 2 || ByteShift == 4 ||
+      ByteShift == 8 || ByteShift == 16 || ByteShift == 32);
+  if constexpr (ByteShift <= 8) {
+    return shift_left_zero_512<ByteShift>(vector);
+  } else if constexpr (ByteShift == 16) {
+    const __m512i indices = _mm512_set_epi64(5, 4, 3, 2, 1, 0, 0, 0);
+    return _mm512_maskz_permutexvar_epi64(0xFC, indices, vector);
+  } else {
+    const __m512i indices = _mm512_set_epi64(3, 2, 1, 0, 0, 0, 0, 0);
+    return _mm512_maskz_permutexvar_epi64(0xF0, indices, vector);
+  }
+}
+
+template <int ByteCount>
+inline constexpr __mmask64 first_bytes_mask_512() {
+  static_assert(ByteCount >= 1 && ByteCount <= 32);
+  return static_cast<__mmask64>((std::uint64_t{1} << ByteCount) - 1U);
+}
+
+template <int ByteShift>
+inline __m512i shift_left_insert_bytes_512(__m512i vector, __m512i inserted) {
+  return _mm512_mask_blend_epi8(
+      first_bytes_mask_512<ByteShift>(),
+      shift_left_zero_bytes_512<ByteShift>(vector),
+      inserted);
+}
+
+template <typename Cell>
+inline __m512i set1_cell_512(Cell value) {
+  if constexpr (sizeof(Cell) == 1) {
+    return _mm512_set1_epi8(static_cast<char>(value));
+  } else if constexpr (sizeof(Cell) == 2) {
+    return _mm512_set1_epi16(value);
+  } else if constexpr (sizeof(Cell) == 4) {
+    return _mm512_set1_epi32(value);
+  } else {
+    return _mm512_set1_epi64(value);
+  }
+}
+
+template <typename Cell>
+inline __m512i add_cell_512(__m512i lhs, __m512i rhs) {
+  if constexpr (sizeof(Cell) == 1) {
+    return _mm512_add_epi8(lhs, rhs);
+  } else if constexpr (sizeof(Cell) == 2) {
+    return _mm512_add_epi16(lhs, rhs);
+  } else if constexpr (sizeof(Cell) == 4) {
+    return _mm512_add_epi32(lhs, rhs);
+  } else {
+    return _mm512_add_epi64(lhs, rhs);
+  }
+}
+
+template <typename Cell>
+inline __m512i max_cell_512(__m512i lhs, __m512i rhs) {
+  if constexpr (sizeof(Cell) == 1) {
+    return _mm512_max_epi8(lhs, rhs);
+  } else if constexpr (sizeof(Cell) == 2) {
+    return _mm512_max_epi16(lhs, rhs);
+  } else if constexpr (sizeof(Cell) == 4) {
+    return _mm512_max_epi32(lhs, rhs);
+  } else {
+    return _mm512_max_epi64(lhs, rhs);
+  }
+}
+
+template <typename Cell>
+inline __m512i add_sentinel_cell_512(__m512i lhs, __m512i rhs, Cell sentinel) {
+  const __m512i sum = add_cell_512<Cell>(lhs, rhs);
+  const __m512i sentinel_vector = set1_cell_512(sentinel);
+  if constexpr (sizeof(Cell) == 1) {
+    const __mmask64 mask = _mm512_cmpeq_epi8_mask(lhs, sentinel_vector);
+    return _mm512_mask_blend_epi8(mask, sum, sentinel_vector);
+  } else if constexpr (sizeof(Cell) == 2) {
+    const __mmask32 mask = _mm512_cmpeq_epi16_mask(lhs, sentinel_vector);
+    return _mm512_mask_blend_epi16(mask, sum, sentinel_vector);
+  } else if constexpr (sizeof(Cell) == 4) {
+    const __mmask16 mask = _mm512_cmpeq_epi32_mask(lhs, sentinel_vector);
+    return _mm512_mask_blend_epi32(mask, sum, sentinel_vector);
+  } else {
+    const __mmask8 mask = _mm512_cmpeq_epi64_mask(lhs, sentinel_vector);
+    return _mm512_mask_blend_epi64(mask, sum, sentinel_vector);
+  }
+}
+
+template <int LaneBytes, int LaneCount, typename Cell>
+inline __m512i global_lazy_f_prefix_carry_512(
+    __m512i final_f,
+    std::size_t segment_count,
+    Cell gap_extend_score,
+    Cell low_score) {
+  const Score lane_span_gap =
+      static_cast<Score>(segment_count) * static_cast<Score>(gap_extend_score);
+  const __m512i low_vector = set1_cell_512(low_score);
+  __m512i prefix = shift_left_insert_bytes_512<LaneBytes>(final_f, low_vector);
+
+  if constexpr (LaneCount > 1) {
+    __m512i candidate = shift_left_insert_bytes_512<LaneBytes>(prefix, low_vector);
+    candidate = add_sentinel_cell_512<Cell>(
+        candidate,
+        set1_cell_512(static_cast<Cell>(lane_span_gap)),
+        low_score);
+    prefix = max_cell_512<Cell>(prefix, candidate);
+  }
+  if constexpr (LaneCount > 2) {
+    __m512i candidate = shift_left_insert_bytes_512<LaneBytes * 2>(prefix, low_vector);
+    candidate = add_sentinel_cell_512<Cell>(
+        candidate,
+        set1_cell_512(static_cast<Cell>(lane_span_gap * 2)),
+        low_score);
+    prefix = max_cell_512<Cell>(prefix, candidate);
+  }
+  if constexpr (LaneCount > 4) {
+    __m512i candidate = shift_left_insert_bytes_512<LaneBytes * 4>(prefix, low_vector);
+    candidate = add_sentinel_cell_512<Cell>(
+        candidate,
+        set1_cell_512(static_cast<Cell>(lane_span_gap * 4)),
+        low_score);
+    prefix = max_cell_512<Cell>(prefix, candidate);
+  }
+  if constexpr (LaneCount > 8) {
+    __m512i candidate = shift_left_insert_bytes_512<LaneBytes * 8>(prefix, low_vector);
+    candidate = add_sentinel_cell_512<Cell>(
+        candidate,
+        set1_cell_512(static_cast<Cell>(lane_span_gap * 8)),
+        low_score);
+    prefix = max_cell_512<Cell>(prefix, candidate);
+  }
+  if constexpr (LaneCount > 16) {
+    __m512i candidate = shift_left_insert_bytes_512<LaneBytes * 16>(prefix, low_vector);
+    candidate = add_sentinel_cell_512<Cell>(
+        candidate,
+        set1_cell_512(static_cast<Cell>(lane_span_gap * 16)),
+        low_score);
+    prefix = max_cell_512<Cell>(prefix, candidate);
+  }
+  if constexpr (LaneCount > 32) {
+    __m512i candidate = shift_left_insert_bytes_512<LaneBytes * 32>(prefix, low_vector);
+    candidate = add_sentinel_cell_512<Cell>(
+        candidate,
+        set1_cell_512(static_cast<Cell>(lane_span_gap * 32)),
+        low_score);
+    prefix = max_cell_512<Cell>(prefix, candidate);
+  }
+
+  return prefix;
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -111,6 +261,22 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static vector_type shift_left_zero(vector_type vector) {
     return shift_left_zero_512<1>(vector);
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int8_t inserted) {
+    return _mm512_mask_blend_epi8(0x1, shift_left_zero_512<1>(vector), set1(inserted));
+  }
+
+  static vector_type global_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int8_t gap_extend_score,
+      std::int8_t low_score) {
+    return global_lazy_f_prefix_carry_512<1, lane_count>(
+        final_f,
+        segment_count,
+        gap_extend_score,
+        low_score);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -218,6 +384,22 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return shift_left_zero_512<2>(vector);
   }
 
+  static vector_type shift_left_insert(vector_type vector, std::int16_t inserted) {
+    return _mm512_mask_blend_epi16(0x1, shift_left_zero_512<2>(vector), set1(inserted));
+  }
+
+  static vector_type global_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int16_t gap_extend_score,
+      std::int16_t low_score) {
+    return global_lazy_f_prefix_carry_512<2, lane_count>(
+        final_f,
+        segment_count,
+        gap_extend_score,
+        low_score);
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm512_cmpgt_epi16_mask(lhs, rhs) != 0;
   }
@@ -314,6 +496,22 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return shift_left_zero_512<4>(vector);
   }
 
+  static vector_type shift_left_insert(vector_type vector, std::int32_t inserted) {
+    return _mm512_mask_blend_epi32(0x1, shift_left_zero_512<4>(vector), set1(inserted));
+  }
+
+  static vector_type global_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int32_t gap_extend_score,
+      std::int32_t low_score) {
+    return global_lazy_f_prefix_carry_512<4, lane_count>(
+        final_f,
+        segment_count,
+        gap_extend_score,
+        low_score);
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm512_cmpgt_epi32_mask(lhs, rhs) != 0;
   }
@@ -408,6 +606,22 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static vector_type shift_left_zero(vector_type vector) {
     return shift_left_zero_512<8>(vector);
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int64_t inserted) {
+    return _mm512_mask_blend_epi64(0x1, shift_left_zero_512<8>(vector), set1(inserted));
+  }
+
+  static vector_type global_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int64_t gap_extend_score,
+      std::int64_t low_score) {
+    return global_lazy_f_prefix_carry_512<8, lane_count>(
+        final_f,
+        segment_count,
+        gap_extend_score,
+        low_score);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -876,7 +1090,7 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps>(
+    return farrar_fixed_kernel::detail::prepare_affine_score<SimdOps, true>(
         prepared,
         match_score,
         mismatch_score,
