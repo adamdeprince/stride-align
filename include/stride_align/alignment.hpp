@@ -63,6 +63,20 @@ inline std::string build_cigar(std::string_view operations) {
   return cigar;
 }
 
+inline std::string expand_cigar(std::string_view cigar) {
+  std::string operations;
+  std::size_t count = 0;
+  for (const char value : cigar) {
+    if (value >= '0' && value <= '9') {
+      count = count * 10U + static_cast<std::size_t>(value - '0');
+      continue;
+    }
+    operations.append(count, value);
+    count = 0;
+  }
+  return operations;
+}
+
 class ReverseCigarBuilder {
  public:
   void push(char operation) {
@@ -128,6 +142,58 @@ inline AlignmentPath make_alignment_path(
   }
 
   return path;
+}
+
+inline AlignmentPath make_alignment_path_from_cigar(
+    Score score,
+    std::size_t query_start,
+    std::size_t query_end,
+    std::size_t target_start,
+    std::size_t target_end,
+    std::string_view cigar) {
+  AlignmentPath path;
+  path.score = score;
+  path.query_start = query_start;
+  path.query_end = query_end;
+  path.target_start = target_start;
+  path.target_end = target_end;
+  path.cigar = std::string(cigar);
+
+  std::size_t count = 0;
+  for (const char value : cigar) {
+    if (value >= '0' && value <= '9') {
+      count = count * 10U + static_cast<std::size_t>(value - '0');
+      continue;
+    }
+    path.operations.append(count, value);
+    path.aligned_length += count;
+    switch (value) {
+      case 'M':
+        path.matches += count;
+        break;
+      case 'X':
+        path.mismatches += count;
+        break;
+      case 'I':
+        path.insertions += count;
+        break;
+      case 'D':
+        path.deletions += count;
+        break;
+      default:
+        break;
+    }
+    count = 0;
+  }
+  return path;
+}
+
+inline AlignmentPath make_global_alignment_path_from_cigar(
+    Score score,
+    std::size_t query_size,
+    std::size_t target_size,
+    std::string_view cigar) {
+  return make_alignment_path_from_cigar(score, 0U, query_size, 0U, target_size, cigar);
 }
 
 inline AlignmentPath make_alignment_path(const AlignmentResult& result) {

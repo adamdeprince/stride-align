@@ -23,14 +23,7 @@ bool supports_avx512bwvl() noexcept {
 STRIDE_ALIGN_AVX512BWVL_TARGET RunResult run_avx512bwvl_backend(
     const PreparedWorkload& prepared,
     const Options& options) {
-  if (options.shape == "1:many") {
-    return run_prepared_batch<stride_align::backend_avx512bwvl::SimdOps>(
-        prepared.batch,
-        options);
-  }
-  return run_prepared_single<stride_align::backend_avx512bwvl::SimdOps>(
-      prepared.single,
-      options);
+  return run_backend_variant<stride_align::backend_avx512bwvl::SimdOps>(prepared, options);
 }
 
 #undef STRIDE_ALIGN_AVX512BWVL_TARGET

@@ -55,6 +55,8 @@ void print_help(std::ostream& output) {
       << "Profiles native C++ prepared affine Needleman-Wunsch score kernels.\n\n"
       << "Options:\n"
       << "  --backend avx2|avx512bwvl        SIMD backend to run (default: avx2)\n"
+      << "  --variant nw-affine-score|sw-farrar-score|sw-cigar|sw-path-info|sw-cigar-path-info|sw-scorefirst-cigar|sw-scorefirst-path-info|sw-checkpointed-cigar\n"
+      << "                                      Kernel variant to run (default: nw-affine-score)\n"
       << "  --pass english|chinese           Text-like token distribution (default: english)\n"
       << "  --shape 1:1|1:many               Prepared single or prepared batch path (default: 1:1)\n"
       << "  --length N                       Set query and target length (default: 1024)\n"
@@ -93,6 +95,8 @@ Options parse_options(int argc, char** argv) {
 
     if (argument == "--backend") {
       options.backend = require_value(argument);
+    } else if (argument == "--variant") {
+      options.variant = require_value(argument);
     } else if (argument == "--pass") {
       options.pass_name = require_value(argument);
     } else if (argument == "--shape") {
@@ -139,6 +143,14 @@ Options parse_options(int argc, char** argv) {
   if (options.backend != "avx2" && options.backend != "avx512bwvl") {
     usage_error("--backend must be avx2 or avx512bwvl");
   }
+  if (options.variant != "nw-affine-score" && options.variant != "sw-farrar-score" &&
+      options.variant != "sw-cigar" && options.variant != "sw-path-info" &&
+      options.variant != "sw-cigar-path-info" &&
+      options.variant != "sw-scorefirst-cigar" &&
+      options.variant != "sw-scorefirst-path-info" &&
+      options.variant != "sw-checkpointed-cigar") {
+    usage_error("--variant must be nw-affine-score, sw-farrar-score, sw-cigar, or sw-path-info");
+  }
   if (options.pass_name != "english" && options.pass_name != "english-short" &&
       options.pass_name != "chinese") {
     usage_error("--pass must be english, english-short, or chinese");
@@ -148,6 +160,14 @@ Options parse_options(int argc, char** argv) {
   }
   if (options.many_count == 0) {
     usage_error("--many-count must be at least 1");
+  }
+  if (options.shape == "1:many" &&
+      (options.variant == "sw-cigar" || options.variant == "sw-path-info" ||
+       options.variant == "sw-cigar-path-info" ||
+       options.variant == "sw-scorefirst-cigar" ||
+       options.variant == "sw-scorefirst-path-info" ||
+       options.variant == "sw-checkpointed-cigar")) {
+    usage_error("--variant sw-cigar and sw-path-info are 1:1-only native microbench rows");
   }
   if (options.iterations == 0) {
     usage_error("--iterations must be at least 1");
@@ -356,7 +376,7 @@ void print_result(
 
   std::cout << std::setprecision(9)
             << "backend=" << options.backend
-            << " variant=nw-affine-score"
+            << " variant=" << options.variant
             << " mode=prepared"
             << " shape=" << options.shape
             << " pass=" << options.pass_name

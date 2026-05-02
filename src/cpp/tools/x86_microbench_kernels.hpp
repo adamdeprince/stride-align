@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 #include "backends/farrar_fixed_kernel.hpp"
 #include "x86_microbench_common.hpp"
@@ -17,7 +18,7 @@ inline std::uint64_t checksum_add(std::uint64_t checksum, stride_align::Score sc
 }
 
 template <template <typename, typename> class OpsTemplate>
-RunResult run_prepared_single(
+RunResult run_nw_affine_score_single(
     const stride_align::PreparedFarrarAlignment& prepared_alignment,
     const Options& options) {
   RunResult result;
@@ -55,7 +56,7 @@ RunResult run_prepared_single(
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
-RunResult run_prepared_batch_cell(
+RunResult run_nw_affine_score_batch_cell(
     const stride_align::PreparedFarrarBatchAlignment& prepared_alignment,
     const Options& options) {
   RunResult result;
@@ -102,20 +103,373 @@ RunResult run_prepared_batch_cell(
 }
 
 template <template <typename, typename> class OpsTemplate>
-RunResult run_prepared_batch(
+RunResult run_nw_affine_score_batch(
     const stride_align::PreparedFarrarBatchAlignment& prepared_alignment,
     const Options& options) {
   switch (prepared_alignment.score_bits) {
     case stride_align::KernelBits::bits8:
-      return run_prepared_batch_cell<OpsTemplate, std::int8_t>(prepared_alignment, options);
+      return run_nw_affine_score_batch_cell<OpsTemplate, std::int8_t>(
+          prepared_alignment,
+          options);
     case stride_align::KernelBits::bits16:
-      return run_prepared_batch_cell<OpsTemplate, std::int16_t>(prepared_alignment, options);
+      return run_nw_affine_score_batch_cell<OpsTemplate, std::int16_t>(
+          prepared_alignment,
+          options);
     case stride_align::KernelBits::bits32:
-      return run_prepared_batch_cell<OpsTemplate, std::int32_t>(prepared_alignment, options);
+      return run_nw_affine_score_batch_cell<OpsTemplate, std::int32_t>(
+          prepared_alignment,
+          options);
     case stride_align::KernelBits::bits64:
-      return run_prepared_batch_cell<OpsTemplate, std::int64_t>(prepared_alignment, options);
+      return run_nw_affine_score_batch_cell<OpsTemplate, std::int64_t>(
+          prepared_alignment,
+          options);
   }
   throw std::runtime_error("unsupported score width");
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_farrar_score_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto prepare_start = Clock::now();
+  auto prepared = stride_align::farrar_fixed_kernel::detail::prepare_score<OpsTemplate>(
+      prepared_alignment,
+      options.match_score,
+      options.mismatch_score,
+      options.gap_extend_score);
+  const auto prepare_end = Clock::now();
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    result.last_score =
+        stride_align::farrar_fixed_kernel::detail::dispatch_prepared_score<OpsTemplate>(
+            prepared);
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    result.last_score =
+        stride_align::farrar_fixed_kernel::detail::dispatch_prepared_score<OpsTemplate>(
+            prepared);
+    result.checksum = checksum_add(result.checksum, result.last_score);
+  }
+  const auto run_end = Clock::now();
+
+  result.prepare_seconds = std::chrono::duration<double>(prepare_end - prepare_start).count();
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+RunResult run_sw_farrar_score_batch_cell(
+    const stride_align::PreparedFarrarBatchAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto prepare_start = Clock::now();
+  auto prepared = stride_align::farrar_fixed_kernel::detail::prepare_score_batch_state<
+      OpsTemplate,
+      Cell,
+      true>(
+      prepared_alignment,
+      options.match_score,
+      options.mismatch_score,
+      options.gap_extend_score);
+  const auto prepare_end = Clock::now();
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto scores =
+        stride_align::farrar_fixed_kernel::detail::score_batch_state<
+            OpsTemplate,
+            Cell,
+            true>(prepared);
+    result.last_score = scores.empty() ? 0 : scores.back();
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto scores =
+        stride_align::farrar_fixed_kernel::detail::score_batch_state<
+            OpsTemplate,
+            Cell,
+            true>(prepared);
+    for (const auto score : scores) {
+      result.last_score = score;
+      result.checksum = checksum_add(result.checksum, score);
+    }
+  }
+  const auto run_end = Clock::now();
+
+  result.prepare_seconds = std::chrono::duration<double>(prepare_end - prepare_start).count();
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations * prepared_alignment.target_tokens.size();
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_farrar_score_batch(
+    const stride_align::PreparedFarrarBatchAlignment& prepared_alignment,
+    const Options& options) {
+  switch (prepared_alignment.score_bits) {
+    case stride_align::KernelBits::bits8:
+      return run_sw_farrar_score_batch_cell<OpsTemplate, std::int8_t>(
+          prepared_alignment,
+          options);
+    case stride_align::KernelBits::bits16:
+      return run_sw_farrar_score_batch_cell<OpsTemplate, std::int16_t>(
+          prepared_alignment,
+          options);
+    case stride_align::KernelBits::bits32:
+      return run_sw_farrar_score_batch_cell<OpsTemplate, std::int32_t>(
+          prepared_alignment,
+          options);
+    case stride_align::KernelBits::bits64:
+      return run_sw_farrar_score_batch_cell<OpsTemplate, std::int64_t>(
+          prepared_alignment,
+          options);
+  }
+  throw std::runtime_error("unsupported score width");
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_cigar_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar<
+        OpsTemplate>(
+        prepared_alignment,
+        options.match_score,
+        options.mismatch_score,
+        options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+    result.checksum = checksum_add(result.checksum, result.last_score);
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_checkpointed_cigar_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::dispatch_linear_sw_checkpointed_cigar<
+        OpsTemplate>(
+        prepared_alignment,
+        options.match_score,
+        options.mismatch_score,
+        options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+    result.checksum = checksum_add(result.checksum, result.last_score);
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_path_info_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<
+        OpsTemplate>(
+        prepared_alignment,
+        options.match_score,
+        options.mismatch_score,
+        options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+    result.checksum = checksum_add(
+        checksum_add(result.checksum, path.score),
+        static_cast<stride_align::Score>(path.operations.size()));
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_cigar_path_info_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar_path_info<
+        OpsTemplate>(
+        prepared_alignment,
+        options.match_score,
+        options.mismatch_score,
+        options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+    result.checksum = checksum_add(
+        checksum_add(result.checksum, path.score),
+        static_cast<stride_align::Score>(path.operations.size()));
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_scorefirst_cigar_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::
+        dispatch_linear_sw_score_first_masked_cigar<OpsTemplate>(
+            prepared_alignment,
+            options.match_score,
+            options.mismatch_score,
+            options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+    result.checksum = checksum_add(result.checksum, result.last_score);
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_scorefirst_path_info_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::
+        dispatch_linear_sw_score_first_masked_cigar_path_info<OpsTemplate>(
+            prepared_alignment,
+            options.match_score,
+            options.mismatch_score,
+            options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+    result.checksum = checksum_add(
+        checksum_add(result.checksum, path.score),
+        static_cast<stride_align::Score>(path.operations.size()));
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_backend_variant(const PreparedWorkload& prepared, const Options& options) {
+  if (options.variant == "nw-affine-score") {
+    if (options.shape == "1:many") {
+      return run_nw_affine_score_batch<OpsTemplate>(prepared.batch, options);
+    }
+    return run_nw_affine_score_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-farrar-score") {
+    if (options.shape == "1:many") {
+      return run_sw_farrar_score_batch<OpsTemplate>(prepared.batch, options);
+    }
+    return run_sw_farrar_score_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-cigar") {
+    return run_sw_cigar_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-checkpointed-cigar") {
+    return run_sw_checkpointed_cigar_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-path-info") {
+    return run_sw_path_info_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-cigar-path-info") {
+    return run_sw_cigar_path_info_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-scorefirst-cigar") {
+    return run_sw_scorefirst_cigar_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-scorefirst-path-info") {
+    return run_sw_scorefirst_path_info_single<OpsTemplate>(prepared.single, options);
+  }
+  throw std::runtime_error("unsupported variant");
 }
 
 }  // namespace stride_align::microbench

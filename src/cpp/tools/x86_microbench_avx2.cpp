@@ -21,10 +21,7 @@ bool supports_avx2() noexcept {
 STRIDE_ALIGN_AVX2_TARGET RunResult run_avx2_backend(
     const PreparedWorkload& prepared,
     const Options& options) {
-  if (options.shape == "1:many") {
-    return run_prepared_batch<stride_align::backend_avx2::SimdOps>(prepared.batch, options);
-  }
-  return run_prepared_single<stride_align::backend_avx2::SimdOps>(prepared.single, options);
+  return run_backend_variant<stride_align::backend_avx2::SimdOps>(prepared, options);
 }
 
 #undef STRIDE_ALIGN_AVX2_TARGET

@@ -513,6 +513,38 @@ AlignedVector<Cell> build_profile(
   return profile;
 }
 
+template <template <typename, typename> class OpsTemplate, typename Cell>
+AlignedVector<Cell> build_target_ordered_profile(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    std::size_t segment_count) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  AlignedVector<Cell> profile(target.size() * segment_count * lane_count, mismatch_score);
+
+  for (std::size_t target_index = 0; target_index < target.size(); ++target_index) {
+    const auto token = target[target_index];
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+      Cell* lanes = profile.data() + ((target_index * segment_count + segment) * lane_count);
+      for (std::size_t lane = 0; lane < lane_count; ++lane) {
+        const std::size_t query_index = lane * segment_count + segment;
+        lanes[lane] = query_index < query.size() && query[query_index] == token ? match_score
+                                                                                 : mismatch_score;
+      }
+    }
+  }
+
+  return profile;
+}
+
+inline bool should_use_target_ordered_profile(
+    std::size_t target_size,
+    std::size_t profile_token_count) noexcept {
+  return target_size >= 128U && profile_token_count * 4U >= target_size * 3U;
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell, bool UseFastPath = true>
 PreparedScoreState<Cell> prepare_score_state(
     const PreparedFarrarAlignment& prepared,
@@ -558,14 +590,35 @@ PreparedScoreState<Cell> prepare_score_state(
 
   state.segment_count = (query.size() + lane_count - 1U) / lane_count;
   const auto profile_tokens = collect_profile_tokens(target, state.profile_indices);
-  state.profile =
-      build_profile<OpsTemplate, Cell>(query, profile_tokens, match, mismatch, state.segment_count);
   state.target_profile_offsets.reserve(target.size());
-  for (const auto token : target) {
-    state.target_profile_offsets.push_back(
-        static_cast<std::size_t>(state.profile_indices[token]) * state.segment_count * lane_count);
-  }
   const auto state_cells = state.segment_count * lane_count;
+  bool use_target_ordered_profile = false;
+  if constexpr (requires { Ops::target_ordered_profile_high_cardinality; }) {
+    use_target_ordered_profile = Ops::target_ordered_profile_high_cardinality &&
+        should_use_target_ordered_profile(target.size(), profile_tokens.size());
+  }
+  if (use_target_ordered_profile) {
+    state.profile = build_target_ordered_profile<OpsTemplate, Cell>(
+        query,
+        target,
+        match,
+        mismatch,
+        state.segment_count);
+    for (std::size_t target_index = 0; target_index < target.size(); ++target_index) {
+      state.target_profile_offsets.push_back(target_index * state_cells);
+    }
+  } else {
+    state.profile = build_profile<OpsTemplate, Cell>(
+        query,
+        profile_tokens,
+        match,
+        mismatch,
+        state.segment_count);
+    for (const auto token : target) {
+      state.target_profile_offsets.push_back(
+          static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
+    }
+  }
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
   state.e_store.resize(state_cells);
@@ -1181,6 +1234,18 @@ typename Ops::vector_type local_lazy_f_prefix_carry(
     typename Ops::vector_type final_f,
     std::size_t segment_count,
     Cell gap_extend_score) {
+  if constexpr (requires {
+                  Ops::local_lazy_f_prefix_carry(
+                      final_f,
+                      segment_count,
+                      gap_extend_score);
+                }) {
+    return Ops::local_lazy_f_prefix_carry(
+        final_f,
+        segment_count,
+        gap_extend_score);
+  }
+
   alignas(Ops::alignment) Cell output[Ops::lane_count] = {};
   alignas(Ops::alignment) Cell final_scores[Ops::lane_count] = {};
   Ops::store_cells(final_scores, final_f);
@@ -1201,6 +1266,25 @@ typename Ops::vector_type local_lazy_f_prefix_carry(
   }
 
   return Ops::load_cells(output);
+}
+
+template <typename Ops, typename Cell>
+void scan_local_linear_lazy_f_once(
+    Cell* h_store_data,
+    std::size_t segment_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_vector,
+    typename Ops::vector_type& best_vector) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
+    v_h_segment = Ops::max(v_h_segment, v_f);
+    store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
+    best_vector = Ops::max(best_vector, v_h_segment);
+    v_f = Ops::add(v_f, gap_vector);
+  }
 }
 
 template <typename Ops, typename Cell, std::size_t LaneCount, bool LocalAlignment>
@@ -1269,7 +1353,6 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
   if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
     return 0;
   }
-
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
   std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
   std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
@@ -2532,6 +2615,136 @@ Score dispatch_global_affine_score(
   throw nb::python_error();
 }
 
+template <typename Ops, typename Cell>
+void local_sw_score_main_segment(
+    Cell* h_store_data,
+    Cell* h_load_data,
+    Cell* e_store_data,
+    const Cell* profile_row,
+    std::size_t segment,
+    typename Ops::vector_type& v_h,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_vector,
+    typename Ops::vector_type zero_vector,
+    typename Ops::vector_type& best_vector) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  Cell* h_store_segment = h_store_data + segment * lane_count;
+  Cell* h_load_segment = h_load_data + segment * lane_count;
+  Cell* e_segment = e_store_data + segment * lane_count;
+  const Cell* profile_segment = profile_row + segment * lane_count;
+
+  const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+  auto v_e = load_state_cells<Ops, Cell>(e_segment);
+  v_h = Ops::add(v_h, v_profile);
+  v_h = Ops::max(v_h, v_e);
+  v_h = Ops::max(v_h, v_f);
+  v_h = Ops::max(v_h, zero_vector);
+  store_state_cells<Ops, Cell>(h_store_segment, v_h);
+  best_vector = Ops::max(best_vector, v_h);
+
+  const auto v_h_gap = Ops::add(v_h, gap_vector);
+  v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
+  store_state_cells<Ops, Cell>(e_segment, v_e);
+  v_f = Ops::max(Ops::add(v_f, gap_vector), v_h_gap);
+  v_h = load_state_cells<Ops, Cell>(h_load_segment);
+}
+
+template <typename Ops, typename Cell, std::size_t SegmentCount>
+Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
+  if (state.segment_count != SegmentCount || state.target_profile_offsets.empty()) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(state.gap_score);
+  auto best_vector = zero_vector;
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+
+  for (const auto profile_offset : state.target_profile_offsets) {
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_zero<Ops, Cell>(
+        load_state_cells<Ops, Cell>(h_load_data + ((SegmentCount - 1U) * lane_count)));
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + profile_offset;
+
+    for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
+      local_sw_score_main_segment<Ops, Cell>(
+          h_store_data,
+          h_load_data,
+          e_store_data,
+          profile_row,
+          segment,
+          v_h,
+          v_f,
+          gap_vector,
+          zero_vector,
+          best_vector);
+      local_sw_score_main_segment<Ops, Cell>(
+          h_store_data,
+          h_load_data,
+          e_store_data,
+          profile_row,
+          segment + 1U,
+          v_h,
+          v_f,
+          gap_vector,
+          zero_vector,
+          best_vector);
+      local_sw_score_main_segment<Ops, Cell>(
+          h_store_data,
+          h_load_data,
+          e_store_data,
+          profile_row,
+          segment + 2U,
+          v_h,
+          v_f,
+          gap_vector,
+          zero_vector,
+          best_vector);
+      local_sw_score_main_segment<Ops, Cell>(
+          h_store_data,
+          h_load_data,
+          e_store_data,
+          profile_row,
+          segment + 3U,
+          v_h,
+          v_f,
+          gap_vector,
+          zero_vector,
+          best_vector);
+    }
+
+    v_f = local_lazy_f_prefix_carry<Ops, Cell>(
+        v_f,
+        SegmentCount,
+        state.gap_score);
+    if (any_greater<Ops, Cell>(v_f, zero_vector)) {
+      scan_local_linear_lazy_f_once<Ops, Cell>(
+          h_store_data,
+          SegmentCount,
+          v_f,
+          gap_vector,
+          best_vector);
+    }
+  }
+
+  return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell>
 Score score_state(PreparedScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
@@ -2542,6 +2755,22 @@ Score score_state(PreparedScoreState<Cell>& state) {
   }
   if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
     return 0;
+  }
+  if (state.gap_score <= 0 && state.query_size == state.segment_count * lane_count) {
+    if constexpr (requires { Ops::local_sw_score_exact_segment64; }) {
+      if constexpr (Ops::local_sw_score_exact_segment64) {
+        if (state.segment_count == 64U) {
+          return score_state_exact_fill_local_sw<Ops, Cell, 64U>(state);
+        }
+      }
+    }
+    if constexpr (requires { Ops::local_sw_score_exact_segment128; }) {
+      if constexpr (Ops::local_sw_score_exact_segment128) {
+        if (state.segment_count == 128U) {
+          return score_state_exact_fill_local_sw<Ops, Cell, 128U>(state);
+        }
+      }
+    }
   }
 
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
@@ -2798,10 +3027,20 @@ struct LinearTracebackResult {
   std::string operations;
 };
 
+struct LinearCigarTrace {
+  Score score = 0;
+  std::size_t query_start = 0;
+  std::size_t query_end = 0;
+  std::size_t target_start = 0;
+  std::size_t target_end = 0;
+  std::string cigar;
+};
+
 enum class LinearMaskedTraceOutput {
   path_info,
   traceback,
   cigar,
+  cigar_trace,
 };
 
 template <typename Cell>
@@ -3077,6 +3316,37 @@ void update_linear_local_endpoint_from_vector(
   best = {best.score, row, column};
 }
 
+template <typename Ops, typename Cell>
+void update_linear_local_endpoint_for_score_from_mask(
+    std::uint64_t candidate_mask,
+    std::size_t segment,
+    std::size_t column,
+    std::size_t query_size,
+    std::size_t segment_count,
+    Score score,
+    LinearLocalEndpoint& best) {
+  while (candidate_mask != 0) {
+    const auto lane = static_cast<std::size_t>(std::countr_zero(candidate_mask));
+    candidate_mask &= candidate_mask - 1U;
+
+    const std::size_t query_index = lane * segment_count + segment;
+    if (query_index >= query_size) {
+      continue;
+    }
+
+    const std::size_t row = query_index + 1U;
+    if (local_trace_best_is_better(
+            score,
+            row,
+            column,
+            best.score,
+            best.row,
+            best.column)) {
+      best = {score, row, column};
+    }
+  }
+}
+
 inline std::string build_linear_operations_from_masked_trace(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
@@ -3175,6 +3445,15 @@ inline LinearTracebackResult build_linear_traceback_from_masked_trace(
   return result;
 }
 
+inline LinearCigarTrace build_linear_cigar_trace_from_masked_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const LinearMaskedTrace& trace,
+    Score score,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t lane_count);
+
 inline std::string build_linear_cigar_from_masked_trace(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
@@ -3182,6 +3461,30 @@ inline std::string build_linear_cigar_from_masked_trace(
     std::size_t best_row,
     std::size_t best_column,
     std::size_t lane_count) {
+  return build_linear_cigar_trace_from_masked_trace(
+      query,
+      target,
+      trace,
+      0,
+      best_row,
+      best_column,
+      lane_count)
+      .cigar;
+}
+
+inline LinearCigarTrace build_linear_cigar_trace_from_masked_trace(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const LinearMaskedTrace& trace,
+    Score score,
+    std::size_t best_row,
+    std::size_t best_column,
+    std::size_t lane_count) {
+  LinearCigarTrace result;
+  result.score = score;
+  result.query_end = best_row;
+  result.target_end = best_column;
+
   ReverseCigarBuilder cigar;
 
   std::size_t row = best_row;
@@ -3210,23 +3513,30 @@ inline std::string build_linear_cigar_from_masked_trace(
     break;
   }
 
-  return cigar.str();
+  result.query_start = row;
+  result.target_start = column;
+  result.cigar = cigar.str();
+  return result;
 }
 
 template <
     template <typename, typename> class OpsTemplate,
     typename Cell,
-    LinearMaskedTraceOutput Output>
+    LinearMaskedTraceOutput Output,
+    bool ScoreKnown = false>
 auto linear_sw_masked_trace_state(
     PreparedScoreState<Cell>& state,
     std::span<const std::uint8_t> query,
-    std::span<const std::uint8_t> target) {
+    std::span<const std::uint8_t> target,
+    Score known_score = 0) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
   if (query.empty() || target.empty() || state.segment_count == 0) {
     if constexpr (Output == LinearMaskedTraceOutput::cigar) {
       return std::string();
+    } else if constexpr (Output == LinearMaskedTraceOutput::cigar_trace) {
+      return LinearCigarTrace{};
     } else if constexpr (Output == LinearMaskedTraceOutput::traceback) {
       return LinearTracebackResult{};
     } else {
@@ -3246,6 +3556,7 @@ auto linear_sw_masked_trace_state(
 
   const auto zero_vector = Ops::zero();
   const auto gap_vector = Ops::set1(state.gap_score);
+  [[maybe_unused]] const auto known_score_vector = Ops::set1(static_cast<Cell>(known_score));
   Cell* h_store_data = state.h_store.data();
   Cell* h_load_data = state.h_load.data();
   Cell* e_store_data = state.e_store.data();
@@ -3289,14 +3600,27 @@ auto linear_sw_masked_trace_state(
       const std::uint64_t high_mask = up_mask | left_mask;
       trace.set(column, segment, low_mask, high_mask);
 
-      update_linear_local_endpoint_from_vector<Ops, Cell>(
-          v_cell,
-          positive_mask,
-          segment,
-          column,
-          state.query_size,
-          state.segment_count,
-          best);
+      if constexpr (ScoreKnown) {
+        const std::uint64_t endpoint_mask =
+            trace_mask_eq<Ops>(v_cell, known_score_vector) & positive_mask;
+        update_linear_local_endpoint_for_score_from_mask<Ops, Cell>(
+            endpoint_mask,
+            segment,
+            column,
+            state.query_size,
+            state.segment_count,
+            known_score,
+            best);
+      } else {
+        update_linear_local_endpoint_from_vector<Ops, Cell>(
+            v_cell,
+            positive_mask,
+            segment,
+            column,
+            state.query_size,
+            state.segment_count,
+            best);
+      }
 
       const auto v_h_gap = Ops::add(v_cell, gap_vector);
       v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
@@ -3325,14 +3649,27 @@ auto linear_sw_masked_trace_state(
 
         if (propagated_mask != 0) {
           trace.force_up(column, segment, propagated_mask);
-          update_linear_local_endpoint_from_vector<Ops, Cell>(
-              v_h_updated,
-              propagated_mask,
-              segment,
-              column,
-              state.query_size,
-              state.segment_count,
-              best);
+          if constexpr (ScoreKnown) {
+            const std::uint64_t endpoint_mask =
+                trace_mask_eq<Ops>(v_h_updated, known_score_vector) & propagated_mask;
+            update_linear_local_endpoint_for_score_from_mask<Ops, Cell>(
+                endpoint_mask,
+                segment,
+                column,
+                state.query_size,
+                state.segment_count,
+                known_score,
+                best);
+          } else {
+            update_linear_local_endpoint_from_vector<Ops, Cell>(
+                v_h_updated,
+                propagated_mask,
+                segment,
+                column,
+                state.query_size,
+                state.segment_count,
+                best);
+          }
         }
         if (tied_up_mask != 0) {
           trace.force_up_when_not_diagonal(column, segment, tied_up_mask);
@@ -3350,6 +3687,8 @@ auto linear_sw_masked_trace_state(
   if (best.score <= 0) {
     if constexpr (Output == LinearMaskedTraceOutput::cigar) {
       return std::string();
+    } else if constexpr (Output == LinearMaskedTraceOutput::cigar_trace) {
+      return LinearCigarTrace{};
     } else if constexpr (Output == LinearMaskedTraceOutput::traceback) {
       return LinearTracebackResult{};
     } else {
@@ -3362,6 +3701,15 @@ auto linear_sw_masked_trace_state(
         query,
         target,
         trace,
+        best.row,
+        best.column,
+        lane_count);
+  } else if constexpr (Output == LinearMaskedTraceOutput::cigar_trace) {
+    return build_linear_cigar_trace_from_masked_trace(
+        query,
+        target,
+        trace,
+        best.score,
         best.row,
         best.column,
         lane_count);
@@ -3453,6 +3801,112 @@ std::string linear_sw_masked_cigar(
       OpsTemplate,
       Cell,
       LinearMaskedTraceOutput::cigar>(state, query, target);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+LinearCigarTrace linear_sw_masked_cigar_trace(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return linear_sw_masked_trace_state<
+      OpsTemplate,
+      Cell,
+      LinearMaskedTraceOutput::cigar_trace>(state, query, target);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+AlignmentPath linear_sw_masked_cigar_path_info(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  const auto trace = linear_sw_masked_cigar_trace<OpsTemplate, Cell>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  return make_alignment_path_from_cigar(
+      trace.score,
+      trace.query_start,
+      trace.query_end,
+      trace.target_start,
+      trace.target_end,
+      trace.cigar);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+LinearCigarTrace linear_sw_score_first_masked_cigar_trace(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = prepare_score_state<OpsTemplate, Cell, false>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  const Score score = score_state<OpsTemplate, Cell>(state);
+  if (score <= 0) {
+    return LinearCigarTrace{};
+  }
+
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+  return linear_sw_masked_trace_state<
+      OpsTemplate,
+      Cell,
+      LinearMaskedTraceOutput::cigar_trace,
+      true>(state, query, target, score);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::string linear_sw_score_first_masked_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  return linear_sw_score_first_masked_cigar_trace<OpsTemplate, Cell>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score)
+      .cigar;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+AlignmentPath linear_sw_score_first_masked_cigar_path_info(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  const auto trace = linear_sw_score_first_masked_cigar_trace<OpsTemplate, Cell>(
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score);
+  return make_alignment_path_from_cigar(
+      trace.score,
+      trace.query_start,
+      trace.query_end,
+      trace.target_start,
+      trace.target_end,
+      trace.cigar);
 }
 
 template <template <typename, typename> class OpsTemplate>
@@ -3563,6 +4017,191 @@ std::string dispatch_linear_sw_masked_cigar(
   }
 
   PyErr_SetString(PyExc_RuntimeError, "unsupported masked linear SW CIGAR width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+LinearCigarTrace dispatch_linear_sw_masked_cigar_trace(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_masked_cigar_trace<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_masked_cigar_trace<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_masked_cigar_trace<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_masked_cigar_trace<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported masked linear SW CIGAR width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+AlignmentPath dispatch_linear_sw_masked_cigar_path_info(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_masked_cigar_path_info<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_masked_cigar_path_info<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_masked_cigar_path_info<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_masked_cigar_path_info<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported masked linear SW path-info width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+LinearCigarTrace dispatch_linear_sw_score_first_masked_cigar_trace(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_score_first_masked_cigar_trace<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_score_first_masked_cigar_trace<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_score_first_masked_cigar_trace<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_score_first_masked_cigar_trace<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported score-first masked linear SW CIGAR width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+std::string dispatch_linear_sw_score_first_masked_cigar(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_score_first_masked_cigar<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_score_first_masked_cigar<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_score_first_masked_cigar<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_score_first_masked_cigar<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported score-first masked linear SW CIGAR width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+AlignmentPath dispatch_linear_sw_score_first_masked_cigar_path_info(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return linear_sw_score_first_masked_cigar_path_info<OpsTemplate, std::int8_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits16:
+      return linear_sw_score_first_masked_cigar_path_info<OpsTemplate, std::int16_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits32:
+      return linear_sw_score_first_masked_cigar_path_info<OpsTemplate, std::int32_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    case KernelBits::bits64:
+      return linear_sw_score_first_masked_cigar_path_info<OpsTemplate, std::int64_t>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported score-first masked linear SW path-info width");
   throw nb::python_error();
 }
 

@@ -81,7 +81,16 @@ python tools/x86_microbench_regression.py \
   --passes english,chinese \
   --widths 16,32 \
   --write-json /tmp/stride-align-x86-microbench.json
+.venv/bin/python tools/pinned_benchmark_sweep.py \
+  --output-dir /tmp/stride-align-pinned \
+  --cpu 2 \
+  --iterations 15 \
+  --warmups 3
 ```
 
 `STRIDE_ALIGN_PERF_SYMBOLS=ON` keeps nanobind modules unstripped and adds debug
 symbols plus frame pointers while preserving `-O3`.
+
+The checked-in native microbench baseline lives at
+`benchmarks/x86_microbench_baseline.json`. Treat it as a local guardrail with a
+loose threshold, not as a cross-machine SLA.

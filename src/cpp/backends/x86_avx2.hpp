@@ -262,6 +262,28 @@ inline __m256i global_lazy_f_prefix_carry_i16_no_padding_256(
   return prefix;
 }
 
+inline __m256i local_linear_sw_lazy_f_prefix_carry_i16_256(
+    __m256i final_f,
+    std::size_t segment_count,
+    std::int16_t gap_score) {
+  return global_lazy_f_prefix_carry_i16_no_padding_256(
+      final_f,
+      segment_count,
+      gap_score,
+      std::int16_t{0});
+}
+
+inline __m256i local_linear_sw_lazy_f_prefix_carry_i32_256(
+    __m256i final_f,
+    std::size_t segment_count,
+    std::int32_t gap_score) {
+  return global_lazy_f_prefix_carry_256<4, 8>(
+      final_f,
+      segment_count,
+      gap_score,
+      std::int32_t{0});
+}
+
 inline std::uint32_t compress_even_bits_32(std::uint32_t mask) {
   mask &= 0x55555555U;
   mask = (mask | (mask >> 1U)) & 0x33333333U;
@@ -391,6 +413,8 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr bool dense_global_lazy_f_scan = true;
   static constexpr bool plain_global_main_f_after_first_segment = true;
   static constexpr bool global_main_f_segment64_unroll = true;
+  static constexpr bool local_sw_score_exact_segment64 = true;
+  static constexpr bool target_ordered_profile_high_cardinality = true;
 
   static vector_type load_tokens(const std::uint16_t* values) {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
@@ -466,6 +490,16 @@ struct SimdOps<std::uint16_t, std::int16_t> {
         low_score);
   }
 
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int16_t gap_score) {
+    return local_linear_sw_lazy_f_prefix_carry_i16_256(
+        final_f,
+        segment_count,
+        gap_score);
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi16(lhs, rhs)) != 0;
   }
@@ -509,6 +543,8 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr bool dense_global_lazy_f_scan = true;
   static constexpr bool plain_global_main_f_after_first_segment = true;
   static constexpr bool global_main_f_segment128_unroll = true;
+  static constexpr bool local_sw_score_exact_segment128 = true;
+  static constexpr bool target_ordered_profile_high_cardinality = true;
 
   static vector_type load_tokens(const std::uint32_t* values) {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
@@ -570,6 +606,16 @@ struct SimdOps<std::uint32_t, std::int32_t> {
         segment_count,
         gap_extend_score,
         low_score);
+  }
+
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int32_t gap_score) {
+    return local_linear_sw_lazy_f_prefix_carry_i32_256(
+        final_f,
+        segment_count,
+        gap_score);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -773,11 +819,20 @@ struct TargetImplementation {
           prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
       const auto prepared =
           prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
-      const auto path = farrar_fixed_kernel::detail::dispatch_linear_sw_masked_traceback<SimdOps>(
+      const auto trace =
+          farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar_trace<
+              SimdOps>(
           prepared,
           match_score,
           mismatch_score,
           gap_score);
+      farrar_fixed_kernel::detail::LinearTracebackResult path;
+      path.score = trace.score;
+      path.query_start = trace.query_start;
+      path.query_end = trace.query_end;
+      path.target_start = trace.target_start;
+      path.target_end = trace.target_end;
+      path.operations = expand_cigar(trace.cigar);
       return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
     }
     return profile_traceback::linear_path<true>(
@@ -799,7 +854,8 @@ struct TargetImplementation {
     if (gap_score <= 0) {
       const auto prepared =
           prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
-      return farrar_fixed_kernel::detail::dispatch_linear_sw_masked_path_info<SimdOps>(
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar_path_info<
+          SimdOps>(
           prepared,
           match_score,
           mismatch_score,
@@ -824,7 +880,7 @@ struct TargetImplementation {
     if (gap_score <= 0) {
       const auto prepared =
           prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
-      return farrar_fixed_kernel::detail::dispatch_linear_sw_masked_cigar<SimdOps>(
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar<SimdOps>(
           prepared,
           match_score,
           mismatch_score,
@@ -991,7 +1047,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_farrar_alignment(
+    const Score expected_score = smith_waterman_affine_score(
         query,
         target,
         match_score,
@@ -999,12 +1055,15 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<SimdOps, true>(
-        prepared,
+    return profile_traceback::affine_path_info_with_score<true>(
+        query,
+        target,
         match_score,
         mismatch_score,
         gap_open_score,
-        gap_extend_score);
+        gap_extend_score,
+        width,
+        expected_score);
   }
 
   static std::string smith_waterman_affine_cigar(
@@ -1332,7 +1391,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    const auto prepared = prepare_farrar_alignment(
+    const Score expected_score = needleman_wunsch_affine_score(
         query,
         target,
         match_score,
@@ -1340,12 +1399,15 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
-    return farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<SimdOps, false>(
-        prepared,
+    return profile_traceback::affine_path_info_with_score<false>(
+        query,
+        target,
         match_score,
         mismatch_score,
         gap_open_score,
-        gap_extend_score);
+        gap_extend_score,
+        width,
+        expected_score);
   }
 
   static std::string needleman_wunsch_affine_cigar(

@@ -12,6 +12,7 @@ namespace stride_align::microbench {
 
 struct Options {
   std::string backend = "avx2";
+  std::string variant = "nw-affine-score";
   std::string pass_name = "english";
   std::string shape = "1:1";
   std::size_t query_length = 1024;

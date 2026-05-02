@@ -1255,6 +1255,76 @@ CIGAR/trace representation without materializing full per-cell path-info. Do not
 spend more effort on score-only affine NW until a new benchmark shows a
 regression there.
 
+35. Affine CIGAR-derived path-info
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The affine path-info worst case has been replaced on AVX2 and AVX512BWVL:
+
+- The profile traceback CIGAR route now returns `AffineCigarTrace`, which carries
+  the CIGAR plus score and query/target start/end coordinates.
+- `affine_path_info_prepared` expands that compact CIGAR into the public
+  `AlignmentPath` counters and operation string. This keeps the API result shape
+  unchanged while avoiding the old striped full-path trace materialization.
+- AVX2/AVX512BWVL affine SW/NW path-info now compute the optimized score first,
+  then call the score-verified CIGAR traceback and derive path-info metadata from
+  that compact result.
+- Global NW is exact because endpoints are fixed by the algorithm. Local SW uses
+  the traceback-returned endpoint and traceback stop point.
+- The old striped affine path-info helper remains in `farrar_fixed_kernel.hpp`
+  as a fallback/porting reference, but it is no longer the active AVX2/AVX512BWVL
+  path-info route.
+
+Focused timing after this change, pinned on CPU 2 with 1024x1024
+English/Chinese affine rows:
+
+- English SW path-info width16: AVX2 about 0.00219 s, AVX512 about 0.00199 s,
+  parasail about 0.00338 s.
+- English SW path-info width32: AVX2 about 0.00251 s, AVX512 about 0.00230 s,
+  parasail about 0.00389 s.
+- English NW path-info width16: AVX2 about 0.00173 s, AVX512 about 0.00165 s,
+  parasail about 0.00471 s.
+- Chinese SW path-info width16 is now essentially tied/slightly ahead of
+  parasail in short focused runs, and AVX512/width32 is ahead.
+- Chinese NW path-info remains strongly ahead of parasail for both widths.
+
+Perf note: Python `perf record` on the installed wheel copy still shows stripped
+DSO offsets, but the build-tree `_avx2` module has the same build-id and symbols.
+Mapping the hot offsets with `addr2line` shows samples split between the AVX2
+affine score lazy-F scan in `farrar_fixed_kernel.hpp` and
+`affine_banded_cigar_trace<short, true>` in `profile_traceback.hpp`. The old
+full path-table materialization is no longer the bottleneck.
+
+36. Benchmark artifacts and regression guard
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two repeatability helpers were added:
+
+- `tools/x86_microbench_regression.py` writes and checks a native x86 prepared
+  affine NW score baseline. The current local baseline is
+  `benchmarks/x86_microbench_baseline.json`.
+- `tools/pinned_benchmark_sweep.py` writes separate pinned CSV files for
+  score-only, CIGAR, and path-info sweeps. The current run was saved under
+  `/tmp/stride-align-pinned-2026-05-02/`.
+
+Current pinned sweep summary:
+
+- Score-only: AVX2 wins 29 of 48 rows against parasail; AVX512BWVL wins 39 of
+  48. The remaining x86 losses are mostly linear SW Farrar score, where parasail
+  is still materially faster.
+- CIGAR: AVX2 wins 12 of 16 rows; AVX512BWVL wins 14 of 16. The remaining losses
+  are linear SW CIGAR, especially Chinese width16 on AVX2.
+- Path-info: AVX2 wins 12 of 16 rows; AVX512BWVL wins 14 of 16. The remaining
+  losses mirror linear SW CIGAR/path-info, not affine path-info.
+
+37. Porting note after path-info replacement
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Do not port the older x86 striped affine path-info route to LSX/LASX as the
+default. Port the CIGAR-derived affine path-info structure first, then measure.
+The architecture-specific SIMD work should stay focused on score/profile kernels
+and compact trace production; path metadata should be derived after traceback
+unless Loongson measurements prove otherwise.
+
 
 Expected Loongson result after port
 -----------------------------------
@@ -1264,3 +1334,84 @@ helper, Loongson should no longer use profile_traceback for affine path-producin
 work in the common text-processing negative-gap cases. Its behavior should match
 the x86 SSE4.1/AVX2/AVX512 route at the API level, while using LSX/LASX SimdOps
 for the actual vector operations.
+
+38. AVX2 linear SW score-first CIGAR traceback
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+AVX2 linear Smith-Waterman CIGAR/path work now uses a score-first masked trace
+route:
+
+- `linear_sw_score_first_masked_cigar_trace` first runs the prepared striped
+  score kernel to get the final local SW score.
+- The masked trace pass then records the same compact two-bit direction table,
+  but endpoint selection only checks lanes equal to the known final score.
+  It no longer runs full greater-than/tie endpoint selection for every vector.
+- AVX2 `smith_waterman_linear_cigar`, `smith_waterman_path_info`, and
+  `smith_waterman_path` route through the score-first CIGAR trace result.
+  `path_info` and `path` derive operations/metadata from the compact CIGAR.
+- The old masked path-info and CIGAR helpers remain in `farrar_fixed_kernel.hpp`
+  for measurement and non-AVX2 routes.
+
+Measurement notes:
+
+- Native AVX2 Chinese 1024x1024 linear SW width16 CIGAR moved from about
+  5.09 ms to about 4.50 ms per target in pinned microbench runs.
+- Native AVX2 Chinese 1024x1024 linear SW width32 CIGAR moved from about
+  5.53 ms to about 4.69 ms per target in pinned microbench runs.
+- Path-info showed the same improvement pattern because it now derives from the
+  same score-first CIGAR trace.
+- The previously existing checkpointed CIGAR recompute route was measured before
+  routing and was much slower for this workload: roughly 21-23 ms per target.
+  Do not port or enable it for Chinese/English 1024x1024 text workloads without
+  fresh evidence.
+- Post-change perf on AVX2 width16 shows the remaining time concentrated in the
+  score-first masked trace loop, with the added score pass around 10% and buffer
+  zeroing around 5%. Endpoint update is no longer a standalone top hotspot.
+
+AVX512BWVL was measured but not switched globally:
+
+- Score-first wins for Chinese width16 CIGAR/path-info and for width32
+  path-info.
+- It lost for Chinese width32 CIGAR in the focused native run, so AVX512 CIGAR
+  should stay on the old masked route until width-specific selection or a better
+  trace loop is implemented.
+
+39. AVX2 exact-fill linear SW score specialization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+AVX2 linear Smith-Waterman score-only Farrar kernels now have exact-fill
+specializations for the common 1024x1024 text-processing shape:
+
+- Width16 uses a dedicated 64-segment path (`1024 / 16 lanes`).
+- Width32 uses a dedicated 128-segment path (`1024 / 8 lanes`).
+- The main DP loop is unrolled in groups of four segments and bypasses the
+  generic segment-count loop.
+- The lazy-F correction is local-SW-specific. It uses AVX2 width16/width32
+  prefix/carry helpers and a single local linear scan instead of sharing the
+  global-affine no-padding assumptions.
+- The specialization is gated to exact query stripe fill and non-positive gap
+  scores. Other widths/shapes keep the generic path.
+
+Profile locality was checked at the same time:
+
+- The existing profile was already target-observed-symbol compacted, not a
+  sparse 256-row table.
+- For AVX2 width16/width32 only, high-cardinality targets now use target-ordered
+  profile rows when at least 75% of target positions are unique observed symbols.
+  This keeps Chinese-style target profile access sequential while preserving the
+  compact token-row layout for English/low-cardinality inputs.
+- The target-ordered profile is not enabled for generic/AVX512/other backends
+  until measured separately.
+
+Focused native AVX2 measurements on CPU 2, Chinese 1024x1024 linear SW
+`sw-farrar-score`:
+
+- Width16 improved from about 496 us per target to about 300-323 us.
+- Width32 improved from about 897 us per target to about 565-609 us.
+- Python-level focused benchmark still shows parasail ahead on
+  `sw-farrar-score`, but AVX2 now wins the `sw-score` rows for English and
+  Chinese width16/width32.
+
+Post-change perf has the samples concentrated almost entirely in
+`score_state_exact_fill_local_sw`, so the next improvements need to work inside
+that exact-fill loop rather than in dispatch, profile lookup, or Python overhead.

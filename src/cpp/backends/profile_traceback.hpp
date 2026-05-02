@@ -74,12 +74,22 @@ enum class AffineState : std::uint8_t {
   left,
 };
 
+struct AffineCigarTrace {
+  std::string cigar;
+  Score score = 0;
+  std::size_t query_start = 0;
+  std::size_t query_end = 0;
+  std::size_t target_start = 0;
+  std::size_t target_end = 0;
+};
+
 template <typename TraceCell>
 class TraceTable {
  public:
   // Interior cells are overwritten by DP; callers initialize only readable boundaries.
   explicit TraceTable(std::size_t cell_count)
-      : data_(std::make_unique_for_overwrite<TraceCell[]>(cell_count)) {}
+      : data_(std::make_unique_for_overwrite<TraceCell[]>(
+            std::max<std::size_t>(cell_count, 1U))) {}
 
   TraceCell& operator[](std::size_t index) noexcept {
     return data_[index];
@@ -1054,7 +1064,7 @@ AlignmentPath affine_path_info(
 }
 
 template <typename Cell, bool LocalAlignment>
-std::string affine_full_cigar(
+AffineCigarTrace affine_full_cigar_trace(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
     Cell match_score,
@@ -1158,6 +1168,7 @@ std::string affine_full_cigar(
   if constexpr (!LocalAlignment) {
     best_row = query.size();
     best_column = target.size();
+    best_score = previous_h.back();
   }
 
   ReverseCigarBuilder cigar;
@@ -1216,13 +1227,37 @@ std::string affine_full_cigar(
     state = continues_gap ? AffineState::left : AffineState::h;
   }
 
-  return cigar.str();
+  return AffineCigarTrace{
+      cigar.str(),
+      static_cast<Score>(best_score),
+      row,
+      best_row,
+      column,
+      best_column};
+}
+
+template <typename Cell, bool LocalAlignment>
+std::string affine_full_cigar(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score) {
+  return affine_full_cigar_trace<Cell, LocalAlignment>(
+             query,
+             target,
+             match_score,
+             mismatch_score,
+             gap_open_score,
+             gap_extend_score)
+      .cigar;
 }
 
 // CIGAR-only affine traceback. This intentionally does not share the striped
 // affine path-info route because CIGAR's winning layout is a direct byte trace.
 template <typename Cell, bool LocalAlignment>
-std::optional<std::string> affine_banded_cigar(
+std::optional<AffineCigarTrace> affine_banded_cigar_trace(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
     Cell match_score,
@@ -1232,7 +1267,7 @@ std::optional<std::string> affine_banded_cigar(
     Score expected_score) {
   if constexpr (LocalAlignment) {
     if (expected_score <= 0) {
-      return std::string();
+      return AffineCigarTrace{};
     }
   }
 
@@ -1433,11 +1468,40 @@ std::optional<std::string> affine_banded_cigar(
     state = continues_gap ? AffineState::left : AffineState::h;
   }
 
-  return cigar.str();
+  return AffineCigarTrace{
+      cigar.str(),
+      static_cast<Score>(best_score),
+      row,
+      best_row,
+      column,
+      best_column};
 }
 
 template <typename Cell, bool LocalAlignment>
-std::string affine_score_verified_cigar(
+std::optional<std::string> affine_banded_cigar(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score,
+    Score expected_score) {
+  auto trace = affine_banded_cigar_trace<Cell, LocalAlignment>(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      expected_score);
+  if (!trace.has_value()) {
+    return std::nullopt;
+  }
+  return trace->cigar;
+}
+
+template <typename Cell, bool LocalAlignment>
+AffineCigarTrace affine_score_verified_cigar_trace(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
     Cell match_score,
@@ -1454,7 +1518,7 @@ std::string affine_score_verified_cigar(
             mismatch_score,
             gap_open_score,
             gap_extend_score);
-  if (auto cigar = affine_banded_cigar<Cell, LocalAlignment>(
+  if (auto trace = affine_banded_cigar_trace<Cell, LocalAlignment>(
           query,
           target,
           match_score,
@@ -1462,16 +1526,36 @@ std::string affine_score_verified_cigar(
           gap_open_score,
           gap_extend_score,
           verified_score);
-      cigar.has_value()) {
-    return *cigar;
+      trace.has_value()) {
+    return *trace;
   }
-  return affine_full_cigar<Cell, LocalAlignment>(
+  return affine_full_cigar_trace<Cell, LocalAlignment>(
       query,
       target,
       match_score,
       mismatch_score,
       gap_open_score,
       gap_extend_score);
+}
+
+template <typename Cell, bool LocalAlignment>
+std::string affine_score_verified_cigar(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_open_score,
+    Cell gap_extend_score,
+    std::optional<Score> expected_score = std::nullopt) {
+  return affine_score_verified_cigar_trace<Cell, LocalAlignment>(
+             query,
+             target,
+             match_score,
+             mismatch_score,
+             gap_open_score,
+             gap_extend_score,
+             expected_score)
+      .cigar;
 }
 
 template <typename Cell>
@@ -2184,6 +2268,54 @@ std::string affine_cigar_prepared(PreparedAffineCigar& prepared) {
             static_cast<Cell>(prepared.gap_extend_score),
             prepared.expected_score);
       });
+}
+
+template <bool LocalAlignment>
+AlignmentPath affine_path_info_prepared(PreparedAffineCigar& prepared) {
+  return detail::dispatch_profile_width(
+      prepared.prepared,
+      [&]<typename Cell>(
+          std::span<const std::uint8_t> query_tokens,
+          std::span<const std::uint8_t> target_tokens) {
+        const auto trace = detail::affine_score_verified_cigar_trace<Cell, LocalAlignment>(
+            query_tokens,
+            target_tokens,
+            static_cast<Cell>(prepared.match_score),
+            static_cast<Cell>(prepared.mismatch_score),
+            static_cast<Cell>(prepared.gap_open_score),
+            static_cast<Cell>(prepared.gap_extend_score),
+            prepared.expected_score);
+        const Score score = prepared.expected_score.value_or(trace.score);
+        return make_alignment_path_from_cigar(
+            score,
+            trace.query_start,
+            trace.query_end,
+            trace.target_start,
+            trace.target_end,
+            trace.cigar);
+      });
+}
+
+template <bool LocalAlignment>
+AlignmentPath affine_path_info_with_score(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width,
+    Score expected_score) {
+  auto prepared = prepare_affine_cigar(
+      query,
+      target,
+      match_score,
+      mismatch_score,
+      gap_open_score,
+      gap_extend_score,
+      width,
+      expected_score);
+  return affine_path_info_prepared<LocalAlignment>(prepared);
 }
 
 template <bool LocalAlignment>
