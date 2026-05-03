@@ -1476,3 +1476,84 @@ but still trails parasail for `sw-farrar-score`, while other score variants may
 already be competitive. The next x86 work should not target benchmark overhead;
 it should target reducing instructions and memory traffic in the exact-fill DP
 body or replacing the remaining lazy-F correction strategy.
+
+41. AVX2 parasail annotate comparison and rejected experiments
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Native parasail was profiled on the same pinned Chinese 1024x1024 width16
+`sw-farrar-score` row:
+
+- `perf report` put about 90% of samples in
+  `parasail_sw_striped_profile_avx2_256_16`.
+- Parasail's hot loop uses the classic bounded lazy-F correction loop with
+  `vpcmpgtw`/`vpmovmskb` early exit. It does not use the prefix-carry plus
+  unconditional full correction scan used by the current stride-align raw
+  exact-fill kernel.
+- Perf counters, although multiplexed, showed the current AVX2 path retiring
+  more instructions and doing substantially more L1 stores than parasail for
+  the same row. This matches the annotate result: the remaining gap is store/uop
+  pressure inside the DP/correction loop.
+
+Two direct follow-up experiments were tested and rejected:
+
+- A parasail-style bounded lazy-F loop was implemented for the raw i16
+  exact-fill kernel. It preserved the score but regressed Chinese width16 from
+  the roughly 305-320 us range to about 366 us, and English width16 to about
+  357 us. The structure is not a drop-in win with the current sign convention
+  and state layout.
+- Changing the i16 raw kernel from unroll-by-8 to unroll-by-4 preserved scores
+  but did not win; a sequential pinned repeat measured about 319 us for Chinese
+  width16, slower than the better unroll-by-8 runs.
+- Conditional H stores in the lazy-F correction scan were also rejected. They
+  preserved scores but regressed to about 346 us for Chinese width16 and about
+  341 us for English width16. Like the earlier conditional E-store test, the
+  per-segment compare/branch cost outweighed the saved stores.
+
+Porting note:
+
+- Do not port the rejected bounded lazy-F, unroll-by-4, conditional E-store, or
+  conditional H-store experiments to other architectures.
+- The useful takeaway for non-x86 SIMD ports is diagnostic: compare against
+  parasail-style early-exit correction, but measure before adopting it. The
+  winner at this point was the raw exact-fill kernel with unroll-by-8 and
+  branchless correction stores.
+
+42. AVX2 deferred lazy-F correction representation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The next DP-loop experiment changed the correction representation instead of
+adding more per-segment conditional stores:
+
+- Width16 exact-fill AVX2 now has a high-cardinality path that carries the
+  lazy-F correction vector forward to the next target column instead of
+  immediately materializing corrected H values with a full store-heavy scan.
+- The next column applies the carried correction while loading previous-column H
+  for the diagonal input. The final target column does a score-only flush that
+  updates the best vector without storing corrected H back to the DP buffer.
+- The branch is at prepared-profile granularity, not per segment. The current
+  gate is `profile_row_count >= 48`, which keeps English-like low-cardinality
+  rows on the old branchless materializing scan and sends Chinese-like rows to
+  the deferred representation.
+- Width32 was measured separately with the same deferred representation and did
+  not win. The width32 exact-fill path therefore keeps the branchless
+  materializing scan. Do not port the width16 deferred path to width32 or other
+  architectures until it wins on that width/architecture.
+
+Focused pinned native measurements, CPU 2, 1024x1024 linear
+`sw-farrar-score`, 1000 iterations, 20 warmups, median of three runs:
+
+- AVX2 English width16: about 294 us; native parasail about 346 us.
+- AVX2 Chinese width16: about 291 us; native parasail about 287 us.
+- AVX2 English width32: about 536 us; native parasail about 472 us.
+- AVX2 Chinese width32: about 536 us; native parasail about 448 us.
+
+Interpretation:
+
+- The representation change is useful for the width16 high-cardinality target
+  but not a universal replacement for the correction scan.
+- Width16 is now close enough to parasail that follow-up work should use perf
+  counters/annotate on the retained deferred path rather than more blind
+  control-flow experiments.
+- Width32 remains the worse AVX2 Farrar score gap. Its next experiment should
+  be a width32-specific redesign, not a direct port of the width16 deferred
+  correction.
