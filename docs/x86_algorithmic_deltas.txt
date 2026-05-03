@@ -1737,3 +1737,26 @@ Interpretation:
   bounded correction path rather than profile layout.
 - Do not port this to AVX512 or non-x86 backends until they show the same
   store/uop bottleneck and the same correction representation wins there.
+
+46. AVX2 width32 deferred unroll-by-4 experiment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After promoting deferred width32 correction, a native-only
+`--sw-farrar-i32-strategy deferred-u4` experiment was added to test whether a
+smaller unroll factor improves scheduling or IPC.
+
+Focused pinned native results, AVX2 `sw-farrar-score`, width32, 1024x1024,
+3000 iterations, 30 warmups, median of five samples:
+
+- English deferred-u4: 159.2 us per target, best 152.5 us.
+- Chinese deferred-u4: 155.6 us per target, best 152.1 us.
+- The promoted deferred unroll-by-8 path from the previous section remained
+  faster at roughly 148 us English and 147 us Chinese in sequential confirmation
+  runs.
+
+Interpretation:
+
+- Reducing the deferred path from unroll-by-8 to unroll-by-4 did not improve
+  the remaining width32 gap. The lower unroll appears to give up more loop and
+  scheduling efficiency than it saves in register pressure.
+- Keep `deferred-u4` only as an A/B tool. Do not promote it or port it.

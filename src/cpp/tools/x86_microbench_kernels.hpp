@@ -50,6 +50,9 @@ inline stride_align::farrar_fixed_kernel::detail::ScoreKernelStrategy sw_farrar_
   if (options.sw_farrar_i32_strategy == "deferred") {
     return Strategy::deferred;
   }
+  if (options.sw_farrar_i32_strategy == "deferred-u4") {
+    return Strategy::deferred_unroll4;
+  }
   throw std::runtime_error("unsupported SW Farrar width32 strategy");
 }
 

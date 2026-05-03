@@ -166,6 +166,7 @@ enum class ScoreKernelStrategy {
   automatic,
   materialized,
   deferred,
+  deferred_unroll4,
   bounded,
 };
 
