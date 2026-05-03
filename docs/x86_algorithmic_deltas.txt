@@ -1981,3 +1981,65 @@ Interpretation:
 - Do not port this blindly to width16 or AVX512. Width16 has a different lane
   count and AVX512's problem is still backend/frequency pressure under wider
   vectors.
+
+50. Width16 compact SW Farrar A/B and pinned sweep, 2026-05-03
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This pass tested the compact exact-fill SW Farrar loop on width16 after the
+width32 compact promotion in section 49.
+
+AVX2 width16 result:
+
+- The width16 exact-fill kernel now supports the same compact
+  one-vector-per-segment main loop and bounded correction loop shape as the
+  width32 kernel.
+- The AVX2 automatic width16 path uses the compact loop. The old unroll-by-8
+  bounded representation remains available through the explicit `bounded`
+  native microbench strategy.
+- Focused pinned native A/B rows showed compact winning most width16 rows. It
+  improved English 1:1 and Chinese 1:1 modestly, improved Chinese 1:many
+  substantially, and slightly regressed the English 1:many median while leaving
+  best time close.
+
+AVX512BWVL width16 result:
+
+- The shared exact-fill SW helper now has an explicit compact-loop A/B path,
+  but AVX512 automatic behavior is unchanged.
+- Focused pinned native A/B rows did not justify promotion. Compact regressed
+  English rows, was neutral on Chinese 1:1, and only improved Chinese 1:many.
+  This matches the earlier diagnosis that AVX512 width16 is still constrained by
+  backend/frequency pressure, not just loop body shape.
+
+Full pinned Python sweep:
+
+- Command output: `/tmp/stride-align-pinned-sweep-2026-05-03.csv`.
+- Scope: generic, AVX2, AVX512BWVL, parasail; English and Chinese; linear and
+  affine; widths 16 and 32; `1:1` and `1:many`; score, path-info, and CIGAR
+  variants with timing split enabled.
+- Overall parasail-relative geometric mean, including path/CIGAR rows:
+  AVX2 was about 1.20x parasail and won 53/80 comparable rows; AVX512BWVL was
+  about 1.55x parasail and won 69/80 comparable rows.
+- Score-only parasail-relative geometric mean:
+  AVX2 was about 1.08x parasail over comparable score rows; AVX512BWVL was
+  about 1.42x parasail.
+- `sw-score` is strong overall: AVX2 about 1.29x parasail, AVX512BWVL about
+  1.78x parasail.
+- `nw-score` is mixed on AVX2: affine rows win overall, but linear NW score
+  remains behind parasail. AVX512BWVL wins most NW score rows.
+- `sw-farrar-score` remains the main score-only weakness: AVX2 about 0.92x
+  parasail overall, AVX512BWVL about 1.02x. The worst SW Farrar rows are Chinese
+  affine width16/32 `1:many` and Chinese affine width32 `1:1`.
+- SW path/CIGAR is split: AVX512BWVL usually beats parasail trace-cigar, but
+  AVX2 loses badly on Chinese linear width16 and width32 SW path/CIGAR rows.
+- NW path/CIGAR is strong on both x86 backends. Both AVX2 and AVX512BWVL beat
+  parasail trace-cigar on all comparable NW path/CIGAR rows in this sweep.
+
+Current interpretation:
+
+- The compact-loop scheduling shape fixed much of the width32 gap and is worth
+  keeping for AVX2 width16, but it does not solve every corpus/scoring shape.
+- The remaining AVX2 SW Farrar losses are not one single width problem. Linear
+  width16/32 and affine width16/32 fail in different rows, so future changes
+  need separate A/B switches by scoring mode and channel width.
+- AVX512 should stay conservative for SW Farrar width16. It wins many rows in
+  the full sweep, but the explicit compact A/B result is too mixed to promote.

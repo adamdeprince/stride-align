@@ -2926,6 +2926,7 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
   Cell* h_load_data = state.h_load.data();
   Cell* e_store_data = state.e_store.data();
   const Cell* profile_data = state.profile.data();
+  const bool use_compact_loop = state.kernel_strategy == ScoreKernelStrategy::compact;
 
   for (const auto profile_offset : state.target_profile_offsets) {
     std::swap(h_store_data, h_load_data);
@@ -2935,51 +2936,67 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
     auto v_f = zero_vector;
     const Cell* profile_row = profile_data + profile_offset;
 
-    for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
-      local_sw_score_main_segment<Ops, Cell>(
-          h_store_data,
-          h_load_data,
-          e_store_data,
-          profile_row,
-          segment,
-          v_h,
-          v_f,
-          gap_vector,
-          zero_vector,
-          best_vector);
-      local_sw_score_main_segment<Ops, Cell>(
-          h_store_data,
-          h_load_data,
-          e_store_data,
-          profile_row,
-          segment + 1U,
-          v_h,
-          v_f,
-          gap_vector,
-          zero_vector,
-          best_vector);
-      local_sw_score_main_segment<Ops, Cell>(
-          h_store_data,
-          h_load_data,
-          e_store_data,
-          profile_row,
-          segment + 2U,
-          v_h,
-          v_f,
-          gap_vector,
-          zero_vector,
-          best_vector);
-      local_sw_score_main_segment<Ops, Cell>(
-          h_store_data,
-          h_load_data,
-          e_store_data,
-          profile_row,
-          segment + 3U,
-          v_h,
-          v_f,
-          gap_vector,
-          zero_vector,
-          best_vector);
+    if (use_compact_loop) {
+      for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+        local_sw_score_main_segment<Ops, Cell>(
+            h_store_data,
+            h_load_data,
+            e_store_data,
+            profile_row,
+            segment,
+            v_h,
+            v_f,
+            gap_vector,
+            zero_vector,
+            best_vector);
+      }
+    } else {
+      for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
+        local_sw_score_main_segment<Ops, Cell>(
+            h_store_data,
+            h_load_data,
+            e_store_data,
+            profile_row,
+            segment,
+            v_h,
+            v_f,
+            gap_vector,
+            zero_vector,
+            best_vector);
+        local_sw_score_main_segment<Ops, Cell>(
+            h_store_data,
+            h_load_data,
+            e_store_data,
+            profile_row,
+            segment + 1U,
+            v_h,
+            v_f,
+            gap_vector,
+            zero_vector,
+            best_vector);
+        local_sw_score_main_segment<Ops, Cell>(
+            h_store_data,
+            h_load_data,
+            e_store_data,
+            profile_row,
+            segment + 2U,
+            v_h,
+            v_f,
+            gap_vector,
+            zero_vector,
+            best_vector);
+        local_sw_score_main_segment<Ops, Cell>(
+            h_store_data,
+            h_load_data,
+            e_store_data,
+            profile_row,
+            segment + 3U,
+            v_h,
+            v_f,
+            gap_vector,
+            zero_vector,
+            best_vector);
+      }
     }
 
     v_f = local_lazy_f_prefix_carry<Ops, Cell>(
@@ -2989,7 +3006,8 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
     if (any_greater<Ops, Cell>(v_f, zero_vector)) {
       const bool use_bounded_correction =
           state.kernel_strategy == ScoreKernelStrategy::automatic ||
-          state.kernel_strategy == ScoreKernelStrategy::bounded;
+          state.kernel_strategy == ScoreKernelStrategy::bounded ||
+          state.kernel_strategy == ScoreKernelStrategy::compact;
       if constexpr (requires { Ops::bounded_local_sw_lazy_f_scan; }) {
         if constexpr (Ops::bounded_local_sw_lazy_f_scan) {
           if (use_bounded_correction) {
