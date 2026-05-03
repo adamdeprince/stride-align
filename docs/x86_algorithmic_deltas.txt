@@ -1924,3 +1924,60 @@ Interpretation:
   loads/stores than parasail in the measured row but still has lower IPC and
   higher backend-bound percentage, so further AVX512 work should target
   dependency chains and frequency/backend pressure rather than memory volume.
+
+49. AVX2 width32 compact SW Farrar DP loop
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The AVX2 width32 exact-fill SW Farrar score kernel now has two additional
+native microbench strategy switches:
+
+- `--sw-farrar-i32-strategy bounded-u4`
+- `--sw-farrar-i32-strategy compact`
+
+`bounded-u4` keeps the bounded correction representation but changes the main
+DP and correction loops from unroll-by-8 to unroll-by-4. It did not win in the
+focused rows and remains an A/B control only.
+
+`compact` keeps the same bounded correction semantics but changes the main
+exact-fill DP loop from a fully unrolled eight-segment block to a compact
+one-vector-per-segment loop. This is closer to parasail's scheduling shape: a
+small hot loop with one H/E/profile vector step and a separate short lazy-F
+correction loop. The public/default AVX2 width32 automatic path now uses this
+compact loop; `bounded` remains available as the old unroll-by-8 A/B control.
+
+Focused pinned native rows, AVX2 `sw-farrar-score`, width32, 1024x1024:
+
+- English 1:1: compact/auto was about 410-420 us per target, essentially tied
+  with native parasail in short runs.
+- English 1:many: compact/auto was about 386-401 us per target, ahead of
+  native parasail in the confirmation run.
+- Chinese 1:1: compact/auto was about 381-415 us per target across short
+  samples, essentially tied with native parasail.
+- Chinese 1:many: compact/auto was about 393-411 us per target, close to or
+  slightly ahead of native parasail in the confirmation run.
+
+Focused Python benchmark after rebuilding the extension, width32 linear
+`sw-farrar-score`, 12 iterations / 3 warmups:
+
+- English 1:1: AVX2 median 0.000415 s, parasail 0.000422 s.
+- English 1:many: AVX2 median 0.003231 s, parasail 0.003273 s.
+- Chinese 1:1: AVX2 median 0.000406 s, parasail 0.000404 s.
+- Chinese 1:many: AVX2 median 0.003097 s, parasail 0.003289 s.
+
+Top-down confirmation on Chinese width32 1:1 after promotion:
+
+- AVX2 compact/auto: about 5.0% backend-bound, 13.3% frontend-bound, 5.7%
+  bad speculation, 76.0% retiring, and 3.84 IPC.
+- Before this pass, the same row was about 30.8% backend-bound and 3.24 IPC.
+- Native parasail in the previous comparison was about 5.2% backend-bound,
+  76.1% retiring, and 3.70 IPC.
+
+Interpretation:
+
+- The compact loop fixed the scheduling/dependency-shape gap found in section
+  48. Store volume and L1 misses were already parasail-comparable; the win came
+  from changing the loop shape enough for the core to retire work more
+  efficiently.
+- Do not port this blindly to width16 or AVX512. Width16 has a different lane
+  count and AVX512's problem is still backend/frequency pressure under wider
+  vectors.

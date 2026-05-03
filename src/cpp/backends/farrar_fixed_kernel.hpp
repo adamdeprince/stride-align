@@ -168,6 +168,8 @@ enum class ScoreKernelStrategy {
   deferred,
   deferred_unroll4,
   bounded,
+  bounded_unroll4,
+  compact,
 };
 
 template <typename Cell>
