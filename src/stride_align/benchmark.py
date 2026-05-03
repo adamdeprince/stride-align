@@ -320,8 +320,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=list(_DEFAULT_SHAPES),
         help=(
             "Comparison shapes to benchmark. Choices: 1:1, 1:many, all. "
-            "1:many uses one query against --many-count targets and currently applies "
-            "to score-only variants."
+            "1:many uses one query against --many-count targets, applies to score-only "
+            "variants, and uses prepared batch profiles when the backend exposes them."
         ),
     )
     parser.add_argument(
@@ -530,10 +530,7 @@ def _resolve_backends(names: Sequence[str] | None) -> list[ResolvedBackend]:
 class _ParasailBenchmarkBackend:
     def __init__(self, parasail_module: Any) -> None:
         self._parasail = parasail_module
-        self._prepared_cache: dict[
-            tuple[tuple[object, ...], tuple[object, ...], int, int],
-            tuple[bytes, bytes, Any],
-        ] = {}
+        self._prepared_cache: dict[tuple[object, ...], Any] = {}
 
     def smith_waterman_farrar_score(
         self,
@@ -976,6 +973,105 @@ class _ParasailBenchmarkBackend:
     def _needleman_wunsch_affine_score_prepared(self, prepared):
         return self._score_prepared_profile(prepared)
 
+    def _prepare_smith_waterman_farrar_scores(
+        self,
+        query: object,
+        targets: Sequence[object],
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._prepare_profile_scores(
+            "sw-farrar-score",
+            query,
+            targets,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def _smith_waterman_farrar_scores_prepared(self, prepared):
+        return self._score_prepared_profiles(prepared)
+
+    def _prepare_smith_waterman_scores(
+        self,
+        query: object,
+        targets: Sequence[object],
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._prepare_profile_scores(
+            "sw-score",
+            query,
+            targets,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def _smith_waterman_scores_prepared(self, prepared):
+        return self._score_prepared_profiles(prepared)
+
+    def _prepare_needleman_wunsch_scores(
+        self,
+        query: object,
+        targets: Sequence[object],
+        *,
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None = None,
+        gap_extend_score: int | None = None,
+    ):
+        return self._prepare_profile_scores(
+            "nw-score",
+            query,
+            targets,
+            match_score,
+            mismatch_score,
+            gap_score,
+            width,
+            gap_open_score,
+            gap_extend_score,
+        )
+
+    def _needleman_wunsch_scores_prepared(self, prepared):
+        return self._score_prepared_profiles(prepared)
+
+    def _prepare_smith_waterman_affine_scores(self, *args, **kwargs):
+        return self._prepare_smith_waterman_scores(*args, **kwargs)
+
+    def _smith_waterman_affine_scores_prepared(self, prepared):
+        return self._score_prepared_profiles(prepared)
+
+    def _prepare_smith_waterman_affine_farrar_scores(self, *args, **kwargs):
+        return self._prepare_smith_waterman_farrar_scores(*args, **kwargs)
+
+    def _smith_waterman_affine_farrar_scores_prepared(self, prepared):
+        return self._score_prepared_profiles(prepared)
+
+    def _prepare_needleman_wunsch_affine_scores(self, *args, **kwargs):
+        return self._prepare_needleman_wunsch_scores(*args, **kwargs)
+
+    def _needleman_wunsch_affine_scores_prepared(self, prepared):
+        return self._score_prepared_profiles(prepared)
+
     def _prepare_profile_score(
         self,
         variant: str,
@@ -1019,6 +1115,53 @@ class _ParasailBenchmarkBackend:
     def _score_prepared_profile(self, prepared):
         profile_function, profile, target_text, gap_open_penalty, gap_extend_penalty = prepared
         return profile_function(profile, target_text, gap_open_penalty, gap_extend_penalty)
+
+    def _prepare_profile_scores(
+        self,
+        variant: str,
+        query: object,
+        targets: Sequence[object],
+        match_score: int,
+        mismatch_score: int,
+        gap_score: int,
+        width: int,
+        gap_open_score: int | None,
+        gap_extend_score: int | None,
+    ):
+        gap_open, gap_extend = self._gap_penalties(
+            gap_score,
+            gap_open_score,
+            gap_extend_score,
+        )
+        if gap_open >= 0 or gap_extend >= 0:
+            raise BenchmarkError("parasail benchmark adapter requires a non-positive gap score")
+        query_text, target_texts, matrix = self._prepare_batch_inputs(
+            query,
+            targets,
+            match_score,
+            mismatch_score,
+        )
+        profile_create = getattr(self._parasail, f"profile_create_{width}", None)
+        profile_function = self._profile_function(variant, width)
+        if profile_create is None or profile_function is None:
+            raise BenchmarkError(
+                f"parasail does not expose a prepared profile function for {variant} "
+                f"width {width}"
+            )
+        return (
+            profile_function,
+            profile_create(query_text, matrix),
+            target_texts,
+            -gap_open,
+            -gap_extend,
+        )
+
+    def _score_prepared_profiles(self, prepared):
+        profile_function, profile, target_texts, gap_open_penalty, gap_extend_penalty = prepared
+        return [
+            profile_function(profile, target_text, gap_open_penalty, gap_extend_penalty)
+            for target_text in target_texts
+        ]
 
     def _gap_penalties(
         self,
@@ -1076,6 +1219,57 @@ class _ParasailBenchmarkBackend:
         alphabet = _PARASAIL_SAFE_ALPHABET[: len(symbols)]
         matrix = self._parasail.matrix_create(alphabet, match_score, mismatch_score)
         prepared = (query_text, target_text, matrix)
+        self._prepared_cache[key] = prepared
+        return prepared
+
+    def _prepare_batch_inputs(
+        self,
+        query: object,
+        targets: Sequence[object],
+        match_score: int,
+        mismatch_score: int,
+    ) -> tuple[bytes, tuple[bytes, ...], Any]:
+        query_symbols = self._symbols(query)
+        target_symbols_many = tuple(self._symbols(target) for target in targets)
+        key = ("batch", query_symbols, target_symbols_many, match_score, mismatch_score)
+        cached = self._prepared_cache.get(key)
+        if cached is not None:
+            return cached
+
+        symbols: list[object] = []
+        translation: dict[object, bytes] = {}
+        for symbol in query_symbols:
+            if symbol in translation:
+                continue
+            if len(symbols) >= len(_PARASAIL_SAFE_ALPHABET):
+                raise BenchmarkError(
+                    "parasail benchmark input has too many distinct symbols for the "
+                    f"safe adapter alphabet: {len(symbols) + 1} > "
+                    f"{len(_PARASAIL_SAFE_ALPHABET)}"
+                )
+            translation[symbol] = _PARASAIL_SAFE_ALPHABET[len(symbols) : len(symbols) + 1]
+            symbols.append(symbol)
+        for target_symbols in target_symbols_many:
+            for symbol in target_symbols:
+                if symbol in translation:
+                    continue
+                if len(symbols) >= len(_PARASAIL_SAFE_ALPHABET):
+                    raise BenchmarkError(
+                        "parasail benchmark input has too many distinct symbols for the "
+                        f"safe adapter alphabet: {len(symbols) + 1} > "
+                        f"{len(_PARASAIL_SAFE_ALPHABET)}"
+                    )
+                translation[symbol] = _PARASAIL_SAFE_ALPHABET[len(symbols) : len(symbols) + 1]
+                symbols.append(symbol)
+
+        query_text = b"".join(translation[symbol] for symbol in query_symbols)
+        target_texts = tuple(
+            b"".join(translation[symbol] for symbol in target_symbols)
+            for target_symbols in target_symbols_many
+        )
+        alphabet = _PARASAIL_SAFE_ALPHABET[: len(symbols)]
+        matrix = self._parasail.matrix_create(alphabet, match_score, mismatch_score)
+        prepared = (query_text, target_texts, matrix)
         self._prepared_cache[key] = prepared
         return prepared
 
@@ -1471,7 +1665,7 @@ def _time_backend(
 
     prepared_names: tuple[str, str] | None = None
     if variant in {"sw-farrar-score", "sw-score", "nw-score"}:
-        affine_prepared_names = {
+        affine_prepared_names_1to1 = {
             "sw-farrar-score": (
                 "_prepare_smith_waterman_affine_farrar_score",
                 "_smith_waterman_affine_farrar_score_prepared",
@@ -1485,7 +1679,7 @@ def _time_backend(
                 "_needleman_wunsch_affine_score_prepared",
             ),
         }
-        linear_prepared_names = {
+        linear_prepared_names_1to1 = {
             "sw-farrar-score": (
                 "_prepare_smith_waterman_farrar_score",
                 "_smith_waterman_farrar_score_prepared",
@@ -1499,22 +1693,89 @@ def _time_backend(
                 "_needleman_wunsch_score_prepared",
             ),
         }
+        affine_prepared_names_many = {
+            "sw-farrar-score": (
+                "_prepare_smith_waterman_affine_farrar_scores",
+                "_smith_waterman_affine_farrar_scores_prepared",
+            ),
+            "sw-score": (
+                "_prepare_smith_waterman_affine_scores",
+                "_smith_waterman_affine_scores_prepared",
+            ),
+            "nw-score": (
+                "_prepare_needleman_wunsch_affine_scores",
+                "_needleman_wunsch_affine_scores_prepared",
+            ),
+        }
+        linear_prepared_names_many = {
+            "sw-farrar-score": (
+                "_prepare_smith_waterman_farrar_scores",
+                "_smith_waterman_farrar_scores_prepared",
+            ),
+            "sw-score": (
+                "_prepare_smith_waterman_scores",
+                "_smith_waterman_scores_prepared",
+            ),
+            "nw-score": (
+                "_prepare_needleman_wunsch_scores",
+                "_needleman_wunsch_scores_prepared",
+            ),
+        }
+        affine_prepared_names = (
+            affine_prepared_names_many if shape == "1:many" else affine_prepared_names_1to1
+        )
+        linear_prepared_names = (
+            linear_prepared_names_many if shape == "1:many" else linear_prepared_names_1to1
+        )
         prepared_names = (
             affine_prepared_names[variant] if is_affine else linear_prepared_names[variant]
         )
 
+    prepared_score_batch = False
     if shape == "1:many":
+        if prepared_names is not None:
+            prepare_name, prepared_score_name = prepared_names
+            if hasattr(backend.module, prepare_name) and hasattr(backend.module, prepared_score_name):
+                prepared = getattr(backend.module, prepare_name)(
+                    query,
+                    targets,
+                    match_score=match_score,
+                    mismatch_score=mismatch_score,
+                    gap_score=linear_gap_score,
+                    width=width,
+                    **extra_gap_kwargs,
+                )
+                score_prepared = getattr(backend.module, prepared_score_name)
+                prepared_score_batch = True
 
-        def run_once() -> Any:
-            return function(
-                query,
-                targets,
-                match_score=match_score,
-                mismatch_score=mismatch_score,
-                gap_score=linear_gap_score,
-                width=width,
-                **extra_gap_kwargs,
-            )
+                def run_once() -> Any:
+                    return score_prepared(prepared)
+
+            else:
+
+                def run_once() -> Any:
+                    return function(
+                        query,
+                        targets,
+                        match_score=match_score,
+                        mismatch_score=mismatch_score,
+                        gap_score=linear_gap_score,
+                        width=width,
+                        **extra_gap_kwargs,
+                    )
+
+        else:
+
+            def run_once() -> Any:
+                return function(
+                    query,
+                    targets,
+                    match_score=match_score,
+                    mismatch_score=mismatch_score,
+                    gap_score=linear_gap_score,
+                    width=width,
+                    **extra_gap_kwargs,
+                )
 
     elif prepared_names is not None:
         prepare_name, prepared_score_name = prepared_names
@@ -1625,6 +1886,38 @@ def _time_backend(
     materialization_over_path_info_seconds: float | None = None
     preprocess_seconds: float | None = None
     dp_trace_seconds: float | None = None
+
+    if timing_split and shape == "1:many" and prepared_score_batch:
+
+        def run_direct_batch_once() -> Any:
+            return function(
+                query,
+                targets,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=linear_gap_score,
+                width=width,
+                **extra_gap_kwargs,
+            )
+
+        for _ in range(warmups):
+            run_direct_batch_once()
+
+        direct_batch_timings: list[float] = []
+        for _ in range(iterations):
+            start = time.perf_counter()
+            direct_result = run_direct_batch_once()
+            elapsed = time.perf_counter() - start
+            direct_scores = [_result_score(observed_score) for observed_score in direct_result]
+            if direct_scores != scores:
+                raise BenchmarkError(
+                    f"{backend.name} produced inconsistent direct batch scores for width "
+                    f"{width}: prepared {scores} then direct {direct_scores}"
+                )
+            direct_batch_timings.append(elapsed)
+
+        dp_trace_seconds = median_seconds
+        preprocess_seconds = statistics.median(direct_batch_timings) - dp_trace_seconds
 
     if timing_split and shape == "1:1" and variant in _TRACE_OUTPUT_VARIANTS:
         if is_affine and variant in _CIGAR_VARIANTS:
@@ -1875,8 +2168,8 @@ def _print_table(
             "# timing split columns are benchmark-level deltas: score_base_s is the "
             "matching score-only median, trace_over_s is total median minus score_base_s, "
             "path_info_s/materialize_s compare full-path materialization against path-info "
-            "only, preprocess_s is total CIGAR median minus prepared affine CIGAR median, "
-            "and dp_trace_s is the prepared affine CIGAR median."
+            "only, preprocess_s is direct total minus prepared DP/trace median where a "
+            "prepared API exists, and dp_trace_s is the prepared DP/trace median."
         )
     headers = [
         "pass",

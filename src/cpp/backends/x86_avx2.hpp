@@ -1307,6 +1307,10 @@ struct TargetImplementation {
       farrar_fixed_kernel::detail::PreparedScore<SimdOps>;
   using PreparedAffineScore =
       farrar_fixed_kernel::detail::PreparedAffineScore<SimdOps>;
+  using PreparedScoreBatch =
+      farrar_fixed_kernel::detail::PreparedScoreBatch<SimdOps>;
+  using PreparedAffineScoreBatch =
+      farrar_fixed_kernel::detail::PreparedAffineScoreBatch<SimdOps>;
 
   static Score smith_waterman_score(
       nb::handle query,
@@ -1347,6 +1351,26 @@ struct TargetImplementation {
         match_score,
         mismatch_score,
         gap_score);
+  }
+
+  static PreparedScoreBatch prepare_smith_waterman_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_batch_alignment(query, targets, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::prepare_score_batch<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static std::vector<Score> smith_waterman_scores_prepared(PreparedScoreBatch& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_score_many<SimdOps, true>(prepared);
   }
 
   static AlignmentResult smith_waterman_path(
@@ -1469,6 +1493,27 @@ struct TargetImplementation {
         width);
   }
 
+  static PreparedScoreBatch prepare_smith_waterman_farrar_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    return prepare_smith_waterman_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static std::vector<Score> smith_waterman_farrar_scores_prepared(
+      PreparedScoreBatch& prepared) {
+    return smith_waterman_scores_prepared(prepared);
+  }
+
   static PreparedSmithWatermanFarrarScore prepare_smith_waterman_farrar_score(
       nb::handle query,
       nb::handle target,
@@ -1546,6 +1591,36 @@ struct TargetImplementation {
         mismatch_score,
         gap_open_score,
         gap_extend_score);
+  }
+
+  static PreparedAffineScoreBatch prepare_smith_waterman_affine_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_batch_alignment(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::prepare_affine_score_batch<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static std::vector<Score> smith_waterman_affine_scores_prepared(
+      PreparedAffineScoreBatch& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_affine_score_many<SimdOps, true>(
+        prepared);
   }
 
   static AlignmentResult smith_waterman_affine_path(
@@ -1677,6 +1752,29 @@ struct TargetImplementation {
         width);
   }
 
+  static PreparedAffineScoreBatch prepare_smith_waterman_affine_farrar_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    return prepare_smith_waterman_affine_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static std::vector<Score> smith_waterman_affine_farrar_scores_prepared(
+      PreparedAffineScoreBatch& prepared) {
+    return smith_waterman_affine_scores_prepared(prepared);
+  }
+
   static PreparedAffineScore prepare_smith_waterman_affine_score(
       nb::handle query,
       nb::handle target,
@@ -1796,6 +1894,27 @@ struct TargetImplementation {
         gap_score);
   }
 
+  static PreparedScoreBatch prepare_needleman_wunsch_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    const auto prepared =
+        prepare_farrar_batch_alignment(query, targets, match_score, mismatch_score, gap_score, width);
+    return farrar_fixed_kernel::detail::prepare_score_batch<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_score);
+  }
+
+  static std::vector<Score> needleman_wunsch_scores_prepared(PreparedScoreBatch& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_score_many<SimdOps, false>(
+        prepared);
+  }
+
   static AlignmentResult needleman_wunsch_path(
       nb::handle query,
       nb::handle target,
@@ -1890,6 +2009,36 @@ struct TargetImplementation {
         mismatch_score,
         gap_open_score,
         gap_extend_score);
+  }
+
+  static PreparedAffineScoreBatch prepare_needleman_wunsch_affine_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const auto prepared = prepare_farrar_batch_alignment(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return farrar_fixed_kernel::detail::prepare_affine_score_batch<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  static std::vector<Score> needleman_wunsch_affine_scores_prepared(
+      PreparedAffineScoreBatch& prepared) {
+    return farrar_fixed_kernel::detail::dispatch_prepared_affine_score_many<SimdOps, false>(
+        prepared);
   }
 
   static AlignmentResult needleman_wunsch_affine_path(
@@ -1988,6 +2137,8 @@ struct Implementation {
   using PreparedSmithWatermanFarrarScore =
       TargetImplementation::PreparedSmithWatermanFarrarScore;
   using PreparedAffineScore = TargetImplementation::PreparedAffineScore;
+  using PreparedScoreBatch = TargetImplementation::PreparedScoreBatch;
+  using PreparedAffineScoreBatch = TargetImplementation::PreparedAffineScoreBatch;
 
   static STRIDE_ALIGN_X86_BASELINE bool supported_on_this_machine() noexcept {
 #if defined(__GNUC__) || defined(__clang__)
@@ -2038,6 +2189,29 @@ struct Implementation {
         mismatch_score,
         gap_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedScoreBatch prepare_smith_waterman_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> smith_waterman_scores_prepared(
+      PreparedScoreBatch& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_scores_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE AlignmentResult smith_waterman_path(
@@ -2125,6 +2299,29 @@ struct Implementation {
         width);
   }
 
+  static STRIDE_ALIGN_X86_BASELINE PreparedScoreBatch prepare_smith_waterman_farrar_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_farrar_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> smith_waterman_farrar_scores_prepared(
+      PreparedScoreBatch& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_farrar_scores_prepared(prepared);
+  }
+
   static STRIDE_ALIGN_X86_BASELINE PreparedSmithWatermanFarrarScore
   prepare_smith_waterman_farrar_score(
       nb::handle query,
@@ -2185,6 +2382,32 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedAffineScoreBatch
+  prepare_smith_waterman_affine_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_affine_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> smith_waterman_affine_scores_prepared(
+      PreparedAffineScoreBatch& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_scores_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE AlignmentResult smith_waterman_affine_path(
@@ -2280,6 +2503,32 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedAffineScoreBatch
+  prepare_smith_waterman_affine_farrar_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_smith_waterman_affine_farrar_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score>
+  smith_waterman_affine_farrar_scores_prepared(PreparedAffineScoreBatch& prepared) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_farrar_scores_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE PreparedAffineScore prepare_smith_waterman_affine_score(
@@ -2389,6 +2638,29 @@ struct Implementation {
         width);
   }
 
+  static STRIDE_ALIGN_X86_BASELINE PreparedScoreBatch prepare_needleman_wunsch_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_needleman_wunsch_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> needleman_wunsch_scores_prepared(
+      PreparedScoreBatch& prepared) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_scores_prepared(prepared);
+  }
+
   static STRIDE_ALIGN_X86_BASELINE AlignmentResult needleman_wunsch_path(
       nb::handle query,
       nb::handle target,
@@ -2476,6 +2748,32 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE PreparedAffineScoreBatch
+  prepare_needleman_wunsch_affine_scores(
+      nb::handle query,
+      nb::handle targets,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::prepare_needleman_wunsch_affine_scores(
+        query,
+        targets,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> needleman_wunsch_affine_scores_prepared(
+      PreparedAffineScoreBatch& prepared) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_scores_prepared(prepared);
   }
 
   static STRIDE_ALIGN_X86_BASELINE AlignmentResult needleman_wunsch_affine_path(

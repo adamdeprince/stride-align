@@ -58,7 +58,11 @@ def _import_module_suppressing_duplicate_type_warnings(module_name: str) -> Modu
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
-            message=r"nanobind: type '(Alignment(Result|Path)|_PreparedAffineCigar)' was already registered!",
+            message=(
+                r"nanobind: type "
+                r"'(Alignment(Result|Path)|_PreparedAffineCigar|_PreparedScoreBatch|"
+                r"_PreparedAffineScoreBatch)' was already registered!"
+            ),
             category=RuntimeWarning,
         )
         return importlib.import_module(module_name)

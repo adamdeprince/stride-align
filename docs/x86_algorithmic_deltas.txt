@@ -1,7 +1,7 @@
 X86 algorithmic deltas not yet carried to other architecture backends
 ====================================================================
 
-Snapshot date: 2026-05-01
+Snapshot date: 2026-05-03
 
 Purpose
 -------
@@ -34,6 +34,11 @@ The same SSE4.1/AVX2/AVX512BWVL set also now has x86-only batch score routing
 for the public plural score APIs. AVX10 and non-x86 backends still use the
 generic binding fallback for plural score calls unless they define their own
 methods.
+
+AVX2 and AVX512BWVL also now expose prepared 1:many score batch profiles. This
+lets the benchmark and future batch API separate Python/preprocessing/profile
+construction from the repeated DP loop when one query is compared against many
+targets.
 
 
 1. Affine path/path-info now uses striped Farrar traceback on SSE4.1/AVX2/AVX512
@@ -169,7 +174,45 @@ Shared-code caveat:
   route through the striped traceback code that relies on these helpers.
 
 
-5. What is NOT an x86-only delta
+5. Prepared score batch profiles on AVX2/AVX512BWVL
+---------------------------------------------------
+
+The following backend methods exist on x86_avx2.hpp and x86_avx512bwvl.hpp:
+
+- prepare_smith_waterman_scores / smith_waterman_scores_prepared
+- prepare_smith_waterman_farrar_scores / smith_waterman_farrar_scores_prepared
+- prepare_needleman_wunsch_scores / needleman_wunsch_scores_prepared
+- prepare_smith_waterman_affine_scores /
+  smith_waterman_affine_scores_prepared
+- prepare_smith_waterman_affine_farrar_scores /
+  smith_waterman_affine_farrar_scores_prepared
+- prepare_needleman_wunsch_affine_scores /
+  needleman_wunsch_affine_scores_prepared
+
+These methods wrap shared state containers in farrar_fixed_kernel.hpp:
+
+- PreparedScoreBatch
+- PreparedAffineScoreBatch
+- prepare_score_batch(...)
+- prepare_affine_score_batch(...)
+- dispatch_prepared_score_many(...)
+- dispatch_prepared_affine_score_many(...)
+
+The x86-specific part is only the backend routing and nanobind exposure for
+AVX2/AVX512. The reusable batch-state machinery is in the shared fixed-width
+kernel. The benchmark now uses these private prepared batch hooks for 1:many
+score rows when present and reports preprocess_s as direct-batch total minus
+prepared-DP median.
+
+Current non-x86 state:
+
+- Loongson, ARM, PowerPC, RISC-V, AVX10, SSE4.1, SWAR, and generic do not
+  expose the prepared score batch profile methods yet.
+- Their public plural score functions still work through direct batch methods
+  or binding fallback, but timing includes preparation on every call.
+
+
+6. What is NOT an x86-only delta
 -------------------------------
 
 Do not port these as if they were x86-specific:
@@ -184,7 +227,8 @@ Do not port these as if they were x86-specific:
   Loongson and x86 both use affine_fixed_kernel::detail::dispatch_compact_byte_score
   for local affine score-only in common negative-gap cases.
 - The Python batch score API and benchmark "shape" column are frontend/benchmark
-  changes, not x86 algorithm changes.
+  changes, not x86 algorithm changes. The prepared batch hooks listed above are
+  the x86-specific part.
 - The packed trace-byte representation in affine_fixed_kernel.hpp is shared
   generic fixed-kernel work, not only x86.
 - The profile traceback trace-table initialization reduction is shared. In

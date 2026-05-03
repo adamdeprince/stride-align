@@ -894,6 +894,53 @@ def test_benchmark_uses_prepared_affine_profiles_when_available(
     assert fake.calls == ["prepare", "prepared", "prepared", "prepared", "prepared"]
 
 
+def test_benchmark_uses_prepared_one_to_many_profiles_when_available() -> None:
+    from stride_align import benchmark
+
+    class FakeModule:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def _prepare_smith_waterman_farrar_scores(self, *args, **kwargs):
+            assert kwargs["gap_score"] == -1
+            self.calls.append("prepare")
+            return object()
+
+        def _smith_waterman_farrar_scores_prepared(self, prepared):
+            self.calls.append("prepared")
+            return [10, 11, 12]
+
+        def smith_waterman_farrar_scores(self, *args, **kwargs):
+            self.calls.append("direct")
+            return [10, 11, 12]
+
+    fake = FakeModule()
+    result = benchmark._time_backend(
+        benchmark.ResolvedBackend("x86_avx2", "fake", fake),
+        "english",
+        "linear",
+        "sw-farrar-score",
+        "AAAA",
+        ("AAAT", "AATA", "ATAA"),
+        16,
+        2,
+        0,
+        2,
+        -1,
+        -1,
+        -1,
+        shape="1:many",
+        timing_split=True,
+    )
+
+    assert result.score == 33
+    assert result.preprocess_seconds is not None
+    assert result.dp_trace_seconds is not None
+    assert fake.calls.count("prepare") == 1
+    assert fake.calls.count("prepared") == 3
+    assert fake.calls.count("direct") == 2
+
+
 def test_benchmark_parasail_adapter_uses_safe_translated_inputs() -> None:
     from stride_align import benchmark
 
@@ -1037,6 +1084,56 @@ def test_direct_generic_backend_supports_all_kernel_widths(width: int) -> None:
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
     assert nw_result.operations == "MMXM"
+
+
+@pytest.mark.skipif(
+    not backend_is_available(BackendKind.X86_AVX2),
+    reason="AVX2 backend not available on this host",
+)
+def test_direct_avx2_prepared_batch_scores_match_direct_scores() -> None:
+    avx2 = pytest.importorskip("stride_align._avx2")
+    query = "The quick brown fox watches the city wake." * 4
+    targets = [
+        "The quick brown fox watches the city wake." * 4,
+        "The quick brown fox watches the city work." * 4,
+        "People cross the station concourse." * 5,
+    ]
+    affine_kwargs = {
+        "match_score": 2,
+        "mismatch_score": -1,
+        "gap_score": -1,
+        "gap_open_score": -3,
+        "gap_extend_score": -1,
+        "width": 16,
+    }
+
+    prepared = avx2._prepare_smith_waterman_farrar_scores(
+        query,
+        targets,
+        match_score=2,
+        mismatch_score=-1,
+        gap_score=-1,
+        width=16,
+    )
+    assert avx2._smith_waterman_farrar_scores_prepared(prepared) == (
+        avx2.smith_waterman_farrar_scores(
+            query,
+            targets,
+            match_score=2,
+            mismatch_score=-1,
+            gap_score=-1,
+            width=16,
+        )
+    )
+
+    prepared_affine = avx2._prepare_needleman_wunsch_affine_scores(
+        query,
+        targets,
+        **affine_kwargs,
+    )
+    assert avx2._needleman_wunsch_affine_scores_prepared(prepared_affine) == (
+        avx2.needleman_wunsch_scores(query, targets, **affine_kwargs)
+    )
 
 
 @pytest.mark.skipif(

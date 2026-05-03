@@ -5222,6 +5222,122 @@ Score dispatch_prepared_global_affine_score(PreparedAffineScore<OpsTemplate>& pr
       prepared.state);
 }
 
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+PreparedScoreBatch<OpsTemplate> prepare_score_batch(
+    const PreparedFarrarBatchAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
+    std::size_t profile_block_size = 64U,
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
+  PreparedScoreBatch<OpsTemplate> output;
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      output.state = prepare_score_batch_state<OpsTemplate, std::int8_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score,
+          profile_layout,
+          profile_block_size,
+          kernel_strategy);
+      return output;
+    case KernelBits::bits16:
+      output.state = prepare_score_batch_state<OpsTemplate, std::int16_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score,
+          profile_layout,
+          profile_block_size,
+          kernel_strategy);
+      return output;
+    case KernelBits::bits32:
+      output.state = prepare_score_batch_state<OpsTemplate, std::int32_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score,
+          profile_layout,
+          profile_block_size,
+          kernel_strategy);
+      return output;
+    case KernelBits::bits64:
+      output.state = prepare_score_batch_state<OpsTemplate, std::int64_t, LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score,
+          profile_layout,
+          profile_block_size,
+          kernel_strategy);
+      return output;
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported prepared batch Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+PreparedAffineScoreBatch<OpsTemplate> prepare_affine_score_batch(
+    const PreparedFarrarBatchAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  PreparedAffineScoreBatch<OpsTemplate> output;
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      output.state = prepare_affine_score_batch_state<
+          OpsTemplate,
+          std::int8_t,
+          !LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+      return output;
+    case KernelBits::bits16:
+      output.state = prepare_affine_score_batch_state<
+          OpsTemplate,
+          std::int16_t,
+          !LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+      return output;
+    case KernelBits::bits32:
+      output.state = prepare_affine_score_batch_state<
+          OpsTemplate,
+          std::int32_t,
+          !LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+      return output;
+    case KernelBits::bits64:
+      output.state = prepare_affine_score_batch_state<
+          OpsTemplate,
+          std::int64_t,
+          !LocalAlignment>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_open_score,
+          gap_extend_score);
+      return output;
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported prepared batch affine Farrar score width");
+  throw nb::python_error();
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell, bool LocalAlignment>
 std::vector<Score> score_batch_state(PreparedScoreBatchState<Cell>& batch) {
   std::vector<Score> scores;
@@ -5243,6 +5359,17 @@ std::vector<Score> score_batch_state(PreparedScoreBatchState<Cell>& batch) {
   return scores;
 }
 
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+std::vector<Score> dispatch_prepared_score_many(PreparedScoreBatch<OpsTemplate>& prepared) {
+  return std::visit(
+      [](auto& state) -> std::vector<Score> {
+        using State = std::decay_t<decltype(state)>;
+        using Cell = typename State::cell_type;
+        return score_batch_state<OpsTemplate, Cell, LocalAlignment>(state);
+      },
+      prepared.state);
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell, bool LocalAlignment>
 std::vector<Score> affine_score_batch_state(PreparedAffineScoreBatchState<Cell>& batch) {
   std::vector<Score> scores;
@@ -5261,6 +5388,18 @@ std::vector<Score> affine_score_batch_state(PreparedAffineScoreBatchState<Cell>&
     }
   }
   return scores;
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+std::vector<Score> dispatch_prepared_affine_score_many(
+    PreparedAffineScoreBatch<OpsTemplate>& prepared) {
+  return std::visit(
+      [](auto& state) -> std::vector<Score> {
+        using State = std::decay_t<decltype(state)>;
+        using Cell = typename State::cell_type;
+        return affine_score_batch_state<OpsTemplate, Cell, LocalAlignment>(state);
+      },
+      prepared.state);
 }
 
 template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
