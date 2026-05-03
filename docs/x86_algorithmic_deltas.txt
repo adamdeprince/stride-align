@@ -204,6 +204,19 @@ kernel. The benchmark now uses these private prepared batch hooks for 1:many
 score rows when present and reports preprocess_s as direct-batch total minus
 prepared-DP median.
 
+Follow-up performance result: automatic prepared score batch profiles no longer
+choose target-ordered layout. For English/Chinese 1024x1024 1:many SW Farrar,
+target-ordered profile layout caused heavy memory traffic and was roughly 2x
+slower than the compact observed/token-major layout. Explicit target-ordered
+and blocked-target-ordered layout switches remain available in the native
+microbench for A/B testing, but automatic 1:many prepared score batches now use
+compact-observed profile rows.
+
+AVX2 width16 exact-fill SW Farrar also now uses bounded lazy-F correction for
+automatic strategy, mirroring the width32 bounded correction. The older
+deferred correction path remains reachable from the native microbench strategy
+switch for comparison.
+
 Current non-x86 state:
 
 - Loongson, ARM, PowerPC, RISC-V, AVX10, SSE4.1, SWAR, and generic do not

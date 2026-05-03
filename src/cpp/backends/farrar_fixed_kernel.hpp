@@ -1076,8 +1076,11 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
   for (const auto& target : prepared.target_tokens) {
     total_target_size += target.size();
   }
+  const auto requested_profile_layout =
+      profile_layout == ScoreProfileLayout::automatic ? ScoreProfileLayout::compact_observed
+                                                      : profile_layout;
   const auto resolved_profile_layout = resolve_score_profile_layout<Ops>(
-      profile_layout,
+      requested_profile_layout,
       total_target_size,
       profile_tokens.size());
   std::size_t selected_profile_block_size = profile_block_size;

@@ -65,7 +65,7 @@ void print_help(std::ostream& output) {
       << "                                      Farrar score profile layout A/B switch (default: auto)\n"
       << "  --profile-block-size N           Block size for blocked-target-ordered layout (default: 64)\n"
       << "  --sw-farrar-i32-strategy auto|materialized|deferred|deferred-u4|bounded\n"
-      << "                                      AVX2 width32 SW Farrar correction strategy A/B switch (default: auto)\n"
+      << "                                      AVX2 exact-fill SW Farrar correction strategy A/B switch (default: auto)\n"
       << "  --length N                       Set query and target length (default: 1024)\n"
       << "  --query-length N                 Query length override\n"
       << "  --target-length N                Target length override\n"
