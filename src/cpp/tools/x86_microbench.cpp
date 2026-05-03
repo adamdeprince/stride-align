@@ -64,7 +64,7 @@ void print_help(std::ostream& output) {
       << "  --profile-layout auto|token-major|target-ordered|blocked-target-ordered|compact-observed\n"
       << "                                      Farrar score profile layout A/B switch (default: auto)\n"
       << "  --profile-block-size N           Block size for blocked-target-ordered layout (default: 64)\n"
-      << "  --sw-farrar-i32-strategy auto|materialized|deferred|deferred-u4\n"
+      << "  --sw-farrar-i32-strategy auto|materialized|deferred|deferred-u4|bounded\n"
       << "                                      AVX2 width32 SW Farrar correction strategy A/B switch (default: auto)\n"
       << "  --length N                       Set query and target length (default: 1024)\n"
       << "  --query-length N                 Query length override\n"
@@ -185,8 +185,10 @@ Options parse_options(int argc, char** argv) {
   if (options.sw_farrar_i32_strategy != "auto" &&
       options.sw_farrar_i32_strategy != "materialized" &&
       options.sw_farrar_i32_strategy != "deferred" &&
-      options.sw_farrar_i32_strategy != "deferred-u4") {
-    usage_error("--sw-farrar-i32-strategy must be auto, materialized, deferred, or deferred-u4");
+      options.sw_farrar_i32_strategy != "deferred-u4" &&
+      options.sw_farrar_i32_strategy != "bounded") {
+    usage_error(
+        "--sw-farrar-i32-strategy must be auto, materialized, deferred, deferred-u4, or bounded");
   }
   if (options.many_count == 0) {
     usage_error("--many-count must be at least 1");

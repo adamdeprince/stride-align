@@ -1760,3 +1760,39 @@ Interpretation:
   the remaining width32 gap. The lower unroll appears to give up more loop and
   scheduling efficiency than it saves in register pressure.
 - Keep `deferred-u4` only as an A/B tool. Do not promote it or port it.
+
+47. AVX2 width32 bounded lazy-F correction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The AVX2 width32 SW Farrar exact-fill kernel now exposes:
+
+- `--sw-farrar-i32-strategy bounded`
+
+The bounded strategy keeps the raw materialized DP body but changes the lazy-F
+correction pass from an unconditional full-segment rewrite to a bounded scan.
+After the fixed prefix carry produces the wrapped F vector, each correction
+step stores `max(H, F)`, advances F by the linear gap, and exits the correction
+pass when no lane has `F > H + gap`. This is not the same as the rejected
+width16 bounded experiment: width32 had already shown a different bottleneck,
+and the shorter 8-lane vector makes the compare/branch overhead cheaper.
+
+Focused pinned native results, AVX2 `sw-farrar-score`, width32, 1024x1024,
+3000 iterations, 30 warmups, median of five samples:
+
+- English previous auto/deferred: 155.5 us per target, best 150.2 us.
+- English bounded: 135.9 us per target, best 133.3 us.
+- English native parasail: 131.6 us per target, best 127.3 us.
+- Chinese previous auto/deferred: 163.4 us per target, best 157.6 us.
+- Chinese bounded: 139.1 us per target, best 135.0 us.
+- Chinese native parasail: 132.6 us per target, best 129.9 us.
+
+Interpretation:
+
+- Bounded correction is now the default `auto` strategy for AVX2 width32
+  exact-fill SW Farrar score.
+- This closes most of the remaining width32 gap to parasail without changing
+  profile layout or adding per-segment conditional H/E stores in the main DP
+  loop.
+- Keep `materialized`, `deferred`, and `deferred-u4` available as native A/B
+  switches. Do not port this result to width16 or AVX512 without separate
+  measurements; width16 previously rejected a bounded correction variant.

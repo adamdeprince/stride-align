@@ -574,6 +574,19 @@ inline Score local_sw_score_exact_fill_i16_64(
     v_f = _mm256_add_epi32(v_f, gap); \
   } while (false)
 
+#define STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment_index) \
+  do { \
+    __m256i v_h_scan = _mm256_load_si256(h_store + (segment_index)); \
+    v_h_scan = _mm256_max_epi32(v_h_scan, v_f); \
+    _mm256_store_si256(h_store + (segment_index), v_h_scan); \
+    best = _mm256_max_epi32(best, v_h_scan); \
+    v_f = _mm256_add_epi32(v_f, gap); \
+    const __m256i v_continue = _mm256_cmpgt_epi32(v_f, _mm256_add_epi32(v_h_scan, gap)); \
+    if (_mm256_movemask_epi8(v_continue) == 0) { \
+      goto stride_align_avx2_local_sw_i32_bounded_scan_done; \
+    } \
+  } while (false)
+
 #define STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP_CORRECTED(segment_index) \
   do { \
     const __m256i v_profile = _mm256_load_si256(profile_row + (segment_index)); \
@@ -630,13 +643,18 @@ inline Score local_sw_score_exact_fill_i32_128(
   __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
   __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
   const auto* profile_cells = state.profile.data();
+  const bool use_bounded_correction =
+      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic ||
+      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded;
   const bool use_deferred_correction =
-      state.kernel_strategy != farrar_fixed_kernel::detail::ScoreKernelStrategy::materialized;
+      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred ||
+      state.kernel_strategy ==
+          farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred_unroll4;
   const bool use_deferred_unroll4 =
       state.kernel_strategy ==
       farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred_unroll4;
 
-  if (!use_deferred_correction) {
+  if (!use_deferred_correction || use_bounded_correction) {
     for (const auto profile_offset : state.target_profile_offsets) {
       std::swap(h_store, h_load);
 
@@ -663,15 +681,30 @@ inline Score local_sw_score_exact_fill_i32_128(
           lane_gap_4,
           zero);
       if (_mm256_movemask_epi8(_mm256_cmpgt_epi32(v_f, zero)) != 0) {
-        for (std::size_t segment = 0; segment < 128U; segment += 8U) {
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 1U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 2U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 3U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 4U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 5U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 6U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 7U);
+        if (use_bounded_correction) {
+          for (std::size_t segment = 0; segment < 128U; segment += 8U) {
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 1U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 2U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 3U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 4U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 5U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 6U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 7U);
+          }
+stride_align_avx2_local_sw_i32_bounded_scan_done:
+          ;
+        } else {
+          for (std::size_t segment = 0; segment < 128U; segment += 8U) {
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 1U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 2U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 3U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 4U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 5U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 6U);
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment + 7U);
+          }
         }
       }
     }
@@ -777,6 +810,7 @@ inline Score local_sw_score_exact_fill_i32_128(
 
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP_CORRECTED
+#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP
 
