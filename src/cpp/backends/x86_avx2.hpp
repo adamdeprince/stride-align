@@ -630,9 +630,8 @@ inline Score local_sw_score_exact_fill_i32_128(
   __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
   __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
   const auto* profile_cells = state.profile.data();
-  // The same deferred-correction representation was measured separately for
-  // width32 and lost, so keep the branchless materializing scan for now.
-  constexpr bool use_deferred_correction = false;
+  const bool use_deferred_correction =
+      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred;
 
   if (!use_deferred_correction) {
     for (const auto profile_offset : state.target_profile_offsets) {

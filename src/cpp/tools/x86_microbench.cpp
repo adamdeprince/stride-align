@@ -64,6 +64,8 @@ void print_help(std::ostream& output) {
       << "  --profile-layout auto|token-major|target-ordered|blocked-target-ordered|compact-observed\n"
       << "                                      Farrar score profile layout A/B switch (default: auto)\n"
       << "  --profile-block-size N           Block size for blocked-target-ordered layout (default: 64)\n"
+      << "  --sw-farrar-i32-strategy auto|materialized|deferred\n"
+      << "                                      AVX2 width32 SW Farrar correction strategy A/B switch (default: auto)\n"
       << "  --length N                       Set query and target length (default: 1024)\n"
       << "  --query-length N                 Query length override\n"
       << "  --target-length N                Target length override\n"
@@ -111,6 +113,8 @@ Options parse_options(int argc, char** argv) {
       options.profile_layout = require_value(argument);
     } else if (argument == "--profile-block-size") {
       options.profile_block_size = parse_size(require_value(argument), argument);
+    } else if (argument == "--sw-farrar-i32-strategy") {
+      options.sw_farrar_i32_strategy = require_value(argument);
     } else if (argument == "--length") {
       const auto length = parse_size(require_value(argument), argument);
       options.query_length = length;
@@ -177,6 +181,11 @@ Options parse_options(int argc, char** argv) {
       options.profile_layout != "compact-observed") {
     usage_error(
         "--profile-layout must be auto, token-major, target-ordered, blocked-target-ordered, or compact-observed");
+  }
+  if (options.sw_farrar_i32_strategy != "auto" &&
+      options.sw_farrar_i32_strategy != "materialized" &&
+      options.sw_farrar_i32_strategy != "deferred") {
+    usage_error("--sw-farrar-i32-strategy must be auto, materialized, or deferred");
   }
   if (options.many_count == 0) {
     usage_error("--many-count must be at least 1");
@@ -470,6 +479,7 @@ void print_result(
             << " shape=" << options.shape
             << " profile_layout=" << options.profile_layout
             << " profile_block_size=" << options.profile_block_size
+            << " sw_farrar_i32_strategy=" << options.sw_farrar_i32_strategy
             << " pass=" << options.pass_name
             << " width=" << bits_name(prepared.batch.score_bits)
             << " query_length=" << workload.query.size()

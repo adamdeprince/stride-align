@@ -16,6 +16,7 @@ struct Options {
   std::string pass_name = "english";
   std::string shape = "1:1";
   std::string profile_layout = "auto";
+  std::string sw_farrar_i32_strategy = "auto";
   std::size_t query_length = 1024;
   std::size_t target_length = 1024;
   std::size_t many_count = 8;

@@ -162,6 +162,13 @@ enum class ScoreProfileLayout {
   compact_observed,
 };
 
+enum class ScoreKernelStrategy {
+  automatic,
+  materialized,
+  deferred,
+  bounded,
+};
+
 template <typename Cell>
 struct BuiltScoreProfile {
   AlignedVector<Cell> profile;
@@ -177,6 +184,7 @@ struct PreparedScoreState {
   std::size_t query_size = 0;
   std::size_t target_size = 0;
   std::size_t segment_count = 0;
+  ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic;
   std::array<std::uint16_t, 256> profile_indices = {};
   std::vector<std::size_t> target_profile_offsets;
   AlignedVector<Cell> profile;
@@ -685,7 +693,8 @@ PreparedScoreState<Cell> prepare_score_state(
     Score mismatch_score,
     Score gap_score,
     ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
-    std::size_t profile_block_size = 64U) {
+    std::size_t profile_block_size = 64U,
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -702,6 +711,7 @@ PreparedScoreState<Cell> prepare_score_state(
   state.gap_score = static_cast<Cell>(gap_score);
   state.query_size = query.size();
   state.target_size = target.size();
+  state.kernel_strategy = kernel_strategy;
   if constexpr (UseFastPath) {
     state.fast_score = score_fast_paths::fast_score_only<
         std::uint8_t,
@@ -1021,7 +1031,8 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
     Score mismatch_score,
     Score gap_score,
     ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
-    std::size_t profile_block_size = 64U) {
+    std::size_t profile_block_size = 64U,
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -1033,6 +1044,7 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
   auto& state = batch.state;
   state.gap_score = static_cast<Cell>(gap_score);
   state.query_size = query.size();
+  state.kernel_strategy = kernel_strategy;
   state.segment_count = query.empty() ? 0 : (query.size() + lane_count - 1U) / lane_count;
 
   batch.target_sizes.reserve(prepared.target_tokens.size());
@@ -5079,7 +5091,8 @@ PreparedScore<OpsTemplate> prepare_score(
     Score mismatch_score,
     Score gap_score,
     ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
-    std::size_t profile_block_size = 64U) {
+    std::size_t profile_block_size = 64U,
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
   PreparedScore<OpsTemplate> output;
   switch (prepared.score_bits) {
     case KernelBits::bits8:
@@ -5089,7 +5102,8 @@ PreparedScore<OpsTemplate> prepare_score(
           mismatch_score,
           gap_score,
           profile_layout,
-          profile_block_size);
+          profile_block_size,
+          kernel_strategy);
       return output;
     case KernelBits::bits16:
       output.state = prepare_score_state<OpsTemplate, std::int16_t>(
@@ -5098,7 +5112,8 @@ PreparedScore<OpsTemplate> prepare_score(
           mismatch_score,
           gap_score,
           profile_layout,
-          profile_block_size);
+          profile_block_size,
+          kernel_strategy);
       return output;
     case KernelBits::bits32:
       output.state = prepare_score_state<OpsTemplate, std::int32_t>(
@@ -5107,7 +5122,8 @@ PreparedScore<OpsTemplate> prepare_score(
           mismatch_score,
           gap_score,
           profile_layout,
-          profile_block_size);
+          profile_block_size,
+          kernel_strategy);
       return output;
     case KernelBits::bits64:
       output.state = prepare_score_state<OpsTemplate, std::int64_t>(
@@ -5116,7 +5132,8 @@ PreparedScore<OpsTemplate> prepare_score(
           mismatch_score,
           gap_score,
           profile_layout,
-          profile_block_size);
+          profile_block_size,
+          kernel_strategy);
       return output;
   }
 

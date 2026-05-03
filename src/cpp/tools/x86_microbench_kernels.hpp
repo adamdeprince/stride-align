@@ -38,6 +38,21 @@ inline stride_align::farrar_fixed_kernel::detail::ScoreProfileLayout profile_lay
   throw std::runtime_error("unsupported profile layout");
 }
 
+inline stride_align::farrar_fixed_kernel::detail::ScoreKernelStrategy sw_farrar_i32_strategy_option(
+    const Options& options) {
+  using Strategy = stride_align::farrar_fixed_kernel::detail::ScoreKernelStrategy;
+  if (options.sw_farrar_i32_strategy == "auto") {
+    return Strategy::automatic;
+  }
+  if (options.sw_farrar_i32_strategy == "materialized") {
+    return Strategy::materialized;
+  }
+  if (options.sw_farrar_i32_strategy == "deferred") {
+    return Strategy::deferred;
+  }
+  throw std::runtime_error("unsupported SW Farrar width32 strategy");
+}
+
 template <template <typename, typename> class OpsTemplate>
 RunResult run_nw_affine_score_single(
     const stride_align::PreparedFarrarAlignment& prepared_alignment,
@@ -160,7 +175,8 @@ RunResult run_sw_farrar_score_single(
       options.mismatch_score,
       options.gap_extend_score,
       profile_layout_option(options),
-      options.profile_block_size);
+      options.profile_block_size,
+      sw_farrar_i32_strategy_option(options));
   const auto prepare_end = Clock::now();
 
   for (std::size_t index = 0; index < options.warmups; ++index) {
@@ -200,7 +216,8 @@ RunResult run_sw_farrar_score_batch_cell(
       options.mismatch_score,
       options.gap_extend_score,
       profile_layout_option(options),
-      options.profile_block_size);
+      options.profile_block_size,
+      sw_farrar_i32_strategy_option(options));
   const auto prepare_end = Clock::now();
 
   for (std::size_t index = 0; index < options.warmups; ++index) {
