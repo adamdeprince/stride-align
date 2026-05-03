@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -152,6 +153,20 @@ using AlignedVector = std::vector<Cell, AlignedAllocator<Cell, 64>>;
 
 inline constexpr std::uint16_t missing_profile_index =
     std::numeric_limits<std::uint16_t>::max();
+
+enum class ScoreProfileLayout {
+  automatic,
+  token_major,
+  target_ordered,
+  blocked_target_ordered,
+  compact_observed,
+};
+
+template <typename Cell>
+struct BuiltScoreProfile {
+  AlignedVector<Cell> profile;
+  std::vector<std::size_t> target_profile_offsets;
+};
 
 template <typename Cell>
 struct PreparedScoreState {
@@ -488,6 +503,24 @@ inline std::vector<std::uint8_t> collect_profile_tokens(
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
+void fill_score_profile_row(
+    Cell* lanes,
+    std::span<const std::uint8_t> query,
+    std::uint8_t token,
+    Cell match_score,
+    Cell mismatch_score,
+    std::size_t segment,
+    std::size_t segment_count) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  for (std::size_t lane = 0; lane < lane_count; ++lane) {
+    const std::size_t query_index = lane * segment_count + segment;
+    lanes[lane] = query_index < query.size() && query[query_index] == token ? match_score
+                                                                             : mismatch_score;
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
 AlignedVector<Cell> build_profile(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> profile_tokens,
@@ -502,11 +535,14 @@ AlignedVector<Cell> build_profile(
     const auto token = profile_tokens[profile_index];
     for (std::size_t segment = 0; segment < segment_count; ++segment) {
       Cell* lanes = profile.data() + ((profile_index * segment_count + segment) * lane_count);
-      for (std::size_t lane = 0; lane < lane_count; ++lane) {
-        const std::size_t query_index = lane * segment_count + segment;
-        lanes[lane] = query_index < query.size() && query[query_index] == token ? match_score
-                                                                                 : mismatch_score;
-      }
+      fill_score_profile_row<OpsTemplate, Cell>(
+          lanes,
+          query,
+          token,
+          match_score,
+          mismatch_score,
+          segment,
+          segment_count);
     }
   }
 
@@ -528,15 +564,84 @@ AlignedVector<Cell> build_target_ordered_profile(
     const auto token = target[target_index];
     for (std::size_t segment = 0; segment < segment_count; ++segment) {
       Cell* lanes = profile.data() + ((target_index * segment_count + segment) * lane_count);
-      for (std::size_t lane = 0; lane < lane_count; ++lane) {
-        const std::size_t query_index = lane * segment_count + segment;
-        lanes[lane] = query_index < query.size() && query[query_index] == token ? match_score
-                                                                                 : mismatch_score;
-      }
+      fill_score_profile_row<OpsTemplate, Cell>(
+          lanes,
+          query,
+          token,
+          match_score,
+          mismatch_score,
+          segment,
+          segment_count);
     }
   }
 
   return profile;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+BuiltScoreProfile<Cell> build_blocked_target_ordered_profile(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    Cell match_score,
+    Cell mismatch_score,
+    std::size_t segment_count,
+    std::size_t block_size = 64U) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  const auto state_cells = segment_count * lane_count;
+  BuiltScoreProfile<Cell> built;
+  built.target_profile_offsets.reserve(target.size());
+  if (target.empty() || state_cells == 0) {
+    return built;
+  }
+  if (block_size == 0) {
+    block_size = 64U;
+  }
+
+  std::array<std::uint16_t, 256> block_indices = {};
+  std::vector<std::uint8_t> block_tokens;
+  block_tokens.reserve(std::min<std::size_t>(block_size, 256U));
+
+  for (std::size_t block_start = 0; block_start < target.size(); block_start += block_size) {
+    const auto block_end = std::min(target.size(), block_start + block_size);
+    block_indices.fill(missing_profile_index);
+    block_tokens.clear();
+
+    for (std::size_t target_index = block_start; target_index < block_end; ++target_index) {
+      const auto token = target[target_index];
+      if (block_indices[token] != missing_profile_index) {
+        continue;
+      }
+      block_indices[token] = static_cast<std::uint16_t>(block_tokens.size());
+      block_tokens.push_back(token);
+    }
+
+    const auto base_row = built.profile.size() / state_cells;
+    built.profile.resize(built.profile.size() + block_tokens.size() * state_cells);
+    for (std::size_t profile_index = 0; profile_index < block_tokens.size(); ++profile_index) {
+      const auto token = block_tokens[profile_index];
+      for (std::size_t segment = 0; segment < segment_count; ++segment) {
+        Cell* lanes = built.profile.data() +
+            ((base_row + profile_index) * segment_count + segment) * lane_count;
+        fill_score_profile_row<OpsTemplate, Cell>(
+            lanes,
+            query,
+            token,
+            match_score,
+            mismatch_score,
+            segment,
+            segment_count);
+      }
+    }
+
+    for (std::size_t target_index = block_start; target_index < block_end; ++target_index) {
+      built.target_profile_offsets.push_back(
+          (base_row + static_cast<std::size_t>(block_indices[target[target_index]])) *
+          state_cells);
+    }
+  }
+
+  return built;
 }
 
 inline bool should_use_target_ordered_profile(
@@ -545,12 +650,42 @@ inline bool should_use_target_ordered_profile(
   return target_size >= 128U && profile_token_count * 4U >= target_size * 3U;
 }
 
+template <typename Ops>
+ScoreProfileLayout resolve_score_profile_layout(
+    ScoreProfileLayout requested_layout,
+    std::size_t target_size,
+    std::size_t profile_token_count) noexcept {
+  if (requested_layout != ScoreProfileLayout::automatic) {
+    return requested_layout;
+  }
+
+  if constexpr (requires { Ops::blocked_target_ordered_profile_min_rows; }) {
+    if (profile_token_count >= Ops::blocked_target_ordered_profile_min_rows) {
+      return ScoreProfileLayout::blocked_target_ordered;
+    }
+  }
+
+  bool use_target_ordered_profile = false;
+  if constexpr (requires { Ops::target_ordered_profile_high_cardinality; }) {
+    use_target_ordered_profile = Ops::target_ordered_profile_high_cardinality &&
+        should_use_target_ordered_profile(target_size, profile_token_count);
+  }
+  if constexpr (requires { Ops::target_ordered_profile_min_rows; }) {
+    use_target_ordered_profile = use_target_ordered_profile ||
+        profile_token_count >= Ops::target_ordered_profile_min_rows;
+  }
+  return use_target_ordered_profile ? ScoreProfileLayout::target_ordered
+                                    : ScoreProfileLayout::token_major;
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell, bool UseFastPath = true>
 PreparedScoreState<Cell> prepare_score_state(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
     Score mismatch_score,
-    Score gap_score) {
+    Score gap_score,
+    ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
+    std::size_t profile_block_size = 64U) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -592,32 +727,53 @@ PreparedScoreState<Cell> prepare_score_state(
   const auto profile_tokens = collect_profile_tokens(target, state.profile_indices);
   state.target_profile_offsets.reserve(target.size());
   const auto state_cells = state.segment_count * lane_count;
-  bool use_target_ordered_profile = false;
-  if constexpr (requires { Ops::target_ordered_profile_high_cardinality; }) {
-    use_target_ordered_profile = Ops::target_ordered_profile_high_cardinality &&
-        should_use_target_ordered_profile(target.size(), profile_tokens.size());
+  std::size_t selected_profile_block_size = profile_block_size;
+  if constexpr (requires { Ops::blocked_target_ordered_profile_block_size; }) {
+    if (profile_layout == ScoreProfileLayout::automatic) {
+      selected_profile_block_size = Ops::blocked_target_ordered_profile_block_size;
+    }
   }
-  if (use_target_ordered_profile) {
-    state.profile = build_target_ordered_profile<OpsTemplate, Cell>(
-        query,
-        target,
-        match,
-        mismatch,
-        state.segment_count);
-    for (std::size_t target_index = 0; target_index < target.size(); ++target_index) {
-      state.target_profile_offsets.push_back(target_index * state_cells);
+  switch (resolve_score_profile_layout<Ops>(
+      profile_layout,
+      target.size(),
+      profile_tokens.size())) {
+    case ScoreProfileLayout::target_ordered:
+      state.profile = build_target_ordered_profile<OpsTemplate, Cell>(
+          query,
+          target,
+          match,
+          mismatch,
+          state.segment_count);
+      for (std::size_t target_index = 0; target_index < target.size(); ++target_index) {
+        state.target_profile_offsets.push_back(target_index * state_cells);
+      }
+      break;
+    case ScoreProfileLayout::blocked_target_ordered: {
+      auto built = build_blocked_target_ordered_profile<OpsTemplate, Cell>(
+          query,
+          target,
+          match,
+          mismatch,
+          state.segment_count,
+          selected_profile_block_size);
+      state.profile = std::move(built.profile);
+      state.target_profile_offsets = std::move(built.target_profile_offsets);
+      break;
     }
-  } else {
-    state.profile = build_profile<OpsTemplate, Cell>(
-        query,
-        profile_tokens,
-        match,
-        mismatch,
-        state.segment_count);
-    for (const auto token : target) {
-      state.target_profile_offsets.push_back(
-          static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
-    }
+    case ScoreProfileLayout::automatic:
+    case ScoreProfileLayout::token_major:
+    case ScoreProfileLayout::compact_observed:
+      state.profile = build_profile<OpsTemplate, Cell>(
+          query,
+          profile_tokens,
+          match,
+          mismatch,
+          state.segment_count);
+      for (const auto token : target) {
+        state.target_profile_offsets.push_back(
+            static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
+      }
+      break;
   }
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
@@ -863,7 +1019,9 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
     const PreparedFarrarBatchAlignment& prepared,
     Score match_score,
     Score mismatch_score,
-    Score gap_score) {
+    Score gap_score,
+    ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
+    std::size_t profile_block_size = 64U) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -900,25 +1058,81 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
   }
 
   const auto profile_tokens = collect_profile_tokens(prepared.target_tokens, state.profile_indices);
-  state.profile = build_profile<OpsTemplate, Cell>(
-      query,
-      profile_tokens,
-      static_cast<Cell>(match_score),
-      static_cast<Cell>(mismatch_score),
-      state.segment_count);
-
+  const auto state_cells = state.segment_count * lane_count;
+  std::size_t total_target_size = 0;
   for (const auto& target : prepared.target_tokens) {
-    auto& offsets = batch.target_profile_offsets.emplace_back();
-    offsets.reserve(target.size());
-    for (const auto token : target) {
-      offsets.push_back(
-          static_cast<std::size_t>(state.profile_indices[token]) *
-          state.segment_count *
-          lane_count);
+    total_target_size += target.size();
+  }
+  const auto resolved_profile_layout = resolve_score_profile_layout<Ops>(
+      profile_layout,
+      total_target_size,
+      profile_tokens.size());
+  std::size_t selected_profile_block_size = profile_block_size;
+  if constexpr (requires { Ops::blocked_target_ordered_profile_block_size; }) {
+    if (profile_layout == ScoreProfileLayout::automatic) {
+      selected_profile_block_size = Ops::blocked_target_ordered_profile_block_size;
     }
   }
 
-  const auto state_cells = state.segment_count * lane_count;
+  switch (resolved_profile_layout) {
+    case ScoreProfileLayout::target_ordered:
+      for (const auto& target : prepared.target_tokens) {
+        const auto target_span = std::span<const std::uint8_t>(target.data(), target.size());
+        const auto base_row = state.profile.size() / state_cells;
+        auto profile = build_target_ordered_profile<OpsTemplate, Cell>(
+            query,
+            target_span,
+            static_cast<Cell>(match_score),
+            static_cast<Cell>(mismatch_score),
+            state.segment_count);
+        state.profile.insert(state.profile.end(), profile.begin(), profile.end());
+        auto& offsets = batch.target_profile_offsets.emplace_back();
+        offsets.reserve(target.size());
+        for (std::size_t target_index = 0; target_index < target.size(); ++target_index) {
+          offsets.push_back((base_row + target_index) * state_cells);
+        }
+      }
+      break;
+    case ScoreProfileLayout::blocked_target_ordered:
+      for (const auto& target : prepared.target_tokens) {
+        const auto target_span = std::span<const std::uint8_t>(target.data(), target.size());
+        const auto base_row = state.profile.size() / state_cells;
+        auto built = build_blocked_target_ordered_profile<OpsTemplate, Cell>(
+            query,
+            target_span,
+            static_cast<Cell>(match_score),
+            static_cast<Cell>(mismatch_score),
+            state.segment_count,
+            selected_profile_block_size);
+        state.profile.insert(state.profile.end(), built.profile.begin(), built.profile.end());
+        auto& offsets = batch.target_profile_offsets.emplace_back();
+        offsets.reserve(built.target_profile_offsets.size());
+        for (const auto offset : built.target_profile_offsets) {
+          offsets.push_back(offset + base_row * state_cells);
+        }
+      }
+      break;
+    case ScoreProfileLayout::automatic:
+    case ScoreProfileLayout::token_major:
+    case ScoreProfileLayout::compact_observed:
+      state.profile = build_profile<OpsTemplate, Cell>(
+          query,
+          profile_tokens,
+          static_cast<Cell>(match_score),
+          static_cast<Cell>(mismatch_score),
+          state.segment_count);
+
+      for (const auto& target : prepared.target_tokens) {
+        auto& offsets = batch.target_profile_offsets.emplace_back();
+        offsets.reserve(target.size());
+        for (const auto token : target) {
+          offsets.push_back(
+              static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
+        }
+      }
+      break;
+  }
+
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
   if constexpr (LocalAlignment) {
@@ -4863,7 +5077,9 @@ PreparedScore<OpsTemplate> prepare_score(
     const PreparedFarrarAlignment& prepared,
     Score match_score,
     Score mismatch_score,
-    Score gap_score) {
+    Score gap_score,
+    ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
+    std::size_t profile_block_size = 64U) {
   PreparedScore<OpsTemplate> output;
   switch (prepared.score_bits) {
     case KernelBits::bits8:
@@ -4871,28 +5087,36 @@ PreparedScore<OpsTemplate> prepare_score(
           prepared,
           match_score,
           mismatch_score,
-          gap_score);
+          gap_score,
+          profile_layout,
+          profile_block_size);
       return output;
     case KernelBits::bits16:
       output.state = prepare_score_state<OpsTemplate, std::int16_t>(
           prepared,
           match_score,
           mismatch_score,
-          gap_score);
+          gap_score,
+          profile_layout,
+          profile_block_size);
       return output;
     case KernelBits::bits32:
       output.state = prepare_score_state<OpsTemplate, std::int32_t>(
           prepared,
           match_score,
           mismatch_score,
-          gap_score);
+          gap_score,
+          profile_layout,
+          profile_block_size);
       return output;
     case KernelBits::bits64:
       output.state = prepare_score_state<OpsTemplate, std::int64_t>(
           prepared,
           match_score,
           mismatch_score,
-          gap_score);
+          gap_score,
+          profile_layout,
+          profile_block_size);
       return output;
   }
 

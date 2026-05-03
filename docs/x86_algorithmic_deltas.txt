@@ -1557,3 +1557,139 @@ Interpretation:
 - Width32 remains the worse AVX2 Farrar score gap. Its next experiment should
   be a width32-specific redesign, not a direct port of the width16 deferred
   correction.
+
+43. AVX2 retained Farrar profile/perf pass
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The retained width16 AVX2 `sw-farrar-score` path was reprofiled after the
+deferred-correction change and compared against native parasail on the same
+pinned CPU row.
+
+Microbench support:
+
+- `stride_align_x86_microbench` now accepts `--samples N` and reports the
+  median timed run plus `median_ns_per_target`, `best_ns_per_target`, and
+  `best_cells_per_s`. This is the default tool for native parasail-comparable
+  pinned rows; one-shot native timings were too noisy for this stage.
+
+Perf counters, Chinese width16, 1024x1024, pinned CPU 2:
+
+- Before the retained profile-layout change, AVX2 retired about 2.74B
+  instructions, issued about 2.71B uops, and performed about 406M L1 stores.
+  Native parasail retired about 2.32B instructions, issued about 2.42B uops,
+  and performed about 274M L1 stores on the same row.
+- After using target-ordered profiles for the retained width16 path, a fresh
+  2000-iteration run measured AVX2 at about 2.39B instructions, 2.38B issued
+  uops, and 269M L1 stores. Native parasail on the same row measured about
+  2.29B instructions, 2.38B issued uops, and 271M L1 stores. This removed most
+  of the store/uop pressure gap without branchy per-segment conditional stores.
+- The remaining counter gap moved to profile/cache locality: AVX2 showed about
+  67M L1 load misses on that profiled run versus parasail's roughly 12M. The
+  next work should focus on profile layout/cache behavior, not another
+  conditional-store pass.
+
+Instruction-mix interpretation:
+
+- Current `perf report` puts 98.9% of AVX2 samples in
+  `local_sw_score_exact_fill_i16_64` and 98.2% of parasail samples in
+  `parasail_sw_striped_profile_avx2_256_16`, so this is still a direct
+  inner-loop comparison.
+- Parasail's annotated AVX2 striped loop still uses H load/store, E load/store,
+  profile add, max chains, and a bounded lazy-F correction with
+  `vpcmpgtw`/`vpmovmskb` early exit.
+- The retained stride-align width16 path now has similar store/uop counts, but
+  the target-ordered profile trades those wins for much heavier L1 load-miss
+  pressure. That is an acceptable width16 improvement, but it is not a general
+  solution.
+
+Retained gate:
+
+- Benchmark target-side unique rows are lower than the earlier high-cardinality
+  gate: English has 36 and Chinese has 32 target-observed symbols in the
+  current corpus. AVX2 width16 therefore keeps an explicit
+  `target_ordered_profile_min_rows = 32` gate.
+- Width32 was measured with the same 32-row target-ordered trigger and did not
+  win. AVX2 width32 keeps its trigger at 48 rows so the English/Chinese rows
+  stay on the previous width32 path.
+
+Focused pinned native results after this pass, 1024x1024 linear
+`sw-farrar-score`, 1000 iterations, 20 warmups, median of five samples:
+
+- English width16: AVX2 78.3 us per target, best 76.0 us; parasail 68.9 us,
+  best 67.4 us.
+- Chinese width16: AVX2 78.3 us per target, best 76.8 us; parasail 68.0 us,
+  best 67.0 us.
+- English width32: AVX2 168.7 us per target, best 167.3 us; parasail 128.8 us,
+  best 123.5 us.
+- Chinese width32: AVX2 170.4 us per target, best 166.6 us; parasail 144.9 us,
+  best 131.8 us.
+
+Porting note:
+
+- Do not port the AVX2 width16 target-ordered/deferred profile decision to
+  AVX512 or non-x86 backends yet. AVX512 is frozen for this kernel until AVX2
+  closes the gap further, and width32 needs a separate profile/cache redesign.
+
+44. AVX2 width32 Farrar profile-layout A/B pass
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A native-only Farrar profile-layout switch was added to the x86 microbench:
+
+- `--profile-layout auto`
+- `--profile-layout token-major`
+- `--profile-layout target-ordered`
+- `--profile-layout blocked-target-ordered`
+- `--profile-layout compact-observed`
+- `--profile-block-size N` for the blocked layout
+
+The public Python API still uses the default `auto` behavior. `compact-observed`
+currently shares the existing token-major implementation because the existing
+profile builder already emits only target-observed symbols.
+
+Implementation notes:
+
+- `ScoreProfileLayout` is plumbed through score-only Farrar preparation.
+- The blocked target-ordered builder creates profile rows for symbols observed
+  within each target block and maps target columns to rows inside that block.
+  It avoids full per-target-column profile materialization while still allowing
+  target-local profile-row ordering.
+- The switch is available for prepared 1:1 and 1:many native microbench runs.
+
+Width32 A/B findings, AVX2 `sw-farrar-score`, 1024x1024, pinned CPU 2:
+
+- Full target-ordered width32 lost on English and Chinese.
+- Small blocked layouts, especially block size 16, lost because they create too
+  many duplicate profile rows.
+- Block sizes 256-1024 were close to token-major and sometimes slightly faster
+  in short runs. Longer 3000-iteration, five-sample runs did not show a stable
+  enough win to promote them to the default.
+- The AVX2 width32 `auto` path therefore remains on token-major/compact-observed
+  for English and Chinese. The blocked layout stays available as an experiment
+  switch.
+
+Representative longer pinned medians:
+
+- English width32 token-major: 164.7 us per target.
+- English width32 blocked-512: 162.0-165.0 us per target depending on run.
+- Chinese width32 token-major: 164.6 us per target.
+- Chinese width32 blocked-512: 160.0-163.0 us per target depending on run.
+- Parasail width32 remained around 126-128 us per target in the same native
+  harness.
+
+Perf counters shifted the width32 diagnosis away from profile layout:
+
+- Chinese width32 token-major, 2000 iterations: about 5.23B instructions, 5.17B
+  issued uops, 797M L1 stores, and 46M L1 load misses.
+- Chinese width32 blocked-512, same row: about 5.23B instructions, 5.18B issued
+  uops, 797M L1 stores, and 50M L1 load misses.
+- Native parasail width32, same row: about 4.66B instructions, 4.77B issued
+  uops, 536M L1 stores, and 44M L1 load misses.
+
+Interpretation:
+
+- Unlike width16 after the retained deferred-correction pass, width32 is still
+  dominated by store/uop pressure rather than profile-load locality.
+- The next width32 work should target the DP/correction representation and H/E
+  store traffic, not another profile-layout-only pass.
+- Do not port the blocked profile experiment to AVX512 or non-x86 backends until
+  it wins consistently on AVX2.

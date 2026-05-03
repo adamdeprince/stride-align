@@ -5,6 +5,7 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -60,12 +61,16 @@ void print_help(std::ostream& output) {
       << "                                      Kernel variant to run (default: nw-affine-score)\n"
       << "  --pass english|chinese           Text-like token distribution (default: english)\n"
       << "  --shape 1:1|1:many               Prepared single or prepared batch path (default: 1:1)\n"
+      << "  --profile-layout auto|token-major|target-ordered|blocked-target-ordered|compact-observed\n"
+      << "                                      Farrar score profile layout A/B switch (default: auto)\n"
+      << "  --profile-block-size N           Block size for blocked-target-ordered layout (default: 64)\n"
       << "  --length N                       Set query and target length (default: 1024)\n"
       << "  --query-length N                 Query length override\n"
       << "  --target-length N                Target length override\n"
       << "  --many-count N                   Targets per 1:many batch call (default: 8)\n"
       << "  --iterations N                   Timed iterations (default: 1000)\n"
       << "  --warmups N                      Warmup iterations (default: 10)\n"
+      << "  --samples N                      Repeat timed run N times and report median/best (default: 1)\n"
       << "  --width 0|8|16|32|64             Forced score width, 0 means auto (default: 16)\n"
       << "  --match N                        Match score (default: 2)\n"
       << "  --mismatch N                     Mismatch score (default: -1)\n"
@@ -102,6 +107,10 @@ Options parse_options(int argc, char** argv) {
       options.pass_name = require_value(argument);
     } else if (argument == "--shape") {
       options.shape = require_value(argument);
+    } else if (argument == "--profile-layout") {
+      options.profile_layout = require_value(argument);
+    } else if (argument == "--profile-block-size") {
+      options.profile_block_size = parse_size(require_value(argument), argument);
     } else if (argument == "--length") {
       const auto length = parse_size(require_value(argument), argument);
       options.query_length = length;
@@ -120,6 +129,8 @@ Options parse_options(int argc, char** argv) {
       options.iterations = parse_size(require_value(argument), argument);
     } else if (argument == "--warmups") {
       options.warmups = parse_size(require_value(argument), argument);
+    } else if (argument == "--samples") {
+      options.samples = parse_size(require_value(argument), argument);
     } else if (argument == "--width") {
       options.width = static_cast<unsigned int>(parse_size(require_value(argument), argument));
     } else if (argument == "--match") {
@@ -160,6 +171,13 @@ Options parse_options(int argc, char** argv) {
   if (options.shape != "1:1" && options.shape != "1:many") {
     usage_error("--shape must be 1:1 or 1:many");
   }
+  if (options.profile_layout != "auto" && options.profile_layout != "token-major" &&
+      options.profile_layout != "target-ordered" &&
+      options.profile_layout != "blocked-target-ordered" &&
+      options.profile_layout != "compact-observed") {
+    usage_error(
+        "--profile-layout must be auto, token-major, target-ordered, blocked-target-ordered, or compact-observed");
+  }
   if (options.many_count == 0) {
     usage_error("--many-count must be at least 1");
   }
@@ -173,6 +191,12 @@ Options parse_options(int argc, char** argv) {
   }
   if (options.iterations == 0) {
     usage_error("--iterations must be at least 1");
+  }
+  if (options.samples == 0) {
+    usage_error("--samples must be at least 1");
+  }
+  if (options.profile_block_size == 0) {
+    usage_error("--profile-block-size must be at least 1");
   }
   if (options.width != 0 && options.width != 8 && options.width != 16 &&
       options.width != 32 && options.width != 64) {
@@ -369,25 +393,83 @@ RunResult run_backend(const PreparedWorkload& prepared, const Options& options) 
   return run_avx512bwvl_backend(prepared, options);
 }
 
+double ns_per_target(
+    const RunResult& result,
+    std::size_t targets_per_call) {
+  const auto scored_targets = result.scored_targets == 0 ? targets_per_call : result.scored_targets;
+  return result.run_seconds * 1.0e9 / static_cast<double>(scored_targets);
+}
+
+double cells_per_second(
+    const Workload& workload,
+    const RunResult& result) {
+  const auto cells_per_target =
+      static_cast<double>(workload.query.size()) *
+      static_cast<double>(workload.targets.front().size());
+  const auto total_cells = cells_per_target * static_cast<double>(result.scored_targets);
+  return total_cells / result.run_seconds;
+}
+
+std::vector<RunResult> run_backend_samples(
+    const PreparedWorkload& prepared,
+    const Options& options) {
+  std::vector<RunResult> results;
+  results.reserve(options.samples);
+  for (std::size_t sample = 0; sample < options.samples; ++sample) {
+    results.push_back(run_backend(prepared, options));
+  }
+  return results;
+}
+
+const RunResult& median_result(
+    const std::vector<RunResult>& results,
+    std::size_t targets_per_call) {
+  if (results.empty()) {
+    usage_error("no benchmark samples collected");
+  }
+  std::vector<std::size_t> order(results.size());
+  for (std::size_t index = 0; index < order.size(); ++index) {
+    order[index] = index;
+  }
+  std::sort(
+      order.begin(),
+      order.end(),
+      [&](std::size_t lhs, std::size_t rhs) {
+        return ns_per_target(results[lhs], targets_per_call) <
+            ns_per_target(results[rhs], targets_per_call);
+      });
+  return results[order[order.size() / 2U]];
+}
+
+double best_ns_per_target(
+    const std::vector<RunResult>& results,
+    std::size_t targets_per_call) {
+  double best = std::numeric_limits<double>::infinity();
+  for (const auto& result : results) {
+    best = std::min(best, ns_per_target(result, targets_per_call));
+  }
+  return best;
+}
+
 void print_result(
     const Options& options,
     const Workload& workload,
     const PreparedWorkload& prepared,
-    const RunResult& result) {
+    const RunResult& result,
+    const std::vector<RunResult>& samples) {
   const std::size_t targets_per_call = options.shape == "1:many" ? workload.targets.size() : 1U;
-  const auto cells_per_target =
-      static_cast<double>(workload.query.size()) * static_cast<double>(workload.targets.front().size());
-  const auto total_cells = cells_per_target * static_cast<double>(result.scored_targets);
-  const auto cells_per_second = total_cells / result.run_seconds;
   const auto ns_per_call = result.run_seconds * 1.0e9 / static_cast<double>(result.calls);
-  const auto ns_per_target =
-      result.run_seconds * 1.0e9 / static_cast<double>(result.scored_targets);
+  const auto target_ns = ns_per_target(result, targets_per_call);
+  const auto target_cells_per_second = cells_per_second(workload, result);
+  const auto best_ns = best_ns_per_target(samples, targets_per_call);
 
   std::cout << std::setprecision(9)
             << "backend=" << options.backend
             << " variant=" << options.variant
             << " mode=prepared"
             << " shape=" << options.shape
+            << " profile_layout=" << options.profile_layout
+            << " profile_block_size=" << options.profile_block_size
             << " pass=" << options.pass_name
             << " width=" << bits_name(prepared.batch.score_bits)
             << " query_length=" << workload.query.size()
@@ -395,14 +477,21 @@ void print_result(
             << " targets_per_call=" << targets_per_call
             << " iterations=" << options.iterations
             << " warmups=" << options.warmups
+            << " samples=" << options.samples
             << " score=" << result.last_score
             << " checksum=" << result.checksum
             << " prepare_s=" << result.prepare_seconds
             << " run_s=" << result.run_seconds
             << " ns_per_call=" << ns_per_call
-            << " ns_per_target=" << ns_per_target
-            << " cells_per_s=" << cells_per_second
-            << '\n';
+            << " ns_per_target=" << target_ns
+            << " cells_per_s=" << target_cells_per_second;
+  if (options.samples > 1U) {
+    std::cout << " median_ns_per_target=" << target_ns
+              << " best_ns_per_target=" << best_ns
+              << " best_cells_per_s="
+              << (target_cells_per_second * target_ns / best_ns);
+  }
+  std::cout << '\n';
 }
 
 }  // namespace
@@ -412,8 +501,10 @@ int main(int argc, char** argv) {
     const auto options = parse_options(argc, argv);
     const auto workload = build_workload(options);
     const auto prepared = prepare_workload(workload, options);
-    const auto result = run_backend(prepared, options);
-    print_result(options, workload, prepared, result);
+    const auto results = run_backend_samples(prepared, options);
+    const std::size_t targets_per_call = options.shape == "1:many" ? workload.targets.size() : 1U;
+    const auto& result = median_result(results, targets_per_call);
+    print_result(options, workload, prepared, result, results);
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "stride_align_x86_microbench: " << error.what() << '\n';

@@ -17,6 +17,27 @@ inline std::uint64_t checksum_add(std::uint64_t checksum, stride_align::Score sc
   return (checksum ^ mixed) * 1099511628211ULL;
 }
 
+inline stride_align::farrar_fixed_kernel::detail::ScoreProfileLayout profile_layout_option(
+    const Options& options) {
+  using Layout = stride_align::farrar_fixed_kernel::detail::ScoreProfileLayout;
+  if (options.profile_layout == "auto") {
+    return Layout::automatic;
+  }
+  if (options.profile_layout == "token-major") {
+    return Layout::token_major;
+  }
+  if (options.profile_layout == "target-ordered") {
+    return Layout::target_ordered;
+  }
+  if (options.profile_layout == "blocked-target-ordered") {
+    return Layout::blocked_target_ordered;
+  }
+  if (options.profile_layout == "compact-observed") {
+    return Layout::compact_observed;
+  }
+  throw std::runtime_error("unsupported profile layout");
+}
+
 template <template <typename, typename> class OpsTemplate>
 RunResult run_nw_affine_score_single(
     const stride_align::PreparedFarrarAlignment& prepared_alignment,
@@ -137,7 +158,9 @@ RunResult run_sw_farrar_score_single(
       prepared_alignment,
       options.match_score,
       options.mismatch_score,
-      options.gap_extend_score);
+      options.gap_extend_score,
+      profile_layout_option(options),
+      options.profile_block_size);
   const auto prepare_end = Clock::now();
 
   for (std::size_t index = 0; index < options.warmups; ++index) {
@@ -175,7 +198,9 @@ RunResult run_sw_farrar_score_batch_cell(
       prepared_alignment,
       options.match_score,
       options.mismatch_score,
-      options.gap_extend_score);
+      options.gap_extend_score,
+      profile_layout_option(options),
+      options.profile_block_size);
   const auto prepare_end = Clock::now();
 
   for (std::size_t index = 0; index < options.warmups; ++index) {

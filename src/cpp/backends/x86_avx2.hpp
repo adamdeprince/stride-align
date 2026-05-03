@@ -882,6 +882,7 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr bool global_main_f_segment64_unroll = true;
   static constexpr bool local_sw_score_exact_segment64 = true;
   static constexpr bool target_ordered_profile_high_cardinality = true;
+  static constexpr std::size_t target_ordered_profile_min_rows = 32U;
 
   static vector_type load_tokens(const std::uint16_t* values) {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));
@@ -1017,6 +1018,7 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr bool global_main_f_segment128_unroll = true;
   static constexpr bool local_sw_score_exact_segment128 = true;
   static constexpr bool target_ordered_profile_high_cardinality = true;
+  static constexpr std::size_t target_ordered_profile_min_rows = 48U;
 
   static vector_type load_tokens(const std::uint32_t* values) {
     return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values));

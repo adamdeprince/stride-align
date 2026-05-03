@@ -15,11 +15,14 @@ struct Options {
   std::string variant = "nw-affine-score";
   std::string pass_name = "english";
   std::string shape = "1:1";
+  std::string profile_layout = "auto";
   std::size_t query_length = 1024;
   std::size_t target_length = 1024;
   std::size_t many_count = 8;
   std::size_t iterations = 1000;
   std::size_t warmups = 10;
+  std::size_t samples = 1;
+  std::size_t profile_block_size = 64;
   unsigned int width = 16;
   int seed = 1;
   stride_align::Score match_score = 2;
