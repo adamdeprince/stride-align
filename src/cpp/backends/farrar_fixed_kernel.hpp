@@ -1517,6 +1517,28 @@ void scan_local_linear_lazy_f_once(
   }
 }
 
+template <typename Ops, typename Cell>
+void scan_local_linear_lazy_f_once_bounded(
+    Cell* h_store_data,
+    std::size_t segment_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_vector,
+    typename Ops::vector_type& best_vector) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
+    v_h_segment = Ops::max(v_h_segment, v_f);
+    store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
+    best_vector = Ops::max(best_vector, v_h_segment);
+    v_f = Ops::add(v_f, gap_vector);
+    if (!any_greater<Ops, Cell>(v_f, Ops::add(v_h_segment, gap_vector))) {
+      return;
+    }
+  }
+}
+
 template <typename Ops, typename Cell, std::size_t LaneCount, bool LocalAlignment>
 typename Ops::vector_type trace_lazy_f_prefix_carry(
     typename Ops::vector_type final_f,
@@ -2963,12 +2985,42 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
         SegmentCount,
         state.gap_score);
     if (any_greater<Ops, Cell>(v_f, zero_vector)) {
-      scan_local_linear_lazy_f_once<Ops, Cell>(
-          h_store_data,
-          SegmentCount,
-          v_f,
-          gap_vector,
-          best_vector);
+      const bool use_bounded_correction =
+          state.kernel_strategy == ScoreKernelStrategy::automatic ||
+          state.kernel_strategy == ScoreKernelStrategy::bounded;
+      if constexpr (requires { Ops::bounded_local_sw_lazy_f_scan; }) {
+        if constexpr (Ops::bounded_local_sw_lazy_f_scan) {
+          if (use_bounded_correction) {
+            scan_local_linear_lazy_f_once_bounded<Ops, Cell>(
+                h_store_data,
+                SegmentCount,
+                v_f,
+                gap_vector,
+                best_vector);
+          } else {
+            scan_local_linear_lazy_f_once<Ops, Cell>(
+                h_store_data,
+                SegmentCount,
+                v_f,
+                gap_vector,
+                best_vector);
+          }
+        } else {
+          scan_local_linear_lazy_f_once<Ops, Cell>(
+              h_store_data,
+              SegmentCount,
+              v_f,
+              gap_vector,
+              best_vector);
+        }
+      } else {
+        scan_local_linear_lazy_f_once<Ops, Cell>(
+            h_store_data,
+            SegmentCount,
+            v_f,
+            gap_vector,
+            best_vector);
+      }
     }
   }
 
@@ -2987,6 +3039,16 @@ Score score_state(PreparedScoreState<Cell>& state) {
     return 0;
   }
   if (state.gap_score <= 0 && state.query_size == state.segment_count * lane_count) {
+    if constexpr (requires { Ops::local_sw_score_exact_segment32; }) {
+      if constexpr (Ops::local_sw_score_exact_segment32) {
+        if (state.segment_count == 32U) {
+          if constexpr (requires { Ops::local_sw_score_exact_segment32_raw(state); }) {
+            return Ops::local_sw_score_exact_segment32_raw(state);
+          }
+          return score_state_exact_fill_local_sw<Ops, Cell, 32U>(state);
+        }
+      }
+    }
     if constexpr (requires { Ops::local_sw_score_exact_segment64; }) {
       if constexpr (Ops::local_sw_score_exact_segment64) {
         if (state.segment_count == 64U) {

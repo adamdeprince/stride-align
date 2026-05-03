@@ -217,6 +217,18 @@ automatic strategy, mirroring the width32 bounded correction. The older
 deferred correction path remains reachable from the native microbench strategy
 switch for comparison.
 
+AVX512BWVL now opts into the shared exact-fill local SW score path for the
+1024-character English/Chinese benchmark shapes:
+
+- width16: 1024 / 32 lanes = 32 segments
+- width32: 1024 / 16 lanes = 64 segments
+
+The shared exact-fill path now supports segment-count 32 and a bounded lazy-F
+scan. AVX512BWVL sets bounded_local_sw_lazy_f_scan for width16 and width32, so
+automatic strategy stops lazy-F correction once the carry can no longer improve
+the next segment. The native strategy switch can still force the full
+materialized scan for A/B testing.
+
 Current non-x86 state:
 
 - Loongson, ARM, PowerPC, RISC-V, AVX10, SSE4.1, SWAR, and generic do not

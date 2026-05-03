@@ -327,6 +327,8 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr bool dense_global_lazy_f_scan = true;
   static constexpr bool plain_global_main_f_after_first_segment = true;
   static constexpr bool global_main_f_segment32_unroll = true;
+  static constexpr bool local_sw_score_exact_segment32 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static vector_type load_tokens(const std::uint16_t* values) {
     return _mm512_loadu_si512(values);
@@ -455,6 +457,8 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr bool dense_global_lazy_f_scan = true;
   static constexpr bool plain_global_main_f_after_first_segment = true;
   static constexpr bool global_main_f_segment64_unroll = true;
+  static constexpr bool local_sw_score_exact_segment64 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static vector_type load_tokens(const std::uint32_t* values) {
     return _mm512_loadu_si512(values);
