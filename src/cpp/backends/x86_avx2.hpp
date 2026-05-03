@@ -631,7 +631,7 @@ inline Score local_sw_score_exact_fill_i32_128(
   __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
   const auto* profile_cells = state.profile.data();
   const bool use_deferred_correction =
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred;
+      state.kernel_strategy != farrar_fixed_kernel::detail::ScoreKernelStrategy::materialized;
 
   if (!use_deferred_correction) {
     for (const auto profile_offset : state.target_profile_offsets) {

@@ -1693,3 +1693,47 @@ Interpretation:
   store traffic, not another profile-layout-only pass.
 - Do not port the blocked profile experiment to AVX512 or non-x86 backends until
   it wins consistently on AVX2.
+
+45. AVX2 width32 deferred correction promotion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The width32 SW Farrar exact-fill kernel now has a native microbench strategy
+switch:
+
+- `--sw-farrar-i32-strategy auto`
+- `--sw-farrar-i32-strategy materialized`
+- `--sw-farrar-i32-strategy deferred`
+
+`materialized` is the previous branchless correction scan. `deferred` carries
+the lazy-F correction to the next target column and folds it into the next
+column's diagonal inputs instead of rewriting corrected H during the current
+column's correction scan. `auto` now selects the deferred representation for
+the AVX2 width32 exact-fill path; `materialized` remains available for
+regression tests.
+
+Focused pinned native results, AVX2 `sw-farrar-score`, width32, 1024x1024,
+3000 iterations, 30 warmups, median of five samples:
+
+- English materialized: 164.0 us per target, best 161.2 us.
+- English deferred: 150.3 us per target, best 144.1 us.
+- Chinese materialized: 165.7 us per target, best 162.6 us.
+- Chinese deferred: 149.5 us per target, best 144.9 us.
+
+Perf counters, Chinese width32, 2000 iterations:
+
+- Materialized: about 5.23B instructions, 5.18B issued uops, 797M L1 stores,
+  and 44.8M L1 load misses.
+- Deferred: about 4.60B instructions, 4.57B issued uops, 532M L1 stores, and
+  44.0M L1 load misses.
+- Native parasail: about 4.66B instructions, 4.77B issued uops, 536M L1 stores,
+  and 43.4M L1 load misses.
+
+Interpretation:
+
+- Deferred width32 fixed the store/uop gap that profile-layout work did not
+  address. Store traffic is now roughly parasail-comparable.
+- The remaining gap is cycles/IPC rather than gross store count. The next
+  width32 work should focus on scheduling, dependency chains, and possibly a
+  bounded correction path rather than profile layout.
+- Do not port this to AVX512 or non-x86 backends until they show the same
+  store/uop bottleneck and the same correction representation wins there.
