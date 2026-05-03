@@ -1865,3 +1865,62 @@ Interpretation:
 - Keep `materialized`, `deferred`, and `deferred-u4` available as native A/B
   switches. Do not port this result to width16 or AVX512 without separate
   measurements; width16 previously rejected a bounded correction variant.
+
+48. SW Farrar post-bounded perf comparison, 2026-05-03
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This pass re-profiled the current SW Farrar score kernels after AVX2 width32
+bounded correction and AVX512 exact-fill bounded correction were enabled.
+
+Pinned native baseline, Chinese 1024x1024:
+
+- AVX2 width32 1:1: about 431 us per target median, 412 us best.
+- Native parasail width32 1:1: about 402 us per target median, 400 us best.
+- AVX512BWVL width16 1:many: about 260 us per target median, 250 us best.
+- Native parasail AVX2 width16 1:many: about 207 us per target median, 207 us
+  best.
+
+AVX2 width32 A/B checks:
+
+- `bounded` remains the best retained correction strategy in short native
+  samples: about 390 us per target on the Chinese 1:1 row.
+- `materialized`, `deferred`, and `deferred-u4` were slower in the same row.
+- Profile-layout switches did not expose a new win. `auto`/token-major were
+  fastest; target-ordered, blocked-target-ordered, and compact-observed were
+  slower for Chinese 1:1.
+
+Top-down and cache counters shifted the diagnosis:
+
+- AVX2 width32: about 30.8% backend-bound, 64.3% retiring, 3.24 IPC.
+- Native parasail width32: about 5.2% backend-bound, 76.1% retiring, 3.70 IPC.
+- AVX2 and parasail had essentially the same L1 load misses and store counts in
+  this row, so the remaining AVX2 width32 gap is no longer gross profile
+  locality or H/E store volume.
+- AVX512BWVL width16 1:many: about 45.7% backend-bound, 50.0% retiring, 2.66
+  IPC.
+- Native parasail width16 1:many: about 19.4% backend-bound, 66.1% retiring,
+  3.36 IPC.
+
+Perf annotation:
+
+- AVX2 width32 spent about 98.9% of samples in
+  `backend_avx2::local_sw_score_exact_fill_i32_128`.
+- Native parasail spent about 99.1% in
+  `parasail_sw_striped_profile_avx2_256_32`.
+- AVX512BWVL width16 1:many spent about 98.4% in the shared
+  `score_state_exact_fill_local_sw<..., short, 32>` helper.
+
+Interpretation:
+
+- The old "profile layout and store traffic" explanation is stale for AVX2
+  width32. Bounded correction made memory traffic parasail-comparable.
+- Parasail's remaining advantage is instruction scheduling / dependency shape:
+  it retires more work per cycle with much lower backend-bound percentage.
+- The next AVX2 width32 target should be a DP-loop representation/scheduling
+  pass, not another profile-layout pass. Compare parasail's compact
+  one-vector-per-segment body and separate short lazy-F loop against our
+  unrolled eight-segment body with interleaved H/E/profile traffic.
+- The next AVX512 width16 target should be conservative. It uses fewer
+  loads/stores than parasail in the measured row but still has lower IPC and
+  higher backend-bound percentage, so further AVX512 work should target
+  dependency chains and frequency/backend pressure rather than memory volume.
