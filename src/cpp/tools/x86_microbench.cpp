@@ -57,7 +57,7 @@ void print_help(std::ostream& output) {
       << "Options:\n"
       << "  --backend avx2|avx512bwvl|parasail\n"
       << "                                      SIMD/backend implementation to run (default: avx2)\n"
-      << "  --variant nw-affine-score|sw-farrar-score|sw-cigar|sw-path-info|sw-cigar-path-info|sw-scorefirst-cigar|sw-scorefirst-path-info|sw-checkpointed-cigar\n"
+      << "  --variant nw-affine-score|sw-farrar-score|sw-affine-farrar-score|sw-cigar|sw-path-info|sw-cigar-path-info|sw-scorefirst-cigar|sw-scorefirst-path-info|sw-checkpointed-cigar\n"
       << "                                      Kernel variant to run (default: nw-affine-score)\n"
       << "  --pass english|chinese           Text-like token distribution (default: english)\n"
       << "  --shape 1:1|1:many               Prepared single or prepared batch path (default: 1:1)\n"
@@ -161,12 +161,13 @@ Options parse_options(int argc, char** argv) {
     usage_error("--backend must be avx2, avx512bwvl, or parasail");
   }
   if (options.variant != "nw-affine-score" && options.variant != "sw-farrar-score" &&
+      options.variant != "sw-affine-farrar-score" &&
       options.variant != "sw-cigar" && options.variant != "sw-path-info" &&
       options.variant != "sw-cigar-path-info" &&
       options.variant != "sw-scorefirst-cigar" &&
       options.variant != "sw-scorefirst-path-info" &&
       options.variant != "sw-checkpointed-cigar") {
-    usage_error("--variant must be nw-affine-score, sw-farrar-score, sw-cigar, or sw-path-info");
+    usage_error("--variant must be nw-affine-score, sw-farrar-score, sw-affine-farrar-score, sw-cigar, or sw-path-info");
   }
   if (options.pass_name != "english" && options.pass_name != "english-short" &&
       options.pass_name != "chinese") {

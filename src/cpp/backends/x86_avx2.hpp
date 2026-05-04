@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include <nanobind/nanobind.h>
@@ -891,6 +892,77 @@ stride_align_avx2_local_sw_i32_bounded_scan_done:
   return reduce_max_i32_256(best);
 }
 
+inline Score local_affine_score_exact_fill_i32_128(
+    farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
+    std::span<const std::size_t> target_profile_offsets) {
+  if (state.query_size != 1024U || state.segment_count != 128U ||
+      target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
+      state.gap_extend_score > 0) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), std::int32_t{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), std::int32_t{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), std::int32_t{0});
+
+  const __m256i zero = _mm256_setzero_si256();
+  const __m256i gap_open = _mm256_set1_epi32(state.gap_open_score);
+  const __m256i gap_extend = _mm256_set1_epi32(state.gap_extend_score);
+  const auto lane_gap = static_cast<std::int32_t>(state.gap_extend_score * 128);
+  const __m256i lane_gap_1 = _mm256_set1_epi32(lane_gap);
+  const __m256i lane_gap_2 = _mm256_set1_epi32(lane_gap * 2);
+  const __m256i lane_gap_4 = _mm256_set1_epi32(lane_gap * 4);
+  __m256i best = zero;
+  __m256i* h_store = reinterpret_cast<__m256i*>(state.h_store.data());
+  __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
+  __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
+  const auto* profile_cells = state.profile.data();
+
+  for (const auto profile_offset : target_profile_offsets) {
+    std::swap(h_store, h_load);
+
+    __m256i v_h = shift_left_zero_256<4>(_mm256_load_si256(h_load + 127));
+    __m256i v_f = zero;
+    const __m256i* profile_row =
+        reinterpret_cast<const __m256i*>(profile_cells + profile_offset);
+
+    for (std::size_t segment = 0; segment < 128U; ++segment) {
+      const __m256i v_profile = _mm256_load_si256(profile_row + segment);
+      __m256i v_e = _mm256_load_si256(e_store + segment);
+      v_h = _mm256_add_epi32(v_h, v_profile);
+      v_h = _mm256_max_epi32(v_h, v_e);
+      v_h = _mm256_max_epi32(v_h, v_f);
+      v_h = _mm256_max_epi32(v_h, zero);
+      _mm256_store_si256(h_store + segment, v_h);
+      best = _mm256_max_epi32(best, v_h);
+
+      const __m256i v_h_open = _mm256_add_epi32(v_h, gap_open);
+      v_e = _mm256_max_epi32(_mm256_add_epi32(v_e, gap_extend), v_h_open);
+      _mm256_store_si256(e_store + segment, v_e);
+      v_f = _mm256_max_epi32(_mm256_add_epi32(v_f, gap_extend), v_h_open);
+      v_h = _mm256_load_si256(h_load + segment);
+    }
+
+    v_f = local_linear_sw_lazy_f_prefix_carry_i32_128_256(
+        v_f,
+        lane_gap_1,
+        lane_gap_2,
+        lane_gap_4,
+        zero);
+    if (_mm256_movemask_epi8(_mm256_cmpgt_epi32(v_f, zero)) != 0) {
+      for (std::size_t segment = 0; segment < 128U; ++segment) {
+        const __m256i v_h_previous = _mm256_load_si256(h_store + segment);
+        const __m256i v_h = _mm256_max_epi32(v_h_previous, v_f);
+        _mm256_store_si256(h_store + segment, v_h);
+        best = _mm256_max_epi32(best, v_h);
+        v_f = _mm256_add_epi32(v_f, gap_extend);
+      }
+    }
+  }
+
+  return reduce_max_i32_256(best);
+}
+
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP_CORRECTED
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED
@@ -1241,6 +1313,12 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static Score local_sw_score_exact_segment128_raw(
       farrar_fixed_kernel::detail::PreparedScoreState<std::int32_t>& state) {
     return local_sw_score_exact_fill_i32_128(state);
+  }
+
+  static Score local_affine_score_exact_segment128_raw(
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
+      std::span<const std::size_t> target_profile_offsets) {
+    return local_affine_score_exact_fill_i32_128(state, target_profile_offsets);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {

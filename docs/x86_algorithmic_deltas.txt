@@ -2043,3 +2043,87 @@ Current interpretation:
   need separate A/B switches by scoring mode and channel width.
 - AVX512 should stay conservative for SW Farrar width16. It wins many rows in
   the full sweep, but the explicit compact A/B result is too mixed to promote.
+
+51. Native affine SW Farrar microbench and AVX2 width32 correction, 2026-05-04
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This pass added a native microbench variant for local affine SW Farrar score:
+
+- Native variant: `--variant sw-affine-farrar-score`
+- Native backends: `avx2`, `avx512bwvl` through the stride-align kernels and
+  `parasail` through explicit `parasail_sw_striped_profile_avx2_256_*`
+  functions.
+- The batch affine score path now passes target profile offsets as a span into
+  the local score kernel instead of copying each target's offsets into
+  `batch.state.target_profile_offsets`.
+
+The AVX2 width32 local affine SW score path now has a raw exact-fill kernel for
+the common 1024-by-1024, 128-segment case. It is intentionally separate from
+the generic `affine_score_state` loop, mirroring the earlier linear SW Farrar
+exact-fill split. The raw loop uses fixed 128-segment bounds and direct
+`__m256i*` H/E/profile access.
+
+The important algorithmic change is in score-only Lazy-F correction:
+
+- The first raw attempt updated both H and E during Lazy-F correction. Pinned
+  native perf showed this was store/uop heavy and still behind parasail on
+  Chinese affine width32 `1:many`.
+- Parasail's annotated AVX2 affine SW score kernel corrects H during Lazy-F but
+  does not update E in the Lazy-F correction loop.
+- Removing E updates from the raw score-only correction preserved benchmark
+  scores and cut the hot correction-loop store/uop pressure enough to move the
+  native explicit-AVX2 comparison from a loss to a win.
+- A bounded per-segment stop condition (`F_next > H + gap_open`) was tested
+  after that, but it regressed the focused Chinese width32 `1:many` row. It was
+  rejected; the retained representation performs the no-E score-only correction
+  without a per-segment bounded branch.
+
+Focused pinned native results, Chinese affine SW Farrar width32 `1:many`,
+1024-by-1024, 8 targets per call:
+
+- Initial raw H+E correction: AVX2 about 230-243 ns/target, native parasail
+  about 190-199 ns/target.
+- Retained no-E correction: AVX2 about 180 ns/target in perf-stat runs and
+  about 186 ns/target in a short 5-sample run.
+- Native explicit AVX2 parasail comparison: about 192 ns/target in the matched
+  perf-stat run and about 205 ns/target in one 5-sample run.
+- Perf stat after the retained change: AVX2 retired about 34.6B instructions
+  and 8.7B cycles for the focused run; native parasail retired about 38.5B
+  instructions and 9.4B cycles in the matched run.
+- AVX2 still performs more L1 stores than parasail, but the excessive E-store
+  correction traffic is gone.
+
+Adjacent native checks:
+
+- Chinese affine width32 `1:1`: AVX2 about 188 ns/target, native parasail about
+  192 ns/target.
+- Chinese affine width16 `1:many`: AVX2 about 144 ns/target, native parasail
+  about 174 ns/target.
+- English affine width32 `1:many`: AVX2 about 189 ns/target, native parasail
+  about 239 ns/target.
+
+Public Python benchmark caveat:
+
+- After rebuilding the extension, the public benchmark path still shows
+  parasail ahead on Chinese affine `1:many` score-only rows, especially width32
+  (AVX2 about 1.47 ms/call for 8 targets, parasail about 1.28 ms/call in one
+  focused run).
+- The native parasail microbench uses explicit
+  `parasail_sw_striped_profile_avx2_256_*`, while the Python adapter calls
+  parasail's `sw_striped_profile_*` entrypoints. Treat native explicit-AVX2
+  parity as solved for this row, but do not treat the public parasail comparison
+  as solved until the adapter/harness discrepancy is understood.
+
+Current recommendations from this pass:
+
+- Keep the no-E score-only Lazy-F correction in AVX2 width32 affine SW.
+- Do not promote bounded per-segment affine correction; it lost in the focused
+  width32 row.
+- Add an explicit parasail native mode that can call the same `sw_striped_profile_*`
+  symbol family used by the Python adapter, so public and native comparisons
+  are apples-to-apples.
+- Next AVX2 affine work should compare explicit parasail AVX2, parasail generic
+  dispatch, and stride-align in one native harness before changing profile
+  layout or AVX512.
+- Only after that, consider porting the measured no-E score-only correction
+  idea to width16 or AVX512.

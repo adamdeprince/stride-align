@@ -1600,12 +1600,20 @@ typename Ops::vector_type trace_lazy_f_prefix_carry(
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
-Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
+Score affine_score_state_for_offsets(
+    PreparedAffineScoreState<Cell>& state,
+    std::span<const std::size_t> target_profile_offsets) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
-  if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
+  if (state.segment_count == 0 || target_profile_offsets.empty()) {
     return 0;
+  }
+  if constexpr (requires { Ops::local_affine_score_exact_segment128_raw(state, target_profile_offsets); }) {
+    if (state.query_size == 1024U && state.segment_count == 128U &&
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
+      return Ops::local_affine_score_exact_segment128_raw(state, target_profile_offsets);
+    }
   }
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
   std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
@@ -1623,7 +1631,7 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
   Cell* e_store_data = state.e_store.data();
   const Cell* profile_data = state.profile.data();
 
-  for (const auto profile_offset : state.target_profile_offsets) {
+  for (const auto profile_offset : target_profile_offsets) {
     std::swap(h_store_data, h_load_data);
 
     auto v_h = shift_left_zero<Ops, Cell>(
@@ -1689,6 +1697,15 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
   }
 
   return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
+  return affine_score_state_for_offsets<OpsTemplate, Cell>(
+      state,
+      std::span<const std::size_t>(
+          state.target_profile_offsets.data(),
+          state.target_profile_offsets.size()));
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell, bool PreserveSentinel>
@@ -5461,14 +5478,22 @@ std::vector<Score> affine_score_batch_state(PreparedAffineScoreBatchState<Cell>&
   scores.reserve(batch.target_sizes.size());
   for (std::size_t index = 0; index < batch.target_sizes.size(); ++index) {
     batch.state.target_size = batch.target_sizes[index];
-    if (index < batch.target_profile_offsets.size()) {
-      batch.state.target_profile_offsets = batch.target_profile_offsets[index];
-    } else {
-      batch.state.target_profile_offsets.clear();
-    }
     if constexpr (LocalAlignment) {
-      scores.push_back(affine_score_state<OpsTemplate, Cell>(batch.state));
+      const auto offsets =
+          index < batch.target_profile_offsets.size()
+              ? std::span<const std::size_t>(
+                    batch.target_profile_offsets[index].data(),
+                    batch.target_profile_offsets[index].size())
+              : std::span<const std::size_t>();
+      scores.push_back(affine_score_state_for_offsets<OpsTemplate, Cell>(
+          batch.state,
+          offsets));
     } else {
+      if (index < batch.target_profile_offsets.size()) {
+        batch.state.target_profile_offsets = batch.target_profile_offsets[index];
+      } else {
+        batch.state.target_profile_offsets.clear();
+      }
       scores.push_back(global_affine_score_state<OpsTemplate, Cell>(batch.state));
     }
   }

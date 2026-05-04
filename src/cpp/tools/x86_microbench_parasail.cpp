@@ -176,6 +176,47 @@ ResultPtr run_sw_profile(
   throw std::runtime_error("unsupported parasail score width");
 }
 
+ResultPtr run_sw_affine_profile(
+    const parasail_profile_t* profile,
+    const std::vector<char>& target,
+    stride_align::KernelBits bits,
+    int gap_open_penalty,
+    int gap_extend_penalty) {
+  const char* target_data = target.data();
+  const int target_length = checked_length(target.size());
+  switch (bits) {
+    case stride_align::KernelBits::bits8:
+      return ResultPtr(parasail_sw_striped_profile_avx2_256_8(
+          profile,
+          target_data,
+          target_length,
+          gap_open_penalty,
+          gap_extend_penalty));
+    case stride_align::KernelBits::bits16:
+      return ResultPtr(parasail_sw_striped_profile_avx2_256_16(
+          profile,
+          target_data,
+          target_length,
+          gap_open_penalty,
+          gap_extend_penalty));
+    case stride_align::KernelBits::bits32:
+      return ResultPtr(parasail_sw_striped_profile_avx2_256_32(
+          profile,
+          target_data,
+          target_length,
+          gap_open_penalty,
+          gap_extend_penalty));
+    case stride_align::KernelBits::bits64:
+      return ResultPtr(parasail_sw_striped_profile_avx2_256_64(
+          profile,
+          target_data,
+          target_length,
+          gap_open_penalty,
+          gap_extend_penalty));
+  }
+  throw std::runtime_error("unsupported parasail score width");
+}
+
 ResultPtr run_nw_profile(
     const parasail_profile_t* profile,
     const std::vector<char>& target,
@@ -238,8 +279,11 @@ bool supports_parasail() noexcept {
 
 RunResult run_parasail_backend(const PreparedWorkload& prepared, const Options& options) {
 #if defined(STRIDE_ALIGN_HAVE_PARASAIL_MICROBENCH)
-  if (options.variant != "sw-farrar-score" && options.variant != "nw-affine-score") {
-    throw std::runtime_error("native parasail microbench supports sw-farrar-score and nw-affine-score");
+  if (options.variant != "sw-farrar-score" &&
+      options.variant != "sw-affine-farrar-score" &&
+      options.variant != "nw-affine-score") {
+    throw std::runtime_error(
+        "native parasail microbench supports sw-farrar-score, sw-affine-farrar-score, and nw-affine-score");
   }
   if (options.gap_open_score >= 0 || options.gap_extend_score >= 0) {
     throw std::runtime_error("parasail native microbench expects non-positive gap scores");
@@ -267,6 +311,14 @@ RunResult run_parasail_backend(const PreparedWorkload& prepared, const Options& 
           profile.get(),
           target,
           prepared.batch.score_bits,
+          static_cast<int>(-options.gap_extend_score)));
+    }
+    if (options.variant == "sw-affine-farrar-score") {
+      return result_score(run_sw_affine_profile(
+          profile.get(),
+          target,
+          prepared.batch.score_bits,
+          static_cast<int>(-options.gap_open_score),
           static_cast<int>(-options.gap_extend_score)));
     }
     return result_score(run_nw_profile(
