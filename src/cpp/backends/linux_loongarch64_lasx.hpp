@@ -133,35 +133,6 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return detail::shift_left_insert<1>(vector, set1(inserted));
   }
 
-  static vector_type local_lazy_f_prefix_carry(
-      vector_type final_f,
-      std::size_t segment_count,
-      std::int8_t gap_score) {
-    const auto span_gap = static_cast<std::int8_t>(
-        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
-    const auto zero_vector = zero();
-    auto prefix = max(final_f, zero_vector);
-    auto shifted = add(detail::shift_left_insert<1>(prefix, zero_vector), set1(span_gap));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<2>(prefix, zero_vector),
-        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 2)));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<4>(prefix, zero_vector),
-        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 4)));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<8>(prefix, zero_vector),
-        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 8)));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<16>(prefix, zero_vector),
-        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 16)));
-    prefix = max(prefix, shifted);
-    return detail::shift_left_insert<1>(max(prefix, zero_vector), zero_vector);
-  }
-
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return trace_mask_gt(lhs, rhs) != 0;
   }
@@ -255,31 +226,6 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return detail::shift_left_insert<2>(vector, set1(inserted));
   }
 
-  static vector_type local_lazy_f_prefix_carry(
-      vector_type final_f,
-      std::size_t segment_count,
-      std::int16_t gap_score) {
-    const auto span_gap = static_cast<std::int16_t>(
-        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
-    const auto zero_vector = zero();
-    auto prefix = max(final_f, zero_vector);
-    auto shifted = add(detail::shift_left_insert<2>(prefix, zero_vector), set1(span_gap));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<4>(prefix, zero_vector),
-        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 2)));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<8>(prefix, zero_vector),
-        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 4)));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<16>(prefix, zero_vector),
-        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 8)));
-    prefix = max(prefix, shifted);
-    return detail::shift_left_insert<2>(max(prefix, zero_vector), zero_vector);
-  }
-
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return trace_mask_gt(lhs, rhs) != 0;
   }
@@ -371,27 +317,6 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static vector_type shift_left_insert(vector_type vector, std::int32_t inserted) {
     return detail::shift_left_insert<4>(vector, set1(inserted));
-  }
-
-  static vector_type local_lazy_f_prefix_carry(
-      vector_type final_f,
-      std::size_t segment_count,
-      std::int32_t gap_score) {
-    const auto span_gap = static_cast<std::int32_t>(
-        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
-    const auto zero_vector = zero();
-    auto prefix = max(final_f, zero_vector);
-    auto shifted = add(detail::shift_left_insert<4>(prefix, zero_vector), set1(span_gap));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<8>(prefix, zero_vector),
-        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 2)));
-    prefix = max(prefix, shifted);
-    shifted = add(
-        detail::shift_left_insert<16>(prefix, zero_vector),
-        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 4)));
-    prefix = max(prefix, shifted);
-    return detail::shift_left_insert<4>(max(prefix, zero_vector), zero_vector);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
