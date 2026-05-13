@@ -578,6 +578,27 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto output_prepared =
+          prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto trace =
+          farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar_trace<
+              SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+      farrar_fixed_kernel::detail::LinearTracebackResult path;
+      path.score = trace.score;
+      path.query_start = trace.query_start;
+      path.query_end = trace.query_end;
+      path.target_start = trace.target_start;
+      path.target_end = trace.target_end;
+      path.operations = expand_cigar(trace.cigar);
+      return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
+    }
     return profile_traceback::linear_path<true>(
         query,
         target,
@@ -594,7 +615,42 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar_path_info<
+          SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
     return profile_traceback::linear_path_info<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static std::string smith_waterman_linear_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      return farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar<SimdOps>(
+          prepared,
+          match_score,
+          mismatch_score,
+          gap_score);
+    }
+    return profile_traceback::linear_cigar<true>(
         query,
         target,
         match_score,
