@@ -14,6 +14,7 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" STRIDE_ALIGN_SYSTEM_PROCESSOR)
 
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
   set(CMAKE_CXX_FLAGS_${config} "-O3")
@@ -24,6 +25,15 @@ include(CheckIPOSupported)
 
 option(STRIDE_ALIGN_ENABLE_LTO "Enable interprocedural/link-time optimization" OFF)
 option(STRIDE_ALIGN_BUILD_MICROBENCH "Build native C++ profiling microbenchmarks" OFF)
+set(STRIDE_ALIGN_STATIC_CXX_RUNTIME_DEFAULT OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "^loongarch64$")
+  set(STRIDE_ALIGN_STATIC_CXX_RUNTIME_DEFAULT ON)
+endif()
+option(
+  STRIDE_ALIGN_STATIC_CXX_RUNTIME
+  "Statically link the C++ runtime into Python extension modules"
+  ${STRIDE_ALIGN_STATIC_CXX_RUNTIME_DEFAULT}
+)
 option(
   STRIDE_ALIGN_PERF_SYMBOLS
   "Build with debug symbols, frame pointers, and unstripped nanobind modules for perf"
@@ -135,6 +145,20 @@ function(configure_stride_align_target target_name)
     target_compile_options(${target_name} PRIVATE /O2 /W4)
   endif()
 
+  if(STRIDE_ALIGN_STATIC_CXX_RUNTIME)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      target_link_options(${target_name} PRIVATE -static-libstdc++ -static-libgcc)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      target_link_options(${target_name} PRIVATE -static-libstdc++)
+    else()
+      message(
+        WARNING
+        "STRIDE_ALIGN_STATIC_CXX_RUNTIME is enabled but no static C++ runtime flags "
+        "are configured for ${CMAKE_CXX_COMPILER_ID}"
+      )
+    endif()
+  endif()
+
   if(STRIDE_ALIGN_PERF_SYMBOLS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
       target_compile_options(
@@ -166,7 +190,6 @@ function(add_stride_align_backend module_name backend_source)
 endfunction()
 
 set(STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_GENERIC=1)
-string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" STRIDE_ALIGN_SYSTEM_PROCESSOR)
 
 nanobind_add_module(
   _cpu
