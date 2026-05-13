@@ -3167,6 +3167,16 @@ Score score_state(PreparedScoreState<Cell>& state) {
         }
       }
     }
+    if constexpr (requires { Ops::local_sw_score_exact_segment256; }) {
+      if constexpr (Ops::local_sw_score_exact_segment256) {
+        if (state.segment_count == 256U) {
+          if constexpr (requires { Ops::local_sw_score_exact_segment256_raw(state); }) {
+            return Ops::local_sw_score_exact_segment256_raw(state);
+          }
+          return score_state_exact_fill_local_sw<Ops, Cell, 256U>(state);
+        }
+      }
+    }
   }
 
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});

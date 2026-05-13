@@ -150,6 +150,8 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 8;
   static constexpr bool has_vector_max = true;
+  static constexpr bool local_sw_score_exact_segment128 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static uint16x8_t load_tokens(const std::uint16_t* values) {
     return vld1q_u16(values);
@@ -226,6 +228,35 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return shift_left_insert(prefix, low_score);
   }
 
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int16_t gap_score) {
+    const auto span_gap = static_cast<std::int16_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    const auto shift_prefix = [](vector_type value, int lanes) {
+      for (int lane = 0; lane < lanes; ++lane) {
+        value = shift_left_insert(value, 0);
+      }
+      return value;
+    };
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(
+        shift_prefix(prefix, 1),
+        set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_prefix(prefix, 2),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_prefix(prefix, 4),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 4)));
+    prefix = max(prefix, shifted);
+    return shift_left_insert(max(prefix, zero_vector), 0);
+  }
+
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return any_mask(vcgtq_s16(lhs, rhs));
   }
@@ -275,6 +306,8 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 4;
   static constexpr bool has_vector_max = true;
+  static constexpr bool local_sw_score_exact_segment256 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static uint32x4_t load_tokens(const std::uint32_t* values) {
     return vld1q_u32(values);
@@ -344,6 +377,31 @@ struct SimdOps<std::uint32_t, std::int32_t> {
         low_score);
     prefix = max(prefix, shifted);
     return shift_left_insert(prefix, low_score);
+  }
+
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int32_t gap_score) {
+    const auto span_gap = static_cast<std::int32_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    const auto shift_prefix = [](vector_type value, int lanes) {
+      for (int lane = 0; lane < lanes; ++lane) {
+        value = shift_left_insert(value, 0);
+      }
+      return value;
+    };
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(
+        shift_prefix(prefix, 1),
+        set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_prefix(prefix, 2),
+        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    return shift_left_insert(max(prefix, zero_vector), 0);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
