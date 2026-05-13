@@ -1104,9 +1104,15 @@ class _ParasailBenchmarkBackend:
                 f"parasail does not expose a prepared profile function for {variant} "
                 f"width {width}"
             )
+        profile = profile_create(query_text, matrix)
+        profile_pointer = getattr(profile, "pointer", None)
+        if profile_pointer is not None and not bool(profile_pointer):
+            raise BenchmarkError(
+                f"parasail prepared profile creation returned NULL for {variant} width {width}"
+            )
         return (
             profile_function,
-            profile_create(query_text, matrix),
+            profile,
             target_text,
             -gap_open,
             -gap_extend,
@@ -1148,9 +1154,15 @@ class _ParasailBenchmarkBackend:
                 f"parasail does not expose a prepared profile function for {variant} "
                 f"width {width}"
             )
+        profile = profile_create(query_text, matrix)
+        profile_pointer = getattr(profile, "pointer", None)
+        if profile_pointer is not None and not bool(profile_pointer):
+            raise BenchmarkError(
+                f"parasail prepared profile creation returned NULL for {variant} width {width}"
+            )
         return (
             profile_function,
-            profile_create(query_text, matrix),
+            profile,
             target_texts,
             -gap_open,
             -gap_extend,
@@ -1736,22 +1748,27 @@ def _time_backend(
         if prepared_names is not None:
             prepare_name, prepared_score_name = prepared_names
             if hasattr(backend.module, prepare_name) and hasattr(backend.module, prepared_score_name):
-                prepared = getattr(backend.module, prepare_name)(
-                    query,
-                    targets,
-                    match_score=match_score,
-                    mismatch_score=mismatch_score,
-                    gap_score=linear_gap_score,
-                    width=width,
-                    **extra_gap_kwargs,
-                )
-                score_prepared = getattr(backend.module, prepared_score_name)
-                prepared_score_batch = True
+                try:
+                    prepared = getattr(backend.module, prepare_name)(
+                        query,
+                        targets,
+                        match_score=match_score,
+                        mismatch_score=mismatch_score,
+                        gap_score=linear_gap_score,
+                        width=width,
+                        **extra_gap_kwargs,
+                    )
+                except BenchmarkError:
+                    if backend.name != "parasail":
+                        raise
+                else:
+                    score_prepared = getattr(backend.module, prepared_score_name)
+                    prepared_score_batch = True
 
-                def run_once() -> Any:
-                    return score_prepared(prepared)
+                    def run_once() -> Any:
+                        return score_prepared(prepared)
 
-            else:
+            if not prepared_score_batch:
 
                 def run_once() -> Any:
                     return function(
@@ -1778,23 +1795,30 @@ def _time_backend(
                 )
 
     elif prepared_names is not None:
+        prepared_score_single = False
         prepare_name, prepared_score_name = prepared_names
         if hasattr(backend.module, prepare_name) and hasattr(backend.module, prepared_score_name):
-            prepared = getattr(backend.module, prepare_name)(
-                query,
-                targets[0],
-                match_score=match_score,
-                mismatch_score=mismatch_score,
-                gap_score=linear_gap_score,
-                width=width,
-                **extra_gap_kwargs,
-            )
-            score_prepared = getattr(backend.module, prepared_score_name)
+            try:
+                prepared = getattr(backend.module, prepare_name)(
+                    query,
+                    targets[0],
+                    match_score=match_score,
+                    mismatch_score=mismatch_score,
+                    gap_score=linear_gap_score,
+                    width=width,
+                    **extra_gap_kwargs,
+                )
+            except BenchmarkError:
+                if backend.name != "parasail":
+                    raise
+            else:
+                score_prepared = getattr(backend.module, prepared_score_name)
+                prepared_score_single = True
 
-            def run_once() -> Any:
-                return score_prepared(prepared)
+                def run_once() -> Any:
+                    return score_prepared(prepared)
 
-        else:
+        if not prepared_score_single:
 
             def run_once() -> Any:
                 return function(
