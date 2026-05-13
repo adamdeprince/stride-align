@@ -36,6 +36,17 @@ inline bool any_mask(uint64x2_t mask) {
   return (vgetq_lane_u64(mask, 0) | vgetq_lane_u64(mask, 1)) != 0;
 }
 
+template <typename Lane, std::size_t LaneCount>
+inline std::uint64_t trace_lane_mask(const Lane (&values)[LaneCount]) noexcept {
+  std::uint64_t mask = 0;
+  for (std::size_t lane = 0; lane < LaneCount; ++lane) {
+    if (values[lane] != 0) {
+      mask |= std::uint64_t{1} << lane;
+    }
+  }
+  return mask;
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -85,6 +96,18 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static mask_type greater_mask(vector_type lhs, vector_type rhs) {
     return vcgtq_s8(lhs, rhs);
+  }
+
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint8_t lanes[lane_count];
+    vst1q_u8(lanes, vcgtq_s8(lhs, rhs));
+    return trace_lane_mask(lanes);
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint8_t lanes[lane_count];
+    vst1q_u8(lanes, vceqq_s8(lhs, rhs));
+    return trace_lane_mask(lanes);
   }
 
   static mask_type empty_mask() {
@@ -157,6 +180,18 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return vcgtq_s16(lhs, rhs);
   }
 
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint16_t lanes[lane_count];
+    vst1q_u16(lanes, vcgtq_s16(lhs, rhs));
+    return trace_lane_mask(lanes);
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint16_t lanes[lane_count];
+    vst1q_u16(lanes, vceqq_s16(lhs, rhs));
+    return trace_lane_mask(lanes);
+  }
+
   static mask_type empty_mask() {
     return vdupq_n_u16(0);
   }
@@ -225,6 +260,18 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static mask_type greater_mask(vector_type lhs, vector_type rhs) {
     return vcgtq_s32(lhs, rhs);
+  }
+
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint32_t lanes[lane_count];
+    vst1q_u32(lanes, vcgtq_s32(lhs, rhs));
+    return trace_lane_mask(lanes);
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint32_t lanes[lane_count];
+    vst1q_u32(lanes, vceqq_s32(lhs, rhs));
+    return trace_lane_mask(lanes);
   }
 
   static mask_type empty_mask() {
@@ -296,6 +343,18 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static mask_type greater_mask(vector_type lhs, vector_type rhs) {
     return vcgtq_s64(lhs, rhs);
+  }
+
+  static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint64_t lanes[lane_count];
+    vst1q_u64(lanes, vcgtq_s64(lhs, rhs));
+    return trace_lane_mask(lanes);
+  }
+
+  static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
+    alignas(alignment) std::uint64_t lanes[lane_count];
+    vst1q_u64(lanes, vceqq_s64(lhs, rhs));
+    return trace_lane_mask(lanes);
   }
 
   static mask_type empty_mask() {
