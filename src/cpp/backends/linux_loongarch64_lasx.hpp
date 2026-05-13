@@ -67,8 +67,8 @@ __m256i shift_left_zero(__m256i vector) {
 template <int ByteCount>
 __m256i shift_left_insert(__m256i vector, __m256i inserted) {
   return __lasx_xvbitsel_v(
-      inserted,
       shift_left_zero<ByteCount>(vector),
+      inserted,
       first_bytes_mask<ByteCount>());
 }
 
@@ -116,7 +116,7 @@ struct SimdOps<std::uint8_t, std::int8_t> {
   static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int8_t sentinel) {
     const vector_type sum = add(lhs, rhs);
     const vector_type mask = __lasx_xvseq_b(lhs, set1(sentinel));
-    return __lasx_xvbitsel_v(set1(sentinel), sum, mask);
+    return __lasx_xvbitsel_v(sum, set1(sentinel), mask);
   }
 
   static vector_type max(vector_type lhs, vector_type rhs) {
@@ -161,7 +161,7 @@ struct SimdOps<std::uint8_t, std::int8_t> {
       std::int8_t match_score,
       std::int8_t mismatch_score) {
     const vector_type mask = __lasx_xvseq_b(load_tokens(query), load_tokens(target));
-    return __lasx_xvbitsel_v(set1(match_score), set1(mismatch_score), mask);
+    return __lasx_xvbitsel_v(set1(mismatch_score), set1(match_score), mask);
   }
 };
 
@@ -207,7 +207,7 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int16_t sentinel) {
     const vector_type sum = add(lhs, rhs);
     const vector_type mask = __lasx_xvseq_h(lhs, set1(sentinel));
-    return __lasx_xvbitsel_v(set1(sentinel), sum, mask);
+    return __lasx_xvbitsel_v(sum, set1(sentinel), mask);
   }
 
   static vector_type max(vector_type lhs, vector_type rhs) {
@@ -252,7 +252,7 @@ struct SimdOps<std::uint16_t, std::int16_t> {
       std::int16_t match_score,
       std::int16_t mismatch_score) {
     const vector_type mask = __lasx_xvseq_h(load_tokens(query), load_tokens(target));
-    return __lasx_xvbitsel_v(set1(match_score), set1(mismatch_score), mask);
+    return __lasx_xvbitsel_v(set1(mismatch_score), set1(match_score), mask);
   }
 };
 
@@ -298,7 +298,7 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int32_t sentinel) {
     const vector_type sum = add(lhs, rhs);
     const vector_type mask = __lasx_xvseq_w(lhs, set1(sentinel));
-    return __lasx_xvbitsel_v(set1(sentinel), sum, mask);
+    return __lasx_xvbitsel_v(sum, set1(sentinel), mask);
   }
 
   static vector_type max(vector_type lhs, vector_type rhs) {
@@ -343,7 +343,7 @@ struct SimdOps<std::uint32_t, std::int32_t> {
       std::int32_t match_score,
       std::int32_t mismatch_score) {
     const vector_type mask = __lasx_xvseq_w(load_tokens(query), load_tokens(target));
-    return __lasx_xvbitsel_v(set1(match_score), set1(mismatch_score), mask);
+    return __lasx_xvbitsel_v(set1(mismatch_score), set1(match_score), mask);
   }
 };
 
@@ -389,7 +389,7 @@ struct SimdOps<std::uint64_t, std::int64_t> {
   static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int64_t sentinel) {
     const vector_type sum = add(lhs, rhs);
     const vector_type mask = __lasx_xvseq_d(lhs, set1(sentinel));
-    return __lasx_xvbitsel_v(set1(sentinel), sum, mask);
+    return __lasx_xvbitsel_v(sum, set1(sentinel), mask);
   }
 
   static vector_type max(vector_type lhs, vector_type rhs) {
@@ -434,7 +434,7 @@ struct SimdOps<std::uint64_t, std::int64_t> {
       std::int64_t match_score,
       std::int64_t mismatch_score) {
     const vector_type mask = __lasx_xvseq_d(load_tokens(query), load_tokens(target));
-    return __lasx_xvbitsel_v(set1(match_score), set1(mismatch_score), mask);
+    return __lasx_xvbitsel_v(set1(mismatch_score), set1(match_score), mask);
   }
 };
 
