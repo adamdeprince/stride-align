@@ -12,6 +12,8 @@ Raw artifacts:
 | --- | --- |
 | [`macos-arm64-neon-focused-2026-05-14.csv`](macos-arm64-neon-focused-2026-05-14.csv) | Focused `generic`, `macos_arm64_neon`, and `parasail` rows for `sw-path-info`, `sw-cigar`, `nw-score`, and `sw-farrar-score`, including `1:1` and `1:many`. |
 | [`macos-arm64-neon-microbench-2026-05-14.txt`](macos-arm64-neon-microbench-2026-05-14.txt) | Native NEON microbench rows for affine SW CIGAR/path-info, affine NW score, and SW Farrar score. |
+| [`macos-arm64-neon-sw-farrar-parasail-study-2026-05-14.csv`](macos-arm64-neon-sw-farrar-parasail-study-2026-05-14.csv) | Focused run after adding exact-fill linear SW Farrar NEON score paths. |
+| [`macos-arm64-neon-linear-trace-onepass-parasail-study-2026-05-14.csv`](macos-arm64-neon-linear-trace-onepass-parasail-study-2026-05-14.csv) | Negative-control run for one-pass striped linear SW trace routing. This lost and was reverted. |
 | [`macos-arm64-neon-nw-affine-primitives-2026-05-14.csv`](macos-arm64-neon-nw-affine-primitives-2026-05-14.csv) | Narrow affine `nw-score` run after adding NEON vector primitives. |
 | [`macos-arm64-neon-nw-affine-fastpaths-2026-05-14.csv`](macos-arm64-neon-nw-affine-fastpaths-2026-05-14.csv) | Negative-control run: dense/plain global-affine fast-path flags enabled for NEON. This lost and should stay disabled. |
 
@@ -47,6 +49,19 @@ narrow `macos-arm64-neon-nw-affine-fastpaths-2026-05-14.csv` run dropped affine
 `nw-score` to about `0.30x` parasail geomean. Keep those flags disabled for
 NEON unless the loop structure is redesigned.
 
+The Parasail-inspired exact-fill linear SW Farrar score path was a real win.
+For linear `sw-farrar-score`, the new run is `1.45x` faster than the previous
+NEON focused sweep geomean. Width32 is now effectively at parasail parity for
+English/Chinese `1:1` rows (`0.999x` parasail) and close for `1:many`
+(`0.968x` English, `0.925x` Chinese). Width16 remains behind parasail
+(`0.77x` to `0.87x`).
+
+The shared striped masked trace route was tested and reverted. The one-pass
+variant reached only `0.35x` parasail geomean and `0.45x` of the previous NEON
+trace/CIGAR baseline. The loss means the existing shared masked-trace
+representation is too expensive for mac NEON; do not re-enable it without a
+NEON-specific trace representation or decode redesign.
+
 ## Worst Rows
 
 | Ratio | Pass | Case | Shape | Variant | Width |
@@ -60,10 +75,11 @@ NEON unless the loop structure is redesigned.
 
 ## Recommendations
 
-1. Target linear SW trace/CIGAR width16 next. It is now the worst macOS NEON row, and the loss is trace/output path specific rather than affine score DP.
-2. Work on `sw-farrar-score` width16 before width32. Width16 loses in both `1:1` and `1:many`, and native microbench shows the kernel is otherwise stable enough to profile.
-3. For affine `nw-score`, do not re-enable dense/plain global-affine flags. The next attempt should be a NEON-specific loop redesign, not the x86-oriented shared flag path.
-4. Add a native parasail comparison path for the arm64 microbench if we need instruction-level parity work. The current native harness measures NEON only.
-5. Keep the public affine SW CIGAR/path-info route separate from the striped path materialization benchmark. The public path is competitive; the native striped traceback rows are intentionally slower and diagnostic.
-6. Profile with Apple Instruments or `sample` before micro-optimizing NEON. Current losses are broad enough that guessing between profile loads, trace traffic, and lazy-F propagation is not useful.
-7. Continue treating SWAR as a reference backend on macOS; it is not a performance target.
+1. Keep the exact-fill linear SW Farrar score path enabled; it is the only Parasail-derived mac NEON change from this pass that measured well.
+2. Target `sw-farrar-score` width16 next. Width32 is close enough to parasail that width16 is now the clearer score-only gap.
+3. Do not route linear SW path/CIGAR through the shared masked trace helpers on NEON. A viable trace attempt needs a NEON-specific packed trace layout or cheaper decode/output path.
+4. For affine `nw-score`, do not re-enable dense/plain global-affine flags. The next attempt should be a NEON-specific loop redesign, not the x86-oriented shared flag path.
+5. Add a native parasail comparison path for the arm64 microbench if we need instruction-level parity work. The current native harness measures NEON only.
+6. Keep the public affine SW CIGAR/path-info route separate from the striped path materialization benchmark. The public path is competitive; the native striped traceback rows are intentionally slower and diagnostic.
+7. Profile with Apple Instruments or `sample` before micro-optimizing NEON. Current losses are broad enough that guessing between profile loads, trace traffic, and lazy-F propagation is not useful.
+8. Continue treating SWAR as a reference backend on macOS; it is not a performance target.
