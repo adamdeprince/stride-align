@@ -266,6 +266,10 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "^loongarch64$")
   add_stride_align_backend(_lsx src/cpp/backends/linux_loongarch64_lsx.cpp)
   add_stride_align_backend(_lasx src/cpp/backends/linux_loongarch64_lasx.cpp)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(_lsx PRIVATE -mlsx)
+    target_compile_options(_lasx PRIVATE -mlsx -mlasx)
+  endif()
   list(
     APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS
     STRIDE_ALIGN_HAVE_LINUX_LOONGARCH64_LSX=1
