@@ -375,6 +375,10 @@ typename Ops::vector_type shift_left_insert(
 
 template <typename Ops, typename Cell>
 typename Ops::vector_type first_lane_vector(Cell first, Cell rest) {
+  if constexpr (requires { Ops::shift_left_insert(Ops::set1(rest), first); }) {
+    return Ops::shift_left_insert(Ops::set1(rest), first);
+  }
+
   alignas(Ops::alignment) Cell values[Ops::lane_count] = {};
   std::fill(values, values + Ops::lane_count, rest);
   values[0] = first;
