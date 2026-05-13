@@ -372,29 +372,52 @@ inline nb::object make_bytes_output(
   return nb::bytes(output.data(), output.size());
 }
 
+inline void append_utf8(std::string& output, Py_UCS4 codepoint) {
+  if (codepoint <= 0x7fU) {
+    output.push_back(static_cast<char>(codepoint));
+    return;
+  }
+
+  if (codepoint <= 0x7ffU) {
+    output.push_back(static_cast<char>(0xc0U | (codepoint >> 6U)));
+    output.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    return;
+  }
+
+  if (codepoint <= 0xffffU) {
+    output.push_back(static_cast<char>(0xe0U | (codepoint >> 12U)));
+    output.push_back(static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3fU)));
+    output.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    return;
+  }
+
+  output.push_back(static_cast<char>(0xf0U | (codepoint >> 18U)));
+  output.push_back(static_cast<char>(0x80U | ((codepoint >> 12U) & 0x3fU)));
+  output.push_back(static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3fU)));
+  output.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+}
+
 inline nb::object make_unicode_output(
     std::span<const std::uint64_t> symbols,
     std::size_t start_index,
     std::string_view operations,
     char gap_operation) {
-  std::vector<Py_UCS4> codepoints;
-  codepoints.reserve(operations.size());
+  std::string output;
+  output.reserve(operations.size());
 
   std::size_t index = start_index;
   for (const char operation : operations) {
     if (operation == gap_operation) {
-      codepoints.push_back(static_cast<Py_UCS4>('-'));
+      output.push_back('-');
       continue;
     }
 
-    codepoints.push_back(static_cast<Py_UCS4>(symbols[index]));
+    append_utf8(output, static_cast<Py_UCS4>(symbols[index]));
     ++index;
   }
 
-  return detail::checked_steal(PyUnicode_FromKindAndData(
-      PyUnicode_4BYTE_KIND,
-      codepoints.empty() ? nullptr : codepoints.data(),
-      static_cast<Py_ssize_t>(codepoints.size())));
+  return detail::checked_steal(
+      PyUnicode_FromStringAndSize(output.data(), static_cast<Py_ssize_t>(output.size())));
 }
 
 inline nb::object make_sequence_output(

@@ -216,49 +216,49 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
       return static_cast<Score>(best_score);
     }
     return static_cast<Score>(final_score);
-  }
-
-  if constexpr (!LocalAlignment) {
-    best_row = query.size();
-    best_column = target.size();
-    best_score = final_score;
-  }
-
-  TracebackResult result;
-  result.score = static_cast<Score>(best_score);
-  result.query_end = best_row;
-  result.target_end = best_column;
-
-  std::size_t row = best_row;
-  std::size_t column = best_column;
-
-  while (row > 0 || column > 0) {
-    const TraceDirection direction = directions[direction_index(row, column)];
-    if (direction == TraceDirection::stop) {
-      break;
+  } else {
+    if constexpr (!LocalAlignment) {
+      best_row = query.size();
+      best_column = target.size();
+      best_score = final_score;
     }
 
-    if (direction == TraceDirection::diagonal) {
-      result.operations.push_back(query[row - 1] == target[column - 1] ? 'M' : 'X');
-      --row;
+    TracebackResult result;
+    result.score = static_cast<Score>(best_score);
+    result.query_end = best_row;
+    result.target_end = best_column;
+
+    std::size_t row = best_row;
+    std::size_t column = best_column;
+
+    while (row > 0 || column > 0) {
+      const TraceDirection direction = directions[direction_index(row, column)];
+      if (direction == TraceDirection::stop) {
+        break;
+      }
+
+      if (direction == TraceDirection::diagonal) {
+        result.operations.push_back(query[row - 1] == target[column - 1] ? 'M' : 'X');
+        --row;
+        --column;
+        continue;
+      }
+
+      if (direction == TraceDirection::up) {
+        result.operations.push_back('D');
+        --row;
+        continue;
+      }
+
+      result.operations.push_back('I');
       --column;
-      continue;
     }
 
-    if (direction == TraceDirection::up) {
-      result.operations.push_back('D');
-      --row;
-      continue;
-    }
-
-    result.operations.push_back('I');
-    --column;
+    std::reverse(result.operations.begin(), result.operations.end());
+    result.query_start = row;
+    result.target_start = column;
+    return result;
   }
-
-  std::reverse(result.operations.begin(), result.operations.end());
-  result.query_start = row;
-  result.target_start = column;
-  return result;
 }
 
 template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
