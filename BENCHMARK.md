@@ -182,7 +182,7 @@ Recommended Loongson next steps:
 4. Add a native Loongson microbench/perf entrypoint before micro-optimizing LSX/LASX loops.
 5. Treat parasail as a generic LoongArch comparison unless a maintained LSX/LASX parasail build becomes available.
 
-## macOS Arm64 NEON - 2026-05-13
+## macOS Arm64 NEON - 2026-05-14
 
 Raw macOS arm64 artifacts are separate from `benchmark.csv`:
 
@@ -192,6 +192,9 @@ Raw macOS arm64 artifacts are separate from `benchmark.csv`:
 | [`benchmarks/macos-arm64-neon-score-parasail-2026-05-13.csv`](benchmarks/macos-arm64-neon-score-parasail-2026-05-13.csv) | Score rows including locally installed parasail. |
 | [`benchmarks/macos-arm64-neon-path-parasail-2026-05-13.csv`](benchmarks/macos-arm64-neon-path-parasail-2026-05-13.csv) | Path/CIGAR timing-split rows including locally installed parasail. |
 | [`benchmarks/macos-arm64-neon-2026-05-13.md`](benchmarks/macos-arm64-neon-2026-05-13.md) | macOS arm64-specific notes and recommendations. |
+| [`benchmarks/macos-arm64-neon-focused-2026-05-14.csv`](benchmarks/macos-arm64-neon-focused-2026-05-14.csv) | Focused post-optimization comparison against parasail. |
+| [`benchmarks/macos-arm64-neon-microbench-2026-05-14.txt`](benchmarks/macos-arm64-neon-microbench-2026-05-14.txt) | Native NEON microbench rows. |
+| [`benchmarks/macos-arm64-neon-2026-05-14.md`](benchmarks/macos-arm64-neon-2026-05-14.md) | Updated macOS arm64 notes and recommendations. |
 
 Build context: `wopr`, macOS 15.3.1 arm64, Python 3.13 from Homebrew, Apple
 clang 17. Parasail was installed locally as `parasail==1.3.4`; the bundled
@@ -206,32 +209,33 @@ macOS arm64 native score-only takeaways:
 | `macos_arm64_neon` | 48 | 44 | 2.40x | 2.65x |
 | `swar` | 48 | 5 | 0.64x | 0.65x |
 
-Against locally installed parasail:
+Current focused comparison against locally installed parasail:
 
-| Backend | Comparable Rows | Wins | Geomean vs Parasail | Median vs Parasail |
+| Group | Rows | Wins vs Parasail | Geomean vs Parasail | Median Ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `macos_arm64_neon` | 80 | 10 | 0.72x | 0.75x |
-
-By group for `macos_arm64_neon`:
-
-| Group | Rows | Wins vs Parasail | Geomean vs Parasail | Median vs Parasail |
-| --- | ---: | ---: | ---: | ---: |
-| Score-only | 48 | 0 | 0.71x | 0.75x |
-| Path/CIGAR | 32 | 10 | 0.75x | 0.79x |
+| Focused sweep | 48 | 3 | 0.720x | 0.714x |
+| Score-only | 32 | 0 | 0.683x | 0.684x |
+| Path/CIGAR | 16 | 3 | 0.801x | 0.821x |
+| Affine `nw-score` | 8 | 0 | 0.647x | 0.667x |
+| Affine SW path/CIGAR | 8 | 1 | 0.838x | 0.904x |
+| `sw-farrar-score` | 16 | 0 | 0.673x | 0.663x |
 
 Main macOS arm64 takeaways:
 
-NEON is a real improvement over generic score-only code, but it is not yet
-parasail-competitive. It loses every score-only row to parasail in this sweep.
+NEON is a real improvement over generic score-only code, but it is still not
+parasail-competitive overall. The focused 2026-05-14 sweep is `0.720x`
+parasail geomean across 48 comparable rows.
 
-The worst NEON rows are affine SW traceback: Chinese affine `sw-path-info`
-width16 is `0.21x` parasail, English affine `sw-path-info` width16 is `0.27x`,
-and Chinese affine `sw-cigar` width16 is `0.29x`.
+Affine SW path/CIGAR improved materially and is no longer the worst macOS NEON
+area. Affine global `nw-score` improved about `1.27x` geomean over the
+2026-05-13 parasail sweep after adding NEON vector primitives, but still loses
+all parasail comparisons. The attempted dense/plain global-affine fast-path
+flags were measured separately and lost; keep them disabled for NEON.
 
 Recommended macOS arm64 next steps:
 
-1. Target affine SW traceback first, especially width16 `sw-path-info` and `sw-cigar`.
-2. Add a native mac arm64 microbench path before doing instruction scheduling.
-3. Measure `sw-farrar-score` width16/width32 profile layout and lazy-F behavior with Apple profiling tools.
-4. Improve affine/global `nw-score` separately; current NEON loses every `nw-score` parasail comparison.
+1. Target linear SW trace/CIGAR width16 next; it is now the worst macOS NEON row.
+2. Work on `sw-farrar-score` width16 before width32.
+3. Redesign affine `nw-score` with a NEON-specific loop if we revisit it; do not reuse the x86-oriented dense/plain flags.
+4. Add a native parasail comparison mode to the arm64 microbench before instruction-level parity work.
 5. Keep SWAR out of the mac performance path except as a correctness/reference backend.
