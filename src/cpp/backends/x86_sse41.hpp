@@ -57,6 +57,8 @@ struct SimdOps<std::uint8_t, std::int8_t> {
   using vector_type = __m128i;
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 16;
+  static constexpr bool local_sw_score_exact_segment64 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static __m128i load_tokens(const std::uint8_t* values) {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
@@ -108,6 +110,31 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return shift_left_insert_128<1>(vector, set1(inserted));
   }
 
+  static __m128i local_lazy_f_prefix_carry(
+      __m128i final_f,
+      std::size_t segment_count,
+      std::int8_t gap_score) {
+    const auto span_gap = static_cast<std::int8_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(shift_left_insert_128<1>(prefix, zero_vector), set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_left_insert_128<2>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_left_insert_128<4>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 4)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_left_insert_128<8>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 8)));
+    prefix = max(prefix, shifted);
+    return shift_left_insert_128<1>(max(prefix, zero_vector), zero_vector);
+  }
+
   static bool any_gt(__m128i lhs, __m128i rhs) {
     return _mm_movemask_epi8(_mm_cmpgt_epi8(lhs, rhs)) != 0;
   }
@@ -139,6 +166,8 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   using vector_type = __m128i;
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 8;
+  static constexpr bool local_sw_score_exact_segment128 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static __m128i load_tokens(const std::uint16_t* values) {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
@@ -190,6 +219,27 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return shift_left_insert_128<2>(vector, set1(inserted));
   }
 
+  static __m128i local_lazy_f_prefix_carry(
+      __m128i final_f,
+      std::size_t segment_count,
+      std::int16_t gap_score) {
+    const auto span_gap = static_cast<std::int16_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(shift_left_insert_128<2>(prefix, zero_vector), set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_left_insert_128<4>(prefix, zero_vector),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_left_insert_128<8>(prefix, zero_vector),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 4)));
+    prefix = max(prefix, shifted);
+    return shift_left_insert_128<2>(max(prefix, zero_vector), zero_vector);
+  }
+
   static bool any_gt(__m128i lhs, __m128i rhs) {
     return _mm_movemask_epi8(_mm_cmpgt_epi16(lhs, rhs)) != 0;
   }
@@ -221,6 +271,8 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   using vector_type = __m128i;
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 4;
+  static constexpr bool local_sw_score_exact_segment256 = true;
+  static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   static __m128i load_tokens(const std::uint32_t* values) {
     return _mm_loadu_si128(reinterpret_cast<const __m128i*>(values));
@@ -270,6 +322,23 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static __m128i shift_left_insert(__m128i vector, std::int32_t inserted) {
     return shift_left_insert_128<4>(vector, set1(inserted));
+  }
+
+  static __m128i local_lazy_f_prefix_carry(
+      __m128i final_f,
+      std::size_t segment_count,
+      std::int32_t gap_score) {
+    const auto span_gap = static_cast<std::int32_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(shift_left_insert_128<4>(prefix, zero_vector), set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        shift_left_insert_128<8>(prefix, zero_vector),
+        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    return shift_left_insert_128<4>(max(prefix, zero_vector), zero_vector);
   }
 
   static bool any_gt(__m128i lhs, __m128i rhs) {

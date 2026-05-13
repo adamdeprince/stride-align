@@ -3137,6 +3137,16 @@ Score score_state(PreparedScoreState<Cell>& state) {
     return 0;
   }
   if (state.gap_score <= 0 && state.query_size == state.segment_count * lane_count) {
+    if constexpr (requires { Ops::local_sw_score_exact_segment16; }) {
+      if constexpr (Ops::local_sw_score_exact_segment16) {
+        if (state.segment_count == 16U) {
+          if constexpr (requires { Ops::local_sw_score_exact_segment16_raw(state); }) {
+            return Ops::local_sw_score_exact_segment16_raw(state);
+          }
+          return score_state_exact_fill_local_sw<Ops, Cell, 16U>(state);
+        }
+      }
+    }
     if constexpr (requires { Ops::local_sw_score_exact_segment32; }) {
       if constexpr (Ops::local_sw_score_exact_segment32) {
         if (state.segment_count == 32U) {
