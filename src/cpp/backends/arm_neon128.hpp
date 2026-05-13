@@ -150,9 +150,6 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 8;
   static constexpr bool has_vector_max = true;
-  static constexpr bool dense_global_lazy_f_scan = true;
-  static constexpr bool plain_global_main_f_after_first_segment = true;
-  static constexpr bool global_main_f_segment128_unroll = true;
 
   static uint16x8_t load_tokens(const std::uint16_t* values) {
     return vld1q_u16(values);
@@ -278,9 +275,6 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 4;
   static constexpr bool has_vector_max = true;
-  static constexpr bool dense_global_lazy_f_scan = true;
-  static constexpr bool plain_global_main_f_after_first_segment = true;
-  static constexpr bool global_main_f_segment256_unroll = true;
 
   static uint32x4_t load_tokens(const std::uint32_t* values) {
     return vld1q_u32(values);
