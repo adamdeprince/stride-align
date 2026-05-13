@@ -1,5 +1,9 @@
 # Benchmark Summary
 
+This file contains separate benchmark families. The original `benchmark.csv`
+summary below is x86-only. Loongson LSX/LASX results are listed separately in
+the Loongson section and should not be compared directly with the x86 rows.
+
 Generated on 2026-05-13 with Python 3.13 in the project virtualenv.
 
 Raw results are in [`benchmark.csv`](benchmark.csv). The CSV contains 320 data
@@ -125,3 +129,55 @@ claims. The run is pinned with `taskset -c 2`, but it still uses short
 15-iteration medians and includes Python benchmark orchestration. For final
 claims, rerun longer pinned sweeps and native microbench rows for the specific
 kernels under discussion.
+
+## Loongson LSX/LASX - 2026-05-13
+
+Raw Loongson artifacts are separate from `benchmark.csv`:
+
+| Artifact | Contents |
+| --- | --- |
+| [`benchmarks/loongson-score-native-2026-05-13.csv`](benchmarks/loongson-score-native-2026-05-13.csv) | Native `generic`, `swar`, LSX, and LASX score rows for `1:1` and `1:many`. |
+| [`benchmarks/loongson-score-1to1-parasail-2026-05-13.csv`](benchmarks/loongson-score-1to1-parasail-2026-05-13.csv) | Direct `sw-score`/`nw-score` `1:1` comparison against patched generic LoongArch parasail. |
+| [`benchmarks/loongson-path-native-2026-05-13.csv`](benchmarks/loongson-path-native-2026-05-13.csv) | Native path/CIGAR timing split rows, no parasail. |
+| [`benchmarks/loongson-2026-05-13.md`](benchmarks/loongson-2026-05-13.md) | Loongson-specific notes and recommendations. |
+
+Build context: `loongson`, Python 3.13.13, GCC 15.2.0, CMake 4.3.2. The
+LoongArch Python extension modules were built with static C++ runtime linkage;
+`ldd` shows no dynamic `libstdc++`/`libgcc` dependency.
+
+Parasail status: upstream `pip install parasail` failed on LoongArch. A patched
+source build works for direct score calls after treating LoongArch as a non-x86
+`cpuid` stub target, but it is generic parasail, not LSX/LASX optimized. Its
+profile API returned NULL profiles and trace/CIGAR was not usable, so parasail
+is included only for direct `sw-score`/`nw-score` `1:1` rows.
+
+Loongson score-only takeaways:
+
+| Backend | Native Score Rows | Median vs Generic | Best vs Generic |
+| --- | ---: | ---: | ---: |
+| `linux_loongarch64_lsx` | 48 | 3.93x | 8.86x |
+| `linux_loongarch64_lasx` | 48 | 6.79x | 16.05x |
+| `swar` | 48 | 0.59x | 1.02x |
+
+Against patched generic LoongArch parasail direct score rows:
+
+| Backend | Comparable Rows | Wins | Geomean vs Parasail | Median vs Parasail |
+| --- | ---: | ---: | ---: | ---: |
+| `linux_loongarch64_lsx` | 16 | 16 | 5.31x | 5.85x |
+| `linux_loongarch64_lasx` | 16 | 16 | 7.52x | 6.85x |
+
+Loongson path/CIGAR takeaways:
+
+LSX/LASX are not uniformly better for path-producing work yet. Affine CIGAR
+rows are strong, with LASX reaching about `4.32x` generic, but linear SW
+path/CIGAR is the weak point. The worst LSX linear SW path row is `0.34x`
+generic and the worst LASX row is `0.48x` generic, which points at trace-table
+and materialization traffic rather than raw score DP throughput.
+
+Recommended Loongson next steps:
+
+1. Keep LSX/LASX score kernels enabled; they already provide substantial score-only wins.
+2. Target a Loongson-specific linear SW trace/CIGAR redesign before doing instruction scheduling.
+3. Start with LASX width16/width32 trace traffic reduction, then port the measured structure to LSX.
+4. Add a native Loongson microbench/perf entrypoint before micro-optimizing LSX/LASX loops.
+5. Treat parasail as a generic LoongArch comparison unless a maintained LSX/LASX parasail build becomes available.
