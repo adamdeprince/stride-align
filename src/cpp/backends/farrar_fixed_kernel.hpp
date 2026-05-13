@@ -107,6 +107,15 @@ struct UseGlobalMainFSegment128Unroll<
     std::void_t<decltype(Ops::global_main_f_segment128_unroll)>>
     : std::bool_constant<Ops::global_main_f_segment128_unroll> {};
 
+template <typename Ops, typename = void>
+struct UseGlobalMainFSegment256Unroll : std::false_type {};
+
+template <typename Ops>
+struct UseGlobalMainFSegment256Unroll<
+    Ops,
+    std::void_t<decltype(Ops::global_main_f_segment256_unroll)>>
+    : std::bool_constant<Ops::global_main_f_segment256_unroll> {};
+
 template <typename T, std::size_t Alignment>
 struct AlignedAllocator {
   using value_type = T;
@@ -1935,7 +1944,55 @@ Score global_affine_score_state_equal_length_no_padding(
       };
 
       process_first_segment();
-      if constexpr (UseGlobalMainFSegment128Unroll<Ops>::value) {
+      if constexpr (UseGlobalMainFSegment256Unroll<Ops>::value) {
+        if (state.segment_count == 256U) {
+          process_unrolled_plain_segments(256U);
+        } else if constexpr (UseGlobalMainFSegment128Unroll<Ops>::value) {
+          if (state.segment_count == 128U) {
+            process_unrolled_plain_segments(128U);
+          } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+            if (state.segment_count == 64U) {
+              process_unrolled_plain_segments(64U);
+            } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+              if (state.segment_count == 32U) {
+                process_unrolled_plain_segments(32U);
+              } else {
+                process_plain_tail();
+              }
+            } else {
+              process_plain_tail();
+            }
+          } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+            if (state.segment_count == 32U) {
+              process_unrolled_plain_segments(32U);
+            } else {
+              process_plain_tail();
+            }
+          } else {
+            process_plain_tail();
+          }
+        } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {
+          if (state.segment_count == 64U) {
+            process_unrolled_plain_segments(64U);
+          } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+            if (state.segment_count == 32U) {
+              process_unrolled_plain_segments(32U);
+            } else {
+              process_plain_tail();
+            }
+          } else {
+            process_plain_tail();
+          }
+        } else if constexpr (UseGlobalMainFSegment32Unroll<Ops>::value) {
+          if (state.segment_count == 32U) {
+            process_unrolled_plain_segments(32U);
+          } else {
+            process_plain_tail();
+          }
+        } else {
+          process_plain_tail();
+        }
+      } else if constexpr (UseGlobalMainFSegment128Unroll<Ops>::value) {
         if (state.segment_count == 128U) {
           process_unrolled_plain_segments(128U);
         } else if constexpr (UseGlobalMainFSegment64Unroll<Ops>::value) {

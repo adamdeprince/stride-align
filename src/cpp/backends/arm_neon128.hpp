@@ -82,12 +82,23 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return vaddq_s8(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int8_t sentinel) {
+    const auto sum = vaddq_s8(lhs, rhs);
+    const auto mask = vceqq_s8(lhs, set1(sentinel));
+    return vbslq_s8(mask, set1(sentinel), sum);
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     return vmaxq_s8(lhs, rhs);
   }
 
   static vector_type shift_left_zero(vector_type vector) {
     return vreinterpretq_s8_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s8(vector), 15));
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int8_t inserted) {
+    return vreinterpretq_s8_u8(
+        vextq_u8(vreinterpretq_u8_s8(set1(inserted)), vreinterpretq_u8_s8(vector), 15));
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -139,6 +150,9 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 8;
   static constexpr bool has_vector_max = true;
+  static constexpr bool dense_global_lazy_f_scan = true;
+  static constexpr bool plain_global_main_f_after_first_segment = true;
+  static constexpr bool global_main_f_segment128_unroll = true;
 
   static uint16x8_t load_tokens(const std::uint16_t* values) {
     return vld1q_u16(values);
@@ -164,12 +178,55 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return vaddq_s16(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int16_t sentinel) {
+    const auto sum = vaddq_s16(lhs, rhs);
+    const auto mask = vceqq_s16(lhs, set1(sentinel));
+    return vbslq_s16(mask, set1(sentinel), sum);
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     return vmaxq_s16(lhs, rhs);
   }
 
   static vector_type shift_left_zero(vector_type vector) {
     return vreinterpretq_s16_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s16(vector), 14));
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int16_t inserted) {
+    return vreinterpretq_s16_u8(
+        vextq_u8(vreinterpretq_u8_s16(set1(inserted)), vreinterpretq_u8_s16(vector), 14));
+  }
+
+  static vector_type global_lazy_f_prefix_carry_no_padding(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int16_t gap_extend_score,
+      std::int16_t low_score) {
+    const auto span_gap = static_cast<std::int16_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_extend_score));
+    const auto shift_prefix = [low_score](vector_type value, int lanes) {
+      for (int lane = 0; lane < lanes; ++lane) {
+        value = shift_left_insert(value, low_score);
+      }
+      return value;
+    };
+    auto prefix = final_f;
+    auto shifted = add_sentinel(
+        shift_prefix(prefix, 1),
+        set1(span_gap),
+        low_score);
+    prefix = max(prefix, shifted);
+    shifted = add_sentinel(
+        shift_prefix(prefix, 2),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 2)),
+        low_score);
+    prefix = max(prefix, shifted);
+    shifted = add_sentinel(
+        shift_prefix(prefix, 4),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 4)),
+        low_score);
+    prefix = max(prefix, shifted);
+    return shift_left_insert(prefix, low_score);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -221,6 +278,9 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   static constexpr std::size_t alignment = 16;
   static constexpr std::size_t lane_count = 4;
   static constexpr bool has_vector_max = true;
+  static constexpr bool dense_global_lazy_f_scan = true;
+  static constexpr bool plain_global_main_f_after_first_segment = true;
+  static constexpr bool global_main_f_segment256_unroll = true;
 
   static uint32x4_t load_tokens(const std::uint32_t* values) {
     return vld1q_u32(values);
@@ -246,12 +306,50 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return vaddq_s32(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int32_t sentinel) {
+    const auto sum = vaddq_s32(lhs, rhs);
+    const auto mask = vceqq_s32(lhs, set1(sentinel));
+    return vbslq_s32(mask, set1(sentinel), sum);
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     return vmaxq_s32(lhs, rhs);
   }
 
   static vector_type shift_left_zero(vector_type vector) {
     return vreinterpretq_s32_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s32(vector), 12));
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int32_t inserted) {
+    return vreinterpretq_s32_u8(
+        vextq_u8(vreinterpretq_u8_s32(set1(inserted)), vreinterpretq_u8_s32(vector), 12));
+  }
+
+  static vector_type global_lazy_f_prefix_carry_no_padding(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int32_t gap_extend_score,
+      std::int32_t low_score) {
+    const auto span_gap = static_cast<std::int32_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_extend_score));
+    const auto shift_prefix = [low_score](vector_type value, int lanes) {
+      for (int lane = 0; lane < lanes; ++lane) {
+        value = shift_left_insert(value, low_score);
+      }
+      return value;
+    };
+    auto prefix = final_f;
+    auto shifted = add_sentinel(
+        shift_prefix(prefix, 1),
+        set1(span_gap),
+        low_score);
+    prefix = max(prefix, shifted);
+    shifted = add_sentinel(
+        shift_prefix(prefix, 2),
+        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 2)),
+        low_score);
+    prefix = max(prefix, shifted);
+    return shift_left_insert(prefix, low_score);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -328,6 +426,12 @@ struct SimdOps<std::uint64_t, std::int64_t> {
     return vaddq_s64(lhs, rhs);
   }
 
+  static vector_type add_sentinel(vector_type lhs, vector_type rhs, std::int64_t sentinel) {
+    const auto sum = vaddq_s64(lhs, rhs);
+    const auto mask = vceqq_s64(lhs, set1(sentinel));
+    return vbslq_s64(mask, set1(sentinel), sum);
+  }
+
   static vector_type max(vector_type lhs, vector_type rhs) {
     const uint64x2_t mask = vcgtq_s64(lhs, rhs);
     return vbslq_s64(mask, lhs, rhs);
@@ -335,6 +439,11 @@ struct SimdOps<std::uint64_t, std::int64_t> {
 
   static vector_type shift_left_zero(vector_type vector) {
     return vreinterpretq_s64_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s64(vector), 8));
+  }
+
+  static vector_type shift_left_insert(vector_type vector, std::int64_t inserted) {
+    return vreinterpretq_s64_u8(
+        vextq_u8(vreinterpretq_u8_s64(set1(inserted)), vreinterpretq_u8_s64(vector), 8));
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
