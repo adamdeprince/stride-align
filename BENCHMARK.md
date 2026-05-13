@@ -9,6 +9,8 @@ Generated on 2026-05-13 with Python 3.13 in the project virtualenv.
 Raw results are in [`benchmark.csv`](benchmark.csv). The CSV contains 320 data
 rows: English and Chinese text workloads, linear and affine scoring, widths 16
 and 32, `1:1` and `1:many` shapes, and generic/x86/parasail backends.
+The focused Intel exact-fill follow-up is in
+[`benchmarks/x86-sw-farrar-exactfill-study-2026-05-14.csv`](benchmarks/x86-sw-farrar-exactfill-study-2026-05-14.csv).
 
 Command:
 
@@ -96,6 +98,12 @@ for this sweep, while AVX512BWVL is slightly behind. The worst AVX512 row is
 Chinese affine `1:many` width32 `sw-farrar-score`, where AVX512BWVL is about
 0.64x parasail.
 
+The 2026-05-14 focused linear `sw-farrar-score` exact-fill run shows the Intel
+hooks are working: SSE4.1 is `6.04x` generic, AVX2 is `10.67x` generic, and
+AVX512BWVL is `14.41x` generic by focused geomean. Compared with the prior
+`benchmark.csv` rows, AVX2 moved about `1.04x` because width16/32 already had
+raw exact-fill kernels, while AVX512BWVL moved about `1.47x`.
+
 The generic backend is useful as a correctness/performance baseline, not as a
 parasail competitor. It loses most score-only rows badly, although a few
 linear NW path/CIGAR rows are competitive.
@@ -139,6 +147,8 @@ Raw Loongson artifacts are separate from `benchmark.csv`:
 | [`benchmarks/loongson-score-native-2026-05-13.csv`](benchmarks/loongson-score-native-2026-05-13.csv) | Native `generic`, `swar`, LSX, and LASX score rows for `1:1` and `1:many`. |
 | [`benchmarks/loongson-score-1to1-parasail-2026-05-13.csv`](benchmarks/loongson-score-1to1-parasail-2026-05-13.csv) | Direct `sw-score`/`nw-score` `1:1` comparison against patched generic LoongArch parasail. |
 | [`benchmarks/loongson-path-native-2026-05-13.csv`](benchmarks/loongson-path-native-2026-05-13.csv) | Native path/CIGAR timing split rows, no parasail. |
+| [`benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv`](benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv) | Focused linear `sw-farrar-score` baseline before exact-fill hooks. |
+| [`benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv`](benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv) | Focused linear `sw-farrar-score` run after exact-fill hooks. |
 | [`benchmarks/loongson-2026-05-13.md`](benchmarks/loongson-2026-05-13.md) | Loongson-specific notes and recommendations. |
 
 Build context: `loongson`, Python 3.13.13, GCC 15.2.0, CMake 4.3.2. The
@@ -159,6 +169,12 @@ Loongson score-only takeaways:
 | `linux_loongarch64_lasx` | 48 | 6.79x | 16.05x |
 | `swar` | 48 | 0.59x | 1.02x |
 
+Exact-fill linear `sw-farrar-score` hooks were added after the mac NEON study.
+On the focused 2026-05-14 Loongson run, LSX improved `1.73x` geomean and LASX
+improved `1.63x` geomean over the pre-change focused baseline. After the
+change, focused linear `sw-farrar-score` is `10.24x` generic on LSX and
+`17.50x` generic on LASX.
+
 Against patched generic LoongArch parasail direct score rows:
 
 | Backend | Comparable Rows | Wins | Geomean vs Parasail | Median vs Parasail |
@@ -176,7 +192,7 @@ and materialization traffic rather than raw score DP throughput.
 
 Recommended Loongson next steps:
 
-1. Keep LSX/LASX score kernels enabled; they already provide substantial score-only wins.
+1. Keep exact-fill LSX/LASX score hooks enabled; they are a large score-only win.
 2. Target a Loongson-specific linear SW trace/CIGAR redesign before doing instruction scheduling.
 3. Start with LASX width16/width32 trace traffic reduction, then port the measured structure to LSX.
 4. Add a native Loongson microbench/perf entrypoint before micro-optimizing LSX/LASX loops.
