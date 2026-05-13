@@ -402,7 +402,16 @@ if(STRIDE_ALIGN_BUILD_MICROBENCH)
         endif()
       endif()
     endif()
+  elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    add_executable(
+      stride_align_arm_neon_microbench
+      src/cpp/tools/x86_microbench.cpp
+      src/cpp/tools/arm_neon_microbench_backend.cpp
+    )
+    configure_stride_align_target(stride_align_arm_neon_microbench)
+    nanobind_build_library(nanobind-static)
+    target_link_libraries(stride_align_arm_neon_microbench PRIVATE nanobind-static Python::Python)
   else()
-    message(WARNING "STRIDE_ALIGN_BUILD_MICROBENCH is currently implemented for x86 targets only")
+    message(WARNING "STRIDE_ALIGN_BUILD_MICROBENCH is currently implemented for x86 and macOS arm64 targets only")
   endif()
 endif()

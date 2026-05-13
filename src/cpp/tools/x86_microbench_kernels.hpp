@@ -398,6 +398,78 @@ RunResult run_sw_affine_farrar_score_batch(
 }
 
 template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_affine_cigar_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::dispatch_affine_striped_cigar<
+        OpsTemplate,
+        true>(
+        prepared_alignment,
+        options.match_score,
+        options.mismatch_score,
+        options.gap_open_score,
+        options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto cigar = run_once();
+    result.last_score = static_cast<stride_align::Score>(cigar.size());
+    result.checksum = checksum_add(result.checksum, result.last_score);
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
+RunResult run_sw_affine_path_info_single(
+    const stride_align::PreparedFarrarAlignment& prepared_alignment,
+    const Options& options) {
+  RunResult result;
+  const auto run_once = [&]() {
+    return stride_align::farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<
+        OpsTemplate,
+        true>(
+        prepared_alignment,
+        options.match_score,
+        options.mismatch_score,
+        options.gap_open_score,
+        options.gap_extend_score);
+  };
+
+  for (std::size_t index = 0; index < options.warmups; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+  }
+
+  const auto run_start = Clock::now();
+  for (std::size_t index = 0; index < options.iterations; ++index) {
+    const auto path = run_once();
+    result.last_score = path.score;
+    result.checksum = checksum_add(
+        checksum_add(result.checksum, path.score),
+        static_cast<stride_align::Score>(path.cigar.size()));
+  }
+  const auto run_end = Clock::now();
+
+  result.run_seconds = std::chrono::duration<double>(run_end - run_start).count();
+  result.calls = options.iterations;
+  result.scored_targets = options.iterations;
+  return result;
+}
+
+template <template <typename, typename> class OpsTemplate>
 RunResult run_sw_cigar_single(
     const stride_align::PreparedFarrarAlignment& prepared_alignment,
     const Options& options) {
@@ -620,6 +692,12 @@ RunResult run_backend_variant(const PreparedWorkload& prepared, const Options& o
       return run_sw_affine_farrar_score_batch<OpsTemplate>(prepared.batch, options);
     }
     return run_sw_affine_farrar_score_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-affine-cigar") {
+    return run_sw_affine_cigar_single<OpsTemplate>(prepared.single, options);
+  }
+  if (options.variant == "sw-affine-path-info") {
+    return run_sw_affine_path_info_single<OpsTemplate>(prepared.single, options);
   }
   if (options.variant == "sw-cigar") {
     return run_sw_cigar_single<OpsTemplate>(prepared.single, options);

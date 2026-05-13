@@ -53,11 +53,21 @@ int parse_int(std::string_view value, std::string_view option) {
 void print_help(std::ostream& output) {
   output
       << "Usage: stride_align_x86_microbench [options]\n\n"
-      << "Profiles native C++ prepared affine Needleman-Wunsch score kernels.\n\n"
+      << "Profiles native C++ SIMD score and traceback kernels.\n\n"
       << "Options:\n"
-      << "  --backend avx2|avx512bwvl|parasail\n"
-      << "                                      SIMD/backend implementation to run (default: avx2)\n"
-      << "  --variant nw-affine-score|sw-farrar-score|sw-affine-farrar-score|sw-cigar|sw-path-info|sw-cigar-path-info|sw-scorefirst-cigar|sw-scorefirst-path-info|sw-checkpointed-cigar\n"
+      << "  --backend avx2|avx512bwvl|parasail"
+#if defined(__aarch64__) || defined(_M_ARM64)
+      << "|neon"
+#endif
+      << "\n"
+      << "                                      SIMD/backend implementation to run (default: "
+#if defined(__aarch64__) || defined(_M_ARM64)
+      << "neon"
+#else
+      << "avx2"
+#endif
+      << ")\n"
+      << "  --variant nw-affine-score|sw-farrar-score|sw-affine-farrar-score|sw-affine-cigar|sw-affine-path-info|sw-cigar|sw-path-info|sw-cigar-path-info|sw-scorefirst-cigar|sw-scorefirst-path-info|sw-checkpointed-cigar\n"
       << "                                      Kernel variant to run (default: nw-affine-score)\n"
       << "  --pass english|chinese           Text-like token distribution (default: english)\n"
       << "  --shape 1:1|1:many               Prepared single or prepared batch path (default: 1:1)\n"
@@ -157,17 +167,23 @@ Options parse_options(int argc, char** argv) {
     options.target_length = 31;
   }
   if (options.backend != "avx2" && options.backend != "avx512bwvl" &&
-      options.backend != "parasail") {
-    usage_error("--backend must be avx2, avx512bwvl, or parasail");
+      options.backend != "parasail"
+#if defined(__aarch64__) || defined(_M_ARM64)
+      && options.backend != "neon"
+#endif
+  ) {
+    usage_error("--backend must be avx2, avx512bwvl, parasail, or neon when built on arm64");
   }
   if (options.variant != "nw-affine-score" && options.variant != "sw-farrar-score" &&
       options.variant != "sw-affine-farrar-score" &&
+      options.variant != "sw-affine-cigar" &&
+      options.variant != "sw-affine-path-info" &&
       options.variant != "sw-cigar" && options.variant != "sw-path-info" &&
       options.variant != "sw-cigar-path-info" &&
       options.variant != "sw-scorefirst-cigar" &&
       options.variant != "sw-scorefirst-path-info" &&
       options.variant != "sw-checkpointed-cigar") {
-    usage_error("--variant must be nw-affine-score, sw-farrar-score, sw-affine-farrar-score, sw-cigar, or sw-path-info");
+    usage_error("--variant must be one of the documented score or traceback variants");
   }
   if (options.pass_name != "english" && options.pass_name != "english-short" &&
       options.pass_name != "chinese") {
@@ -198,11 +214,13 @@ Options parse_options(int argc, char** argv) {
   }
   if (options.shape == "1:many" &&
       (options.variant == "sw-cigar" || options.variant == "sw-path-info" ||
+       options.variant == "sw-affine-cigar" ||
+       options.variant == "sw-affine-path-info" ||
        options.variant == "sw-cigar-path-info" ||
        options.variant == "sw-scorefirst-cigar" ||
        options.variant == "sw-scorefirst-path-info" ||
        options.variant == "sw-checkpointed-cigar")) {
-    usage_error("--variant sw-cigar and sw-path-info are 1:1-only native microbench rows");
+    usage_error("traceback variants are 1:1-only native microbench rows");
   }
   if (options.iterations == 0) {
     usage_error("--iterations must be at least 1");
@@ -388,6 +406,15 @@ std::string bits_name(stride_align::KernelBits bits) {
 }
 
 RunResult run_backend(const PreparedWorkload& prepared, const Options& options) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  if (options.backend == "neon") {
+    if (!supports_neon()) {
+      usage_error("NEON is not available on this machine");
+    }
+    return run_neon_backend(prepared, options);
+  }
+#endif
+
   if (options.backend == "avx2") {
     if (!supports_avx2()) {
       usage_error("AVX2 is not available on this machine");

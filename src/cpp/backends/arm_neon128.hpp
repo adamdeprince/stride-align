@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include <nanobind/nanobind.h>
 
@@ -461,7 +462,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path<true>(
+    const auto output_prepared = prepare_alignment(
         query,
         target,
         match_score,
@@ -469,6 +470,48 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    const auto path = farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<SimdOps, true>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+    return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
+  }
+
+  static std::string smith_waterman_affine_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const Score expected_score = smith_waterman_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return profile_traceback::affine_cigar_with_score<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width,
+        expected_score);
   }
 
   static AlignmentPath smith_waterman_affine_path_info(
@@ -479,7 +522,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path_info<true>(
+    const Score expected_score = smith_waterman_affine_score(
         query,
         target,
         match_score,
@@ -487,6 +530,15 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return profile_traceback::affine_path_info_with_score<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width,
+        expected_score);
   }
 
   static Score smith_waterman_affine_farrar_score(
@@ -680,7 +732,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path<false>(
+    const auto output_prepared = prepare_alignment(
         query,
         target,
         match_score,
@@ -688,6 +740,48 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    const auto prepared = prepare_farrar_alignment(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    const auto path = farrar_fixed_kernel::detail::dispatch_affine_striped_path_info<SimdOps, false>(
+        prepared,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score);
+    return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
+  }
+
+  static std::string needleman_wunsch_affine_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    const Score expected_score = needleman_wunsch_affine_score(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+    return profile_traceback::affine_cigar_with_score<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width,
+        expected_score);
   }
 
   static AlignmentPath needleman_wunsch_affine_path_info(
@@ -698,7 +792,7 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
-    return profile_traceback::affine_path_info<false>(
+    const Score expected_score = needleman_wunsch_affine_score(
         query,
         target,
         match_score,
@@ -706,6 +800,15 @@ struct TargetImplementation {
         gap_open_score,
         gap_extend_score,
         width);
+    return profile_traceback::affine_path_info_with_score<false>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width,
+        expected_score);
   }
 };
 

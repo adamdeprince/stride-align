@@ -11,7 +11,11 @@
 namespace stride_align::microbench {
 
 struct Options {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  std::string backend = "neon";
+#else
   std::string backend = "avx2";
+#endif
   std::string variant = "nw-affine-score";
   std::string pass_name = "english";
   std::string shape = "1:1";
@@ -58,5 +62,10 @@ bool supports_parasail() noexcept;
 RunResult run_avx2_backend(const PreparedWorkload& prepared, const Options& options);
 RunResult run_avx512bwvl_backend(const PreparedWorkload& prepared, const Options& options);
 RunResult run_parasail_backend(const PreparedWorkload& prepared, const Options& options);
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+bool supports_neon() noexcept;
+RunResult run_neon_backend(const PreparedWorkload& prepared, const Options& options);
+#endif
 
 }  // namespace stride_align::microbench

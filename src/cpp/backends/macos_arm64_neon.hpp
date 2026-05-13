@@ -2,6 +2,8 @@
 
 #include <nanobind/nanobind.h>
 
+#include <string>
+
 #include "backends/arm_neon128.hpp"
 
 namespace stride_align::backend_macos_arm64_neon {
@@ -167,6 +169,25 @@ struct Implementation {
       unsigned int width) {
     ensure_supported();
     return TargetImplementation::smith_waterman_affine_path_info(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static std::string smith_waterman_affine_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_affine_cigar(
         query,
         target,
         match_score,
@@ -348,6 +369,25 @@ struct Implementation {
       unsigned int width) {
     ensure_supported();
     return TargetImplementation::needleman_wunsch_affine_path(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_open_score,
+        gap_extend_score,
+        width);
+  }
+
+  static std::string needleman_wunsch_affine_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_open_score,
+      Score gap_extend_score,
+      unsigned int width) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_affine_cigar(
         query,
         target,
         match_score,
