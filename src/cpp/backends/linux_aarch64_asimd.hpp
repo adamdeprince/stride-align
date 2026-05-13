@@ -82,23 +82,6 @@ struct Implementation {
         width);
   }
 
-  static std::string smith_waterman_linear_cigar(
-      nb::handle query,
-      nb::handle target,
-      Score match_score,
-      Score mismatch_score,
-      Score gap_score,
-      unsigned int width) {
-    ensure_supported();
-    return TargetImplementation::smith_waterman_linear_cigar(
-        query,
-        target,
-        match_score,
-        mismatch_score,
-        gap_score,
-        width);
-  }
-
   static Score smith_waterman_farrar_score(
       nb::handle query,
       nb::handle target,
