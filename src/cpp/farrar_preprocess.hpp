@@ -157,10 +157,37 @@ inline std::size_t direct_unicode_lookup_size(PyObject* unicode_object) {
   }
 }
 
+// Codepoint -> compact-token map keyed by raw codepoint index. Backed by a
+// thread-local cache so the 128 KB 2-byte Unicode buffer is not reallocated
+// and re-initialized on every preparation call. Inserted slots are tracked in
+// `touched` so the next constructor only clears the few slots that were
+// actually populated (at most 256, since tokens fit in a uint8_t).
 struct DirectUnicodeTokenMap {
   static constexpr std::uint16_t missing = std::numeric_limits<std::uint16_t>::max();
 
-  explicit DirectUnicodeTokenMap(std::size_t lookup_size) : lookup(lookup_size, missing) {}
+  explicit DirectUnicodeTokenMap(std::size_t lookup_size) {
+    if (lookup_size == 256U) {
+      thread_local std::vector<std::uint16_t> cached_lookup(256U, missing);
+      thread_local std::vector<std::uint32_t> cached_touched;
+      reset_cache(cached_lookup, cached_touched);
+      lookup_storage_ = cached_lookup.data();
+      touched_indices_ = &cached_touched;
+    } else if (lookup_size == 65536U) {
+      thread_local std::vector<std::uint16_t> cached_lookup(65536U, missing);
+      thread_local std::vector<std::uint32_t> cached_touched;
+      reset_cache(cached_lookup, cached_touched);
+      lookup_storage_ = cached_lookup.data();
+      touched_indices_ = &cached_touched;
+    } else {
+      owned_lookup_.assign(lookup_size, missing);
+      lookup_storage_ = owned_lookup_.data();
+      touched_indices_ = &owned_touched_;
+    }
+  }
+
+  // Non-copyable/movable: instances hold pointers into thread-local storage.
+  DirectUnicodeTokenMap(const DirectUnicodeTokenMap&) = delete;
+  DirectUnicodeTokenMap& operator=(const DirectUnicodeTokenMap&) = delete;
 
   std::vector<std::uint8_t> encode(PyObject* unicode_object) {
     if (PyUnicode_READY(unicode_object) != 0) {
@@ -176,9 +203,10 @@ struct DirectUnicodeTokenMap {
     for (std::size_t index = 0; index < size; ++index) {
       const auto codepoint = static_cast<std::size_t>(
           PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(index)));
-      std::uint16_t& entry = lookup[codepoint];
+      std::uint16_t& entry = lookup_storage_[codepoint];
       if (entry == missing) {
         entry = next_compact_token(symbol_count);
+        touched_indices_->push_back(static_cast<std::uint32_t>(codepoint));
         ++symbol_count;
       }
       tokens.push_back(static_cast<std::uint8_t>(entry));
@@ -186,8 +214,22 @@ struct DirectUnicodeTokenMap {
     return tokens;
   }
 
-  std::vector<std::uint16_t> lookup;
   std::size_t symbol_count = 0;
+
+ private:
+  static void reset_cache(
+      std::vector<std::uint16_t>& lookup,
+      std::vector<std::uint32_t>& touched) noexcept {
+    for (const auto codepoint : touched) {
+      lookup[codepoint] = missing;
+    }
+    touched.clear();
+  }
+
+  std::uint16_t* lookup_storage_ = nullptr;
+  std::vector<std::uint32_t>* touched_indices_ = nullptr;
+  std::vector<std::uint16_t> owned_lookup_;
+  std::vector<std::uint32_t> owned_touched_;
 };
 
 inline std::vector<nb::object> sequence_items(nb::handle input, std::string_view argument_name) {

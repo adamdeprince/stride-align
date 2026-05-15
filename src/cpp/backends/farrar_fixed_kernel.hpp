@@ -678,7 +678,8 @@ template <typename Ops>
 ScoreProfileLayout resolve_score_profile_layout(
     ScoreProfileLayout requested_layout,
     std::size_t target_size,
-    std::size_t profile_token_count) noexcept {
+    std::size_t profile_token_count,
+    bool amortize_profile_build = false) noexcept {
   if (requested_layout != ScoreProfileLayout::automatic) {
     return requested_layout;
   }
@@ -695,8 +696,13 @@ ScoreProfileLayout resolve_score_profile_layout(
         should_use_target_ordered_profile(target_size, profile_token_count);
   }
   if constexpr (requires { Ops::target_ordered_profile_min_rows; }) {
+    // The min-rows trigger picks a target.size() x state_cells profile, which
+    // is much larger than the compact token-major profile. That only pays
+    // off when the same profile is reused across many DP runs. For one-shot
+    // single-target call sites the prep cost dwarfs any DP-side savings.
     use_target_ordered_profile = use_target_ordered_profile ||
-        profile_token_count >= Ops::target_ordered_profile_min_rows;
+        (amortize_profile_build &&
+         profile_token_count >= Ops::target_ordered_profile_min_rows);
   }
   return use_target_ordered_profile ? ScoreProfileLayout::target_ordered
                                     : ScoreProfileLayout::token_major;
@@ -710,7 +716,8 @@ PreparedScoreState<Cell> prepare_score_state(
     Score gap_score,
     ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
     std::size_t profile_block_size = 64U,
-    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic,
+    bool amortize_profile_build = false) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -762,7 +769,8 @@ PreparedScoreState<Cell> prepare_score_state(
   switch (resolve_score_profile_layout<Ops>(
       profile_layout,
       target.size(),
-      profile_tokens.size())) {
+      profile_tokens.size(),
+      amortize_profile_build)) {
     case ScoreProfileLayout::target_ordered:
       state.profile = build_target_ordered_profile<OpsTemplate, Cell>(
           query,
@@ -1048,7 +1056,8 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
     Score gap_score,
     ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
     std::size_t profile_block_size = 64U,
-    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic,
+    bool amortize_profile_build = true) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
 
@@ -1097,7 +1106,8 @@ PreparedScoreBatchState<Cell> prepare_score_batch_state(
   const auto resolved_profile_layout = resolve_score_profile_layout<Ops>(
       requested_profile_layout,
       total_target_size,
-      profile_tokens.size());
+      profile_tokens.size(),
+      amortize_profile_build);
   std::size_t selected_profile_block_size = profile_block_size;
   if constexpr (requires { Ops::blocked_target_ordered_profile_block_size; }) {
     if (profile_layout == ScoreProfileLayout::automatic) {
@@ -1626,6 +1636,12 @@ Score affine_score_state_for_offsets(
     if (state.query_size == 1024U && state.segment_count == 128U &&
         state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
       return Ops::local_affine_score_exact_segment128_raw(state, target_profile_offsets);
+    }
+  }
+  if constexpr (requires { Ops::local_affine_score_exact_segment64_raw(state, target_profile_offsets); }) {
+    if (state.query_size == 1024U && state.segment_count == 64U &&
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
+      return Ops::local_affine_score_exact_segment64_raw(state, target_profile_offsets);
     }
   }
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
@@ -5276,7 +5292,8 @@ PreparedScore<OpsTemplate> prepare_score(
     Score gap_score,
     ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
     std::size_t profile_block_size = 64U,
-    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic) {
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic,
+    bool amortize_profile_build = true) {
   PreparedScore<OpsTemplate> output;
   switch (prepared.score_bits) {
     case KernelBits::bits8:
@@ -5287,7 +5304,8 @@ PreparedScore<OpsTemplate> prepare_score(
           gap_score,
           profile_layout,
           profile_block_size,
-          kernel_strategy);
+          kernel_strategy,
+          amortize_profile_build);
       return output;
     case KernelBits::bits16:
       output.state = prepare_score_state<OpsTemplate, std::int16_t>(
@@ -5297,7 +5315,8 @@ PreparedScore<OpsTemplate> prepare_score(
           gap_score,
           profile_layout,
           profile_block_size,
-          kernel_strategy);
+          kernel_strategy,
+          amortize_profile_build);
       return output;
     case KernelBits::bits32:
       output.state = prepare_score_state<OpsTemplate, std::int32_t>(
@@ -5307,7 +5326,8 @@ PreparedScore<OpsTemplate> prepare_score(
           gap_score,
           profile_layout,
           profile_block_size,
-          kernel_strategy);
+          kernel_strategy,
+          amortize_profile_build);
       return output;
     case KernelBits::bits64:
       output.state = prepare_score_state<OpsTemplate, std::int64_t>(
@@ -5317,7 +5337,8 @@ PreparedScore<OpsTemplate> prepare_score(
           gap_score,
           profile_layout,
           profile_block_size,
-          kernel_strategy);
+          kernel_strategy,
+          amortize_profile_build);
       return output;
   }
 

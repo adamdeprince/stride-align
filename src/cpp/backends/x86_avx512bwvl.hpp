@@ -193,6 +193,99 @@ inline __m512i global_lazy_f_prefix_carry_512(
   return prefix;
 }
 
+// Local-SW affine score exact-fill kernel for 1024-character queries striped
+// across AVX-512 width32 lanes (16 lanes -> 64 segments). Mirrors the AVX2
+// 128-segment kernel in x86_avx2.hpp: branchless H/E/profile DP body, log-step
+// prefix carry for lazy-F, and a no-E correction loop. The correction loop
+// updates H but intentionally does NOT update E, matching parasail's annotated
+// affine SW correction shape (see docs/x86_algorithmic_deltas.txt section 51).
+inline Score local_affine_score_exact_fill_i32_64(
+    farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
+    std::span<const std::size_t> target_profile_offsets) {
+  if (state.query_size != 1024U || state.segment_count != 64U ||
+      target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
+      state.gap_extend_score > 0) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), std::int32_t{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), std::int32_t{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), std::int32_t{0});
+
+  const __m512i zero = _mm512_setzero_si512();
+  const __m512i gap_open = _mm512_set1_epi32(state.gap_open_score);
+  const __m512i gap_extend = _mm512_set1_epi32(state.gap_extend_score);
+  const auto span_gap = static_cast<std::int32_t>(
+      static_cast<Score>(64) * static_cast<Score>(state.gap_extend_score));
+  const __m512i span_gap_1 = _mm512_set1_epi32(span_gap);
+  const __m512i span_gap_2 = _mm512_set1_epi32(
+      static_cast<std::int32_t>(static_cast<Score>(span_gap) * 2));
+  const __m512i span_gap_4 = _mm512_set1_epi32(
+      static_cast<std::int32_t>(static_cast<Score>(span_gap) * 4));
+  const __m512i span_gap_8 = _mm512_set1_epi32(
+      static_cast<std::int32_t>(static_cast<Score>(span_gap) * 8));
+  __m512i best = zero;
+  __m512i* h_store = reinterpret_cast<__m512i*>(state.h_store.data());
+  __m512i* h_load = reinterpret_cast<__m512i*>(state.h_load.data());
+  __m512i* e_store = reinterpret_cast<__m512i*>(state.e_store.data());
+  const auto* profile_cells = state.profile.data();
+
+  for (const auto profile_offset : target_profile_offsets) {
+    std::swap(h_store, h_load);
+
+    __m512i v_h = shift_left_zero_bytes_512<4>(_mm512_load_si512(h_load + 63));
+    __m512i v_f = zero;
+    const __m512i* profile_row =
+        reinterpret_cast<const __m512i*>(profile_cells + profile_offset);
+
+    for (std::size_t segment = 0; segment < 64U; ++segment) {
+      const __m512i v_profile = _mm512_load_si512(profile_row + segment);
+      __m512i v_e = _mm512_load_si512(e_store + segment);
+      v_h = _mm512_add_epi32(v_h, v_profile);
+      v_h = _mm512_max_epi32(v_h, v_e);
+      v_h = _mm512_max_epi32(v_h, v_f);
+      v_h = _mm512_max_epi32(v_h, zero);
+      _mm512_store_si512(h_store + segment, v_h);
+      best = _mm512_max_epi32(best, v_h);
+
+      const __m512i v_h_open = _mm512_add_epi32(v_h, gap_open);
+      v_e = _mm512_max_epi32(_mm512_add_epi32(v_e, gap_extend), v_h_open);
+      _mm512_store_si512(e_store + segment, v_e);
+      v_f = _mm512_max_epi32(_mm512_add_epi32(v_f, gap_extend), v_h_open);
+      v_h = _mm512_load_si512(h_load + segment);
+    }
+
+    // Log-step prefix carry for 16 lanes: combine each lane with the best of
+    // its earlier neighbors plus the cumulative cross-lane gap penalty.
+    __m512i prefix = _mm512_max_epi32(v_f, zero);
+    __m512i shifted = _mm512_add_epi32(
+        shift_left_insert_bytes_512<4>(prefix, zero), span_gap_1);
+    prefix = _mm512_max_epi32(prefix, shifted);
+    shifted = _mm512_add_epi32(
+        shift_left_insert_bytes_512<8>(prefix, zero), span_gap_2);
+    prefix = _mm512_max_epi32(prefix, shifted);
+    shifted = _mm512_add_epi32(
+        shift_left_insert_bytes_512<16>(prefix, zero), span_gap_4);
+    prefix = _mm512_max_epi32(prefix, shifted);
+    shifted = _mm512_add_epi32(
+        shift_left_insert_bytes_512<32>(prefix, zero), span_gap_8);
+    prefix = _mm512_max_epi32(prefix, shifted);
+    v_f = shift_left_insert_bytes_512<4>(_mm512_max_epi32(prefix, zero), zero);
+
+    if (_mm512_cmpgt_epi32_mask(v_f, zero) != 0) {
+      for (std::size_t segment = 0; segment < 64U; ++segment) {
+        const __m512i v_h_previous = _mm512_load_si512(h_store + segment);
+        const __m512i v_h_corrected = _mm512_max_epi32(v_h_previous, v_f);
+        _mm512_store_si512(h_store + segment, v_h_corrected);
+        best = _mm512_max_epi32(best, v_h_corrected);
+        v_f = _mm512_add_epi32(v_f, gap_extend);
+      }
+    }
+  }
+
+  return static_cast<Score>(_mm512_reduce_max_epi32(best));
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -650,6 +743,12 @@ struct SimdOps<std::uint32_t, std::int32_t> {
       std::int32_t mismatch_score) {
     const __mmask16 mask = _mm512_cmpeq_epi32_mask(load_tokens(query), load_tokens(target));
     return _mm512_mask_blend_epi32(mask, set1(mismatch_score), set1(match_score));
+  }
+
+  static Score local_affine_score_exact_segment64_raw(
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
+      std::span<const std::size_t> target_profile_offsets) {
+    return local_affine_score_exact_fill_i32_64(state, target_profile_offsets);
   }
 };
 
