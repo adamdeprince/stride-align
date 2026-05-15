@@ -3393,21 +3393,47 @@ Score global_score_state(PreparedScoreState<Cell>& state) {
       v_h = load_state_cells<Ops, Cell>(h_load_segment);
     }
 
-    for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
-      v_up = shift_left_insert<Ops, Cell>(v_up, low_score);
-      bool propagated = false;
-
+    if (state.gap_score <= 0) {
+      // Log-step prefix carry across lanes, then one segment scan. Mirrors
+      // the affine NW path. Replaces the up-to-lane_count naive iteration
+      // loop with O(log lane_count) shift+max inside the prefix carry plus
+      // O(segment_count) work in the single scan, which closes the linear-NW
+      // gap (chinese nw-score w16 was 0.69x parasail before this change).
+      v_up = global_lazy_f_prefix_carry<Ops, Cell>(
+          v_up,
+          state.segment_count,
+          state.gap_score,
+          low_score);
       for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
         Cell* h_store_segment = h_store_data + segment * lane_count;
         auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
-        propagated = propagated || any_greater<Ops, Cell>(v_up, v_h_segment);
+        const bool segment_propagated = any_greater<Ops, Cell>(v_up, v_h_segment);
         v_h_segment = Ops::max(v_h_segment, v_up);
-        store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
-        v_up = Ops::add(v_h_segment, gap_vector);
+        if (segment_propagated) {
+          store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
+        }
+        v_up = add_sentinel<Ops, Cell>(v_h_segment, gap_vector, low_score);
       }
+    } else {
+      // Positive-gap fallback: the prefix-carry path assumes non-positive
+      // gap (so propagation is monotone-decreasing across lanes). Keep the
+      // naive shift+scan loop for the rare positive-gap case.
+      for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
+        v_up = shift_left_insert<Ops, Cell>(v_up, low_score);
+        bool propagated = false;
 
-      if (state.gap_score <= 0 && !propagated) {
-        break;
+        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+          Cell* h_store_segment = h_store_data + segment * lane_count;
+          auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
+          propagated = propagated || any_greater<Ops, Cell>(v_up, v_h_segment);
+          v_h_segment = Ops::max(v_h_segment, v_up);
+          store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
+          v_up = Ops::add(v_h_segment, gap_vector);
+        }
+
+        if (!propagated) {
+          break;
+        }
       }
     }
   }
