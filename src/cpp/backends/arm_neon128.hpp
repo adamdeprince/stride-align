@@ -824,6 +824,24 @@ struct TargetImplementation {
         gap_score);
   }
 
+  // Gate the SIMD masked-trace route to widths where NEON has enough lanes to
+  // amortize the masked-trace overhead. NEON i16 = 8 lanes works; NEON i32 = 4
+  // lanes loses badly to the scalar profile_traceback path. The kernel bits
+  // resolved from the score bound (after preparation) decide; user-forced
+  // width=32 stays on the scalar path.
+  static bool linear_sw_masked_trace_enabled(
+      const PreparedFarrarAlignment& prepared,
+      unsigned int width) {
+    if (width != 0 && width != 8 && width != 16) {
+      return false;
+    }
+    if (prepared.score_bits != KernelBits::bits8 &&
+        prepared.score_bits != KernelBits::bits16) {
+      return false;
+    }
+    return true;
+  }
+
   static AlignmentResult smith_waterman_path(
       nb::handle query,
       nb::handle target,
@@ -831,6 +849,25 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto output_prepared =
+          prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      if (linear_sw_masked_trace_enabled(prepared, width)) {
+        const auto trace = farrar_fixed_kernel::detail::
+            dispatch_linear_sw_score_first_masked_cigar_trace<SimdOps>(
+                prepared, match_score, mismatch_score, gap_score);
+        farrar_fixed_kernel::detail::LinearTracebackResult path;
+        path.score = trace.score;
+        path.query_start = trace.query_start;
+        path.query_end = trace.query_end;
+        path.target_start = trace.target_start;
+        path.target_end = trace.target_end;
+        path.operations = expand_cigar(trace.cigar);
+        return profile_traceback::detail::materialize_alignment_result(output_prepared, path);
+      }
+    }
     return profile_traceback::linear_path<true>(
         query,
         target,
@@ -847,7 +884,40 @@ struct TargetImplementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      if (linear_sw_masked_trace_enabled(prepared, width)) {
+        return farrar_fixed_kernel::detail::
+            dispatch_linear_sw_score_first_masked_cigar_path_info<SimdOps>(
+                prepared, match_score, mismatch_score, gap_score);
+      }
+    }
     return profile_traceback::linear_path_info<true>(
+        query,
+        target,
+        match_score,
+        mismatch_score,
+        gap_score,
+        width);
+  }
+
+  static std::string smith_waterman_linear_cigar(
+      nb::handle query,
+      nb::handle target,
+      Score match_score,
+      Score mismatch_score,
+      Score gap_score,
+      unsigned int width) {
+    if (gap_score <= 0) {
+      const auto prepared =
+          prepare_farrar_alignment(query, target, match_score, mismatch_score, gap_score, width);
+      if (linear_sw_masked_trace_enabled(prepared, width)) {
+        return farrar_fixed_kernel::detail::dispatch_linear_sw_score_first_masked_cigar<SimdOps>(
+            prepared, match_score, mismatch_score, gap_score);
+      }
+    }
+    return profile_traceback::linear_cigar<true>(
         query,
         target,
         match_score,
