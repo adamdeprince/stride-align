@@ -47,6 +47,201 @@ inline std::uint64_t trace_lane_mask(const Lane (&values)[LaneCount]) noexcept {
   return mask;
 }
 
+// NEON local-SW affine score exact-fill kernels. Two specializations for the
+// hot 1024-character query shapes:
+//   - i16 / width16: 8 lanes -> 128 segments
+//   - i32 / width32: 4 lanes -> 256 segments
+//
+// Mirrors the AVX2 (x86) / LASX (LoongArch) P2 pattern: branchless H/E/profile
+// DP body, log-step prefix carry for cross-lane lazy-F propagation, then a
+// no-E correction loop (H-only, parasail-style — empirically score-preserving
+// for these workloads). Dispatched through the
+// farrar_fixed_kernel::detail::affine_score_state_for_offsets hook by
+// declaring local_affine_score_exact_segment{128,256}_raw on the SimdOps.
+//
+// NEON is 128-bit so the cross-lane prefix-carry shifts use direct vextq_u8
+// byte counts (no intermediate per-lane loop, no cross-128-lane carry needed).
+inline Score local_affine_score_exact_fill_i16_128(
+    farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int16_t>& state,
+    std::span<const std::size_t> target_profile_offsets) {
+  if (state.query_size != 1024U || state.segment_count != 128U ||
+      target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
+      state.gap_extend_score > 0) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), std::int16_t{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), std::int16_t{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), std::int16_t{0});
+
+  const int16x8_t zero = vdupq_n_s16(0);
+  const int16x8_t gap_open = vdupq_n_s16(state.gap_open_score);
+  const int16x8_t gap_extend = vdupq_n_s16(state.gap_extend_score);
+  const auto lane_gap = static_cast<std::int16_t>(
+      static_cast<Score>(128) * static_cast<Score>(state.gap_extend_score));
+  const int16x8_t lane_gap_1 = vdupq_n_s16(lane_gap);
+  const int16x8_t lane_gap_2 = vdupq_n_s16(
+      static_cast<std::int16_t>(static_cast<Score>(lane_gap) * 2));
+  const int16x8_t lane_gap_4 = vdupq_n_s16(
+      static_cast<std::int16_t>(static_cast<Score>(lane_gap) * 4));
+  int16x8_t best = zero;
+  std::int16_t* h_store = state.h_store.data();
+  std::int16_t* h_load = state.h_load.data();
+  std::int16_t* e_store = state.e_store.data();
+  const std::int16_t* profile_cells = state.profile.data();
+
+  for (const auto profile_offset : target_profile_offsets) {
+    std::swap(h_store, h_load);
+
+    // Wrap-around v_h: shift up by 1 lane (2 bytes), insert zero at lane 0.
+    int16x8_t v_h = vreinterpretq_s16_u8(vextq_u8(
+        vreinterpretq_u8_s16(zero),
+        vreinterpretq_u8_s16(vld1q_s16(h_load + 127 * 8)),
+        14));
+    int16x8_t v_f = zero;
+    const std::int16_t* profile_row = profile_cells + profile_offset;
+
+    for (std::size_t segment = 0; segment < 128U; ++segment) {
+      const int16x8_t v_profile = vld1q_s16(profile_row + segment * 8);
+      int16x8_t v_e = vld1q_s16(e_store + segment * 8);
+      v_h = vaddq_s16(v_h, v_profile);
+      v_h = vmaxq_s16(v_h, v_e);
+      v_h = vmaxq_s16(v_h, v_f);
+      v_h = vmaxq_s16(v_h, zero);
+      vst1q_s16(h_store + segment * 8, v_h);
+      best = vmaxq_s16(best, v_h);
+
+      const int16x8_t v_h_open = vaddq_s16(v_h, gap_open);
+      v_e = vmaxq_s16(vaddq_s16(v_e, gap_extend), v_h_open);
+      vst1q_s16(e_store + segment * 8, v_e);
+      v_f = vmaxq_s16(vaddq_s16(v_f, gap_extend), v_h_open);
+      v_h = vld1q_s16(h_load + segment * 8);
+    }
+
+    // Log-step prefix carry across the 8 i16 lanes (3 stages). Each shift uses
+    // a single vextq_u8 with the byte count = 16 - shift_bytes.
+    int16x8_t prefix = vmaxq_s16(v_f, zero);
+    int16x8_t shifted = vaddq_s16(
+        vreinterpretq_s16_u8(vextq_u8(
+            vreinterpretq_u8_s16(zero), vreinterpretq_u8_s16(prefix), 14)),
+        lane_gap_1);
+    prefix = vmaxq_s16(prefix, shifted);
+    shifted = vaddq_s16(
+        vreinterpretq_s16_u8(vextq_u8(
+            vreinterpretq_u8_s16(zero), vreinterpretq_u8_s16(prefix), 12)),
+        lane_gap_2);
+    prefix = vmaxq_s16(prefix, shifted);
+    shifted = vaddq_s16(
+        vreinterpretq_s16_u8(vextq_u8(
+            vreinterpretq_u8_s16(zero), vreinterpretq_u8_s16(prefix), 8)),
+        lane_gap_4);
+    prefix = vmaxq_s16(prefix, shifted);
+    v_f = vreinterpretq_s16_u8(vextq_u8(
+        vreinterpretq_u8_s16(zero),
+        vreinterpretq_u8_s16(vmaxq_s16(prefix, zero)),
+        14));
+
+    if (any_mask(vcgtq_s16(v_f, zero))) {
+      // No-E correction: update H only. Next column recomputes E from H so we
+      // skip writing E here. Same shape parasail uses on AVX2.
+      for (std::size_t segment = 0; segment < 128U; ++segment) {
+        const int16x8_t v_h_previous = vld1q_s16(h_store + segment * 8);
+        const int16x8_t v_h_corrected = vmaxq_s16(v_h_previous, v_f);
+        vst1q_s16(h_store + segment * 8, v_h_corrected);
+        best = vmaxq_s16(best, v_h_corrected);
+        v_f = vaddq_s16(v_f, gap_extend);
+      }
+    }
+  }
+
+  return static_cast<Score>(vmaxvq_s16(best));
+}
+
+inline Score local_affine_score_exact_fill_i32_256(
+    farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
+    std::span<const std::size_t> target_profile_offsets) {
+  if (state.query_size != 1024U || state.segment_count != 256U ||
+      target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
+      state.gap_extend_score > 0) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), std::int32_t{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), std::int32_t{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), std::int32_t{0});
+
+  const int32x4_t zero = vdupq_n_s32(0);
+  const int32x4_t gap_open = vdupq_n_s32(state.gap_open_score);
+  const int32x4_t gap_extend = vdupq_n_s32(state.gap_extend_score);
+  const auto lane_gap = static_cast<std::int32_t>(
+      static_cast<Score>(256) * static_cast<Score>(state.gap_extend_score));
+  const int32x4_t lane_gap_1 = vdupq_n_s32(lane_gap);
+  const int32x4_t lane_gap_2 = vdupq_n_s32(
+      static_cast<std::int32_t>(static_cast<Score>(lane_gap) * 2));
+  int32x4_t best = zero;
+  std::int32_t* h_store = state.h_store.data();
+  std::int32_t* h_load = state.h_load.data();
+  std::int32_t* e_store = state.e_store.data();
+  const std::int32_t* profile_cells = state.profile.data();
+
+  for (const auto profile_offset : target_profile_offsets) {
+    std::swap(h_store, h_load);
+
+    int32x4_t v_h = vreinterpretq_s32_u8(vextq_u8(
+        vreinterpretq_u8_s32(zero),
+        vreinterpretq_u8_s32(vld1q_s32(h_load + 255 * 4)),
+        12));
+    int32x4_t v_f = zero;
+    const std::int32_t* profile_row = profile_cells + profile_offset;
+
+    for (std::size_t segment = 0; segment < 256U; ++segment) {
+      const int32x4_t v_profile = vld1q_s32(profile_row + segment * 4);
+      int32x4_t v_e = vld1q_s32(e_store + segment * 4);
+      v_h = vaddq_s32(v_h, v_profile);
+      v_h = vmaxq_s32(v_h, v_e);
+      v_h = vmaxq_s32(v_h, v_f);
+      v_h = vmaxq_s32(v_h, zero);
+      vst1q_s32(h_store + segment * 4, v_h);
+      best = vmaxq_s32(best, v_h);
+
+      const int32x4_t v_h_open = vaddq_s32(v_h, gap_open);
+      v_e = vmaxq_s32(vaddq_s32(v_e, gap_extend), v_h_open);
+      vst1q_s32(e_store + segment * 4, v_e);
+      v_f = vmaxq_s32(vaddq_s32(v_f, gap_extend), v_h_open);
+      v_h = vld1q_s32(h_load + segment * 4);
+    }
+
+    // Log-step prefix carry across the 4 i32 lanes (2 stages).
+    int32x4_t prefix = vmaxq_s32(v_f, zero);
+    int32x4_t shifted = vaddq_s32(
+        vreinterpretq_s32_u8(vextq_u8(
+            vreinterpretq_u8_s32(zero), vreinterpretq_u8_s32(prefix), 12)),
+        lane_gap_1);
+    prefix = vmaxq_s32(prefix, shifted);
+    shifted = vaddq_s32(
+        vreinterpretq_s32_u8(vextq_u8(
+            vreinterpretq_u8_s32(zero), vreinterpretq_u8_s32(prefix), 8)),
+        lane_gap_2);
+    prefix = vmaxq_s32(prefix, shifted);
+    v_f = vreinterpretq_s32_u8(vextq_u8(
+        vreinterpretq_u8_s32(zero),
+        vreinterpretq_u8_s32(vmaxq_s32(prefix, zero)),
+        12));
+
+    if (any_mask(vcgtq_s32(v_f, zero))) {
+      for (std::size_t segment = 0; segment < 256U; ++segment) {
+        const int32x4_t v_h_previous = vld1q_s32(h_store + segment * 4);
+        const int32x4_t v_h_corrected = vmaxq_s32(v_h_previous, v_f);
+        vst1q_s32(h_store + segment * 4, v_h_corrected);
+        best = vmaxq_s32(best, v_h_corrected);
+        v_f = vaddq_s32(v_f, gap_extend);
+      }
+    }
+  }
+
+  return static_cast<Score>(vmaxvq_s32(best));
+}
+
 template <typename Token, typename Cell>
 struct SimdOps;
 
@@ -297,6 +492,12 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     const uint16x8_t mask = vceqq_u16(load_tokens(query), load_tokens(target));
     return vbslq_s16(mask, set1(match_score), set1(mismatch_score));
   }
+
+  static Score local_affine_score_exact_segment128_raw(
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int16_t>& state,
+      std::span<const std::size_t> target_profile_offsets) {
+    return local_affine_score_exact_fill_i16_128(state, target_profile_offsets);
+  }
 };
 
 template <>
@@ -443,6 +644,12 @@ struct SimdOps<std::uint32_t, std::int32_t> {
       std::int32_t mismatch_score) {
     const uint32x4_t mask = vceqq_u32(load_tokens(query), load_tokens(target));
     return vbslq_s32(mask, set1(match_score), set1(mismatch_score));
+  }
+
+  static Score local_affine_score_exact_segment256_raw(
+      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
+      std::span<const std::size_t> target_profile_offsets) {
+    return local_affine_score_exact_fill_i32_256(state, target_profile_offsets);
   }
 };
 

@@ -1632,6 +1632,12 @@ Score affine_score_state_for_offsets(
   if (state.segment_count == 0 || target_profile_offsets.empty()) {
     return 0;
   }
+  if constexpr (requires { Ops::local_affine_score_exact_segment256_raw(state, target_profile_offsets); }) {
+    if (state.query_size == 1024U && state.segment_count == 256U &&
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
+      return Ops::local_affine_score_exact_segment256_raw(state, target_profile_offsets);
+    }
+  }
   if constexpr (requires { Ops::local_affine_score_exact_segment128_raw(state, target_profile_offsets); }) {
     if (state.query_size == 1024U && state.segment_count == 128U &&
         state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
