@@ -47,6 +47,39 @@ inline std::uint64_t trace_lane_mask(const Lane (&values)[LaneCount]) noexcept {
   return mask;
 }
 
+// NEON-native movemask: collapse a SIMD compare result (per-lane FFFF/0000)
+// into a packed bit-per-lane uint64. AND with a power-of-two pattern then
+// horizontal-sum. This is the hot inner-loop alternative to the scalar
+// store + per-lane-loop trace_lane_mask path, which is a real bottleneck on
+// trace/cigar/path-info workloads.
+inline std::uint64_t lane_mask(uint16x8_t mask) noexcept {
+  static const uint16_t kBitsRaw[8] = {1U, 2U, 4U, 8U, 16U, 32U, 64U, 128U};
+  const uint16x8_t bits = vld1q_u16(kBitsRaw);
+  return vaddvq_u16(vandq_u16(mask, bits));
+}
+
+inline std::uint64_t lane_mask(uint32x4_t mask) noexcept {
+  static const uint32_t kBitsRaw[4] = {1U, 2U, 4U, 8U};
+  const uint32x4_t bits = vld1q_u32(kBitsRaw);
+  return vaddvq_u32(vandq_u32(mask, bits));
+}
+
+inline std::uint64_t lane_mask(uint8x16_t mask) noexcept {
+  static const uint8_t kBitsRaw[16] = {1U, 2U, 4U, 8U, 16U, 32U, 64U, 128U,
+                                       1U, 2U, 4U, 8U, 16U, 32U, 64U, 128U};
+  const uint8x16_t bits = vld1q_u8(kBitsRaw);
+  const uint8x16_t masked = vandq_u8(mask, bits);
+  const std::uint64_t lo = vaddv_u8(vget_low_u8(masked));
+  const std::uint64_t hi = vaddv_u8(vget_high_u8(masked));
+  return (hi << 8) | lo;
+}
+
+inline std::uint64_t lane_mask(uint64x2_t mask) noexcept {
+  const std::uint64_t lo = vgetq_lane_u64(mask, 0) ? 1U : 0U;
+  const std::uint64_t hi = vgetq_lane_u64(mask, 1) ? 2U : 0U;
+  return lo | hi;
+}
+
 // NEON local-SW affine score exact-fill kernels. Two specializations for the
 // hot 1024-character query shapes:
 //   - i16 / width16: 8 lanes -> 128 segments
@@ -305,15 +338,11 @@ struct SimdOps<std::uint8_t, std::int8_t> {
   }
 
   static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint8_t lanes[lane_count];
-    vst1q_u8(lanes, vcgtq_s8(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vcgtq_s8(lhs, rhs));
   }
 
   static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint8_t lanes[lane_count];
-    vst1q_u8(lanes, vceqq_s8(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vceqq_s8(lhs, rhs));
   }
 
   static mask_type empty_mask() {
@@ -477,15 +506,11 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   }
 
   static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint16_t lanes[lane_count];
-    vst1q_u16(lanes, vcgtq_s16(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vcgtq_s16(lhs, rhs));
   }
 
   static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint16_t lanes[lane_count];
-    vst1q_u16(lanes, vceqq_s16(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vceqq_s16(lhs, rhs));
   }
 
   static mask_type empty_mask() {
@@ -643,15 +668,11 @@ struct SimdOps<std::uint32_t, std::int32_t> {
   }
 
   static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint32_t lanes[lane_count];
-    vst1q_u32(lanes, vcgtq_s32(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vcgtq_s32(lhs, rhs));
   }
 
   static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint32_t lanes[lane_count];
-    vst1q_u32(lanes, vceqq_s32(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vceqq_s32(lhs, rhs));
   }
 
   static mask_type empty_mask() {
@@ -743,15 +764,11 @@ struct SimdOps<std::uint64_t, std::int64_t> {
   }
 
   static std::uint64_t trace_mask_gt(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint64_t lanes[lane_count];
-    vst1q_u64(lanes, vcgtq_s64(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vcgtq_s64(lhs, rhs));
   }
 
   static std::uint64_t trace_mask_eq(vector_type lhs, vector_type rhs) {
-    alignas(alignment) std::uint64_t lanes[lane_count];
-    vst1q_u64(lanes, vceqq_s64(lhs, rhs));
-    return trace_lane_mask(lanes);
+    return arm_neon128_backend::lane_mask(vceqq_s64(lhs, rhs));
   }
 
   static mask_type empty_mask() {
