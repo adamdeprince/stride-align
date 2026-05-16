@@ -100,12 +100,16 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
   DiagonalState<Cell> previous_previous;
   DiagonalState<Cell> previous;
 
-  std::vector<Token> query_tokens(lane_count);
-  std::vector<Token> target_tokens(lane_count);
-  std::vector<Cell> diagonal_scores(lane_count);
-  std::vector<Cell> up_scores(lane_count);
-  std::vector<Cell> left_scores(lane_count);
-  std::vector<Cell> cell_scores(lane_count);
+  // Stack-allocated scratch sized to the largest possible SVE register
+  // (2048 bits, spec maximum). Lets the compiler keep scratch in registers
+  // across the inner block and treat the buffers as non-aliasing.
+  constexpr std::size_t kMaxLanes = 2048U / (8U * sizeof(Cell));
+  alignas(64) Token query_tokens[kMaxLanes] = {};
+  alignas(64) Token target_tokens[kMaxLanes] = {};
+  alignas(64) Cell diagonal_scores[kMaxLanes] = {};
+  alignas(64) Cell up_scores[kMaxLanes] = {};
+  alignas(64) Cell left_scores[kMaxLanes] = {};
+  alignas(64) Cell cell_scores[kMaxLanes] = {};
 
   Cell best_score = 0;
   std::size_t best_row = 0;
@@ -143,21 +147,21 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
 
       const auto gap_vector = Ops::set1(gap_score, count);
       const auto substitution_vector =
-          Ops::substitution(query_tokens.data(), target_tokens.data(), match_score, mismatch_score, count);
-      const auto diagonal_vector = Ops::add(Ops::load_cells(diagonal_scores.data(), count), substitution_vector, count);
-      const auto up_vector = Ops::add(Ops::load_cells(up_scores.data(), count), gap_vector, count);
-      const auto left_vector = Ops::add(Ops::load_cells(left_scores.data(), count), gap_vector, count);
+          Ops::substitution(query_tokens, target_tokens, match_score, mismatch_score, count);
+      const auto diagonal_vector = Ops::add(Ops::load_cells(diagonal_scores, count), substitution_vector, count);
+      const auto up_vector = Ops::add(Ops::load_cells(up_scores, count), gap_vector, count);
+      const auto left_vector = Ops::add(Ops::load_cells(left_scores, count), gap_vector, count);
 
-      Ops::store_cells(diagonal_scores.data(), diagonal_vector, count);
-      Ops::store_cells(up_scores.data(), up_vector, count);
-      Ops::store_cells(left_scores.data(), left_vector, count);
+      Ops::store_cells(diagonal_scores, diagonal_vector, count);
+      Ops::store_cells(up_scores, up_vector, count);
+      Ops::store_cells(left_scores, left_vector, count);
 
       if constexpr (Ops::has_vector_max) {
         auto cell_vector = Ops::max(diagonal_vector, Ops::max(up_vector, left_vector, count), count);
         if constexpr (LocalAlignment) {
           cell_vector = Ops::max(cell_vector, Ops::zero(count), count);
         }
-        Ops::store_cells(cell_scores.data(), cell_vector, count);
+        Ops::store_cells(cell_scores, cell_vector, count);
       }
 
       for (std::size_t lane = 0; lane < count; ++lane) {

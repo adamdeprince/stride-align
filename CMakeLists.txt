@@ -243,8 +243,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES 
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(_neon PRIVATE -march=armv8-a+simd)
-    target_compile_options(_sve PRIVATE -march=armv8.2-a+sve)
-    target_compile_options(_sve2 PRIVATE -march=armv9-a+sve2)
+    # Pin SVE register length to 128 bits. This makes svcnt*() compile-time
+    # constants so the kernels' inner loops are unrolled and scratch arrays
+    # become stack-resident. The matching supported_on_this_machine() check
+    # in linux_aarch64_sve{,2}.hpp refuses to load on hardware with a
+    # different SVE register width.
+    target_compile_options(_sve PRIVATE -march=armv8.2-a+sve -msve-vector-bits=128)
+    target_compile_options(_sve2 PRIVATE -march=armv9-a+sve2 -msve-vector-bits=128)
   endif()
 
   list(

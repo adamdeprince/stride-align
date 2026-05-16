@@ -3,6 +3,7 @@
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
 
+#include <arm_sve.h>
 #include <nanobind/nanobind.h>
 
 #include "backends/arm_sve_backend.hpp"
@@ -19,7 +20,12 @@ struct Implementation {
   using PreparedAffineScore = TargetImplementation::PreparedAffineScore;
 
   static bool supported_on_this_machine() noexcept {
-    return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0 && (getauxval(AT_HWCAP2) & HWCAP2_SVE2) != 0;
+    // The backend is built with -msve-vector-bits=128, so it requires
+    // hardware with 128-bit SVE registers (svcntb() == 16). Wider-vector
+    // machines (e.g. A64FX, Fugaku) must use a backend built for that width.
+    return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0 &&
+        (getauxval(AT_HWCAP2) & HWCAP2_SVE2) != 0 &&
+        svcntb() == 16U;
   }
 
   static void ensure_supported() {

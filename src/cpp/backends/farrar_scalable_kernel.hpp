@@ -129,6 +129,10 @@ typename Ops::vector_type shift_left_insert(
     typename Ops::vector_type vector,
     Cell inserted,
     std::size_t lane_count) {
+  if constexpr (requires { Ops::shift_left_insert(vector, inserted, lane_count); }) {
+    return Ops::shift_left_insert(vector, inserted, lane_count);
+  }
+
   std::vector<Cell> input(lane_count, 0);
   std::vector<Cell> output(lane_count, 0);
   Ops::store_cells(input.data(), vector, lane_count);
@@ -141,6 +145,10 @@ typename Ops::vector_type shift_left_insert(
 
 template <typename Ops, typename Cell>
 typename Ops::vector_type first_lane_vector(Cell first, Cell rest, std::size_t lane_count) {
+  if constexpr (requires { Ops::first_lane_vector(first, rest, lane_count); }) {
+    return Ops::first_lane_vector(first, rest, lane_count);
+  }
+
   std::vector<Cell> values(lane_count, rest);
   values[0] = first;
   return Ops::load_cells(values.data(), lane_count);
@@ -188,6 +196,10 @@ typename Ops::vector_type add_sentinel(
     typename Ops::vector_type rhs,
     Cell sentinel,
     std::size_t lane_count) {
+  if constexpr (requires { Ops::add_sentinel(lhs, rhs, sentinel, lane_count); }) {
+    return Ops::add_sentinel(lhs, rhs, sentinel, lane_count);
+  }
+
   std::vector<Cell> left(lane_count, 0);
   std::vector<Cell> right(lane_count, 0);
   std::vector<Cell> output(lane_count, 0);
@@ -200,6 +212,41 @@ typename Ops::vector_type add_sentinel(
               static_cast<Score>(left[lane]) + static_cast<Score>(right[lane]));
   }
   return Ops::load_cells(output.data(), lane_count);
+}
+
+// Variant of add_sentinel valid only when rhs is bounded such that
+// lhs + rhs cannot underflow into the sentinel from above (i.e. rhs <= 0 and
+// the lhs range stays well above INT_MIN). Uses Ops::saturating_add when
+// available (SVE2's vector-vector svqadd: 1 instruction vs add_sentinel's
+// cmpeq+add+sel = 3). Falls back to the safe add_sentinel otherwise.
+template <typename Ops, typename Cell>
+typename Ops::vector_type add_sentinel_negative_rhs(
+    typename Ops::vector_type lhs,
+    typename Ops::vector_type rhs,
+    Cell sentinel,
+    std::size_t lane_count) {
+  if constexpr (requires { Ops::saturating_add(lhs, rhs); }) {
+    return Ops::saturating_add(lhs, rhs);
+  }
+  return add_sentinel<Ops, Cell>(lhs, rhs, sentinel, lane_count);
+}
+
+// When PreserveSentinel=false (no-padding shape: query_size is divisible by
+// lane_count, so no lane carries the INT_MIN sentinel), all H/E adds in the
+// inner segment loop collapse to plain Ops::add. v_f still requires sentinel
+// handling because it's initialized with INT_MIN in lanes 1+. Mirrors
+// farrar_fixed_kernel::add_valid_or_sentinel and is what NEON's NW affine
+// equal-length path takes advantage of for ~30% gap closure.
+template <typename Ops, typename Cell, bool PreserveSentinel>
+typename Ops::vector_type add_valid_or_sentinel(
+    typename Ops::vector_type lhs,
+    typename Ops::vector_type rhs,
+    Cell sentinel,
+    std::size_t lane_count) {
+  if constexpr (PreserveSentinel) {
+    return add_sentinel<Ops, Cell>(lhs, rhs, sentinel, lane_count);
+  }
+  return Ops::add(lhs, rhs, lane_count);
 }
 
 inline std::vector<std::uint8_t> collect_profile_tokens(
@@ -534,6 +581,86 @@ void update_lazy_f(
   }
 }
 
+// Single-pass affine lazy-F propagation, used after a parallel prefix-carry
+// has already aligned v_f. Mirrors farrar_fixed_kernel::scan_lazy_f.
+template <typename Ops, typename Cell>
+void scan_lazy_f(
+    Cell* h_store_data,
+    Cell* e_store_data,
+    std::size_t segment_count,
+    std::size_t lane_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_open_vector,
+    typename Ops::vector_type gap_extend_vector,
+    typename Ops::vector_type& best_vector) {
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    Cell* e_segment = e_store_data + segment * lane_count;
+
+    const auto v_h_previous = Ops::load_cells(h_store_segment, lane_count);
+    const bool segment_propagated =
+        any_greater<Ops, Cell>(v_f, v_h_previous, lane_count);
+    auto v_h = Ops::max(v_h_previous, v_f, lane_count);
+
+    if (segment_propagated) {
+      Ops::store_cells(h_store_segment, v_h, lane_count);
+      best_vector = Ops::max(best_vector, v_h, lane_count);
+      const auto v_h_open = Ops::add(v_h, gap_open_vector, lane_count);
+      auto v_e = Ops::load_cells(e_segment, lane_count);
+      v_e = Ops::max(v_e, v_h_open, lane_count);
+      Ops::store_cells(e_segment, v_e, lane_count);
+      v_f = Ops::max(
+          Ops::add(v_f, gap_extend_vector, lane_count),
+          v_h_open,
+          lane_count);
+    } else {
+      const auto v_h_open = Ops::add(v_h, gap_open_vector, lane_count);
+      v_f = Ops::max(
+          Ops::add(v_f, gap_extend_vector, lane_count),
+          v_h_open,
+          lane_count);
+    }
+  }
+}
+
+// Single-pass NW affine lazy-F propagation, sentinel-aware. Mirrors
+// farrar_fixed_kernel::scan_global_lazy_f.
+template <typename Ops, typename Cell>
+void scan_global_lazy_f(
+    Cell* h_store_data,
+    Cell* e_store_data,
+    std::size_t segment_count,
+    std::size_t lane_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_open_vector,
+    typename Ops::vector_type gap_extend_vector,
+    Cell low_score) {
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    Cell* e_segment = e_store_data + segment * lane_count;
+
+    const auto v_h_previous = Ops::load_cells(h_store_segment, lane_count);
+    const bool segment_propagated =
+        any_greater<Ops, Cell>(v_f, v_h_previous, lane_count);
+    auto v_h = Ops::max(v_h_previous, v_f, lane_count);
+
+    // gap_open/gap_extend are <= 0, so the SVE2 saturating-add path is safe.
+    const auto v_h_open = add_sentinel_negative_rhs<Ops, Cell>(
+        v_h, gap_open_vector, low_score, lane_count);
+    if (segment_propagated) {
+      Ops::store_cells(h_store_segment, v_h, lane_count);
+      auto v_e = Ops::load_cells(e_segment, lane_count);
+      v_e = Ops::max(v_e, v_h_open, lane_count);
+      Ops::store_cells(e_segment, v_e, lane_count);
+    }
+    v_f = Ops::max(
+        add_sentinel_negative_rhs<Ops, Cell>(
+            v_f, gap_extend_vector, low_score, lane_count),
+        v_h_open,
+        lane_count);
+  }
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell>
 Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
@@ -541,6 +668,35 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
 
   if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
     return 0;
+  }
+
+  // Specialized exact-fill fast paths for query_size=1024. The English and
+  // Chinese benchmark passes default to length=1024, so this is the hot
+  // shape for affine sw-farrar-score. Mirrors the equivalent dispatch in
+  // farrar_fixed_kernel::affine_score_state_for_offsets.
+  if constexpr (requires {
+                  Ops::local_affine_score_exact_segment256_raw(
+                      state,
+                      std::span<const std::size_t>(state.target_profile_offsets));
+                }) {
+    if (state.query_size == 1024U && state.segment_count == 256U &&
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
+      return Ops::local_affine_score_exact_segment256_raw(
+          state,
+          std::span<const std::size_t>(state.target_profile_offsets));
+    }
+  }
+  if constexpr (requires {
+                  Ops::local_affine_score_exact_segment128_raw(
+                      state,
+                      std::span<const std::size_t>(state.target_profile_offsets));
+                }) {
+    if (state.query_size == 1024U && state.segment_count == 128U &&
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
+      return Ops::local_affine_score_exact_segment128_raw(
+          state,
+          std::span<const std::size_t>(state.target_profile_offsets));
+    }
   }
 
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
@@ -594,6 +750,37 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
       v_h = Ops::load_cells(h_load_segment, lane_count);
     }
 
+    // Parallel prefix-carry fast path: when the Ops backend provides
+    // local_lazy_f_prefix_carry, replace the O(lane_count) iterative shift
+    // loop with an O(log lane_count) prefix scan followed by a single sweep.
+    const bool can_prefix_lazy_f =
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0;
+    if constexpr (requires {
+                    Ops::local_lazy_f_prefix_carry(
+                        v_f,
+                        state.segment_count,
+                        state.gap_extend_score);
+                  }) {
+      if (can_prefix_lazy_f) {
+        v_f = Ops::local_lazy_f_prefix_carry(
+            v_f,
+            state.segment_count,
+            state.gap_extend_score);
+        if (any_greater<Ops, Cell>(v_f, zero_vector, lane_count)) {
+          scan_lazy_f<Ops, Cell>(
+              h_store_data,
+              e_store_data,
+              state.segment_count,
+              lane_count,
+              v_f,
+              gap_open_vector,
+              gap_extend_vector,
+              best_vector);
+        }
+        continue;
+      }
+    }
+
     for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
       v_f = shift_left_zero<Ops, Cell>(v_f, lane_count);
       update_lazy_f<Ops, Cell>(
@@ -614,8 +801,8 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
   return static_cast<Score>(reduce_max<Ops, Cell>(best_vector, lane_count));
 }
 
-template <template <typename, typename> class OpsTemplate, typename Cell>
-Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
+template <template <typename, typename> class OpsTemplate, typename Cell, bool PreserveSentinel>
+Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
   const std::size_t lane_count = state.lane_count;
 
@@ -685,23 +872,69 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
 
       const auto v_profile = Ops::load_cells(profile_segment, lane_count);
       auto v_e = Ops::load_cells(e_segment, lane_count);
-      v_h = add_sentinel<Ops, Cell>(v_h, v_profile, low_score, lane_count);
+      // With PreserveSentinel=false (query_size divisible by lane_count, no
+      // padding lanes), v_h never carries a sentinel, so the v_profile add
+      // collapses to a plain Ops::add. Mirrors NEON's equal-length path.
+      v_h = add_valid_or_sentinel<Ops, Cell, PreserveSentinel>(
+          v_h, v_profile, low_score, lane_count);
       v_h = Ops::max(v_h, v_e, lane_count);
       v_h = Ops::max(v_h, v_f, lane_count);
       Ops::store_cells(h_store_segment, v_h, lane_count);
 
-      const auto v_h_open =
-          add_sentinel<Ops, Cell>(v_h, gap_open_vector, low_score, lane_count);
+      // gap_open/gap_extend are <= 0. Without sentinel concerns, plain add
+      // is correct; with sentinels, the SVE2 svqadd path (or scalar fallback)
+      // preserves them.
+      const auto v_h_open = PreserveSentinel
+          ? add_sentinel_negative_rhs<Ops, Cell>(
+                v_h, gap_open_vector, low_score, lane_count)
+          : Ops::add(v_h, gap_open_vector, lane_count);
       v_e = Ops::max(
-          add_sentinel<Ops, Cell>(v_e, gap_extend_vector, low_score, lane_count),
+          PreserveSentinel
+              ? add_sentinel_negative_rhs<Ops, Cell>(
+                    v_e, gap_extend_vector, low_score, lane_count)
+              : Ops::add(v_e, gap_extend_vector, lane_count),
           v_h_open,
           lane_count);
       Ops::store_cells(e_segment, v_e, lane_count);
+      // v_f still carries the sentinel in lanes 1+ during segment 0
+      // (initialized via first_lane_vector with low_score). Keep the
+      // sentinel-aware add here even in the no-padding case.
       v_f = Ops::max(
-          add_sentinel<Ops, Cell>(v_f, gap_extend_vector, low_score, lane_count),
+          add_sentinel_negative_rhs<Ops, Cell>(
+              v_f, gap_extend_vector, low_score, lane_count),
           v_h_open,
           lane_count);
       v_h = Ops::load_cells(h_load_segment, lane_count);
+    }
+
+    // Parallel prefix-carry fast path for NW affine: same idea as the local
+    // SW path above, sentinel-aware via add_sentinel.
+    const bool can_prefix_lazy_f =
+        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0;
+    if constexpr (requires {
+                    Ops::global_lazy_f_prefix_carry_no_padding(
+                        v_f,
+                        state.segment_count,
+                        state.gap_extend_score,
+                        low_score);
+                  }) {
+      if (can_prefix_lazy_f) {
+        v_f = Ops::global_lazy_f_prefix_carry_no_padding(
+            v_f,
+            state.segment_count,
+            state.gap_extend_score,
+            low_score);
+        scan_global_lazy_f<Ops, Cell>(
+            h_store_data,
+            e_store_data,
+            state.segment_count,
+            lane_count,
+            v_f,
+            gap_open_vector,
+            gap_extend_vector,
+            low_score);
+        continue;
+      }
     }
 
     for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
@@ -737,6 +970,21 @@ Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
 
   return static_cast<Score>(
       striped_row_value(h_store_data, state.query_size, state.segment_count, lane_count));
+}
+
+// Dispatcher: when query_size is exactly segment_count * lane_count, no
+// lane carries the sentinel, so the inner segment loop can collapse three of
+// its four sentinel-aware adds to plain Ops::add. This is what NEON's
+// global_affine_score_state branch on equal-length-no-padding does, and
+// closes most of the SVE-vs-NEON gap on nw-score affine.
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_affine_score_state(PreparedAffineScoreState<Cell>& state) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  if (state.query_size != 0 &&
+      state.query_size == state.segment_count * Ops::lane_count()) {
+    return global_affine_score_state_impl<OpsTemplate, Cell, false>(state);
+  }
+  return global_affine_score_state_impl<OpsTemplate, Cell, true>(state);
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
@@ -855,6 +1103,83 @@ Score dispatch_global_affine_score(
   throw nb::python_error();
 }
 
+// Linear SW exact-fill for a hardcoded segment count. Hoisting SegmentCount
+// to a compile-time template parameter lets the inner segment loop unroll
+// (NEON's score_state_exact_fill_local_sw does the same). gap_score must
+// be <= 0 to use the prefix-carry lazy-F path.
+template <template <typename, typename> class OpsTemplate, typename Cell, std::size_t SegmentCount>
+Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  const std::size_t lane_count = state.lane_count;
+
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
+  if (state.segment_count != SegmentCount || state.target_profile_offsets.empty()) {
+    return 0;
+  }
+
+  std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
+  std::fill(state.h_load.begin(), state.h_load.end(), Cell{0});
+  std::fill(state.e_store.begin(), state.e_store.end(), Cell{0});
+
+  const auto zero_vector = Ops::zero(lane_count);
+  const auto gap_vector = Ops::set1(state.gap_score, lane_count);
+  auto best_vector = zero_vector;
+  Cell* h_store_data = state.h_store.data();
+  Cell* h_load_data = state.h_load.data();
+  Cell* e_store_data = state.e_store.data();
+  const Cell* profile_data = state.profile.data();
+
+  for (const auto profile_offset : state.target_profile_offsets) {
+    std::swap(h_store_data, h_load_data);
+
+    auto v_h = shift_left_zero<Ops, Cell>(
+        Ops::load_cells(h_load_data + ((SegmentCount - 1U) * lane_count), lane_count),
+        lane_count);
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + profile_offset;
+
+    for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+      Cell* h_store_segment = h_store_data + segment * lane_count;
+      Cell* h_load_segment = h_load_data + segment * lane_count;
+      Cell* e_segment = e_store_data + segment * lane_count;
+      const Cell* profile_segment = profile_row + segment * lane_count;
+
+      const auto v_profile = Ops::load_cells(profile_segment, lane_count);
+      auto v_e = Ops::load_cells(e_segment, lane_count);
+      v_h = Ops::add(v_h, v_profile, lane_count);
+      v_h = Ops::max(v_h, v_e, lane_count);
+      v_h = Ops::max(v_h, v_f, lane_count);
+      v_h = Ops::max(v_h, zero_vector, lane_count);
+      Ops::store_cells(h_store_segment, v_h, lane_count);
+      best_vector = Ops::max(best_vector, v_h, lane_count);
+
+      const auto v_h_gap = Ops::add(v_h, gap_vector, lane_count);
+      v_e = Ops::max(Ops::add(v_e, gap_vector, lane_count), v_h_gap, lane_count);
+      Ops::store_cells(e_segment, v_e, lane_count);
+      v_f = Ops::max(Ops::add(v_f, gap_vector, lane_count), v_h_gap, lane_count);
+      v_h = Ops::load_cells(h_load_segment, lane_count);
+    }
+
+    // Prefix-carry lazy-F. Caller-side guard requires the Ops backend to
+    // expose local_lazy_f_prefix_carry. Single-pass scan after the carry.
+    v_f = Ops::local_lazy_f_prefix_carry(v_f, SegmentCount, state.gap_score);
+    if (any_greater<Ops, Cell>(v_f, zero_vector, lane_count)) {
+      for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        auto v_h_segment = Ops::load_cells(h_store_segment, lane_count);
+        v_h_segment = Ops::max(v_h_segment, v_f, lane_count);
+        Ops::store_cells(h_store_segment, v_h_segment, lane_count);
+        best_vector = Ops::max(best_vector, v_h_segment, lane_count);
+        v_f = Ops::add(v_f, gap_vector, lane_count);
+      }
+    }
+  }
+
+  return static_cast<Score>(reduce_max<Ops, Cell>(best_vector, lane_count));
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell>
 Score score_state(PreparedScoreState<Cell>& state) {
   using Ops = ScoreOps<OpsTemplate, Cell>;
@@ -865,6 +1190,25 @@ Score score_state(PreparedScoreState<Cell>& state) {
   }
   if (state.segment_count == 0 || state.target_profile_offsets.empty()) {
     return 0;
+  }
+
+  // Specialized exact-fill paths for fixed segment counts. Triggered when
+  // query_size is exactly N*lane_count for one of the magic Ns. Mirrors
+  // NEON's local_sw_score_exact_segment{128,256} dispatch in
+  // farrar_fixed_kernel::score_state.
+  if constexpr (requires { Ops::local_lazy_f_prefix_carry(
+                  std::declval<typename Ops::vector_type>(),
+                  std::size_t{0},
+                  Cell{0}); }) {
+    if (state.gap_score <= 0 &&
+        state.query_size == state.segment_count * lane_count) {
+      if (state.segment_count == 128U) {
+        return score_state_exact_fill_local_sw<OpsTemplate, Cell, 128U>(state);
+      }
+      if (state.segment_count == 256U) {
+        return score_state_exact_fill_local_sw<OpsTemplate, Cell, 256U>(state);
+      }
+    }
   }
 
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
@@ -909,6 +1253,34 @@ Score score_state(PreparedScoreState<Cell>& state) {
       Ops::store_cells(e_segment, v_e, lane_count);
       v_f = Ops::max(Ops::add(v_f, gap_vector, lane_count), v_h_gap, lane_count);
       v_h = Ops::load_cells(h_load_segment, lane_count);
+    }
+
+    // Parallel prefix-carry fast path for linear SW. The track_lazy_best
+    // case (gap_score > 0) needs the iterative loop because it must update
+    // best_vector with every propagation step; skip the fast path there.
+    if constexpr (requires {
+                    Ops::local_lazy_f_prefix_carry(
+                        v_f,
+                        state.segment_count,
+                        state.gap_score);
+                  }) {
+      if (!track_lazy_best && state.gap_score <= 0) {
+        v_f = Ops::local_lazy_f_prefix_carry(
+            v_f,
+            state.segment_count,
+            state.gap_score);
+        if (any_greater<Ops, Cell>(v_f, zero_vector, lane_count)) {
+          for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+            Cell* h_store_segment = h_store_data + segment * lane_count;
+            auto v_h_segment = Ops::load_cells(h_store_segment, lane_count);
+            v_h_segment = Ops::max(v_h_segment, v_f, lane_count);
+            Ops::store_cells(h_store_segment, v_h_segment, lane_count);
+            best_vector = Ops::max(best_vector, v_h_segment, lane_count);
+            v_f = Ops::add(v_f, gap_vector, lane_count);
+          }
+        }
+        continue;
+      }
     }
 
     for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
@@ -996,6 +1368,32 @@ Score global_score_state(PreparedScoreState<Cell>& state) {
 
       v_up = Ops::add(v_cell, gap_vector, lane_count);
       v_h = Ops::load_cells(h_load_segment, lane_count);
+    }
+
+    // Parallel prefix-carry fast path for linear NW. Mirrors the SW path
+    // but uses sentinel-aware ops because boundary cells carry low_score.
+    if constexpr (requires {
+                    Ops::global_lazy_f_prefix_carry_no_padding(
+                        v_up,
+                        state.segment_count,
+                        state.gap_score,
+                        low_score);
+                  }) {
+      if (state.gap_score <= 0) {
+        v_up = Ops::global_lazy_f_prefix_carry_no_padding(
+            v_up,
+            state.segment_count,
+            state.gap_score,
+            low_score);
+        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+          Cell* h_store_segment = h_store_data + segment * lane_count;
+          auto v_h_segment = Ops::load_cells(h_store_segment, lane_count);
+          v_h_segment = Ops::max(v_h_segment, v_up, lane_count);
+          Ops::store_cells(h_store_segment, v_h_segment, lane_count);
+          v_up = add_sentinel<Ops, Cell>(v_h_segment, gap_vector, low_score, lane_count);
+        }
+        continue;
+      }
     }
 
     for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {

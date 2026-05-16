@@ -332,18 +332,23 @@ std::conditional_t<TrackDirections, generic_detail::TracebackResult, Score> run_
   DiagonalState<Cell> previous_previous;
   DiagonalState<Cell> previous;
 
-  std::vector<VectorToken> vector_query_tokens(lane_count);
-  std::vector<VectorToken> vector_target_tokens(lane_count);
-  std::vector<Cell> diagonal_scores(lane_count);
-  std::vector<Cell> e_open_scores(lane_count);
-  std::vector<Cell> e_extend_scores(lane_count);
-  std::vector<Cell> f_open_scores(lane_count);
-  std::vector<Cell> f_extend_scores(lane_count);
-  std::vector<Cell> e_scores(lane_count);
-  std::vector<Cell> f_scores(lane_count);
-  std::vector<Cell> h_scores(lane_count);
-  std::vector<std::uint8_t> e_extends(lane_count);
-  std::vector<std::uint8_t> f_extends(lane_count);
+  // Stack-allocated scratch sized to the largest possible SVE register
+  // (2048 bits, the SVE spec maximum). On hardware with smaller vectors the
+  // tail is unused. Stack arrays let the compiler keep scratch in registers
+  // across the inner block and treat the buffers as non-aliasing.
+  constexpr std::size_t kMaxLanes = 2048U / (8U * sizeof(Cell));
+  alignas(64) VectorToken vector_query_tokens[kMaxLanes] = {};
+  alignas(64) VectorToken vector_target_tokens[kMaxLanes] = {};
+  alignas(64) Cell diagonal_scores[kMaxLanes] = {};
+  alignas(64) Cell e_open_scores[kMaxLanes] = {};
+  alignas(64) Cell e_extend_scores[kMaxLanes] = {};
+  alignas(64) Cell f_open_scores[kMaxLanes] = {};
+  alignas(64) Cell f_extend_scores[kMaxLanes] = {};
+  alignas(64) Cell e_scores[kMaxLanes] = {};
+  alignas(64) Cell f_scores[kMaxLanes] = {};
+  alignas(64) Cell h_scores[kMaxLanes] = {};
+  std::uint8_t e_extends[kMaxLanes] = {};
+  std::uint8_t f_extends[kMaxLanes] = {};
 
   Cell best_score = 0;
   std::size_t best_row = 0;
@@ -429,34 +434,34 @@ std::conditional_t<TrackDirections, generic_detail::TracebackResult, Score> run_
             left_f != negative_infinity_v<Cell> && f_extend_scores[lane] >= f_open_scores[lane];
       }
 
-      auto diagonal_vector = Ops::load_cells(diagonal_scores.data(), count);
+      auto diagonal_vector = Ops::load_cells(diagonal_scores, count);
       if constexpr (!CompactByteTokens) {
         const auto substitution_vector = Ops::substitution(
-            vector_query_tokens.data(),
-            vector_target_tokens.data(),
+            vector_query_tokens,
+            vector_target_tokens,
             match_score,
             mismatch_score,
             count);
         diagonal_vector = Ops::add(diagonal_vector, substitution_vector, count);
-        Ops::store_cells(diagonal_scores.data(), diagonal_vector, count);
+        Ops::store_cells(diagonal_scores, diagonal_vector, count);
       }
 
       const auto e_vector = Ops::max(
-          Ops::load_cells(e_open_scores.data(), count),
-          Ops::load_cells(e_extend_scores.data(), count),
+          Ops::load_cells(e_open_scores, count),
+          Ops::load_cells(e_extend_scores, count),
           count);
       const auto f_vector = Ops::max(
-          Ops::load_cells(f_open_scores.data(), count),
-          Ops::load_cells(f_extend_scores.data(), count),
+          Ops::load_cells(f_open_scores, count),
+          Ops::load_cells(f_extend_scores, count),
           count);
       auto h_vector = Ops::max(diagonal_vector, Ops::max(e_vector, f_vector, count), count);
       if constexpr (LocalAlignment) {
         h_vector = Ops::max(h_vector, Ops::zero(count), count);
       }
 
-      Ops::store_cells(e_scores.data(), e_vector, count);
-      Ops::store_cells(f_scores.data(), f_vector, count);
-      Ops::store_cells(h_scores.data(), h_vector, count);
+      Ops::store_cells(e_scores, e_vector, count);
+      Ops::store_cells(f_scores, f_vector, count);
+      Ops::store_cells(h_scores, h_vector, count);
 
       for (std::size_t lane = 0; lane < count; ++lane) {
         const std::size_t row = current.row_start + offset + lane;
