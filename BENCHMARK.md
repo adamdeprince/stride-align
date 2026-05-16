@@ -1,8 +1,9 @@
 # Benchmark Summary
 
 This file contains separate benchmark families. The original `benchmark.csv`
-summary below is x86-only. Loongson LSX/LASX and macOS arm64 NEON results are
-listed separately and should not be compared directly with the x86 rows.
+summary below is x86-only. Loongson LSX/LASX, macOS arm64 NEON, and Linux
+PowerPC64 VSX (Power8) results are listed separately and should not be
+compared directly with the x86 rows.
 
 Generated on 2026-05-13 with Python 3.13 in the project virtualenv.
 
@@ -265,3 +266,70 @@ Recommended macOS arm64 next steps:
 4. Redesign affine `nw-score` with a NEON-specific loop if we revisit it; do not reuse the x86-oriented dense/plain flags.
 5. Add a native parasail comparison mode to the arm64 microbench before instruction-level parity work.
 6. Keep SWAR out of the mac performance path except as a correctness/reference backend.
+
+## Linux PowerPC64 VSX (Power8) - 2026-05-17
+
+Raw Power8 artifact is separate from `benchmark.csv`:
+
+| Artifact | Contents |
+| --- | --- |
+| [`benchmarks/power8-vsx-2026-05-17.csv`](benchmarks/power8-vsx-2026-05-17.csv) | Native `generic`, `swar`, and `linux_powerpc64_vsx` rows for `english`/`chinese`, `linear`/`affine`, widths 16 and 32, `1:1` and `1:many` shapes, with `--timing-split`. |
+| [`benchmarks/power8-vsx-2026-05-17.md`](benchmarks/power8-vsx-2026-05-17.md) | Power8-specific notes, semantic-delta writeup, and recommendations. |
+
+Build context: real POWER8 silicon (PVR `004b 0201`, 4.157 GHz), KVM-virtualized
+as a single-core `pSeries` guest. Ubuntu 20.04 ppc64le, IBM Advance Toolchain
+15.0 (GCC 11.4.1), Python 3.13.13 from miniforge, CMake 4.3.2 + Ninja from pip.
+Parasail was not built (no upstream ppc64le wheel, source build not attempted).
+All ratios are against `generic` on the same machine.
+
+Power8 VSX score-only takeaways:
+
+| Backend | Score Rows | Geomean vs Generic | Median vs Generic | Best vs Generic |
+| --- | ---: | ---: | ---: | ---: |
+| `linux_powerpc64_vsx` | 48 | 6.61x | 6.75x | 16.82x |
+| `swar`                | 48 | 0.60x | 0.53x |  1.03x |
+
+Power8 VSX path/CIGAR takeaways:
+
+| Backend | Path Rows | Geomean vs Generic | Median vs Generic |
+| --- | ---: | ---: | ---: |
+| `linux_powerpc64_vsx` | 32 | 1.50x | 1.14x |
+| `swar`                | 32 | 1.10x | 1.04x |
+
+Power8 VSX overall vs generic:
+
+| Backend | Rows | Wins vs Generic | Geomean | Median | Worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `linux_powerpc64_vsx` | 80 | 79 | 3.65x | 4.13x | 0.96x |
+| `swar`                | 80 | 27 | 0.77x | 0.98x | 0.41x |
+
+Power8 VSX is a uniform win or tie. The 0.96x worst case is a short 1:1
+linear path-info row at width 16 where SIMD setup dominates. The biggest
+wins (~16x) are `sw-farrar-score` and `sw-score` for both English and
+Chinese 1024x1024 at width 16. Affine `sw-cigar` and `nw-cigar` reach 4.2x
+because they route through the SIMD score kernel +
+`profile_traceback::affine_cigar_with_score` and skip the trace table.
+
+Routing decisions that differ from x86_avx2 / Loongson: linear SW path /
+path-info / linear CIGAR and affine path / path-info stay on
+`profile_traceback` on Power8. The shared masked striped traceback wins on
+ISAs with one-instruction lane bitmask extract and good striped-trace cache
+behavior. On Power8 they measured 0.46-0.60x of the scalar byte-table path,
+so we kept the helper hooks (`trace_mask_*`, `mask_or`, `store_masked_cells`,
+the `vbpermq`-based collapse described inline) but route the public path /
+path-info / linear CIGAR APIs through `profile_traceback`. The affine CIGAR
+entry stays on the SIMD score kernel + scalar reverse-build, which beats
+generic by 2-4x without a trace table.
+
+SWAR is a regression on Power8 across most rows (geomean `0.77x` generic).
+AT15 GCC 11.4 auto-vectorizes the generic score loop well enough that
+SWAR's 64-bit packed lanes give no benefit. SWAR is still useful as a
+correctness/reference backend.
+
+Recommended Power8 next steps:
+
+1. Try a `vbpermq`-based `trace_mask_*` on real hardware; combined with a row-major linear SW trace table this might bring the masked path above 1.0x of generic.
+2. Add a Power8 `local_affine_score_exact_segment*_raw` mirroring the NEON helpers if the 1024-character query shape becomes a target; current `sw-farrar-score` is already 7-8x ahead of generic.
+3. Re-bench on a multi-core / non-virtualized Power8 host to characterise SMT throughput and shared L2/L3 effects.
+4. Build parasail from source for ppc64le and add a parasail column to the next sweep.
+5. Investigate why SWAR loses to generic on Power8 via an asm dump of the generic score loop.
