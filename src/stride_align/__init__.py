@@ -32,8 +32,6 @@ def _backend_module_name(kind: BackendKind) -> str:
             return "stride_align._avx10_256"
         case BackendKind.X86_AVX10_512:
             return "stride_align._avx10_512"
-        case BackendKind.LINUX_AARCH64_ASIMD:
-            return "stride_align._asimd"
         case BackendKind.LINUX_AARCH64_NEON:
             return "stride_align._neon"
         case BackendKind.LINUX_AARCH64_SVE:
@@ -114,7 +112,6 @@ _REAL_SIMD_WIDE_PRIORITY = (
     BackendKind.LINUX_RISCV64_RVV,
     BackendKind.LINUX_LOONGARCH64_LASX,
     BackendKind.LINUX_LOONGARCH64_LSX,
-    BackendKind.LINUX_AARCH64_ASIMD,
     BackendKind.LINUX_AARCH64_NEON,
     BackendKind.MACOS_ARM64_NEON,
     BackendKind.LINUX_POWERPC64_VSX,
@@ -126,7 +123,6 @@ _REAL_SIMD_NARROW_PRIORITY = (
     BackendKind.X86_AVX10_256,
     BackendKind.X86_AVX512BWVL,
     BackendKind.X86_AVX10_512,
-    BackendKind.LINUX_AARCH64_ASIMD,
     BackendKind.LINUX_AARCH64_NEON,
     BackendKind.MACOS_ARM64_NEON,
     BackendKind.LINUX_AARCH64_SVE2,
@@ -144,7 +140,6 @@ _SHORT_LINEAR_FARRAR_PRIORITY = (
     BackendKind.X86_AVX10_256,
     BackendKind.X86_AVX512BWVL,
     BackendKind.X86_AVX10_512,
-    BackendKind.LINUX_AARCH64_ASIMD,
     BackendKind.LINUX_AARCH64_NEON,
     BackendKind.MACOS_ARM64_NEON,
     BackendKind.LINUX_AARCH64_SVE2,

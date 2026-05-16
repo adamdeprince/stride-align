@@ -13,7 +13,6 @@ enum class BackendKind {
   x86_avx512bwvl,
   x86_avx10_256,
   x86_avx10_512,
-  linux_aarch64_asimd,
   linux_aarch64_neon,
   linux_aarch64_sve,
   linux_aarch64_sve2,

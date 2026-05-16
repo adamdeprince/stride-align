@@ -39,7 +39,6 @@ constexpr std::array kBackends = {
     BackendMetadata{BackendKind::x86_avx512bwvl, "x86_avx512bwvl"},
     BackendMetadata{BackendKind::x86_avx10_256, "x86_avx10_256"},
     BackendMetadata{BackendKind::x86_avx10_512, "x86_avx10_512"},
-    BackendMetadata{BackendKind::linux_aarch64_asimd, "linux_aarch64_asimd"},
     BackendMetadata{BackendKind::linux_aarch64_neon, "linux_aarch64_neon"},
     BackendMetadata{BackendKind::linux_aarch64_sve, "linux_aarch64_sve"},
     BackendMetadata{BackendKind::linux_aarch64_sve2, "linux_aarch64_sve2"},
@@ -105,7 +104,7 @@ bool x86_supports_avx10_512() noexcept {
 #endif
 }
 
-bool linux_aarch64_supports_asimd() noexcept {
+bool linux_aarch64_supports_neon() noexcept {
 #if defined(__linux__) && defined(__aarch64__)
   return (getauxval(AT_HWCAP) & HWCAP_ASIMD) != 0;
 #else
@@ -213,12 +212,6 @@ bool backend_is_compiled(BackendKind kind) noexcept {
 #else
       return false;
 #endif
-    case BackendKind::linux_aarch64_asimd:
-#ifdef STRIDE_ALIGN_HAVE_LINUX_AARCH64_ASIMD
-      return true;
-#else
-      return false;
-#endif
     case BackendKind::linux_aarch64_neon:
 #ifdef STRIDE_ALIGN_HAVE_LINUX_AARCH64_NEON
       return true;
@@ -292,10 +285,8 @@ bool backend_is_available(BackendKind kind) noexcept {
       return x86_supports_avx10_256();
     case BackendKind::x86_avx10_512:
       return x86_supports_avx10_512();
-    case BackendKind::linux_aarch64_asimd:
-      return linux_aarch64_supports_asimd();
     case BackendKind::linux_aarch64_neon:
-      return linux_aarch64_supports_asimd();
+      return linux_aarch64_supports_neon();
     case BackendKind::linux_aarch64_sve:
       return linux_aarch64_supports_sve();
     case BackendKind::linux_aarch64_sve2:
@@ -325,7 +316,6 @@ BackendKind detect_best_backend() noexcept {
       BackendKind::linux_aarch64_sve2,
       BackendKind::linux_aarch64_sve,
       BackendKind::linux_aarch64_neon,
-      BackendKind::linux_aarch64_asimd,
       BackendKind::macos_arm64_neon,
       BackendKind::linux_loongarch64_lasx,
       BackendKind::linux_loongarch64_lsx,

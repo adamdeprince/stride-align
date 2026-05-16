@@ -237,13 +237,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
-  add_stride_align_backend(_asimd src/cpp/backends/linux_aarch64_asimd.cpp)
   add_stride_align_backend(_neon src/cpp/backends/linux_aarch64_neon.cpp)
   add_stride_align_backend(_sve src/cpp/backends/linux_aarch64_sve.cpp)
   add_stride_align_backend(_sve2 src/cpp/backends/linux_aarch64_sve2.cpp)
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(_asimd PRIVATE -march=armv8-a+simd)
     target_compile_options(_neon PRIVATE -march=armv8-a+simd)
     target_compile_options(_sve PRIVATE -march=armv8.2-a+sve)
     target_compile_options(_sve2 PRIVATE -march=armv9-a+sve2)
@@ -251,7 +249,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES 
 
   list(
     APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS
-    STRIDE_ALIGN_HAVE_LINUX_AARCH64_ASIMD=1
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_NEON=1
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE=1
     STRIDE_ALIGN_HAVE_LINUX_AARCH64_SVE2=1

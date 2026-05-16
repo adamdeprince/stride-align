@@ -1166,7 +1166,6 @@ FARRAR_BACKENDS = [
     ("stride_align._avx512bwvl", BackendKind.X86_AVX512BWVL),
     ("stride_align._avx10_256", BackendKind.X86_AVX10_256),
     ("stride_align._avx10_512", BackendKind.X86_AVX10_512),
-    ("stride_align._asimd", BackendKind.LINUX_AARCH64_ASIMD),
     ("stride_align._neon", BackendKind.LINUX_AARCH64_NEON),
     ("stride_align._sve", BackendKind.LINUX_AARCH64_SVE),
     ("stride_align._sve2", BackendKind.LINUX_AARCH64_SVE2),
@@ -1613,28 +1612,6 @@ def test_direct_avx10_512_backend_raises_runtime_error_when_unavailable() -> Non
 
     with pytest.raises(RuntimeError, match="not available on this machine"):
         avx10_512.smith_waterman_score("ACCGT", "CCG")
-
-
-@pytest.mark.skipif(
-    not backend_is_available(BackendKind.LINUX_AARCH64_ASIMD),
-    reason="Linux AArch64 ASIMD not available on this host",
-)
-@pytest.mark.parametrize("width", [8, 16, 32, 64])
-def test_direct_asimd_backend_supports_all_kernel_widths(width: int) -> None:
-    asimd = pytest.importorskip("stride_align._asimd")
-
-    assert asimd.smith_waterman_score("ACCGT", "CCG", width=width) == 6
-    assert asimd.needleman_wunsch_score("ACGT", "ACCT", width=width) == 5
-
-    sw_result = asimd.smith_waterman_path("ACCGT", "CCG", width=width)
-    nw_result = asimd.needleman_wunsch_path("ACGT", "ACCT", width=width)
-
-    assert sw_result.aligned_query == "CCG"
-    assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
-    assert nw_result.aligned_query == "ACGT"
-    assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
 
 
 @pytest.mark.skipif(

@@ -14,7 +14,6 @@ class BackendKind(Enum):
     X86_AVX512BWVL = auto()
     X86_AVX10_256 = auto()
     X86_AVX10_512 = auto()
-    LINUX_AARCH64_ASIMD = auto()
     LINUX_AARCH64_NEON = auto()
     LINUX_AARCH64_SVE = auto()
     LINUX_AARCH64_SVE2 = auto()

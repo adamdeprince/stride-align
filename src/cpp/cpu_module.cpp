@@ -18,7 +18,6 @@ NB_MODULE(_cpu, m) {
       .value("X86_AVX512BWVL", BackendKind::x86_avx512bwvl)
       .value("X86_AVX10_256", BackendKind::x86_avx10_256)
       .value("X86_AVX10_512", BackendKind::x86_avx10_512)
-      .value("LINUX_AARCH64_ASIMD", BackendKind::linux_aarch64_asimd)
       .value("LINUX_AARCH64_NEON", BackendKind::linux_aarch64_neon)
       .value("LINUX_AARCH64_SVE", BackendKind::linux_aarch64_sve)
       .value("LINUX_AARCH64_SVE2", BackendKind::linux_aarch64_sve2)
