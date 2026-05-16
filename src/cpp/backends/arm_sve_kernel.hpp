@@ -216,15 +216,15 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
       return static_cast<Score>(best_score);
     }
     return static_cast<Score>(final_score);
-  }
+  } else {
 
-  if constexpr (!LocalAlignment) {
-    best_row = query.size();
-    best_column = target.size();
-    best_score = final_score;
-  }
+    if constexpr (!LocalAlignment) {
+      best_row = query.size();
+      best_column = target.size();
+      best_score = final_score;
+    }
 
-  return TracebackResult{
+    return TracebackResult{
       .score = static_cast<Score>(best_score),
       .query_start = [&] {
         std::size_t row = best_row;
@@ -294,7 +294,8 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
         std::reverse(operations.begin(), operations.end());
         return operations;
       }(),
-  };
+    };
+  }
 }
 
 template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
