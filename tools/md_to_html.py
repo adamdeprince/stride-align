@@ -37,7 +37,7 @@ def readme_filename(suffix: str) -> str:
 
 
 def html_filename(suffix: str) -> str:
-    return "README.html" if not suffix else f"README.{suffix}.html"
+    return "index.html" if not suffix else f"index.{suffix}.html"
 
 
 def render_md_to_html(md_text: str) -> str:
