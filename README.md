@@ -15,12 +15,23 @@ pip install stride-align
 ```
 
 On Loongson systems, install NumPy from your Linux distribution before
-installing `stride-align`:
+installing `stride-align`, and grab the LoongArch64 wheel from the
+GitHub release instead of PyPI (PyPI does not yet accept the
+`linux_loongarch64` or `manylinux_2_38_loongarch64` platform tags):
 
 ```bash
 sudo apt install python3-numpy
-pip install stride-align
+
+PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.1.0/stride_align-0.1.0-${PY}-${PY}-linux_loongarch64.whl
 ```
+
+Prebuilt LoongArch64 wheels are available for Python 3.10, 3.11, 3.12,
+3.13, and 3.14. If you are on a different Python (or just want to
+build from source), `pip install stride-align` falls back to the
+source distribution on PyPI, which compiles the LSX/LASX kernels
+locally.
 
 First, just a disclaimer: I'm not using religious texts here to push
 an agenda - for this demo I need multiple largish public domain
