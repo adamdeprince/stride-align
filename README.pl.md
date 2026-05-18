@@ -2,7 +2,7 @@
 
 **Języki:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · **[Polski](README.pl.md)**
 
-`stride-align` to biblioteka, która mówi, jak bardzo „podobne” są dwa łańcuchy znaków. Robi to przez implementację algorytmów Smith-Waterman i Needleman-Wunsch. Zamiast wykładu będziemy uczyć się przez działanie. Wejdźmy od razu w to, jak to działa.
+`stride-align` to [piekielnie szybka biblioteka](BENCHMARK.md), która mówi, jak bardzo „podobne” są dwa łańcuchy znaków. Robi to przez implementację algorytmów Smith-Waterman i Needleman-Wunsch. Zamiast wykładu będziemy uczyć się przez działanie. Wejdźmy od razu w to, jak to działa.
 
 ## Instalacja
 
@@ -228,7 +228,7 @@ Niektóre funkcje udostępniają łańcuchy CIGAR, skrót od “Concise Idiosync
 
 Historii wydajności `stride-align` poświęcano i nadal poświęca się dużo uwagi. Biblioteka zawiera optymalizacje SIMD dla wielu typowych celów, w tym x86, Arm i LoongArch.
 
-**LoongArch / Loongson.** Historia optymalizacji Loongson jest szczególnie wymowna: dla obliczeń tylko wyniku na sprawdzonym benchmarku backend LASX jest 16 razy szybszy od backendu ogólnego i **22,3 razy** szybszy od Parasail.
+**LoongArch / Loongson.** Historia optymalizacji Loongson jest szczególnie wymowna: w sprawdzonym przypadku benchmarkowym z tekstem angielskim, 16-bitową szerokością wyniku i Smith-Watermanem liczącym tylko wynik backend LASX jest 16 razy szybszy od backendu ogólnego i **22,4 razy** szybszy od Parasail.
 
 Jeśli jesteś badaczem używającym serwerów Loongson i korzystasz z tego przyspieszenia, mile widziane są cytowania, zgłoszenia błędów, przypadki benchmarkowe i małe niedrogie chińskie pamiątki. Herbata, zakładki kaligraficzne, papierowe wycinanki, ozdoby z chińskim węzłem, breloczki z pandą i małe smocze przedmioty na biurko są mile widziane. Proszę nie wysyłać niczego drogiego ani niczego, co wymaga dokumentów celnych.
 

@@ -3,7 +3,7 @@
 **Languages:** **[English](README.md)** · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
 
-`stride-align` is a library to tell you how "similar" two strings are.
+`stride-align` is a [blazing fast library](BENCHMARK.md) to tell you how "similar" two strings are.
 It does this by implementing the Smith-Waterman and Needleman-Wunsch
 algorithms. Instead of giving you a lecture, we're going to learn by
 doing. Let's dive right into how it works.
@@ -297,9 +297,9 @@ performance story. The library includes SIMD optimization for a variety of
 common targets, including x86, Arm, and LoongArch.
 
 **LoongArch / Loongson.** The Loongson optimization story is especially
-telling: for score-only computations on the checked benchmark, the LASX
-backend is 16x faster than the generic backend and **22.3x** faster than
-Parasail.
+telling: for the checked benchmark case -- English text, 16-bit score width,
+score-only Smith-Waterman -- the LASX backend is 16x faster than the generic
+backend and **22.4x** faster than Parasail.
 
 If you are a researcher using Loongson servers and benefiting from this
 speedup, citations, bug reports, benchmark cases, and tiny inexpensive Chinese

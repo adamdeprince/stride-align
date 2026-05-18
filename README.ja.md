@@ -2,7 +2,7 @@
 
 **言語:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · **[日本語](README.ja.md)** · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` は、2つの文字列がどれくらい「似ているか」を教えてくれるライブラリです。Smith-Waterman と Needleman-Wunsch アルゴリズムを実装してそれを行います。講義は抜きにして、手を動かしながら覚えましょう。さっそく仕組みを見ていきます。
+`stride-align` は、2つの文字列がどれくらい「似ているか」を教えてくれる[爆速ライブラリ](BENCHMARK.md)です。Smith-Waterman と Needleman-Wunsch アルゴリズムを実装してそれを行います。講義は抜きにして、手を動かしながら覚えましょう。さっそく仕組みを見ていきます。
 
 ## インストール
 
@@ -228,7 +228,7 @@ print(object_result.aligned_query, object_result.aligned_target)
 
 `stride-align` の性能面には、これまでも今後もかなり注意を払っています。このライブラリには、x86、Arm、LoongArch など一般的な対象向けの SIMD 最適化が含まれています。
 
-**LoongArch / Loongson.** Loongson 向け最適化は特に分かりやすい例です。確認済みベンチマークのスコアのみ計算では、LASX バックエンドは汎用バックエンドより 16 倍速く、Parasail より **22.3 倍** 速くなっています。
+**LoongArch / Loongson.** Loongson 向け最適化は特に分かりやすい例です。確認済みベンチマークのうち、英語テキスト、16 ビットのスコア幅、スコアのみを計算する Smith-Waterman というケースでは、LASX バックエンドは汎用バックエンドより 16 倍速く、Parasail より **22.4 倍** 速くなっています。
 
 Loongson サーバを使ってこの高速化の恩恵を受けている研究者の方は、引用、バグ報告、ベンチマークケース、そして小さくて安価な中国土産を歓迎します。お茶、書道しおり、切り絵飾り、中国結び、パンダのキーホルダー、小さな龍の机上オブジェクトなどは大歓迎です。高価なものや税関書類が必要なものは送らないでください。
 

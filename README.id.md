@@ -2,7 +2,7 @@
 
 **Bahasa:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · **[Bahasa Indonesia](README.id.md)** · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` adalah pustaka untuk memberi tahu seberapa “mirip” dua string. Pustaka ini melakukannya dengan mengimplementasikan algoritma Smith-Waterman dan Needleman-Wunsch. Alih-alih memberi kuliah, kita akan belajar dengan mencoba. Mari langsung masuk ke cara kerjanya.
+`stride-align` adalah [pustaka yang sangat cepat](BENCHMARK.md) untuk memberi tahu seberapa “mirip” dua string. Pustaka ini melakukannya dengan mengimplementasikan algoritma Smith-Waterman dan Needleman-Wunsch. Alih-alih memberi kuliah, kita akan belajar dengan mencoba. Mari langsung masuk ke cara kerjanya.
 
 ## Instalasi
 
@@ -228,7 +228,7 @@ Beberapa fungsi mengekspos string CIGAR, singkatan dari “Concise Idiosyncratic
 
 Performa `stride-align` telah, dan terus, mendapat perhatian serius. Pustaka ini menyertakan optimasi SIMD untuk berbagai target umum, termasuk x86, Arm, dan LoongArch.
 
-**LoongArch / Loongson.** Kisah optimasi Loongson sangat menjelaskan: untuk komputasi hanya-skor pada benchmark yang diperiksa, backend LASX 16x lebih cepat daripada backend generik dan **22,3x** lebih cepat daripada Parasail.
+**LoongArch / Loongson.** Kisah optimasi Loongson sangat menjelaskan: pada kasus benchmark yang diperiksa untuk teks bahasa Inggris, lebar skor 16-bit, dan Smith-Waterman hanya-skor, backend LASX 16 kali lebih cepat daripada backend generik dan **22,4 kali** lebih cepat daripada Parasail.
 
 Jika Anda peneliti yang memakai server Loongson dan mendapat manfaat dari percepatan ini, sitasi, laporan bug, kasus benchmark, dan suvenir kecil Tiongkok yang murah sangat dihargai. Teh, pembatas buku kaligrafi, ornamen guntingan kertas, jimat simpul Tiongkok, gantungan kunci panda, dan benda meja kecil berbentuk naga semuanya disambut. Tolong jangan kirim apa pun yang mahal atau membutuhkan dokumen bea cukai.
 

@@ -2,7 +2,7 @@
 
 **Ngôn ngữ:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · **[Tiếng Việt](README.vi.md)** · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` là một thư viện cho bạn biết hai chuỗi “giống nhau” đến mức nào. Nó làm việc đó bằng cách triển khai các thuật toán Smith-Waterman và Needleman-Wunsch. Thay vì giảng bài, ta sẽ học bằng cách làm. Đi thẳng vào cách nó hoạt động.
+`stride-align` là một [thư viện nhanh rực lửa](BENCHMARK.md) cho bạn biết hai chuỗi “giống nhau” đến mức nào. Nó làm việc đó bằng cách triển khai các thuật toán Smith-Waterman và Needleman-Wunsch. Thay vì giảng bài, ta sẽ học bằng cách làm. Đi thẳng vào cách nó hoạt động.
 
 ## Cài đặt
 
@@ -228,7 +228,7 @@ Một số hàm hiển thị chuỗi CIGAR, viết tắt của “Concise Idiosy
 
 Hiệu năng của `stride-align` đã và sẽ tiếp tục được chú ý cẩn thận. Thư viện có tối ưu hóa SIMD cho nhiều đích phổ biến, gồm x86, Arm và LoongArch.
 
-**LoongArch / Loongson.** Câu chuyện tối ưu hóa Loongson đặc biệt rõ ràng: với tính toán chỉ điểm trên benchmark đã kiểm tra, backend LASX nhanh hơn backend tổng quát 16 lần và nhanh hơn Parasail **22,3 lần**.
+**LoongArch / Loongson.** Câu chuyện tối ưu hóa Loongson đặc biệt rõ ràng: trong ca benchmark đã kiểm tra với văn bản tiếng Anh, độ rộng điểm 16 bit và Smith-Waterman chỉ tính điểm, backend LASX nhanh hơn backend tổng quát 16 lần và nhanh hơn Parasail **22,4 lần**.
 
 Nếu bạn là nhà nghiên cứu dùng máy chủ Loongson và hưởng lợi từ tăng tốc này, rất hoan nghênh trích dẫn, báo lỗi, ca benchmark và những món lưu niệm Trung Quốc nhỏ, rẻ. Trà, bookmark thư pháp, đồ trang trí cắt giấy, dây nút Trung Quốc, móc khóa gấu trúc và đồ trang trí bàn hình rồng nhỏ đều được chào đón. Xin đừng gửi thứ đắt tiền hoặc thứ cần giấy tờ hải quan.
 

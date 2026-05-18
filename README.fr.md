@@ -2,7 +2,7 @@
 
 **Langues:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · **[Français](README.fr.md)** · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` est une bibliothèque qui te dit à quel point deux chaînes se ressemblent. Elle le fait en implémentant les algorithmes Smith-Waterman et Needleman-Wunsch. Plutôt que de faire un cours, on va apprendre en pratiquant. Entrons directement dans le fonctionnement.
+`stride-align` est une [bibliothèque fulgurante](BENCHMARK.md) qui te dit à quel point deux chaînes se ressemblent. Elle le fait en implémentant les algorithmes Smith-Waterman et Needleman-Wunsch. Plutôt que de faire un cours, on va apprendre en pratiquant. Entrons directement dans le fonctionnement.
 
 ## Installation
 
@@ -228,7 +228,7 @@ Certaines fonctions exposent des chaînes CIGAR, abréviation de “Concise Idio
 
 Une attention sérieuse a été portée, et continue de l’être, aux performances de `stride-align`. La bibliothèque inclut des optimisations SIMD pour plusieurs cibles courantes, dont x86, Arm et LoongArch.
 
-**LoongArch / Loongson.** L’histoire d’optimisation Loongson est particulièrement parlante : pour les calculs à score seul sur le banc d’essai vérifié, le backend LASX est 16 fois plus rapide que le backend générique et **22,3 fois** plus rapide que Parasail.
+**LoongArch / Loongson.** L’histoire d’optimisation Loongson est particulièrement parlante : dans le cas de benchmark vérifié portant sur du texte anglais, une largeur de score de 16 bits et un Smith-Waterman à score seul, le backend LASX est 16 fois plus rapide que le backend générique et **22,4 fois** plus rapide que Parasail.
 
 Si tu es chercheur, que tu utilises des serveurs Loongson et que tu profites de cette accélération, les citations, rapports de bogues, cas de banc d’essai et petits souvenirs chinois bon marché sont appréciés. Thé, marque-pages de calligraphie, ornements en papier découpé, porte-bonheur en nœud chinois, porte-clés panda et petits objets de bureau en forme de dragon sont les bienvenus. Merci de ne rien envoyer de cher ni rien qui exige des formalités douanières.
 

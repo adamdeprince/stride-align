@@ -2,7 +2,7 @@
 
 **اللغات:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · **[العربية](README.ar.md)** · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` هي مكتبة تخبرك بمدى “تشابه” سلسلتين نصيتين. تفعل ذلك عبر تنفيذ خوارزميتي Smith-Waterman و Needleman-Wunsch. بدل محاضرة طويلة، سنتعلم بالتجربة. لنبدأ مباشرة بكيفية عملها.
+`stride-align` هي [مكتبة فائقة السرعة](BENCHMARK.md) تخبرك بمدى “تشابه” سلسلتين نصيتين. تفعل ذلك عبر تنفيذ خوارزميتي Smith-Waterman و Needleman-Wunsch. بدل محاضرة طويلة، سنتعلم بالتجربة. لنبدأ مباشرة بكيفية عملها.
 
 ## التثبيت
 
@@ -228,7 +228,7 @@ print(object_result.aligned_query, object_result.aligned_target)
 
 حظيت قصة أداء `stride-align` وما زالت تحظى باهتمام دقيق. تتضمن المكتبة تحسينات SIMD لعدة أهداف شائعة، منها x86 و Arm و LoongArch.
 
-**LoongArch / Loongson.** قصة تحسين Loongson معبرة جداً: في الحسابات التي تنتج الدرجة فقط على الاختبار المعياري المحقق، خلفية LASX أسرع 16 مرة من الخلفية العامة وأسرع **22.3 مرة** من Parasail.
+**LoongArch / Loongson.** قصة تحسين Loongson معبرة جداً: في حالة الاختبار المعياري المحققة الخاصة بالنص الإنجليزي، وعرض الدرجة 16 بت، و Smith-Waterman الذي يحسب الدرجة فقط، يكون خلفية LASX أسرع 16 مرة من الخلفية العامة وأسرع **22.4 مرة** من Parasail.
 
 إذا كنت باحثاً تستخدم خوادم Loongson وتستفيد من هذا التسريع، فالإحالات، وتقارير الأخطاء، وحالات الاختبار المعياري، والهدايا الصينية الصغيرة الرخيصة كلها محل تقدير. الشاي، وعلامات الكتب الخطية، وزخارف قص الورق، وتمائم العقد الصينية، وميداليات مفاتيح الباندا، وأجسام المكتب الصغيرة على شكل تنين كلها مرحب بها. من فضلك لا ترسل شيئاً غالياً أو شيئاً يتطلب أوراقاً جمركية.
 

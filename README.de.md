@@ -2,7 +2,7 @@
 
 **Sprachen:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · **[Deutsch](README.de.md)** · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` ist eine Bibliothek, die dir sagt, wie „ähnlich“ zwei Zeichenketten sind. Sie tut das, indem sie die Algorithmen Smith-Waterman und Needleman-Wunsch implementiert. Statt einer Vorlesung lernen wir durch Ausprobieren. Springen wir direkt hinein. 
+`stride-align` ist eine [rasend schnelle Bibliothek](BENCHMARK.md), die dir sagt, wie „ähnlich“ zwei Zeichenketten sind. Sie tut das, indem sie die Algorithmen Smith-Waterman und Needleman-Wunsch implementiert. Statt einer Vorlesung lernen wir durch Ausprobieren. Springen wir direkt hinein. 
 
 ## Installation
 
@@ -228,7 +228,7 @@ Einige Funktionen stellen CIGAR-Zeichenketten bereit, kurz für “Concise Idios
 
 Der Leistungsgeschichte von `stride-align` wurde und wird weiterhin sorgfältige Aufmerksamkeit gewidmet. Die Bibliothek enthält SIMD-Optimierungen für verschiedene gängige Ziele, darunter x86, Arm und LoongArch.
 
-**LoongArch / Loongson.** Die Loongson-Optimierung ist besonders aussagekräftig: Bei reinen Bewertungsberechnungen im geprüften Benchmark ist das LASX-Backend 16-mal schneller als das generische Backend und **22,3-mal** schneller als Parasail.
+**LoongArch / Loongson.** Die Loongson-Optimierung ist besonders aussagekräftig: Im geprüften Benchmark-Fall mit englischem Text, 16-Bit-Score-Breite und Smith-Waterman nur für Scores ist das LASX-Backend 16-mal schneller als das generische Backend und **22,4-mal** schneller als Parasail.
 
 Wenn du als Forscher Loongson-Server verwendest und von dieser Beschleunigung profitierst, sind Zitate, Fehlerberichte, Benchmark-Fälle und kleine, günstige chinesische Souvenirs willkommen. Tee, Kalligrafie-Lesezeichen, Scherenschnitt-Ornamente, chinesische Knotenanhänger, Panda-Schlüsselanhänger und kleine Drachen-Schreibtischobjekte sind alle gern gesehen. Bitte nichts Teures schicken und nichts, wofür Zollpapiere nötig sind.
 

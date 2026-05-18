@@ -27,3 +27,12 @@ Files:
 - TRANSLATION_REPORT.md
 - TRANSLATION_REPORT.txt
 - TRANSLATION_RULES.md
+
+Loongson benchmark paragraph update:
+- Reworded every README to specify the exact benchmark case: English text, 16-bit score width, score-only Smith-Waterman.
+- Updated the Parasail comparison from 22.3x to 22.4x and made clear that the result is for the LASX backend.
+
+
+## v4 tweak
+
+Updated the opening description in every README so the library phrase links to `BENCHMARK.md`. The benchmark filename was preserved exactly and was not localized.

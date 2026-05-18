@@ -2,7 +2,7 @@
 
 **Diller:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · **[Türkçe](README.tr.md)** · [Polski](README.pl.md)
 
-`stride-align` iki dizgenin ne kadar “benzer” olduğunu söyleyen bir kütüphanedir. Bunu Smith-Waterman ve Needleman-Wunsch algoritmalarını uygulayarak yapar. Ders anlatmak yerine yaparak öğreneceğiz. Hemen nasıl çalıştığına bakalım.
+`stride-align` iki dizgenin ne kadar “benzer” olduğunu söyleyen [alev gibi hızlı bir kütüphanedir](BENCHMARK.md). Bunu Smith-Waterman ve Needleman-Wunsch algoritmalarını uygulayarak yapar. Ders anlatmak yerine yaparak öğreneceğiz. Hemen nasıl çalıştığına bakalım.
 
 ## Kurulum
 
@@ -228,7 +228,7 @@ Bazı fonksiyonlar CIGAR dizgeleri sunar; CIGAR, “Concise Idiosyncratic Gapped
 
 `stride-align`ın performans hikâyesine dikkatle bakıldı ve bakılmaya devam ediyor. Kütüphane x86, Arm ve LoongArch dahil çeşitli yaygın hedefler için SIMD optimizasyonu içerir.
 
-**LoongArch / Loongson.** Loongson optimizasyon hikâyesi özellikle açıklayıcıdır: kontrol edilen benchmarktaki yalnızca puan hesaplamalarında LASX backend’i genel backend’den 16 kat, Parasail’den **22,3 kat** daha hızlıdır.
+**LoongArch / Loongson.** Loongson optimizasyon hikâyesi özellikle açıklayıcıdır: kontrol edilen benchmark vakasında, İngilizce metin, 16 bit puan genişliği ve yalnızca puan hesaplayan Smith-Waterman için LASX backend’i genel backend’den 16 kat, Parasail’den **22,4 kat** daha hızlıdır.
 
 Loongson sunucuları kullanan ve bu hızlanmadan yararlanan bir araştırmacıysanız, atıflar, hata raporları, benchmark örnekleri ve küçük ucuz Çin hediyelikleri makbuldür. Çay, kaligrafi ayraçları, kâğıt kesme süsleri, Çin düğümü süsleri, panda anahtarlıkları ve küçük ejderha masa objeleri hoş karşılanır. Lütfen pahalı bir şey veya gümrük evrakı gerektiren bir şey göndermeyin.
 

@@ -2,7 +2,7 @@
 
 **語言:** [English](README.md) · [简体中文](README.zh-CN.md) · **[繁體中文](README.zh-TW.md)** · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` 是一個函式庫，用來告訴你兩個字串有多「相似」。它透過實作 Smith-Waterman 和 Needleman-Wunsch 演算法來做到這件事。這裡不講大課，我們直接邊做邊學。先看看它怎麼運作。
+`stride-align` 是一個[快得冒煙的函式庫](BENCHMARK.md)，用來告訴你兩個字串有多「相似」。它透過實作 Smith-Waterman 和 Needleman-Wunsch 演算法來做到這件事。這裡不講大課，我們直接邊做邊學。先看看它怎麼運作。
 
 ## 安裝
 
@@ -228,7 +228,7 @@ print(object_result.aligned_query, object_result.aligned_target)
 
 我一直認真關注 `stride-align` 的效能表現，而且會持續如此。這個函式庫包含面向多種常見目標的 SIMD 最佳化，包括 x86、Arm 和 LoongArch。
 
-**LoongArch / Loongson.** Loongson 的最佳化故事尤其有說服力：在已檢查的基準測試中，對於只計算分數的任務，LASX 後端比通用後端快 16 倍，比 Parasail 快 **22.3 倍**。
+**LoongArch / Loongson.** Loongson 的最佳化故事尤其有說服力：在已檢查的基準測試案例中，針對英文文字、16 位元分數寬度、只計算分數的 Smith-Waterman，LASX 後端比通用後端快 16 倍，比 Parasail 快 **22.4 倍**。
 
 如果你是使用 Loongson 伺服器並受益於這個加速的研究人員，歡迎引用、提交 bug 報告、提供基準測試案例，以及寄一點便宜的小型中國紀念品。茶葉、書法書籤、剪紙飾品、中國結掛件、熊貓鑰匙圈和小龍桌面擺件都歡迎。請不要寄任何昂貴物品，也不要寄需要海關文件的東西。
 

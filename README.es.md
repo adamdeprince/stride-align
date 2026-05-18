@@ -2,7 +2,7 @@
 
 **Idiomas:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · **[Español](README.es.md)** · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` es una biblioteca que te dice qué tan “parecidas” son dos cadenas. Lo hace implementando los algoritmos Smith-Waterman y Needleman-Wunsch. En lugar de darte una clase, vamos a aprender haciendo. Entremos directamente en cómo funciona.
+`stride-align` es una [biblioteca rapidísima](BENCHMARK.md) que te dice qué tan “parecidas” son dos cadenas. Lo hace implementando los algoritmos Smith-Waterman y Needleman-Wunsch. En lugar de darte una clase, vamos a aprender haciendo. Entremos directamente en cómo funciona.
 
 ## Instalación
 
@@ -228,7 +228,7 @@ Algunas funciones exponen cadenas CIGAR, abreviatura de “Concise Idiosyncratic
 
 Se ha prestado, y se sigue prestando, mucha atención a la historia de rendimiento de `stride-align`. La biblioteca incluye optimización SIMD para varios objetivos comunes, incluidos x86, Arm y LoongArch.
 
-**LoongArch / Loongson.** La historia de optimización para Loongson es especialmente reveladora: para cálculos de solo puntaje en el benchmark verificado, el backend LASX es 16 veces más rápido que el backend genérico y **22,3 veces** más rápido que Parasail.
+**LoongArch / Loongson.** La historia de optimización para Loongson es especialmente reveladora: en el caso de benchmark verificado con texto en inglés, ancho de puntaje de 16 bits y Smith-Waterman de solo puntaje, el backend LASX es 16 veces más rápido que el backend genérico y **22,4 veces** más rápido que Parasail.
 
 Si eres investigador, usas servidores Loongson y te beneficias de esta aceleración, se agradecen citas, informes de errores, casos de benchmark y pequeños recuerdos chinos baratos. Té, marcadores de caligrafía, adornos de papel recortado, amuletos de nudo chino, llaveros de panda y pequeños objetos de escritorio con forma de dragón son bienvenidos. Por favor no envíes nada caro ni nada que requiera trámites de aduana.
 

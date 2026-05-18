@@ -2,7 +2,7 @@
 
 **Idiomas:** [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · **[Português do Brasil](README.pt-BR.md)** · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
 
-`stride-align` é uma biblioteca que diz quão “parecidas” duas strings são. Ela faz isso implementando os algoritmos Smith-Waterman e Needleman-Wunsch. Em vez de dar uma aula, vamos aprender fazendo. Vamos direto ao funcionamento.
+`stride-align` é uma [biblioteca absurdamente rápida](BENCHMARK.md) que diz quão “parecidas” duas strings são. Ela faz isso implementando os algoritmos Smith-Waterman e Needleman-Wunsch. Em vez de dar uma aula, vamos aprender fazendo. Vamos direto ao funcionamento.
 
 ## Instalação
 
@@ -228,7 +228,7 @@ Algumas funções expõem strings CIGAR, abreviação de “Concise Idiosyncrati
 
 A história de desempenho de `stride-align` recebeu, e continua recebendo, atenção cuidadosa. A biblioteca inclui otimização SIMD para vários alvos comuns, incluindo x86, Arm e LoongArch.
 
-**LoongArch / Loongson.** A história de otimização do Loongson é especialmente reveladora: para cálculos somente de pontuação no benchmark verificado, o backend LASX é 16 vezes mais rápido que o backend genérico e **22,3 vezes** mais rápido que o Parasail.
+**LoongArch / Loongson.** A história de otimização do Loongson é especialmente reveladora: no caso de benchmark verificado com texto em inglês, largura de pontuação de 16 bits e Smith-Waterman somente de pontuação, o backend LASX é 16 vezes mais rápido que o backend genérico e **22,4 vezes** mais rápido que o Parasail.
 
 Se você é pesquisador usando servidores Loongson e se beneficiando dessa aceleração, citações, relatórios de bugs, casos de benchmark e pequenos souvenirs chineses baratos são apreciados. Chá, marcadores de caligrafia, enfeites de papel recortado, pingentes de nó chinês, chaveiros de panda e pequenos objetos de mesa em forma de dragão são todos bem-vindos. Por favor, não envie nada caro nem nada que exija documentação alfandegária.
 
