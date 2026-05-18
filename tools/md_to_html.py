@@ -11,24 +11,11 @@ REPO = Path("/home/adam/dev/stride-align")
 OUT = REPO / "html"
 OUT.mkdir(exist_ok=True)
 
-# Languages: filename suffix -> (lang code, display name, dir)
+# English only for now. Translation entries can be re-added here when the
+# translated README*.md files are updated; the rest of the script already
+# handles RTL / multi-language output.
 LANGS = [
     ("",        "en",     "English",              "ltr"),
-    ("zh-CN",   "zh-CN",  "简体中文",              "ltr"),
-    ("zh-TW",   "zh-TW",  "繁體中文",              "ltr"),
-    ("ja",      "ja",     "日本語",                "ltr"),
-    ("de",      "de",     "Deutsch",              "ltr"),
-    ("ko",      "ko",     "한국어",                "ltr"),
-    ("fr",      "fr",     "Français",             "ltr"),
-    ("es",      "es",     "Español",              "ltr"),
-    ("pt-BR",   "pt-BR",  "Português do Brasil",  "ltr"),
-    ("ru",      "ru",     "Русский",              "ltr"),
-    ("vi",      "vi",     "Tiếng Việt",           "ltr"),
-    ("id",      "id",     "Bahasa Indonesia",     "ltr"),
-    ("hi",      "hi",     "हिन्दी",                "ltr"),
-    ("ar",      "ar",     "العربية",              "rtl"),
-    ("tr",      "tr",     "Türkçe",               "ltr"),
-    ("pl",      "pl",     "Polski",               "ltr"),
 ]
 
 
@@ -93,6 +80,8 @@ def strip_top_h1_and_lang_line(html_body: str, *, suffix: str) -> tuple[str, str
 
 
 def render_lang_switch(active_suffix: str) -> str:
+    if len(LANGS) <= 1:
+        return ""
     parts = []
     for suffix, code, name, _dir in LANGS:
         href = html_filename(suffix)

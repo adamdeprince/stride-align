@@ -1,8 +1,5 @@
 # stride-align
 
-**Languages:** **[English](README.md)** · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
-
-
 `stride-align` is a [blazing fast library](BENCHMARK.md) to tell you how "similar" two strings are.
 It does this by implementing the Smith-Waterman and Needleman-Wunsch
 algorithms. Instead of giving you a lecture, we're going to learn by
