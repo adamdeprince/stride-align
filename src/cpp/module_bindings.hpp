@@ -2152,21 +2152,37 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   // levenshtein_dispatch.hpp, which uses Hyyrö's multi-word Myers and so
   // has no length cap.
 
+  // score_cutoff: when set, the kernel returns as soon as it can prove a
+  // pair's final distance must exceed the cutoff; the returned score is
+  // clamped to cutoff + 1 (rapidfuzz convention). Defaults to None,
+  // which disables the optimization and runs to completion (exact
+  // distance).
+  auto to_cutoff = [](nb::object cutoff_obj) -> std::size_t {
+    if (cutoff_obj.is_none()) {
+      return ::stride_align::levenshtein::kNoCutoff;
+    }
+    return static_cast<std::size_t>(nb::cast<long long>(cutoff_obj));
+  };
+
   m.def(
       "levenshtein_score",
-      [](nb::handle query, nb::handle target) {
-        return ::stride_align::levenshtein::dispatch_score(query, target);
+      [to_cutoff](nb::handle query, nb::handle target, nb::object score_cutoff) {
+        return ::stride_align::levenshtein::dispatch_score(
+            query, target, to_cutoff(score_cutoff));
       },
       nb::arg("query"),
-      nb::arg("target"));
+      nb::arg("target"),
+      nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "levenshtein_normalized_score",
-      [](nb::handle query, nb::handle target) {
-        return ::stride_align::levenshtein::dispatch_normalized_score(query, target);
+      [to_cutoff](nb::handle query, nb::handle target, nb::object score_cutoff) {
+        return ::stride_align::levenshtein::dispatch_normalized_score(
+            query, target, to_cutoff(score_cutoff));
       },
       nb::arg("query"),
-      nb::arg("target"));
+      nb::arg("target"),
+      nb::arg("score_cutoff") = nb::none());
 
   // Each backend that wants the multi-target SIMD kernel exposes
   // Implementation::levenshtein_scores / _normalized_scores as a static
@@ -2178,34 +2194,40 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   // no #ifdef survives here.
   m.def(
       "levenshtein_scores",
-      [](nb::handle query, nb::handle targets) {
+      [to_cutoff](nb::handle query, nb::handle targets, nb::object score_cutoff) {
+        const std::size_t cutoff = to_cutoff(score_cutoff);
         if constexpr (requires {
-                        Implementation::levenshtein_scores(query, targets);
+                        Implementation::levenshtein_scores(query, targets, cutoff);
                       }) {
-          return as_score_ndarray(Implementation::levenshtein_scores(query, targets));
+          return as_score_ndarray(
+              Implementation::levenshtein_scores(query, targets, cutoff));
         } else {
           return as_score_ndarray(
-              ::stride_align::levenshtein::dispatch_scores(query, targets));
+              ::stride_align::levenshtein::dispatch_scores(query, targets, cutoff));
         }
       },
       nb::arg("query"),
-      nb::arg("targets"));
+      nb::arg("targets"),
+      nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "levenshtein_normalized_scores",
-      [](nb::handle query, nb::handle targets) {
+      [to_cutoff](nb::handle query, nb::handle targets, nb::object score_cutoff) {
+        const std::size_t cutoff = to_cutoff(score_cutoff);
         if constexpr (requires {
-                        Implementation::levenshtein_normalized_scores(query, targets);
+                        Implementation::levenshtein_normalized_scores(query, targets, cutoff);
                       }) {
           return as_normalized_ndarray(
-              Implementation::levenshtein_normalized_scores(query, targets));
+              Implementation::levenshtein_normalized_scores(query, targets, cutoff));
         } else {
           return as_normalized_ndarray(
-              ::stride_align::levenshtein::dispatch_normalized_scores(query, targets));
+              ::stride_align::levenshtein::dispatch_normalized_scores(
+                  query, targets, cutoff));
         }
       },
       nb::arg("query"),
-      nb::arg("targets"));
+      nb::arg("targets"),
+      nb::arg("score_cutoff") = nb::none());
 }
 
 }  // namespace stride_align::bindings

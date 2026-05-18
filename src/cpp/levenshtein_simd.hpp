@@ -19,6 +19,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "byte_view.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "preprocess.hpp"
 #include "stride_align/alignment.hpp"
@@ -28,14 +29,20 @@ namespace stride_align::levenshtein_simd {
 
 namespace nb = nanobind;
 
-template <typename Ops>
+// Templated on HasCutoff so the no-cutoff path (the common case) doesn't pay
+// for the extra threshold/done tracking. When HasCutoff is true, a lane
+// freezes once its score exceeds `cutoff + (target_length - k - 1)` (the
+// minimum possible final distance from this state), and on return its
+// score is clamped to `cutoff + 1` (the sentinel rapidfuzz uses).
+template <typename Ops, bool HasCutoff = false>
 inline void myers_batch_single_word(
     const std::uint64_t* peq,
     const std::uint8_t* const* targets,
     const std::size_t* target_lengths,
     std::size_t batch_count,
     std::size_t m,
-    Score* out) {
+    Score* out,
+    std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
   using Vec = typename Ops::Vec;
   constexpr std::size_t lanes = Ops::lanes;
 
@@ -59,6 +66,31 @@ inline void myers_batch_single_word(
   alignas(64) std::uint64_t indices[lanes];
   alignas(64) std::uint64_t active[lanes];
 
+  // Cutoff bookkeeping. `done` is sticky-per-lane (set once score crosses
+  // the bail threshold). `threshold` carries `cutoff + remaining_chars`
+  // for each lane; remaining_chars decrements by one per column. Lanes
+  // past their target end stop receiving deltas via the active mask, so
+  // their threshold value is irrelevant after that point. `batch_mask`
+  // is all-ones in the first batch_count lanes (zero in the unused
+  // tail) so the all-lanes-settled break test ignores unused slots.
+  Vec done = Ops::zero();
+  Vec threshold = Ops::zero();
+  Vec batch_mask = Ops::zero();
+  if constexpr (HasCutoff) {
+    alignas(64) std::uint64_t init_threshold[lanes];
+    alignas(64) std::uint64_t mask_data[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      if (l < batch_count && target_lengths[l] > 0) {
+        init_threshold[l] = cutoff + target_lengths[l] - 1U;
+      } else {
+        init_threshold[l] = cutoff;
+      }
+      mask_data[l] = (l < batch_count) ? ~std::uint64_t{0} : 0;
+    }
+    threshold = Ops::load_aligned(init_threshold);
+    batch_mask = Ops::load_aligned(mask_data);
+  }
+
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
       if (l < batch_count && k < target_lengths[l]) {
@@ -72,6 +104,10 @@ inline void myers_batch_single_word(
 
     const Vec eq = Ops::gather64(peq, indices);
     const Vec active_v = Ops::load_aligned(active);
+    Vec eff_active = active_v;
+    if constexpr (HasCutoff) {
+      eff_active = Ops::andnot_(done, active_v);
+    }
 
     const Vec x = Ops::or_(eq, vn);
     const Vec xv = Ops::and_(x, vp);
@@ -89,16 +125,46 @@ inline void myers_batch_single_word(
     const Vec hn_eq_zero = Ops::cmpeq(hn_bit, zero_v);
     const Vec hp_set = Ops::andnot_(hp_eq_zero, one_v);
     const Vec hn_set = Ops::andnot_(hn_eq_zero, one_v);
-    const Vec delta = Ops::and_(Ops::sub(hp_set, hn_set), active_v);
+    const Vec delta = Ops::and_(Ops::sub(hp_set, hn_set), eff_active);
     score = Ops::add(score, delta);
 
     const Vec hp_shift = Ops::or_(Ops::shl1(hp), one_v);
     const Vec hn_shift = Ops::shl1(hn);
     vp = Ops::or_(hn_shift, Ops::not_(Ops::or_(d0, hp_shift)));
     vn = Ops::and_(d0, hp_shift);
+
+    if constexpr (HasCutoff) {
+      // After this column completes, the minimum possible final score per
+      // lane is score - (target_lengths[l] - k - 1). Bail when even the
+      // best-case can no longer reach the cutoff. `threshold` holds
+      // cutoff + (target_lengths[l] - k - 1). Gate the bail check with
+      // `active_v` so lanes whose target is already exhausted don't get
+      // false positives from threshold underflowing past zero.
+      const Vec exceeded = Ops::and_(Ops::gt_u64(score, threshold), active_v);
+      done = Ops::or_(done, exceeded);
+      threshold = Ops::sub(threshold, one_v);
+
+      // Stop the column loop entirely once every lane in the batch is
+      // settled (target exhausted or bailed by cutoff). `settled =
+      // ~active_v | done` is all-ones per lane that's settled; we look
+      // for any unsettled lane that's still part of the batch.
+      const Vec settled = Ops::or_(Ops::not_(active_v), done);
+      const Vec live = Ops::andnot_(settled, batch_mask);
+      if (Ops::is_zero(live)) {
+        break;
+      }
+    }
   }
 
   alignas(64) std::uint64_t scores[lanes];
+  if constexpr (HasCutoff) {
+    // Clamp bail-time scores to cutoff + 1 so callers see a stable
+    // sentinel regardless of how badly the lane diverged.
+    const Vec cutoff_plus_1 = Ops::set1(cutoff + 1U);
+    score = Ops::or_(
+        Ops::and_(done, cutoff_plus_1),
+        Ops::andnot_(done, score));
+  }
   Ops::store_aligned(scores, score);
   for (std::size_t l = 0; l < batch_count; ++l) {
     out[l] = static_cast<Score>(scores[l]);
@@ -137,40 +203,192 @@ inline std::array<std::uint64_t, 256> build_peq(std::span<const std::uint8_t> pa
   return peq;
 }
 
-// Kinds we can read byte-identically without copying.
-enum class ByteCompatKind : std::uint8_t { None, Bytes, Unicode1Byte };
-
-inline ByteCompatKind classify(PyObject* obj) {
-  if (PyBytes_Check(obj) != 0) {
-    return ByteCompatKind::Bytes;
+// Build a multi-block PEQ table for a uint8 pattern of length > 64. The
+// layout is `peq[b * 256 + c]` so block `b`'s 256-entry table starts at
+// `peq.data() + b * 256` — exactly the base the SIMD `gather64(base,
+// indices)` consumes. Sized at run-time because W depends on pattern
+// length.
+inline std::vector<std::uint64_t> build_peq_multi(
+    std::span<const std::uint8_t> pattern,
+    std::size_t W) {
+  std::vector<std::uint64_t> peq(W * 256U, 0);
+  const std::uint64_t one = 1U;
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    const std::size_t block = i / 64U;
+    const std::size_t bit = i % 64U;
+    peq[block * 256U + pattern[i]] |= one << bit;
   }
-  if (PyUnicode_Check(obj) != 0 &&
-      PyUnicode_KIND(obj) == PyUnicode_1BYTE_KIND) {
-    return ByteCompatKind::Unicode1Byte;
-  }
-  return ByteCompatKind::None;
+  return peq;
 }
 
+// Multi-word Myers in SIMD (one target per lane, pattern split into W
+// 64-bit blocks). Each per-column step runs Hyyrö's horizontal carry
+// chain across blocks per lane, in parallel across `lanes` targets. The
+// wide add (xv + vp[b] + add_carry) is implemented in SIMD via two
+// chained 64-bit adds with overflow detection (`gt_u64`).
+template <typename Ops, std::size_t W, bool HasCutoff = false>
+inline void myers_batch_multi_word(
+    const std::uint64_t* peq,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    std::size_t last_bits,
+    Score* out,
+    std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+  using Vec = typename Ops::Vec;
+  constexpr std::size_t lanes = Ops::lanes;
+  static_assert(W >= 2U, "myers_batch_multi_word is only for W >= 2; use single-word kernel for W == 1");
+
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+
+  // Per-block initial vp: last block uses `(1 << last_bits) - 1` if
+  // last_bits < 64, all-ones otherwise. Earlier blocks are always
+  // all-ones.
+  Vec vp[W];
+  Vec vn[W];
+  for (std::size_t b = 0; b < W; ++b) {
+    if (b == W - 1U && last_bits < 64U) {
+      vp[b] = Ops::set1((std::uint64_t{1} << last_bits) - 1U);
+    } else {
+      vp[b] = Ops::set1(~std::uint64_t{0});
+    }
+    vn[b] = Ops::zero();
+  }
+
+  Vec score = Ops::set1(static_cast<std::uint64_t>(m));
+  const Vec one_v = Ops::set1(1U);
+  const Vec zero_v = Ops::zero();
+  const Vec top_bit_last_mask = Ops::set1(std::uint64_t{1} << (last_bits - 1U));
+
+  Vec done = Ops::zero();
+  Vec threshold = Ops::zero();
+  Vec batch_mask = Ops::zero();
+  if constexpr (HasCutoff) {
+    alignas(64) std::uint64_t init_threshold[lanes];
+    alignas(64) std::uint64_t mask_data[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      init_threshold[l] = (l < batch_count && target_lengths[l] > 0)
+          ? cutoff + target_lengths[l] - 1U
+          : cutoff;
+      mask_data[l] = (l < batch_count) ? ~std::uint64_t{0} : 0;
+    }
+    threshold = Ops::load_aligned(init_threshold);
+    batch_mask = Ops::load_aligned(mask_data);
+  }
+
+  alignas(64) std::uint64_t indices[lanes];
+  alignas(64) std::uint64_t active[lanes];
+
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      if (l < batch_count && k < target_lengths[l]) {
+        indices[l] = targets[l][k];
+        active[l] = ~std::uint64_t{0};
+      } else {
+        indices[l] = 0;
+        active[l] = 0;
+      }
+    }
+    const Vec active_v = Ops::load_aligned(active);
+    Vec eff_active = active_v;
+    if constexpr (HasCutoff) {
+      eff_active = Ops::andnot_(done, active_v);
+    }
+
+    Vec add_carry = zero_v;
+    Vec hp_carry = one_v;  // boundary: bit 0 of d0 gets a +1 carry
+    Vec hn_carry = zero_v;
+    Vec last_hp = zero_v;
+    Vec last_hn = zero_v;
+
+    for (std::size_t b = 0; b < W; ++b) {
+      const Vec eq = Ops::gather64(peq + b * 256U, indices);
+
+      const Vec x = Ops::or_(eq, vn[b]);
+      const Vec xv = Ops::and_(x, vp[b]);
+
+      // Wide add: xv + vp[b] + add_carry, split into two 64-bit adds
+      // with overflow detection so the high half (carry to next block)
+      // is correct for the full 128-bit sum.
+      const Vec t1 = Ops::add(xv, vp[b]);
+      const Vec carry1_mask = Ops::gt_u64(xv, t1);
+      const Vec carry1 = Ops::and_(carry1_mask, one_v);
+      const Vec t2 = Ops::add(t1, add_carry);
+      const Vec carry2_mask = Ops::gt_u64(t1, t2);
+      const Vec carry2 = Ops::and_(carry2_mask, one_v);
+      add_carry = Ops::add(carry1, carry2);
+      const Vec sum = t2;
+
+      const Vec d0 = Ops::or_(Ops::xor_(sum, vp[b]), x);
+      const Vec hp = Ops::or_(vn[b], Ops::not_(Ops::or_(d0, vp[b])));
+      const Vec hn = Ops::and_(d0, vp[b]);
+
+      const Vec hp_shift = Ops::or_(Ops::shl1(hp), hp_carry);
+      const Vec hn_shift = Ops::or_(Ops::shl1(hn), hn_carry);
+      hp_carry = Ops::shr63(hp);
+      hn_carry = Ops::shr63(hn);
+
+      vp[b] = Ops::or_(hn_shift, Ops::not_(Ops::or_(d0, hp_shift)));
+      vn[b] = Ops::and_(d0, hp_shift);
+
+      if (b == W - 1U) {
+        last_hp = hp;
+        last_hn = hn;
+      }
+    }
+
+    const Vec hp_bit = Ops::and_(last_hp, top_bit_last_mask);
+    const Vec hn_bit = Ops::and_(last_hn, top_bit_last_mask);
+    const Vec hp_eq_zero = Ops::cmpeq(hp_bit, zero_v);
+    const Vec hn_eq_zero = Ops::cmpeq(hn_bit, zero_v);
+    const Vec hp_set = Ops::andnot_(hp_eq_zero, one_v);
+    const Vec hn_set = Ops::andnot_(hn_eq_zero, one_v);
+    const Vec delta = Ops::and_(Ops::sub(hp_set, hn_set), eff_active);
+    score = Ops::add(score, delta);
+
+    if constexpr (HasCutoff) {
+      // See single-word kernel: gate the bail check with active_v.
+      const Vec exceeded = Ops::and_(Ops::gt_u64(score, threshold), active_v);
+      done = Ops::or_(done, exceeded);
+      threshold = Ops::sub(threshold, one_v);
+
+      const Vec settled = Ops::or_(Ops::not_(active_v), done);
+      const Vec live = Ops::andnot_(settled, batch_mask);
+      if (Ops::is_zero(live)) {
+        break;
+      }
+    }
+  }
+
+  alignas(64) std::uint64_t scores[lanes];
+  if constexpr (HasCutoff) {
+    const Vec cutoff_plus_1 = Ops::set1(cutoff + 1U);
+    score = Ops::or_(
+        Ops::and_(done, cutoff_plus_1),
+        Ops::andnot_(done, score));
+  }
+  Ops::store_aligned(scores, score);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    out[l] = static_cast<Score>(scores[l]);
+  }
+}
+
+// Re-export the shared byte-view helpers under the SIMD namespace so
+// existing call sites keep compiling. The actual implementations live in
+// byte_view.hpp now that both the singular dispatch and the batch
+// kernel use them.
+using ByteCompatKind = ::stride_align::byte_view::ByteCompatKind;
+using ::stride_align::byte_view::classify;
 inline void byte_view(
     PyObject* obj,
     ByteCompatKind kind,
     const std::uint8_t*& ptr,
     std::size_t& len) {
-  if (kind == ByteCompatKind::Bytes) {
-    char* raw = nullptr;
-    Py_ssize_t size = 0;
-    if (PyBytes_AsStringAndSize(obj, &raw, &size) != 0) {
-      throw nb::python_error();
-    }
-    ptr = reinterpret_cast<const std::uint8_t*>(raw);
-    len = static_cast<std::size_t>(size);
-  } else {
-    // Unicode1Byte. PyUnicode_1BYTE_DATA returns an internal pointer the
-    // PyObject owns; we keep the items array (via `owner`) alive across
-    // the kernel, so the pointer stays valid.
-    ptr = PyUnicode_1BYTE_DATA(obj);
-    len = static_cast<std::size_t>(PyUnicode_GET_LENGTH(obj));
-  }
+  ::stride_align::byte_view::view(obj, kind, ptr, len);
 }
 
 // Try to view every target as bytes or 1-byte unicode (either is
@@ -198,7 +416,8 @@ inline bool view_all_byte_compat(
 template <typename Ops>
 inline std::vector<Score> levenshtein_scores_simd(
     nb::handle query,
-    nb::handle targets) {
+    nb::handle targets,
+    std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
   PyObject* fast_targets =
       PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
   if (fast_targets == nullptr) {
@@ -208,44 +427,97 @@ inline std::vector<Score> levenshtein_scores_simd(
   const auto count = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
   PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
 
+  // Largest pattern length the multi-word SIMD batch kernel covers.
+  // Beyond this we fall through to the scalar Hyyrö multi-word dispatch
+  // (still bit-parallel, just no SIMD across targets).
+  constexpr std::size_t kMaxSimdPatternLen = 256U;
+
   // Fast path: query is bytes or a 1-byte unicode string, each target
   // is independently bytes or 1-byte unicode (mixed is fine; their byte
-  // representations are identical), and pattern length is in (0, 64].
-  // We read CPython buffers directly with no per-target copy or
-  // allocation. The PyObjects stay alive through `owner` for the
-  // duration of this function.
+  // representations are identical), and pattern length is in (0,
+  // kMaxSimdPatternLen]. We read CPython buffers directly with no
+  // per-target copy or allocation. The PyObjects stay alive through
+  // `owner` for the duration of this function.
   const ByteCompatKind q_kind = classify(query.ptr());
   if (q_kind != ByteCompatKind::None) {
     const std::uint8_t* q_ptr = nullptr;
     std::size_t q_len = 0;
     byte_view(query.ptr(), q_kind, q_ptr, q_len);
-    if (q_len > 0 && q_len <= 64U) {
+    if (q_len > 0 && q_len <= kMaxSimdPatternLen) {
       std::vector<const std::uint8_t*> ptrs;
       std::vector<std::size_t> lens;
       if (view_all_byte_compat(items, count, ptrs, lens)) {
-        const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
-
         constexpr std::size_t lanes = Ops::lanes;
         std::vector<Score> out(count);
         std::array<const std::uint8_t*, lanes> batch_ptrs{};
         std::array<std::size_t, lanes> batch_lens{};
-        for (std::size_t b = 0; b < count; b += lanes) {
-          const std::size_t batch_count = std::min(lanes, count - b);
-          for (std::size_t l = 0; l < batch_count; ++l) {
-            batch_ptrs[l] = ptrs[b + l];
-            batch_lens[l] = lens[b + l];
+        const bool has_cutoff =
+            cutoff != ::stride_align::levenshtein::kNoCutoff;
+
+        // Pick the right kernel based on pattern length. Single-word
+        // covers (0, 64]; multi-word handles (64, 256] in 64-char
+        // blocks (W = 2/3/4).
+        const std::span<const std::uint8_t> pattern_span(q_ptr, q_len);
+        if (q_len <= 64U) {
+          const auto peq = build_peq(pattern_span);
+          for (std::size_t b = 0; b < count; b += lanes) {
+            const std::size_t batch_count = std::min(lanes, count - b);
+            for (std::size_t l = 0; l < batch_count; ++l) {
+              batch_ptrs[l] = ptrs[b + l];
+              batch_lens[l] = lens[b + l];
+            }
+            for (std::size_t l = batch_count; l < lanes; ++l) {
+              batch_ptrs[l] = nullptr;
+              batch_lens[l] = 0;
+            }
+            if (has_cutoff) {
+              myers_batch_single_word<Ops, true>(
+                  peq.data(), batch_ptrs.data(), batch_lens.data(),
+                  batch_count, q_len, out.data() + b, cutoff);
+            } else {
+              myers_batch_single_word<Ops, false>(
+                  peq.data(), batch_ptrs.data(), batch_lens.data(),
+                  batch_count, q_len, out.data() + b);
+            }
           }
-          for (std::size_t l = batch_count; l < lanes; ++l) {
-            batch_ptrs[l] = nullptr;
-            batch_lens[l] = 0;
+        } else {
+          // Multi-word path. We don't templatize over the exact W; pick
+          // the upper bucket so each call stays in a constant-W kernel.
+          const std::size_t W = (q_len + 63U) / 64U;
+          const std::size_t last_bits = q_len - (W - 1U) * 64U;
+          const auto peq = build_peq_multi(pattern_span, W);
+
+          auto run_batch = [&](auto W_const) {
+            constexpr std::size_t W_compile = decltype(W_const)::value;
+            for (std::size_t b = 0; b < count; b += lanes) {
+              const std::size_t batch_count = std::min(lanes, count - b);
+              for (std::size_t l = 0; l < batch_count; ++l) {
+                batch_ptrs[l] = ptrs[b + l];
+                batch_lens[l] = lens[b + l];
+              }
+              for (std::size_t l = batch_count; l < lanes; ++l) {
+                batch_ptrs[l] = nullptr;
+                batch_lens[l] = 0;
+              }
+              if (has_cutoff) {
+                myers_batch_multi_word<Ops, W_compile, true>(
+                    peq.data(), batch_ptrs.data(), batch_lens.data(),
+                    batch_count, q_len, last_bits, out.data() + b, cutoff);
+              } else {
+                myers_batch_multi_word<Ops, W_compile, false>(
+                    peq.data(), batch_ptrs.data(), batch_lens.data(),
+                    batch_count, q_len, last_bits, out.data() + b);
+              }
+            }
+          };
+
+          if (W == 2U) {
+            run_batch(std::integral_constant<std::size_t, 2U>{});
+          } else if (W == 3U) {
+            run_batch(std::integral_constant<std::size_t, 3U>{});
+          } else /* W == 4 */ {
+            run_batch(std::integral_constant<std::size_t, 4U>{});
           }
-          myers_batch_single_word<Ops>(
-              peq.data(),
-              batch_ptrs.data(),
-              batch_lens.data(),
-              batch_count,
-              q_len,
-              out.data() + b);
         }
         return out;
       }
@@ -259,7 +531,8 @@ inline std::vector<Score> levenshtein_scores_simd(
   std::vector<Score> out;
   out.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    out.push_back(::stride_align::levenshtein::dispatch_score(query, nb::handle(items[i])));
+    out.push_back(::stride_align::levenshtein::dispatch_score(
+        query, nb::handle(items[i]), cutoff));
   }
   return out;
 }
@@ -267,7 +540,8 @@ inline std::vector<Score> levenshtein_scores_simd(
 template <typename Ops>
 inline std::vector<double> levenshtein_normalized_scores_simd(
     nb::handle query,
-    nb::handle targets) {
+    nb::handle targets,
+    std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
   // Compute raw distances first, then normalize. We need target lengths,
   // so reuse the SIMD-eligibility scan path: re-materialize cheaply.
   PyObject* fast_targets =
@@ -279,7 +553,7 @@ inline std::vector<double> levenshtein_normalized_scores_simd(
   const auto count = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
   PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
 
-  auto raw = levenshtein_scores_simd<Ops>(query, targets);
+  auto raw = levenshtein_scores_simd<Ops>(query, targets, cutoff);
 
   const std::size_t q_len = static_cast<std::size_t>(PyObject_Length(query.ptr()));
 

@@ -1186,18 +1186,42 @@ def _refresh_levenshtein_backend() -> None:
     )
 
 
-def levenshtein_score(query: object, target: object) -> int:
-    """Levenshtein edit distance between two sequences (lower is more similar)."""
-    return int(_LEVENSHTEIN_BACKEND.levenshtein_score(query, target))
+def levenshtein_score(
+    query: object,
+    target: object,
+    score_cutoff: int | None = None,
+) -> int:
+    """Levenshtein edit distance between two sequences (lower is more similar).
+
+    If ``score_cutoff`` is set, the kernel returns as soon as it can prove the
+    final distance must exceed it; in that case the returned score is clamped
+    to ``score_cutoff + 1`` (the rapidfuzz convention).
+    """
+    return int(_LEVENSHTEIN_BACKEND.levenshtein_score(query, target, score_cutoff))
 
 
-def levenshtein_normalized_score(query: object, target: object) -> float:
+def levenshtein_normalized_score(
+    query: object,
+    target: object,
+    score_cutoff: int | None = None,
+) -> float:
     """Length-normalized Levenshtein similarity in [0, 1] (1 = identical)."""
-    return float(_LEVENSHTEIN_BACKEND.levenshtein_normalized_score(query, target))
+    return float(
+        _LEVENSHTEIN_BACKEND.levenshtein_normalized_score(query, target, score_cutoff)
+    )
 
 
-def levenshtein_scores(query: object, targets: object) -> np.ndarray:
-    """Distance from query to every target, returned as a numpy ndarray[int64]."""
+def levenshtein_scores(
+    query: object,
+    targets: object,
+    score_cutoff: int | None = None,
+) -> np.ndarray:
+    """Distance from query to every target, returned as a numpy ndarray[int64].
+
+    If ``score_cutoff`` is set, each lane bails early once its score is
+    provably above the cutoff; bailed-out entries appear as
+    ``score_cutoff + 1`` in the result.
+    """
     # The native binding accepts any sequence (PySequence_Fast handles
     # lists and tuples natively), so we skip the tuple() materialization
     # when the input is already one. The native call returns int64
@@ -1208,10 +1232,14 @@ def levenshtein_scores(query: object, targets: object) -> np.ndarray:
         )
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
-    return _LEVENSHTEIN_BACKEND.levenshtein_scores(query, targets)
+    return _LEVENSHTEIN_BACKEND.levenshtein_scores(query, targets, score_cutoff)
 
 
-def levenshtein_normalized_scores(query: object, targets: object) -> np.ndarray:
+def levenshtein_normalized_scores(
+    query: object,
+    targets: object,
+    score_cutoff: int | None = None,
+) -> np.ndarray:
     """Normalized similarity to every target, returned as a numpy ndarray[float64]."""
     if isinstance(targets, (str, bytes)):
         raise TypeError(
@@ -1219,7 +1247,9 @@ def levenshtein_normalized_scores(query: object, targets: object) -> np.ndarray:
         )
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
-    return _LEVENSHTEIN_BACKEND.levenshtein_normalized_scores(query, targets)
+    return _LEVENSHTEIN_BACKEND.levenshtein_normalized_scores(
+        query, targets, score_cutoff
+    )
 
 
 __all__ = [

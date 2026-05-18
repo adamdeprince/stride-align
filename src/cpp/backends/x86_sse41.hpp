@@ -1445,16 +1445,20 @@ struct Implementation {
         expected_score);
   }
 
-  static std::vector<Score> levenshtein_scores(nb::handle query, nb::handle targets) {
+  static std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
-        ::stride_align::levenshtein_simd::SseOps>(query, targets);
+        ::stride_align::levenshtein_simd::SseOps>(query, targets, cutoff);
   }
 
   static std::vector<double> levenshtein_normalized_scores(
       nb::handle query,
-      nb::handle targets) {
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
-        ::stride_align::levenshtein_simd::SseOps>(query, targets);
+        ::stride_align::levenshtein_simd::SseOps>(query, targets, cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_sse41;

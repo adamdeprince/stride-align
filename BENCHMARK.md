@@ -32,6 +32,9 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Levenshtein (Intel x86) | `x86_avx512bwvl` | python-Levenshtein | 14 | **1.159x** | 1.151x | 1.039x | 1.353x |
 | Levenshtein (Intel x86) | `x86_avx512bwvl` | rapidfuzz | 14 | 1.075x | 1.070x | 0.898x | 1.364x |
 | Levenshtein (Intel x86) | `x86_avx512bwvl` | editdistance | 14 | 13.564x | 13.758x | 11.099x | 15.880x |
+| Lev (long, >64 chars) | `x86_avx512bwvl` | rapidfuzz | 5 | **2.35x** | 2.55x | 1.45x | 2.88x |
+| Lev (1-vs-1, q>=100) | `x86_avx512bwvl` | rapidfuzz | 2 | **1.36x** | 1.36x | 1.34x | 1.39x |
+| Lev (cutoff, q=50) | `x86_avx512bwvl` | rapidfuzz | 3 | **3.91x** | 2.41x | 2.41x | 6.03x |
 
 ## Intel x86 - 2026-05-18
 
@@ -214,6 +217,93 @@ remaining headroom is mostly per-call overhead — list traversal, the
 Python ABI, the ndarray allocation — rather than the inner loop. The
 SIMD multi-target kernel pulls ahead on shorter queries where the
 per-target setup dominates.
+
+## Levenshtein extended (Intel x86) - 2026-05-19
+
+Raw artifact: [`benchmarks/intel-levenshtein-v2-2026-05-19.csv`](benchmarks/intel-levenshtein-v2-2026-05-19.csv).
+
+Three follow-up workloads that exercise the multi-word SIMD batch
+kernel (patterns 65-256 chars, in 64-char blocks W = 2/3/4), the
+zero-copy singular dispatch (no `prepare_alignment` vector copy when
+both inputs are bytes or 1-byte unicode), and the `score_cutoff`
+parameter with per-lane done masks and all-lanes early-exit. Same
+build host and pinning as the section above.
+
+### Long patterns (1-vs-200, no cutoff)
+
+| `q_len` | stride_align | python-Lev | rapidfuzz | vs Lev | vs rf |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 40  |  95 µs | 110 µs |  95 µs | 1.16x | 1.00x |
+| 65  | 118 µs | 187 µs | 171 µs | **1.59x** | **1.45x** |
+| 100 | 118 µs | 324 µs | 357 µs | **2.75x** | **3.03x** |
+| 128 | 118 µs | 320 µs | 300 µs | **2.71x** | **2.54x** |
+| 180 | 135 µs | 405 µs | 384 µs | **3.00x** | **2.85x** |
+| 200 | 166 µs | 456 µs | 440 µs | **2.75x** | **2.65x** |
+
+Each lane in the AVX-512 kernel runs Hyyrö's wide-add carry chain over
+W blocks in parallel across 8 targets. The wide add uses two chained
+64-bit adds + `gt_u64` overflow detection (AVX-512 native unsigned
+`cmpgt`, AVX2 sign-bit-XOR + signed `cmpgt`, SSE4.1 sub-and-sign-bit
+emulation). q_len = 40 is the single-word kernel, which hits parity
+with rapidfuzz.
+
+### 1-vs-1 singular (zero-copy dispatch)
+
+| `q_len` | stride_align | python-Lev | rapidfuzz |
+| ---: | ---: | ---: | ---: |
+| 10  | 0.20 µs | 0.25 µs | **0.17 µs** |
+| 30  | 0.27 µs | 0.31 µs | **0.24 µs** |
+| 60  | 0.36 µs | 0.40 µs | **0.32 µs** |
+| 100 | **0.90 µs** | 1.30 µs | 1.21 µs |
+| 200 | **2.35 µs** | 3.24 µs | 3.14 µs |
+
+When both inputs are bytes or 1-byte unicode the singular path skips
+the prepare\_alignment vector copy and runs scalar Myers directly on
+the CPython buffer (`PyBytes_AsStringAndSize` / `PyUnicode_1BYTE_DATA`).
+We trail rapidfuzz by ~10% under 60 chars (Python ABI overhead, no
+algorithmic gap) and pull ~1.35x ahead from 100 chars onward, where
+the multi-word inner loop dominates.
+
+### score_cutoff (5000 targets, short query)
+
+stride_align vs rapidfuzz with matching cutoff:
+
+| `q_len` | cutoff | stride_align | rapidfuzz | ratio |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 |  2 | **277 µs** |  353 µs | 1.27x |
+| 10 |  5 | **301 µs** |  472 µs | 1.57x |
+| 10 | 10 | **342 µs** |  556 µs | 1.62x |
+| 30 |  7 | **190 µs** |  486 µs | 2.56x |
+| 30 | 15 | **328 µs** |  682 µs | 2.08x |
+| 30 | 30 | **410 µs** |  866 µs | 2.11x |
+| 50 | 12 | **49 µs**  |  297 µs | **6.03x** |
+| 50 | 25 | **204 µs** |  491 µs | 2.41x |
+| 50 | 50 | **410 µs** | 1119 µs | 2.73x |
+
+Per-lane done masks freeze score updates once a lane crosses
+`cutoff + remaining_chars`, and the column loop breaks as soon as every
+batch lane is settled (target exhausted or bailed). The biggest win
+(`q_len=50`, `cutoff=12`, 6x) is where most targets exceed cutoff after
+a handful of columns and the whole batch can short-circuit.
+
+### Where rapidfuzz still wins
+
+Long patterns *with* tight cutoff (e.g. `q=100`, `cutoff=20` over
+50-250-char targets): rapidfuzz 110 µs vs stride_align 402 µs (0.27x).
+Our cutoff bail condition `score > cutoff + remaining_chars` only
+fires near the end of the column loop because `remaining_chars` shrinks
+slowly. rapidfuzz uses **banded Myers** here, restricting the DP to a
+2K+1 diagonal band so the work drops to O(K·n) instead of O(m·n).
+Banded SIMD Myers is a separate kernel and isn't implemented in
+stride-align yet — see "Future work" below.
+
+### Future work
+
+- **Banded Myers** for tight-cutoff long-pattern workloads (the one
+  remaining rapidfuzz win). Restrict per-lane state to ±K diagonals
+  from the main; sliding window across columns.
+- **Pattern lengths > 256**: the multi-word SIMD kernel currently caps
+  at W=4. Extending to W=8 (pattern up to 512) is a recompile.
 
 ## ARM Graviton4 (Linux aarch64) - 2026-05-18
 

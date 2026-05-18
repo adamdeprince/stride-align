@@ -48,6 +48,20 @@ struct SseOps {
   static void store_aligned(std::uint64_t* dst, Vec v) {
     _mm_store_si128(reinterpret_cast<__m128i*>(dst), v);
   }
+  // Per-lane unsigned 64-bit `a > b`. SSE4.1 lacks cmpgt_epi64; emulate via
+  // (a - b) sign bit + zero check (works for any uint64 values).
+  static Vec gt_u64(Vec a, Vec b) {
+    const Vec diff = _mm_sub_epi64(a, b);
+    const Vec sign_lsb = _mm_srli_epi64(diff, 63);
+    const Vec is_ge = _mm_cmpeq_epi64(sign_lsb, _mm_setzero_si128());
+    const Vec is_eq = _mm_cmpeq_epi64(diff, _mm_setzero_si128());
+    return _mm_andnot_si128(is_eq, is_ge);
+  }
+  // Logical right-shift by 63: each 64-bit lane becomes 0 or 1 (the top bit).
+  static Vec shr63(Vec a) { return _mm_srli_epi64(a, 63); }
+  // True iff every bit of `a` is zero. Used by the cutoff early-exit
+  // path to test whether any lane is still live.
+  static bool is_zero(Vec a) { return _mm_testz_si128(a, a) != 0; }
 };
 
 #endif  // __SSE4_1__
@@ -84,6 +98,19 @@ struct Avx2Ops {
   static void store_aligned(std::uint64_t* dst, Vec v) {
     _mm256_store_si256(reinterpret_cast<__m256i*>(dst), v);
   }
+  // Per-lane unsigned 64-bit `a > b`. cmpgt_epi64 is signed; flip the
+  // sign bit of both inputs to recover the unsigned ordering. Used in
+  // Myers' wide-add carry detection where operands can span the full
+  // uint64 range.
+  static Vec gt_u64(Vec a, Vec b) {
+    const Vec sign = _mm256_set1_epi64x(
+        static_cast<long long>(0x8000000000000000ULL));
+    return _mm256_cmpgt_epi64(
+        _mm256_xor_si256(a, sign),
+        _mm256_xor_si256(b, sign));
+  }
+  static Vec shr63(Vec a) { return _mm256_srli_epi64(a, 63); }
+  static bool is_zero(Vec a) { return _mm256_testz_si256(a, a) != 0; }
 };
 
 #endif  // __AVX2__
@@ -122,6 +149,12 @@ struct Avx512Ops {
   static void store_aligned(std::uint64_t* dst, Vec v) {
     _mm512_store_si512(reinterpret_cast<void*>(dst), v);
   }
+  static Vec gt_u64(Vec a, Vec b) {
+    // AVX-512 has a true unsigned variant.
+    return _mm512_maskz_set1_epi64(_mm512_cmpgt_epu64_mask(a, b), -1LL);
+  }
+  static Vec shr63(Vec a) { return _mm512_srli_epi64(a, 63); }
+  static bool is_zero(Vec a) { return _mm512_test_epi64_mask(a, a) == 0; }
 };
 
 #endif  // __AVX512F__

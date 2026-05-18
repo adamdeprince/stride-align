@@ -15,6 +15,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "byte_view.hpp"
 #include "preprocess.hpp"
 #include "stride_align/alignment.hpp"
 #include "stride_align/levenshtein.hpp"
@@ -39,27 +40,31 @@ inline PreparedAlignment prepare(nb::handle query, nb::handle target) {
 template <typename Token>
 inline Score score_one(
     const std::vector<Token>& query,
-    const std::vector<Token>& target) {
+    const std::vector<Token>& target,
+    std::size_t cutoff = kNoCutoff) {
   if constexpr (sizeof(Token) == 1U) {
     return static_cast<Score>(myers_multi_word_u8(
         std::span<const std::uint8_t>(query.data(), query.size()),
-        std::span<const std::uint8_t>(target.data(), target.size())));
+        std::span<const std::uint8_t>(target.data(), target.size()),
+        cutoff));
   } else {
     return static_cast<Score>(myers_distance<Token>(
         std::span<const Token>(query.data(), query.size()),
-        std::span<const Token>(target.data(), target.size())));
+        std::span<const Token>(target.data(), target.size()),
+        cutoff));
   }
 }
 
 inline Score score_visit(
     const TokenStorage& query_tokens,
-    const TokenStorage& target_tokens) {
+    const TokenStorage& target_tokens,
+    std::size_t cutoff = kNoCutoff) {
   return std::visit(
-      [](const auto& q, const auto& t) -> Score {
+      [cutoff](const auto& q, const auto& t) -> Score {
         using QT = typename std::decay_t<decltype(q)>::value_type;
         using TT = typename std::decay_t<decltype(t)>::value_type;
         if constexpr (std::is_same_v<QT, TT>) {
-          return score_one(q, t);
+          return score_one(q, t, cutoff);
         } else {
           // prepare_alignment casts both to the same kernel_bits, so this
           // branch should be unreachable.
@@ -75,20 +80,79 @@ inline Score score_visit(
 
 }  // namespace dispatch_detail
 
-inline Score dispatch_score(nb::handle query, nb::handle target) {
-  const auto prepared = dispatch_detail::prepare(query, target);
-  return dispatch_detail::score_visit(prepared.query_tokens, prepared.target_tokens);
+// Try to score (query, target) without the prepare_alignment vector
+// copy. Returns true on success and writes the distance + lengths.
+// Eligibility: both inputs are bytes or 1-byte unicode (their byte
+// representations are then identical, so we can run scalar Myers
+// directly on the CPython buffer). Wider unicode falls back to the
+// preprocessed path.
+inline bool try_bytes_fast_path(
+    nb::handle query,
+    nb::handle target,
+    std::size_t cutoff,
+    Score& out_distance,
+    std::size_t& out_q_len,
+    std::size_t& out_t_len) {
+  namespace bv = ::stride_align::byte_view;
+  const bv::ByteCompatKind q_kind = bv::classify(query.ptr());
+  if (q_kind == bv::ByteCompatKind::None) {
+    return false;
+  }
+  const bv::ByteCompatKind t_kind = bv::classify(target.ptr());
+  if (t_kind == bv::ByteCompatKind::None) {
+    return false;
+  }
+  const std::uint8_t* q_ptr = nullptr;
+  std::size_t q_len = 0;
+  const std::uint8_t* t_ptr = nullptr;
+  std::size_t t_len = 0;
+  bv::view(query.ptr(), q_kind, q_ptr, q_len);
+  bv::view(target.ptr(), t_kind, t_ptr, t_len);
+  out_distance = static_cast<Score>(myers_multi_word_u8(
+      std::span<const std::uint8_t>(q_ptr, q_len),
+      std::span<const std::uint8_t>(t_ptr, t_len),
+      cutoff));
+  out_q_len = q_len;
+  out_t_len = t_len;
+  return true;
 }
 
-inline double dispatch_normalized_score(nb::handle query, nb::handle target) {
+inline Score dispatch_score(
+    nb::handle query,
+    nb::handle target,
+    std::size_t cutoff = kNoCutoff) {
+  Score distance = 0;
+  std::size_t q_len = 0;
+  std::size_t t_len = 0;
+  if (try_bytes_fast_path(query, target, cutoff, distance, q_len, t_len)) {
+    return distance;
+  }
   const auto prepared = dispatch_detail::prepare(query, target);
-  const auto q_len = std::visit([](const auto& v) { return v.size(); }, prepared.query_tokens);
-  const auto t_len = std::visit([](const auto& v) { return v.size(); }, prepared.target_tokens);
-  const Score distance = dispatch_detail::score_visit(prepared.query_tokens, prepared.target_tokens);
-  return normalize(static_cast<std::size_t>(distance), q_len, t_len);
+  return dispatch_detail::score_visit(prepared.query_tokens, prepared.target_tokens, cutoff);
 }
 
-inline std::vector<Score> dispatch_scores(nb::handle query, nb::handle targets) {
+inline double dispatch_normalized_score(
+    nb::handle query,
+    nb::handle target,
+    std::size_t cutoff = kNoCutoff) {
+  Score distance = 0;
+  std::size_t q_len = 0;
+  std::size_t t_len = 0;
+  if (try_bytes_fast_path(query, target, cutoff, distance, q_len, t_len)) {
+    return normalize(static_cast<std::size_t>(distance), q_len, t_len);
+  }
+  const auto prepared = dispatch_detail::prepare(query, target);
+  const auto qn = std::visit([](const auto& v) { return v.size(); }, prepared.query_tokens);
+  const auto tn = std::visit([](const auto& v) { return v.size(); }, prepared.target_tokens);
+  const Score d = dispatch_detail::score_visit(
+      prepared.query_tokens, prepared.target_tokens, cutoff);
+  return normalize(static_cast<std::size_t>(d), qn, tn);
+}
+
+inline std::vector<Score> dispatch_scores(
+    nb::handle query,
+    nb::handle targets,
+    std::size_t cutoff = kNoCutoff) {
   PyObject* fast_targets =
       PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
   if (fast_targets == nullptr) {
@@ -101,12 +165,15 @@ inline std::vector<Score> dispatch_scores(nb::handle query, nb::handle targets) 
   std::vector<Score> out;
   out.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    out.push_back(dispatch_score(query, nb::handle(items[i])));
+    out.push_back(dispatch_score(query, nb::handle(items[i]), cutoff));
   }
   return out;
 }
 
-inline std::vector<double> dispatch_normalized_scores(nb::handle query, nb::handle targets) {
+inline std::vector<double> dispatch_normalized_scores(
+    nb::handle query,
+    nb::handle targets,
+    std::size_t cutoff = kNoCutoff) {
   PyObject* fast_targets =
       PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
   if (fast_targets == nullptr) {
@@ -119,7 +186,7 @@ inline std::vector<double> dispatch_normalized_scores(nb::handle query, nb::hand
   std::vector<double> out;
   out.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    out.push_back(dispatch_normalized_score(query, nb::handle(items[i])));
+    out.push_back(dispatch_normalized_score(query, nb::handle(items[i]), cutoff));
   }
   return out;
 }

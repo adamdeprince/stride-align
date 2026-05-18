@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -27,11 +28,21 @@
 
 namespace stride_align::levenshtein {
 
+// Sentinel meaning "no cutoff applied". The Myers entry points and the
+// SIMD batch path accept a cutoff; when it equals kNoCutoff every
+// column runs to completion and the exact distance is returned. When a
+// finite cutoff is supplied and the algorithm proves the final score
+// must exceed it, the call returns `cutoff + 1` (matching rapidfuzz's
+// convention) without finishing the remaining columns.
+inline constexpr std::size_t kNoCutoff = std::numeric_limits<std::size_t>::max();
+
 namespace detail {
 
 // Run the Myers/Hyyrö bit-parallel inner loop over a `text`, with PEQ lookup
 // supplied by `peq_for(c)` returning a span of B `std::uint64_t` per text
 // character. `B` is the number of 64-bit blocks the pattern is split into.
+// If `cutoff` is not kNoCutoff and we can prove final >= cutoff + 1, the
+// loop returns cutoff + 1 early.
 template <typename Text, typename PeqFn>
 inline std::size_t myers_inner(
     std::size_t m,
@@ -41,8 +52,13 @@ inline std::size_t myers_inner(
     std::uint64_t* vp,
     std::uint64_t* vn,
     std::uint64_t top_bit_last,
-    std::size_t initial_score) noexcept(noexcept(peq_for(typename Text::value_type{}))) {
+    std::size_t initial_score,
+    std::size_t cutoff = kNoCutoff) noexcept(noexcept(peq_for(typename Text::value_type{}))) {
   std::size_t score = initial_score;
+  // Track remaining columns so we can prove min-final-score = score -
+  // remaining and bail when it already exceeds cutoff.
+  std::size_t k = 0;
+  const std::size_t n = text.size();
   for (const auto c : text) {
     auto eq_blocks = peq_for(c);
     std::uint64_t add_carry = 0;
@@ -87,6 +103,12 @@ inline std::size_t myers_inner(
       --score;
     }
     (void)m;
+    ++k;
+    // Min possible final score is score - (n - k). Bail if even the
+    // best-case can't reach cutoff.
+    if (cutoff != kNoCutoff && score > cutoff + (n - k)) {
+      return cutoff + 1U;
+    }
   }
   return score;
 }
@@ -109,7 +131,8 @@ inline void init_vp_vn(
 
 inline std::size_t myers_single_word_u8(
     std::span<const std::uint8_t> pattern,
-    std::span<const std::uint8_t> text) noexcept {
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff = kNoCutoff) noexcept {
   const std::size_t m = pattern.size();
   if (m == 0) {
     return text.size();
@@ -131,6 +154,8 @@ inline std::size_t myers_single_word_u8(
   std::uint64_t vn = 0;
   std::size_t score = m;
 
+  const std::size_t n = text.size();
+  std::size_t k = 0;
   for (const std::uint8_t c : text) {
     const std::uint64_t eq = peq[c];
     const std::uint64_t x = eq | vn;
@@ -146,13 +171,18 @@ inline std::size_t myers_single_word_u8(
     const std::uint64_t hn_shift = (hn << 1);
     vp = hn_shift | ~(d0 | hp_shift);
     vn = d0 & hp_shift;
+    ++k;
+    if (cutoff != kNoCutoff && score > cutoff + (n - k)) {
+      return cutoff + 1U;
+    }
   }
   return score;
 }
 
 inline std::size_t myers_multi_word_u8(
     std::span<const std::uint8_t> pattern,
-    std::span<const std::uint8_t> text) {
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff = kNoCutoff) {
   const std::size_t m = pattern.size();
   if (m == 0) {
     return text.size();
@@ -161,7 +191,7 @@ inline std::size_t myers_multi_word_u8(
     return m;
   }
   if (m <= 64U) {
-    return myers_single_word_u8(pattern, text);
+    return myers_single_word_u8(pattern, text, cutoff);
   }
 
   constexpr std::size_t kWord = 64U;
@@ -192,13 +222,15 @@ inline std::size_t myers_multi_word_u8(
       vp.data(),
       vn.data(),
       top_bit_last,
-      m);
+      m,
+      cutoff);
 }
 
 template <typename Token>
 std::size_t myers_distance(
     std::span<const Token> pattern,
-    std::span<const Token> text) {
+    std::span<const Token> text,
+    std::size_t cutoff = kNoCutoff) {
   static_assert(std::is_integral_v<Token> || std::is_unsigned_v<Token>);
   const std::size_t m = pattern.size();
   if (m == 0) {
@@ -243,7 +275,8 @@ std::size_t myers_distance(
       vp.data(),
       vn.data(),
       top_bit_last,
-      m);
+      m,
+      cutoff);
 }
 
 inline double normalize(std::size_t distance, std::size_t a_len, std::size_t b_len) noexcept {

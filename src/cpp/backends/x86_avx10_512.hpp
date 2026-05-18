@@ -764,16 +764,20 @@ struct TargetImplementation {
         width);
   }
 
-  static std::vector<Score> levenshtein_scores(nb::handle query, nb::handle targets) {
+  static std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
-        ::stride_align::levenshtein_simd::Avx512Ops>(query, targets);
+        ::stride_align::levenshtein_simd::Avx512Ops>(query, targets, cutoff);
   }
 
   static std::vector<double> levenshtein_normalized_scores(
       nb::handle query,
-      nb::handle targets) {
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
-        ::stride_align::levenshtein_simd::Avx512Ops>(query, targets);
+        ::stride_align::levenshtein_simd::Avx512Ops>(query, targets, cutoff);
   }
 };
 
@@ -1155,16 +1159,18 @@ struct Implementation {
 
   static STRIDE_ALIGN_X86_BASELINE std::vector<Score> levenshtein_scores(
       nb::handle query,
-      nb::handle targets) {
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     ensure_supported();
-    return TargetImplementation::levenshtein_scores(query, targets);
+    return TargetImplementation::levenshtein_scores(query, targets, cutoff);
   }
 
   static STRIDE_ALIGN_X86_BASELINE std::vector<double> levenshtein_normalized_scores(
       nb::handle query,
-      nb::handle targets) {
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     ensure_supported();
-    return TargetImplementation::levenshtein_normalized_scores(query, targets);
+    return TargetImplementation::levenshtein_normalized_scores(query, targets, cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx10_512;
