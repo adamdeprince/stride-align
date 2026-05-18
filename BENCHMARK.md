@@ -1,11 +1,12 @@
 # Benchmark Summary
 
-Stride-align is benchmarked across five hardware families: Intel x86 (AVX2,
-AVX512BWVL), ARM Linux aarch64 on AWS Graviton4 (NEON/ASIMD, SVE, SVE2), ARM
-macOS arm64 on Apple M-series (NEON), LoongArch64 on Loongson (LSX, LASX), and
-PowerPC64 VSX on Power8. Each family ran on a different host with a different
-parasail build (or no parasail at all), so numbers should be read within a
-family, not across families. Raw CSVs live in `benchmark.csv` (x86) and
+[Stride-align](fast.png) is benchmarked across five hardware families:
+Intel x86 (AVX2, AVX512BWVL), ARM Linux aarch64 on AWS Graviton4
+(NEON/ASIMD, SVE, SVE2), ARM macOS arm64 on Apple M-series (NEON),
+LoongArch64 on Loongson (LSX, LASX), and PowerPC64 VSX on Power8. Each
+family ran on a different host with a different parasail build (or no
+parasail at all), so numbers should be read within a family, not
+across families. Raw CSVs live in `benchmark.csv` (x86) and
 `benchmarks/*.csv` (everything else).
 
 All ratios are median-runtime ratios. A ratio above `1.0x` means stride-align
