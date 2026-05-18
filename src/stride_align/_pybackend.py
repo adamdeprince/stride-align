@@ -1150,6 +1150,64 @@ def needleman_wunsch_scores(
     )
 
 
+# --- Levenshtein (Python fallback) ----------------------------------------
+# Plain O(n*m) Wagner-Fischer in Python. Used only when no native backend
+# is available; native backends ship Myers' bit-parallel via the C++ side.
+
+
+def _levenshtein_distance(a, b) -> int:
+    if len(a) == 0:
+        return len(b)
+    if len(b) == 0:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    curr = [0] * (len(b) + 1)
+    for i, ca in enumerate(a, start=1):
+        curr[0] = i
+        for j, cb in enumerate(b, start=1):
+            cost = 0 if ca == cb else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev, curr = curr, prev
+    return prev[len(b)]
+
+
+def _levenshtein_normalize(distance: int, a_len: int, b_len: int) -> float:
+    longer = max(a_len, b_len)
+    if longer == 0:
+        return 1.0
+    ratio = distance / longer
+    if ratio >= 1.0:
+        return 0.0
+    return 1.0 - ratio
+
+
+def levenshtein_score(query: object, target: object) -> int:
+    return _levenshtein_distance(query, target)  # type: ignore[arg-type]
+
+
+def levenshtein_normalized_score(query: object, target: object) -> float:
+    distance = _levenshtein_distance(query, target)  # type: ignore[arg-type]
+    return _levenshtein_normalize(distance, len(query), len(target))  # type: ignore[arg-type]
+
+
+def levenshtein_scores(query: object, targets: object) -> np.ndarray:
+    return np.fromiter(
+        (_levenshtein_distance(query, t) for t in targets),  # type: ignore[union-attr]
+        dtype=np.int64,
+    )
+
+
+def levenshtein_normalized_scores(query: object, targets: object) -> np.ndarray:
+    q_len = len(query)  # type: ignore[arg-type]
+    return np.fromiter(
+        (
+            _levenshtein_normalize(_levenshtein_distance(query, t), q_len, len(t))
+            for t in targets  # type: ignore[union-attr]
+        ),
+        dtype=np.float64,
+    )
+
+
 def needleman_wunsch_path(
     query: object,
     target: object,

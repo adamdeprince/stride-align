@@ -13,6 +13,10 @@ from stride_align import (
     available_backends,
     backend_is_available,
     detect_best_backend,
+    levenshtein_normalized_score,
+    levenshtein_normalized_scores,
+    levenshtein_score,
+    levenshtein_scores,
     needleman_wunsch_cigar,
     needleman_wunsch_normalized_score,
     needleman_wunsch_normalized_scores,
@@ -166,6 +170,60 @@ def test_smith_waterman_farrar_normalized_score_matches_standard_normalized() ->
     assert [smith_waterman_farrar_normalized_score(query, t) for t in targets] == [
         smith_waterman_normalized_score(query, t) for t in targets
     ]
+
+
+def test_levenshtein_score_classic_examples() -> None:
+    # The classic Levenshtein illustration: kitten -> sitting is 3 edits
+    # (k->s, e->i, +g).
+    assert levenshtein_score("kitten", "sitting") == 3
+    assert levenshtein_score("", "") == 0
+    assert levenshtein_score("abc", "") == 3
+    assert levenshtein_score("", "abc") == 3
+    assert levenshtein_score("abc", "abc") == 0
+    assert levenshtein_score("flaw", "lawn") == 2
+
+
+def test_levenshtein_normalized_score_bounds() -> None:
+    assert levenshtein_normalized_score("foo", "foo") == 1.0
+    assert levenshtein_normalized_score("", "") == 1.0
+    assert levenshtein_normalized_score("abc", "xyz") == 0.0
+    # 1 of 6 longer-length is an edit, so similarity is 5/6.
+    assert levenshtein_normalized_score("foobar", "foobaz") == pytest.approx(5 / 6)
+
+
+def test_levenshtein_scores_returns_int64_ndarray() -> None:
+    result = levenshtein_scores("kitten", ["kitten", "sitting", "kit", ""])
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.int64
+    assert result.tolist() == [0, 3, 3, 6]
+
+
+def test_levenshtein_normalized_scores_returns_float64_ndarray() -> None:
+    result = levenshtein_normalized_scores("foo", ["foo", "bar", "food"])
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float64
+    assert result.tolist() == pytest.approx([1.0, 0.0, 0.75])
+
+
+def test_levenshtein_score_bytes_inputs() -> None:
+    assert levenshtein_score(b"hello", b"hallo") == 1
+    assert levenshtein_score(b"", b"abc") == 3
+
+
+def test_levenshtein_score_long_pattern_uses_multi_word_myers() -> None:
+    # Pattern length > 64 forces the Hyyrö multi-word Myers' path. Use a
+    # 100-character query and check a known one-edit edit distance.
+    query = "abcdefghij" * 10
+    target = "xbcdefghij" + "abcdefghij" * 9
+    assert len(query) == 100 and len(target) == 100
+    assert levenshtein_score(query, target) == 1
+
+
+def test_levenshtein_unicode_str_inputs() -> None:
+    # Wide-codepoint inputs exercise the hashmap-PEQ generic path.
+    assert levenshtein_score("café", "cafe") == 1
+    assert levenshtein_score("🎉🎈", "🎉🎈") == 0
+    assert levenshtein_score("🎉🎈", "🎈🎉") == 2
 
 
 def test_scores_batch_api_rejects_single_string_target_collection() -> None:

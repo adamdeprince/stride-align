@@ -1168,6 +1168,42 @@ def needleman_wunsch_trade_cigar(
     )
 
 
+def _levenshtein_backend() -> ModuleType:
+    # Levenshtein has no match/mismatch/gap parameters and a fixed scoring
+    # model, so backend selection is simpler than for SW/NW. Until x86
+    # SIMD specialization lands, every backend's binding routes through
+    # the shared scalar dispatch anyway, so the generic backend is fine.
+    return _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
+
+
+def levenshtein_score(query: object, target: object) -> int:
+    """Levenshtein edit distance between two sequences (lower is more similar)."""
+    return int(_levenshtein_backend().levenshtein_score(query, target))
+
+
+def levenshtein_normalized_score(query: object, target: object) -> float:
+    """Length-normalized Levenshtein similarity in [0, 1] (1 = identical)."""
+    return float(_levenshtein_backend().levenshtein_normalized_score(query, target))
+
+
+def levenshtein_scores(query: object, targets: object) -> np.ndarray:
+    """Distance from query to every target, returned as a numpy ndarray[int64]."""
+    target_tuple = _materialize_targets(targets)
+    return np.asarray(
+        _levenshtein_backend().levenshtein_scores(query, target_tuple),
+        dtype=np.int64,
+    )
+
+
+def levenshtein_normalized_scores(query: object, targets: object) -> np.ndarray:
+    """Normalized similarity to every target, returned as a numpy ndarray[float64]."""
+    target_tuple = _materialize_targets(targets)
+    return np.asarray(
+        _levenshtein_backend().levenshtein_normalized_scores(query, target_tuple),
+        dtype=np.float64,
+    )
+
+
 __all__ = [
     "AlignmentPath",
     "AlignmentResult",
@@ -1177,6 +1213,10 @@ __all__ = [
     "available_backends",
     "backend_is_available",
     "detect_best_backend",
+    "levenshtein_normalized_score",
+    "levenshtein_normalized_scores",
+    "levenshtein_score",
+    "levenshtein_scores",
     "needleman_wunsch_cigar",
     "needleman_wunsch_normalized_score",
     "needleman_wunsch_normalized_scores",

@@ -11,7 +11,9 @@
 
 #include "affine.hpp"
 #include "backends/profile_traceback.hpp"
+#include "levenshtein_dispatch.hpp"
 #include "stride_align/alignment.hpp"
+#include "stride_align/levenshtein.hpp"
 
 namespace stride_align::bindings {
 
@@ -56,6 +58,16 @@ inline GapScores resolve_gap_scores(
 }
 
 using ScoreNDArray = nb::ndarray<nb::numpy, std::int64_t, nb::ndim<1>>;
+using NormalizedNDArray = nb::ndarray<nb::numpy, double, nb::ndim<1>>;
+
+inline NormalizedNDArray as_normalized_ndarray(std::vector<double> values) {
+  auto* heap_vec = new std::vector<double>(std::move(values));
+  nb::capsule owner(heap_vec, [](void* p) noexcept {
+    delete static_cast<std::vector<double>*>(p);
+  });
+  const std::size_t shape[1] = {heap_vec->size()};
+  return NormalizedNDArray(heap_vec->data(), 1, shape, owner);
+}
 
 inline ScoreNDArray as_score_ndarray(std::vector<Score> scores) {
   // Transfer ownership of the std::vector to a capsule so the numpy array
@@ -2129,6 +2141,66 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("gap_open_score") = nb::none(),
       nb::arg("gap_extend_score") = nb::none(),
       nb::arg("width") = nb::none());
+
+  // --- Levenshtein -------------------------------------------------------
+  //
+  // No match/mismatch/gap scores: Levenshtein is fixed at unit cost. The
+  // bindings call backend-specific overrides when available (x86 backends
+  // override *_scores with a multi-target SIMD path); otherwise they fall
+  // through to the shared scalar dispatch in levenshtein_dispatch.hpp.
+
+  m.def(
+      "levenshtein_score",
+      [](nb::handle query, nb::handle target) {
+        if constexpr (requires { Implementation::levenshtein_score(query, target); }) {
+          return Implementation::levenshtein_score(query, target);
+        } else {
+          return ::stride_align::levenshtein::dispatch_score(query, target);
+        }
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "levenshtein_normalized_score",
+      [](nb::handle query, nb::handle target) {
+        if constexpr (requires { Implementation::levenshtein_normalized_score(query, target); }) {
+          return Implementation::levenshtein_normalized_score(query, target);
+        } else {
+          return ::stride_align::levenshtein::dispatch_normalized_score(query, target);
+        }
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "levenshtein_scores",
+      [](nb::handle query, nb::handle targets) {
+        if constexpr (requires { Implementation::levenshtein_scores(query, targets); }) {
+          return as_score_ndarray(Implementation::levenshtein_scores(query, targets));
+        } else {
+          return as_score_ndarray(
+              ::stride_align::levenshtein::dispatch_scores(query, targets));
+        }
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
+  m.def(
+      "levenshtein_normalized_scores",
+      [](nb::handle query, nb::handle targets) {
+        if constexpr (requires {
+                        Implementation::levenshtein_normalized_scores(query, targets);
+                      }) {
+          return as_normalized_ndarray(
+              Implementation::levenshtein_normalized_scores(query, targets));
+        } else {
+          return as_normalized_ndarray(
+              ::stride_align::levenshtein::dispatch_normalized_scores(query, targets));
+        }
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
 }
 
 }  // namespace stride_align::bindings
