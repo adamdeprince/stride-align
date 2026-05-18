@@ -120,9 +120,10 @@ inline std::uint64_t byte_symbol_count(
 inline std::vector<std::uint8_t> compact_unicode_tokens(
     PyObject* unicode_object,
     std::unordered_map<Py_UCS4, std::uint8_t>& token_map) {
-  if (PyUnicode_READY(unicode_object) != 0) {
-    throw nb::python_error();
-  }
+  // PyUnicode_READY is a no-op on Python 3.12+; on 3.10/3.11 it would call
+  // the private _PyUnicode_Ready symbol, which macOS extensions can't import
+  // through nanobind's symbol allowlist. Strings reaching us through the
+  // Python C API are always already-ready, so the call is safe to skip.
 
   const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(unicode_object));
   const int kind = PyUnicode_KIND(unicode_object);
@@ -143,9 +144,10 @@ inline std::vector<std::uint8_t> compact_unicode_tokens(
 }
 
 inline std::size_t direct_unicode_lookup_size(PyObject* unicode_object) {
-  if (PyUnicode_READY(unicode_object) != 0) {
-    throw nb::python_error();
-  }
+  // PyUnicode_READY is a no-op on Python 3.12+; on 3.10/3.11 it would call
+  // the private _PyUnicode_Ready symbol, which macOS extensions can't import
+  // through nanobind's symbol allowlist. Strings reaching us through the
+  // Python C API are always already-ready, so the call is safe to skip.
 
   switch (PyUnicode_KIND(unicode_object)) {
     case PyUnicode_1BYTE_KIND:
@@ -190,10 +192,7 @@ struct DirectUnicodeTokenMap {
   DirectUnicodeTokenMap& operator=(const DirectUnicodeTokenMap&) = delete;
 
   std::vector<std::uint8_t> encode(PyObject* unicode_object) {
-    if (PyUnicode_READY(unicode_object) != 0) {
-      throw nb::python_error();
-    }
-
+    // PyUnicode_READY skipped — see copy_unicode_tokens above.
     const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(unicode_object));
     const int kind = PyUnicode_KIND(unicode_object);
     void* data = PyUnicode_DATA(unicode_object);
@@ -535,10 +534,7 @@ inline unsigned int unicode_storage_bits(nb::handle value) {
   if (PyUnicode_Check(value.ptr()) == 0) {
     return 0;
   }
-  if (PyUnicode_READY(value.ptr()) != 0) {
-    throw nb::python_error();
-  }
-
+  // PyUnicode_READY skipped — see copy_unicode_tokens above.
   switch (PyUnicode_KIND(value.ptr())) {
     case PyUnicode_1BYTE_KIND:
       return 8;

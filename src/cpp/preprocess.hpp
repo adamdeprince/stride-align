@@ -215,9 +215,9 @@ inline TokenStorage copy_bytes_tokens(PyObject* bytes_object, std::uint64_t& sym
 }
 
 inline TokenStorage copy_unicode_tokens(PyObject* unicode_object, std::uint64_t& symbol_limit) {
-  if (PyUnicode_READY(unicode_object) != 0) {
-    throw nb::python_error();
-  }
+  // PyUnicode_READY skipped: no-op on 3.12+ and references the private
+  // _PyUnicode_Ready symbol that nanobind's macOS sym list filters out on
+  // 3.10/3.11. Strings reaching us from the Python C API are already ready.
 
   const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(unicode_object));
   switch (PyUnicode_KIND(unicode_object)) {
