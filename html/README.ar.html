@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stride-align — العربية</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>stride-align</h1>
+<p class="tagline">Smith-Waterman &amp; Needleman-Wunsch · العربية</p>
+</header>
+<nav class="nav">
+<a class="home" href="README.html">README</a>
+<div class="lang-switch" aria-label="Translations">
+  <a hreflang="en" href="README.html">English</a>
+  <a hreflang="zh-CN" href="README.zh-CN.html">简体中文</a>
+  <a hreflang="zh-TW" href="README.zh-TW.html">繁體中文</a>
+  <a hreflang="ja" href="README.ja.html">日本語</a>
+  <a hreflang="de" href="README.de.html">Deutsch</a>
+  <a hreflang="ko" href="README.ko.html">한국어</a>
+  <a hreflang="fr" href="README.fr.html">Français</a>
+  <a hreflang="es" href="README.es.html">Español</a>
+  <a hreflang="pt-BR" href="README.pt-BR.html">Português do Brasil</a>
+  <a hreflang="ru" href="README.ru.html">Русский</a>
+  <a hreflang="vi" href="README.vi.html">Tiếng Việt</a>
+  <a hreflang="id" href="README.id.html">Bahasa Indonesia</a>
+  <a hreflang="hi" href="README.hi.html">हिन्दी</a>
+  <a hreflang="ar" href="README.ar.html" class="active">العربية</a>
+  <a hreflang="tr" href="README.tr.html">Türkçe</a>
+  <a hreflang="pl" href="README.pl.html">Polski</a>
+</div>
+</nav>
+<main class="content">
+<p><strong>اللغات:</strong> <a href="README.html">English</a> · <a href="README.zh-CN.html">简体中文</a> · <a href="README.zh-TW.html">繁體中文</a> · <a href="README.ja.html">日本語</a> · <a href="README.de.html">Deutsch</a> · <a href="README.ko.html">한국어</a> · <a href="README.fr.html">Français</a> · <a href="README.es.html">Español</a> · <a href="README.pt-BR.html">Português do Brasil</a> · <a href="README.ru.html">Русский</a> · <a href="README.vi.html">Tiếng Việt</a> · <a href="README.id.html">Bahasa Indonesia</a> · <a href="README.hi.html">हिन्दी</a> · <strong><a href="README.ar.html">العربية</a></strong> · <a href="README.tr.html">Türkçe</a> · <a href="README.pl.html">Polski</a></p>
+<p><code>stride-align</code> هي <a href="BENCHMARK.html">مكتبة فائقة السرعة</a> تخبرك بمدى “تشابه” سلسلتين نصيتين. تفعل ذلك عبر تنفيذ خوارزميتي Smith-Waterman و Needleman-Wunsch. بدل محاضرة طويلة، سنتعلم بالتجربة. لنبدأ مباشرة بكيفية عملها.</p>
+<h2 id="_1">التثبيت</h2>
+<pre><code class="language-bash">pip install stride-align
+</code></pre>
+<p>على أنظمة Loongson، ثبّت NumPy من توزيعة Linux الخاصة بك قبل تثبيت <code>stride-align</code>:</p>
+<pre><code class="language-bash">sudo apt install python3-numpy
+pip install stride-align
+</code></pre>
+<p>أولاً، توضيح صغير: أنا لا أستخدم نصوصاً دينية هنا لدفع أي أجندة. في هذا العرض أحتاج إلى عدة وثائق كبيرة نسبياً من الملكية العامة، لها المعنى نفسه لكن بصياغات مختلفة. الكتاب المقدس يحدث فقط أنه يلائم هذا الشرط بشكل غريب جداً.</p>
+<p>تخيّل أن لدينا جملتين؛ لنستخدم الجملة الأولى من Genesis لهذا المثال:</p>
+<p>في American Standard Version لدينا: "In the beginning God created the heavens and the earth."</p>
+<p>في King James Version لدينا: "In the beginning God created the heaven and the earth."</p>
+<p>يمكننا رؤية الفرق بأعيننا: heavens مقابل heaven. لكن كيف نقيس هذا الفرق رقمياً؟ نستخدم هذا الجزء الصغير من الشيفرة:</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;In the beginning God created the heaven and the earth.&quot;))
+</code></pre>
+<p>عند تشغيله يطبع:</p>
+<pre><code class="language-python">0.9907407407407407
+</code></pre>
+<p>الدرجات المطبّعة تقع بين <code>0</code> و <code>1</code>. الدرجة <code>1</code> تعني أن المدخلات متطابقة تماماً وفق نموذج التسجيل الافتراضي. الدرجات القريبة من <code>0</code> تعني أن المدخلات لا تشترك إلا بالقليل، رغم أن Smith-Waterman قد يظل قادراً على العثور على تطابقات محلية صغيرة داخل سلاسل غير مرتبطة عموماً.</p>
+<p>الآن لنغيّر النص ونرى ماذا يحدث للدرجة.</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;The quick brown fox jumped over the lazy dog.&quot;))
+</code></pre>
+<p>ويطبع Python:</p>
+<pre><code>0.12222222222222222
+</code></pre>
+<p>بدأت الفكرة تتضح؟ كلما كانت السلاسل أكثر تشابهاً ارتفعت الدرجة.</p>
+<p>لننشئ مثالاً أكبر يعطينا إحساساً بأداء المكتبة. ستلاحظ على الأرجح أننا ننتقل بين Smith-Waterman و Needleman-Wunsch، وقد تتساءل متى تستخدم أياً منهما. استخدم Needleman-Wunsch عندما تريد مقارنة كامل المدخل بكامل المدخل. واستخدم Smith-Waterman عندما تريد العثور على أفضل منطقة مطابقة داخل مدخلات أكبر.</p>
+<p>حسناً، لننتقل إلى شيفرة العرض. تحتاج إلى <code>requests</code> لهذا الجزء:</p>
+<pre><code class="language-bash">pip install requests
+</code></pre>
+<pre><code class="language-python">import os, time, requests
+import stride_align as sa
+
+if not os.path.exists(&quot;kjv.txt&quot;):
+    response = requests.get(&quot;https://openbible.com/textfiles/kjv.txt&quot;)
+    response.raise_for_status()
+    response.encoding = &quot;utf-8-sig&quot;
+    open(&quot;kjv.txt&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;).write(response.text)
+
+lines = [line.strip().lower() for line in open(&quot;kjv.txt&quot;)][2:]
+
+while True:
+    if not (query := input(&quot;Enter a snippet to match.  Press enter to end.\n&quot;)):
+        break
+    t = time.perf_counter()
+    scores = sa.needleman_wunsch_normalized_scores(query.lower(), lines)
+    best = int(scores.argmax())
+    print()
+    print(&quot;Score:&quot;, float(scores[best]))
+    print(lines[best])
+    print(&quot;Search time: %0.2fms&quot; % ((time.perf_counter() - t) * 1000))
+    print()
+    print()
+</code></pre>
+<p>كيف نستخدم هذا؟ لنفترض أن لدينا آية عشوائية من الكتاب المقدس ونريد معرفة الفصل والآية التي جاءت منها. تقول <code>grep</code>؟ لا، يا للهول، لقد ارتكبنا خطأ. الآية التي لدينا من ترجمة مختلفة، لنقل Catholic Public Domain، وما على جهازنا هو King James Bible. المطابقة الحرفية للسلاسل في <code>grep</code> لن تنجح هنا. كيف نجد الفصل والآية؟ نبحث بالطبع عن السلسلة “الأقرب” أو “الأكثر تشابهاً” باستخدام <code>stride-align</code>.</p>
+<p>في عرضنا، يتعامل الجزء الأول مع التنزيل والتخزين المؤقت. وضع الأشخاص الطيبون في <a href="https://openbible.com">Open Bible</a> هذا النص في مكان يمكن الوصول إليه عبر HTTP، لكننا نريد احترام ميزانية تقنية المعلومات لديهم، لذلك نخزن ما ننزله مؤقتاً. هذه ببساطة مواطنة رقمية جيدة.</p>
+<p>في الجزء التالي نحمّل كل الأسطر في قائمة. نزيل محارف السطر الجديد ونجعل كل شيء بأحرف صغيرة، لأننا لا نريد التدقيق المزعج في مسألة ضغط مفتاح Shift.</p>
+<p>أخيراً، تجمع حلقة <code>while True:</code> سطراً من النص، على الأرجح الآية من النسخة Catholic من الكتاب المقدس التي نريد معرفة فصلها وآيتها، وتطابقها مع كل أسطر King James Bible باستخدام الصيغة الدُفعية من Needleman-Wunsch. ترجع مصفوفة من الدرجات. نستخدم <code>argmax()</code> للعثور على السطر الأعلى درجة، ثم نطبع السطر المرتبط بذلك الفهرس. لنجرب.</p>
+<p>سأستخدم Jeremiah 4:28 من Catholic Bible؛ إنه في الواقع مختلف تماماً عن الآية نفسها في King James Bible. لنرَ ما يحدث…</p>
+<pre><code>$ python3 demo2.py
+Enter a snippet to match.  Press enter to end.
+The earth will mourn, and the heavens will lament from above. For I have spoken, I have decided, and I have not regretted. Neither will I be turned away from it.
+
+Score: 0.3598901098901099
+jeremiah 4:28   for this shall the earth mourn, and the heavens above be black: because i have spoken [it], i have purposed [it], and will not repent, neither will i turn back from it.
+Search time: 206.51ms
+
+</code></pre>
+<p>… ووجدناه! وبسرعة جيدة أيضاً.</p>
+<h2 id="_2">عرض آخر: التدقيق الإملائي</h2>
+<p>هذا مدقق إملائي تجريبي صغير، وليس أداة إنتاجية. يتجاهل علامات الترقيم، وحالة الأحرف، وتكرار الكلمات، والأسماء العلم، والسياق. الهدف هو عرض النمط نفسه: استعلام واحد مقابل كثير من المرشحين، على مهمة مألوفة.</p>
+<pre><code class="language-python">import os, sys
+import stride_align as sa
+
+paths = ['/usr/share/dict/words',
+         '/usr/dict/words',
+         '/var/lib/dict/words',
+         '/etc/dictionaries-common/words']
+
+for path in paths:
+    if os.path.exists(path):
+        break
+else:
+    print(&quot;Sorry, I can't find your dictionary&quot;, file=sys.stderr)
+    exit(1)
+
+
+words = [line.strip().lower() for line in open(path)]
+
+
+for line in sys.stdin:
+    new_line = []
+    for word in line.split():
+        scores = sa.needleman_wunsch_normalized_scores(word.lower(), words)
+        word = words[int(scores.argmax())]
+        new_line.append(word)
+    print(' '.join(new_line), flush=True)
+</code></pre>
+<p>أول ما يفعله هذا السكربت هو محاولة العثور على قائمة نظام التشغيل للكلمات المكتوبة بشكل صحيح. قد يختلف موقعها من توزيعة إلى أخرى. عندما نجدها، نحمّلها، ونزيل محارف السطر الجديد، ونبدأ عملية التدقيق الإملائي.</p>
+<p>يشبه التدقيق الإملائي كثيراً المطابقة التي فعلناها سابقاً. لكل كلمة مرشحة، نطابقها مع كل الكلمات في قائمة الكلمات الصحيحة، ونستخدم <code>argmax()</code> للعثور على المرشح الأعلى درجة، ثم نستبدل الكلمة بذلك المرشح. يمكن تسريع هذا ببعض التحسينات، مثل عدم البحث عن مطابقة للكلمات المكتوبة أصلاً بشكل صحيح، لكن هذا عرض توضيحي وهذا التحسين متروك تمريناً للقارئ.</p>
+<p>لنرَ كيف يعمل!</p>
+<pre><code class="language-bash">$ cat - | python3 demo3.py
+this is a demonstrtion of a spel checker
+it doesn't matter that I can't spell corectly
+
+this is a demonstration of a spell checker
+it doesn't matter that i can't spell correctly
+</code></pre>
+<h2 id="_3">التفاصيل</h2>
+<p>يوفر الهيكل الحالي ما يلي:</p>
+<ul>
+<li>محاذاة Needleman-Wunsch بدرجة فقط</li>
+<li>محاذاة Needleman-Wunsch مع تتبع عكسي</li>
+<li>محاذاة Smith-Waterman بدرجة فقط</li>
+<li>محاذاة Smith-Waterman مع تتبع عكسي</li>
+<li>تخطيط خلفية يطابق نمط التخصيص المستخدم في <code>massive-speedup</code></li>
+<li>اكتشاف CPU/الخلفية وتوزيع الخلفية من جهة Python</li>
+</ul>
+<p>تقبل الحدود الأصلية:</p>
+<ul>
+<li><code>bytes</code> مقابل <code>bytes</code></li>
+<li><code>str</code> مقابل <code>str</code></li>
+<li>تسلسلات من كائنات Python غير قابلة للتغيير وقابلة للتجزئة</li>
+<li>مدخلات مختلطة تسلسل/كائن حيث يعامل جانب <code>str</code> أو <code>bytes</code> كتسلسل</li>
+</ul>
+<p>الأزواج المباشرة <code>bytes</code> مقابل <code>str</code> ترفع <code>TypeError</code>.</p>
+<p>التنفيذات الحالية هي نوى عامة للبرمجة الديناميكية مع معالجة مسبقة تسلسل مدخلات Python إلى تدفقات رموز بعرض 8 أو 16 أو 32 أو 64 بت. يمكن للخلفيات المتخصصة لـ SIMD أن تستبدل لاحقاً وحدات ترجمة الخلفية من دون تغيير Python API.</p>
+<p>الدوال التي تحسب الدرجة فقط ترجع درجات رقمية. النسخ المطبّعة ترجع درجات بين <code>0</code> و <code>1</code>. دوال المسار ترجع كائنات نتيجة محاذاة تحتوي على الدرجة، والقيم المحاذاة، والعمليات، وملخصات بأسلوب CIGAR عند توفرها.</p>
+<h2 id="api">API</h2>
+<pre><code class="language-python">import stride_align
+
+score = stride_align.needleman_wunsch_score(&quot;ACGT&quot;, &quot;ACCT&quot;)
+scores = stride_align.Scores(&quot;ACGT&quot;, variant=&quot;needleman_wunsch&quot;).compare([&quot;ACCT&quot;, &quot;AGGT&quot;])
+result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;)
+wide_result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;, width=64)
+object_result = stride_align.needleman_wunsch_path(
+    [frozenset({1}), frozenset({2})],
+    [frozenset({1}), frozenset({3})],
+)
+
+print(score)
+print(scores)
+print(result.score, result.aligned_query, result.aligned_target, result.operations)
+print(wide_result.score)
+print(object_result.aligned_query, object_result.aligned_target)
+</code></pre>
+<p>استخدم <code>Scores(...).compare([...])</code> أو دوال <code>*_scores()</code> لأحمال العمل التي تقارن استعلاماً واحداً بكثير من الأهداف. هذا المسار يجهز الاستعلام/الملف التعريفي مرة واحدة، وهو API الأداء المفضل للمقارنات المتكررة بين النصوص الإنجليزية/الصينية.</p>
+<p>تحافظ مخرجات التتبع العكسي على نوع المسار السريع المقترن:</p>
+<ul>
+<li><code>str</code> كمدخلات ترجع <code>str</code> محاذاة</li>
+<li><code>bytes</code> كمدخلات ترجع <code>bytes</code> محاذاة</li>
+<li>مدخلات التسلسل/الكائن ترجع قيماً <code>tuple</code> محاذاة مع فجوات <code>None</code></li>
+</ul>
+<p>مرر <code>width=8</code> أو <code>16</code> أو <code>32</code> أو <code>64</code> لفرض عرض الرمز/التسجيل الداخلي بدلاً من الاختيار التلقائي.</p>
+<p>تكشف بعض الدوال سلاسل CIGAR، وهي اختصار لـ “Concise Idiosyncratic Gapped Alignment Report”. CIGAR هي ترميز مضغوط لعمليات المحاذاة تستخدمه أدوات SAM/BAM. إذا أردت النسخة الرسمية الكاملة، راجع <a href="https://samtools.github.io/hts-specs/SAMv1.pdf">مواصفة SAM</a>.</p>
+<h2 id="_4">التحسينات والاختبارات المعيارية</h2>
+<p>حظيت قصة أداء <code>stride-align</code> وما زالت تحظى باهتمام دقيق. تتضمن المكتبة تحسينات SIMD لعدة أهداف شائعة، منها x86 و Arm و LoongArch.</p>
+<p><strong>LoongArch / Loongson.</strong> قصة تحسين Loongson معبرة جداً: في حالة الاختبار المعياري المحققة الخاصة بالنص الإنجليزي، وعرض الدرجة 16 بت، و Smith-Waterman الذي يحسب الدرجة فقط، يكون خلفية LASX أسرع 16 مرة من الخلفية العامة وأسرع <strong>22.4 مرة</strong> من Parasail.</p>
+<p>إذا كنت باحثاً تستخدم خوادم Loongson وتستفيد من هذا التسريع، فالإحالات، وتقارير الأخطاء، وحالات الاختبار المعياري، والهدايا الصينية الصغيرة الرخيصة كلها محل تقدير. الشاي، وعلامات الكتب الخطية، وزخارف قص الورق، وتمائم العقد الصينية، وميداليات مفاتيح الباندا، وأجسام المكتب الصغيرة على شكل تنين كلها مرحب بها. من فضلك لا ترسل شيئاً غالياً أو شيئاً يتطلب أوراقاً جمركية.</p>
+<p>راجع <a href="BENCHMARKS.html">الاختبارات المعيارية الكاملة</a>.</p>
+<h2 id="_5">اختبار ميكروي أصلي</h2>
+<p>لتحليل الأداء من دون إطارات Python أو تنسيق اختبارات معيارية، اضبط بناء اختبار ميكروي x86 أصلي:</p>
+<pre><code class="language-bash">nanobind_dir=&quot;$(.venv/bin/python -m nanobind --cmake_dir)&quot;
+cmake -S . -B build/perf \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+  -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+  -DPython_EXECUTABLE=.venv/bin/python \
+  -Dnanobind_DIR=&quot;$nanobind_dir&quot;
+cmake --build build/perf --target stride_align_x86_microbench
+build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+python tools/x86_microbench_regression.py \
+  --binary build/perf/stride_align_x86_microbench \
+  --cpu 2 \
+  --backends avx2,avx512bwvl \
+  --shapes 1:1,1:many \
+  --passes english,chinese \
+  --widths 16,32 \
+  --write-json /tmp/stride-align-x86-microbench.json
+.venv/bin/python tools/pinned_benchmark_sweep.py \
+  --output-dir /tmp/stride-align-pinned \
+  --cpu 2 \
+  --iterations 15 \
+  --warmups 3
+</code></pre>
+<p><code>STRIDE_ALIGN_PERF_SYMBOLS=ON</code> يبقي وحدات nanobind غير مجردة ويضيف رموز تصحيح ومؤشرات إطارات مع الحفاظ على <code>-O3</code>.</p>
+<p>خط الأساس للاختبار الميكروي الأصلي المودع موجود في <code>benchmarks/x86_microbench_baseline.json</code>. عامله كحاجز محلي بعتبة مرنة، لا كاتفاقية مستوى خدمة بين آلات مختلفة.</p>
+<h2 id="_6">الاستشهادات</h2>
+<p>إذا استخدمت برمجيتي في بحثك، فيرجى الاستشهاد بي.</p>
+<pre><code class="language-bibtex">@software{deprince_stride_align,
+  author       = {DePrince, Adam},
+  title        = {stride-align: Fast Smith-Waterman and Needleman-Wunsch alignment for Python},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/adamdeprince/stride-align},
+  note         = {Python/C++ library for sequence and string alignment}
+}
+</code></pre>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

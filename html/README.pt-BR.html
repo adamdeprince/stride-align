@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="pt-BR" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stride-align — Português do Brasil</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>stride-align</h1>
+<p class="tagline">Smith-Waterman &amp; Needleman-Wunsch · Português do Brasil</p>
+</header>
+<nav class="nav">
+<a class="home" href="README.html">README</a>
+<div class="lang-switch" aria-label="Translations">
+  <a hreflang="en" href="README.html">English</a>
+  <a hreflang="zh-CN" href="README.zh-CN.html">简体中文</a>
+  <a hreflang="zh-TW" href="README.zh-TW.html">繁體中文</a>
+  <a hreflang="ja" href="README.ja.html">日本語</a>
+  <a hreflang="de" href="README.de.html">Deutsch</a>
+  <a hreflang="ko" href="README.ko.html">한국어</a>
+  <a hreflang="fr" href="README.fr.html">Français</a>
+  <a hreflang="es" href="README.es.html">Español</a>
+  <a hreflang="pt-BR" href="README.pt-BR.html" class="active">Português do Brasil</a>
+  <a hreflang="ru" href="README.ru.html">Русский</a>
+  <a hreflang="vi" href="README.vi.html">Tiếng Việt</a>
+  <a hreflang="id" href="README.id.html">Bahasa Indonesia</a>
+  <a hreflang="hi" href="README.hi.html">हिन्दी</a>
+  <a hreflang="ar" href="README.ar.html">العربية</a>
+  <a hreflang="tr" href="README.tr.html">Türkçe</a>
+  <a hreflang="pl" href="README.pl.html">Polski</a>
+</div>
+</nav>
+<main class="content">
+<p><strong>Idiomas:</strong> <a href="README.html">English</a> · <a href="README.zh-CN.html">简体中文</a> · <a href="README.zh-TW.html">繁體中文</a> · <a href="README.ja.html">日本語</a> · <a href="README.de.html">Deutsch</a> · <a href="README.ko.html">한국어</a> · <a href="README.fr.html">Français</a> · <a href="README.es.html">Español</a> · <strong><a href="README.pt-BR.html">Português do Brasil</a></strong> · <a href="README.ru.html">Русский</a> · <a href="README.vi.html">Tiếng Việt</a> · <a href="README.id.html">Bahasa Indonesia</a> · <a href="README.hi.html">हिन्दी</a> · <a href="README.ar.html">العربية</a> · <a href="README.tr.html">Türkçe</a> · <a href="README.pl.html">Polski</a></p>
+<p><code>stride-align</code> é uma <a href="BENCHMARK.html">biblioteca absurdamente rápida</a> que diz quão “parecidas” duas strings são. Ela faz isso implementando os algoritmos Smith-Waterman e Needleman-Wunsch. Em vez de dar uma aula, vamos aprender fazendo. Vamos direto ao funcionamento.</p>
+<h2 id="instalacao">Instalação</h2>
+<pre><code class="language-bash">pip install stride-align
+</code></pre>
+<p>Em sistemas Loongson, instale o NumPy pela sua distribuição Linux antes de instalar <code>stride-align</code>:</p>
+<pre><code class="language-bash">sudo apt install python3-numpy
+pip install stride-align
+</code></pre>
+<p>Primeiro, um aviso: não estou usando textos religiosos aqui para empurrar uma agenda. Para esta demonstração, preciso de vários documentos razoavelmente grandes, de domínio público, que tenham o mesmo significado mas sejam redigidos de forma diferente. A Bíblia simplesmente atende a esse requisito de um jeito bizarramente perfeito.</p>
+<p>Imagine que temos duas frases; vamos usar a primeira frase do Gênesis:</p>
+<p>Na American Standard Version, temos: "In the beginning God created the heavens and the earth."</p>
+<p>Na King James Version, temos: "In the beginning God created the heaven and the earth."</p>
+<p>Dá para ver a diferença a olho nu: heavens contra heaven. Mas como quantificar essa diferença? Usamos este pequeno trecho de código:</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;In the beginning God created the heaven and the earth.&quot;))
+</code></pre>
+<p>Quando executamos, ele imprime:</p>
+<pre><code class="language-python">0.9907407407407407
+</code></pre>
+<p>Pontuações normalizadas ficam entre <code>0</code> e <code>1</code>. Uma pontuação de <code>1</code> significa que as entradas são uma correspondência exata no modelo de pontuação padrão. Pontuações perto de <code>0</code> significam que as entradas têm pouco em comum, embora Smith-Waterman ainda possa encontrar pequenas correspondências locais dentro de strings que, no geral, não têm relação.</p>
+<p>Agora vamos mudar o texto e ver o que acontece com a pontuação.</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;The quick brown fox jumped over the lazy dog.&quot;))
+</code></pre>
+<p>e o Python imprime:</p>
+<pre><code>0.12222222222222222
+</code></pre>
+<p>Começando a entender? Quanto mais parecidas as strings, maior a pontuação.</p>
+<p>Vamos montar um exemplo maior, algo que dê uma noção do desempenho da biblioteca. Você provavelmente vai notar que alternamos entre Smith-Waterman e Needleman-Wunsch e talvez se pergunte quando usar qual. Use Needleman-Wunsch quando quiser comparar a entrada inteira contra a entrada inteira. Use Smith-Waterman quando quiser encontrar a melhor região correspondente dentro de entradas maiores.</p>
+<p>Certo, vamos ao código da demonstração. Você precisa de <code>requests</code> para esta parte:</p>
+<pre><code class="language-bash">pip install requests
+</code></pre>
+<pre><code class="language-python">import os, time, requests
+import stride_align as sa
+
+if not os.path.exists(&quot;kjv.txt&quot;):
+    response = requests.get(&quot;https://openbible.com/textfiles/kjv.txt&quot;)
+    response.raise_for_status()
+    response.encoding = &quot;utf-8-sig&quot;
+    open(&quot;kjv.txt&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;).write(response.text)
+
+lines = [line.strip().lower() for line in open(&quot;kjv.txt&quot;)][2:]
+
+while True:
+    if not (query := input(&quot;Enter a snippet to match.  Press enter to end.\n&quot;)):
+        break
+    t = time.perf_counter()
+    scores = sa.needleman_wunsch_normalized_scores(query.lower(), lines)
+    best = int(scores.argmax())
+    print()
+    print(&quot;Score:&quot;, float(scores[best]))
+    print(lines[best])
+    print(&quot;Search time: %0.2fms&quot; % ((time.perf_counter() - t) * 1000))
+    print()
+    print()
+</code></pre>
+<p>Como podemos usar isso? Suponha que temos um versículo bíblico aleatório e queremos saber de que capítulo e versículo ele vem. <code>grep</code>, você diz? Ah, céus, não, cometemos um erro. O versículo vem de outra tradução, digamos Catholic Public Domain, e no computador temos a King James Bible. A correspondência exata de strings do <code>grep</code> não vai funcionar aqui. Como encontramos o capítulo e o versículo? Procuramos a string “mais próxima” ou “mais parecida” usando <code>stride-align</code>, é claro.</p>
+<p>Na nossa demonstração, a primeira parte cuida de baixar e armazenar em cache. O pessoal gentil do <a href="https://openbible.com">Open Bible</a> colocou esse texto em um local acessível por HTTP, mas queremos respeitar o orçamento de TI deles, então armazenamos em cache o que baixamos. É só boa cidadania.</p>
+<p>Na parte seguinte carregamos todas as linhas em uma lista. Removemos quebras de linha e colocamos tudo em minúsculas porque não queremos ficar implicando com a tecla Shift.</p>
+<p>Por fim, o laço <code>while True:</code> coleta uma linha de texto, presumivelmente o versículo da versão Catholic da Bíblia para o qual queremos descobrir capítulo e versículo, e compara essa linha com todas as linhas da King James Bible usando a forma em lote de Needleman-Wunsch. Ele retorna um array de pontuações. Usamos <code>argmax()</code> para encontrar a linha com maior pontuação e então imprimimos a linha associada a esse índice. Vamos tentar.</p>
+<p>Vou usar Jeremiah 4:28 da Catholic Bible; ele é bem diferente do mesmo versículo na King James Bible. Vamos ver o que acontece…</p>
+<pre><code>$ python3 demo2.py
+Enter a snippet to match.  Press enter to end.
+The earth will mourn, and the heavens will lament from above. For I have spoken, I have decided, and I have not regretted. Neither will I be turned away from it.
+
+Score: 0.3598901098901099
+jeremiah 4:28   for this shall the earth mourn, and the heavens above be black: because i have spoken [it], i have purposed [it], and will not repent, neither will i turn back from it.
+Search time: 206.51ms
+
+</code></pre>
+<p>… e encontramos! E bem rápido também.</p>
+<h2 id="outra-demonstracao-verificacao-ortografica">Outra demonstração: verificação ortográfica</h2>
+<p>Este é um corretor ortográfico de brinquedo, não um de produção. Ele ignora pontuação, capitalização, frequência de palavras, nomes próprios e contexto. O ponto é mostrar o mesmo padrão de uma consulta contra muitos candidatos em uma tarefa familiar.</p>
+<pre><code class="language-python">import os, sys
+import stride_align as sa
+
+paths = ['/usr/share/dict/words',
+         '/usr/dict/words',
+         '/var/lib/dict/words',
+         '/etc/dictionaries-common/words']
+
+for path in paths:
+    if os.path.exists(path):
+        break
+else:
+    print(&quot;Sorry, I can't find your dictionary&quot;, file=sys.stderr)
+    exit(1)
+
+
+words = [line.strip().lower() for line in open(path)]
+
+
+for line in sys.stdin:
+    new_line = []
+    for word in line.split():
+        scores = sa.needleman_wunsch_normalized_scores(word.lower(), words)
+        word = words[int(scores.argmax())]
+        new_line.append(word)
+    print(' '.join(new_line), flush=True)
+</code></pre>
+<p>A primeira coisa que este script faz é tentar encontrar a lista de palavras corretamente grafadas do sistema operacional. O local pode variar de distribuição para distribuição. Depois de encontrada, carregamos a lista, removemos as quebras de linha e começamos a verificação ortográfica.</p>
+<p>A verificação se parece muito com a correspondência que fizemos antes. Para cada palavra candidata, comparamos contra todas as palavras da lista de palavras corretas, usamos <code>argmax()</code> para encontrar a candidata com maior pontuação e substituímos a palavra por ela. Poderíamos acelerar com otimizações, como não procurar correspondência para palavras já corretas, mas isto é uma demonstração e essa otimização fica como exercício para o leitor.</p>
+<p>Vamos ver como funciona!</p>
+<pre><code class="language-bash">$ cat - | python3 demo3.py
+this is a demonstrtion of a spel checker
+it doesn't matter that I can't spell corectly
+
+this is a demonstration of a spell checker
+it doesn't matter that i can't spell correctly
+</code></pre>
+<h2 id="detalhes">Detalhes</h2>
+<p>A estrutura atual fornece:</p>
+<ul>
+<li>alinhamento Needleman-Wunsch somente com pontuação</li>
+<li>alinhamento Needleman-Wunsch com retrocesso</li>
+<li>alinhamento Smith-Waterman somente com pontuação</li>
+<li>alinhamento Smith-Waterman com retrocesso</li>
+<li>um layout de backends que combina com o padrão de especialização usado em <code>massive-speedup</code></li>
+<li>detecção de CPU/backend e despacho de backend no lado Python</li>
+</ul>
+<p>A fronteira nativa aceita:</p>
+<ul>
+<li><code>bytes</code> contra <code>bytes</code></li>
+<li><code>str</code> contra <code>str</code></li>
+<li>sequências de objetos Python imutáveis e hasháveis</li>
+<li>entradas mistas de sequência/objeto em que um lado <code>str</code> ou <code>bytes</code> é tratado como sequência</li>
+</ul>
+<p>Pares diretos <code>bytes</code> contra <code>str</code> levantam <code>TypeError</code>.</p>
+<p>As implementações atuais são núcleos genéricos de programação dinâmica com pré-processamento que serializa entradas Python em fluxos de tokens de 8, 16, 32 ou 64 bits. Backends especializados em SIMD podem substituir depois as unidades de tradução do backend sem mudar a API Python.</p>
+<p>Funções somente de pontuação retornam pontuações numéricas. As variantes normalizadas retornam pontuações entre <code>0</code> e <code>1</code>. Funções de caminho retornam objetos de resultado de alinhamento contendo a pontuação, valores alinhados, operações e, quando disponível, resumos no estilo CIGAR.</p>
+<h2 id="api">API</h2>
+<pre><code class="language-python">import stride_align
+
+score = stride_align.needleman_wunsch_score(&quot;ACGT&quot;, &quot;ACCT&quot;)
+scores = stride_align.Scores(&quot;ACGT&quot;, variant=&quot;needleman_wunsch&quot;).compare([&quot;ACCT&quot;, &quot;AGGT&quot;])
+result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;)
+wide_result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;, width=64)
+object_result = stride_align.needleman_wunsch_path(
+    [frozenset({1}), frozenset({2})],
+    [frozenset({1}), frozenset({3})],
+)
+
+print(score)
+print(scores)
+print(result.score, result.aligned_query, result.aligned_target, result.operations)
+print(wide_result.score)
+print(object_result.aligned_query, object_result.aligned_target)
+</code></pre>
+<p>Use <code>Scores(...).compare([...])</code> ou as funções <code>*_scores()</code> para cargas de trabalho de uma consulta contra muitos alvos. Esse caminho prepara a consulta/perfil uma vez e é a API de desempenho preferida para comparações repetidas de texto em inglês/chinês.</p>
+<p>As saídas de retrocesso preservam o tipo de caminho rápido pareado:</p>
+<ul>
+<li><code>str</code> de entrada retornam <code>str</code> alinhadas</li>
+<li><code>bytes</code> de entrada retornam <code>bytes</code> alinhados</li>
+<li>entradas de sequência/objeto retornam valores <code>tuple</code> alinhados com lacunas <code>None</code></li>
+</ul>
+<p>Passe <code>width=8</code>, <code>16</code>, <code>32</code> ou <code>64</code> para forçar a largura interna de token/pontuação em vez de usar a seleção automática.</p>
+<p>Algumas funções expõem strings CIGAR, abreviação de “Concise Idiosyncratic Gapped Alignment Report”. CIGAR é a notação compacta de operações de alinhamento usada por ferramentas SAM/BAM. Se quiser a versão formal completa, consulte a <a href="https://samtools.github.io/hts-specs/SAMv1.pdf">especificação SAM</a>.</p>
+<h2 id="otimizacoes-e-benchmarks">Otimizações e benchmarks</h2>
+<p>A história de desempenho de <code>stride-align</code> recebeu, e continua recebendo, atenção cuidadosa. A biblioteca inclui otimização SIMD para vários alvos comuns, incluindo x86, Arm e LoongArch.</p>
+<p><strong>LoongArch / Loongson.</strong> A história de otimização do Loongson é especialmente reveladora: no caso de benchmark verificado com texto em inglês, largura de pontuação de 16 bits e Smith-Waterman somente de pontuação, o backend LASX é 16 vezes mais rápido que o backend genérico e <strong>22,4 vezes</strong> mais rápido que o Parasail.</p>
+<p>Se você é pesquisador usando servidores Loongson e se beneficiando dessa aceleração, citações, relatórios de bugs, casos de benchmark e pequenos souvenirs chineses baratos são apreciados. Chá, marcadores de caligrafia, enfeites de papel recortado, pingentes de nó chinês, chaveiros de panda e pequenos objetos de mesa em forma de dragão são todos bem-vindos. Por favor, não envie nada caro nem nada que exija documentação alfandegária.</p>
+<p>Veja os <a href="BENCHMARKS.html">benchmarks completos</a>.</p>
+<h2 id="microbenchmark-nativo">Microbenchmark nativo</h2>
+<p>Para perfilamento de desempenho sem quadros Python ou orquestração de benchmark, configure uma compilação nativa de microbenchmark x86:</p>
+<pre><code class="language-bash">nanobind_dir=&quot;$(.venv/bin/python -m nanobind --cmake_dir)&quot;
+cmake -S . -B build/perf \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+  -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+  -DPython_EXECUTABLE=.venv/bin/python \
+  -Dnanobind_DIR=&quot;$nanobind_dir&quot;
+cmake --build build/perf --target stride_align_x86_microbench
+build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+python tools/x86_microbench_regression.py \
+  --binary build/perf/stride_align_x86_microbench \
+  --cpu 2 \
+  --backends avx2,avx512bwvl \
+  --shapes 1:1,1:many \
+  --passes english,chinese \
+  --widths 16,32 \
+  --write-json /tmp/stride-align-x86-microbench.json
+.venv/bin/python tools/pinned_benchmark_sweep.py \
+  --output-dir /tmp/stride-align-pinned \
+  --cpu 2 \
+  --iterations 15 \
+  --warmups 3
+</code></pre>
+<p><code>STRIDE_ALIGN_PERF_SYMBOLS=ON</code> mantém os módulos nanobind sem remoção de símbolos e adiciona símbolos de depuração mais ponteiros de quadro, preservando <code>-O3</code>.</p>
+<p>A linha de base de microbenchmark nativo registrada fica em <code>benchmarks/x86_microbench_baseline.json</code>. Trate-a como uma proteção local com limite folgado, não como um SLA entre máquinas.</p>
+<h2 id="citacoes">Citações</h2>
+<p>Se você usar meu software na sua pesquisa, por favor cite-me.</p>
+<pre><code class="language-bibtex">@software{deprince_stride_align,
+  author       = {DePrince, Adam},
+  title        = {stride-align: Fast Smith-Waterman and Needleman-Wunsch alignment for Python},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/adamdeprince/stride-align},
+  note         = {Python/C++ library for sequence and string alignment}
+}
+</code></pre>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

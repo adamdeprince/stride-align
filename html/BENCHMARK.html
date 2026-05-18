@@ -1,0 +1,1481 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmark Summary — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>Benchmark Summary</h1>
+<p class="tagline">Cross-architecture performance: Intel x86, ARM, Loongson, Power</p>
+</header>
+<nav class="nav">
+<a class="home" href="README.html">README</a>
+
+</nav>
+<main class="content">
+<p><a href="fast.png">Stride-align</a> is benchmarked across five hardware families:
+Intel x86 (AVX2, AVX512BWVL), ARM Linux aarch64 on AWS Graviton4
+(NEON/ASIMD, SVE, SVE2), ARM macOS arm64 on Apple M-series (NEON),
+LoongArch64 on Loongson (LSX, LASX), and PowerPC64 VSX on Power8. Each
+family ran on a different host with a different parasail build (or no
+parasail at all), so numbers should be read within a family, not
+across families. Raw CSVs live in <code>benchmark.csv</code> (x86) and
+<code>benchmarks/*.csv</code> (everything else).</p>
+<p>All ratios are median-runtime ratios. A ratio above <code>1.0x</code> means stride-align
+is faster than the named baseline for that row:</p>
+<pre><code class="language-text">ratio = baseline_median_seconds / stride_align_median_seconds
+</code></pre>
+<h2 id="at-a-glance">At a glance</h2>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Best stride-align backend</th>
+<th>Baseline</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel x86</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>parasail</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;"><strong>1.752x</strong></td>
+<td style="text-align: right;">1.678x</td>
+<td style="text-align: right;">0.909x</td>
+<td style="text-align: right;">3.794x</td>
+</tr>
+<tr>
+<td>Intel x86</td>
+<td><code>x86_avx2</code></td>
+<td>parasail</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">1.377x</td>
+<td style="text-align: right;">1.302x</td>
+<td style="text-align: right;">0.474x</td>
+<td style="text-align: right;">3.513x</td>
+</tr>
+<tr>
+<td>ARM Graviton4 (Linux)</td>
+<td><code>linux_aarch64_neon</code>/<code>asimd</code></td>
+<td>parasail</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;"><strong>1.138x</strong></td>
+<td style="text-align: right;">1.138x</td>
+<td style="text-align: right;">0.260x</td>
+<td style="text-align: right;">2.637x</td>
+</tr>
+<tr>
+<td>ARM Graviton4 (Linux)</td>
+<td><code>linux_aarch64_sve2</code></td>
+<td>parasail</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">1.081x</td>
+<td style="text-align: right;">1.108x</td>
+<td style="text-align: right;">0.261x</td>
+<td style="text-align: right;">2.635x</td>
+</tr>
+<tr>
+<td>ARM Graviton4 (Linux)</td>
+<td><code>linux_aarch64_sve</code></td>
+<td>parasail</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">1.042x</td>
+<td style="text-align: right;">1.101x</td>
+<td style="text-align: right;">0.259x</td>
+<td style="text-align: right;">2.647x</td>
+</tr>
+<tr>
+<td>ARM Mac M4 (macOS)</td>
+<td><code>macos_arm64_neon</code></td>
+<td>parasail</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;"><strong>1.065x</strong></td>
+<td style="text-align: right;">1.046x</td>
+<td style="text-align: right;">0.592x</td>
+<td style="text-align: right;">2.400x</td>
+</tr>
+<tr>
+<td>Loongson LoongArch64</td>
+<td><code>linux_loongarch64_lasx</code></td>
+<td>patched parasail (1:1 score)</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;"><strong>7.517x</strong></td>
+<td style="text-align: right;">6.502x</td>
+<td style="text-align: right;">4.315x</td>
+<td style="text-align: right;">22.365x</td>
+</tr>
+<tr>
+<td>Loongson LoongArch64</td>
+<td><code>linux_loongarch64_lasx</code></td>
+<td>generic (native)</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;"><strong>4.909x</strong></td>
+<td style="text-align: right;">5.149x</td>
+<td style="text-align: right;">0.499x</td>
+<td style="text-align: right;">29.707x</td>
+</tr>
+<tr>
+<td>Power8 VSX (Linux)</td>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>generic (no parasail)</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;"><strong>3.772x</strong></td>
+<td style="text-align: right;">4.128x</td>
+<td style="text-align: right;">0.915x</td>
+<td style="text-align: right;">16.797x</td>
+</tr>
+</tbody>
+</table>
+<h2 id="intel-x86-2026-05-18">Intel x86 - 2026-05-18</h2>
+<p>Raw artifacts: <a href="benchmark.csv"><code>benchmark.csv</code></a> and the focused linear
+<code>sw-farrar-score</code> exact-fill follow-up
+<a href="benchmarks/x86-sw-farrar-exactfill-study-2026-05-14.csv"><code>benchmarks/x86-sw-farrar-exactfill-study-2026-05-14.csv</code></a>.</p>
+<p>Build context: 11th Gen Intel Core i7-1195G7, Python 3.13 in the project
+virtualenv, host pinned with <code>taskset -c 2</code>, regenerated 2026-05-18 after the
+CIGAR builder rework (<code>to_chars</code>-based digit emission + capacity reservation
+in <code>build_cigar</code> and <code>ReverseCigarBuilder</code>). Parasail is the bundled
+<code>parasail==1.3.4</code> wheel. The CSV contains 320 data rows: English and Chinese
+workloads, linear and affine scoring, widths 16 and 32, <code>1:1</code> and <code>1:many</code>
+shapes, and <code>generic</code>/<code>x86_avx2</code>/<code>x86_avx512bwvl</code>/<code>parasail</code> backends.</p>
+<p>Command:</p>
+<pre><code class="language-bash">taskset -c 2 .venv/bin/python -m stride_align.benchmark \
+  --backends generic x86_avx2 x86_avx512bwvl parasail \
+  --variants sw-farrar-score sw-score nw-score sw-path-info nw-path-info sw-cigar nw-cigar \
+  --passes english chinese \
+  --shapes all \
+  --scoring-cases linear affine \
+  --widths 16 32 \
+  --iterations 15 \
+  --warmups 3 \
+  --timing-split \
+  --format csv &gt; benchmark.csv
+</code></pre>
+<h3 id="overall-vs-parasail">Overall vs parasail</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">77</td>
+<td style="text-align: right;">1.752x</td>
+<td style="text-align: right;">1.678x</td>
+<td style="text-align: right;">0.909x</td>
+<td style="text-align: right;">3.794x</td>
+</tr>
+<tr>
+<td><code>x86_avx2</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">66</td>
+<td style="text-align: right;">1.377x</td>
+<td style="text-align: right;">1.302x</td>
+<td style="text-align: right;">0.474x</td>
+<td style="text-align: right;">3.513x</td>
+</tr>
+<tr>
+<td><code>generic</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0.222x</td>
+<td style="text-align: right;">0.176x</td>
+<td style="text-align: right;">0.058x</td>
+<td style="text-align: right;">1.615x</td>
+</tr>
+</tbody>
+</table>
+<p>Score-only rows (16 sw-farrar-score + 16 sw-score + 16 nw-score):</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">1.767x</td>
+<td style="text-align: right;">1.762x</td>
+</tr>
+<tr>
+<td><code>x86_avx2</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">1.297x</td>
+<td style="text-align: right;">1.173x</td>
+</tr>
+</tbody>
+</table>
+<p>Path/CIGAR rows (8 each of sw-path-info, nw-path-info, sw-cigar, nw-cigar):</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">29</td>
+<td style="text-align: right;">1.730x</td>
+<td style="text-align: right;">1.524x</td>
+</tr>
+<tr>
+<td><code>x86_avx2</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">1.508x</td>
+<td style="text-align: right;">1.524x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="by-variant">By variant</h3>
+<p>AVX2:</p>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">2.172x</td>
+<td style="text-align: right;">2.170x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">2.153x</td>
+<td style="text-align: right;">2.231x</td>
+</tr>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">1.763x</td>
+<td style="text-align: right;">1.708x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">1.122x</td>
+<td style="text-align: right;">1.143x</td>
+</tr>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">1.103x</td>
+<td style="text-align: right;">1.045x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">1.060x</td>
+<td style="text-align: right;">1.061x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">1.043x</td>
+<td style="text-align: right;">1.051x</td>
+</tr>
+</tbody>
+</table>
+<p>AVX512BWVL:</p>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">2.295x</td>
+<td style="text-align: right;">2.274x</td>
+</tr>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">2.210x</td>
+<td style="text-align: right;">2.337x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">2.193x</td>
+<td style="text-align: right;">2.327x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">1.673x</td>
+<td style="text-align: right;">1.694x</td>
+</tr>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">1.436x</td>
+<td style="text-align: right;">1.314x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">1.373x</td>
+<td style="text-align: right;">1.412x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">1.346x</td>
+<td style="text-align: right;">1.414x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="worst-rows-vs-parasail">Worst rows vs parasail</h3>
+<p>AVX2:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Ratio</th>
+<th>Pass</th>
+<th>Case</th>
+<th>Shape</th>
+<th>Variant</th>
+<th style="text-align: right;">Width</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.474x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.493x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.763x</td>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.799x</td>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.888x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">32</td>
+</tr>
+</tbody>
+</table>
+<p>AVX512BWVL:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Ratio</th>
+<th>Pass</th>
+<th>Case</th>
+<th>Shape</th>
+<th>Variant</th>
+<th style="text-align: right;">Width</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.909x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.943x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.951x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">32</td>
+</tr>
+<tr>
+<td style="text-align: right;">1.034x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">32</td>
+</tr>
+<tr>
+<td style="text-align: right;">1.079x</td>
+<td>chinese</td>
+<td>affine</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+</tbody>
+</table>
+<h3 id="takeaways">Takeaways</h3>
+<p>AVX512BWVL is the strongest Intel backend, winning <strong>77 of 80</strong> comparable
+rows (every score-only row) at 1.752x parasail geomean. AVX2 wins 66 of 80 at
+1.377x geomean. Both backends now beat parasail on every variant by geomean —
+<code>sw-cigar</code> is the historically weakest variant but is positive (1.043x AVX2,
+1.346x AVX512BWVL) instead of losing.</p>
+<p>The 2026-05-18 sweep folded in the CIGAR builder rework (<code>to_chars</code> digit
+emission and capacity reservation in <code>build_cigar</code> / <code>ReverseCigarBuilder</code>),
+which dropped the path/CIGAR floor. AVX2 went from 1.237x → 1.377x overall
+parasail geomean (<code>1.11x</code>), AVX512BWVL went from 1.451x → 1.752x (<code>1.21x</code>).
+<code>sw-cigar</code> specifically moved from 0.760x → 1.043x on AVX2 and 1.090x →
+1.346x on AVX512BWVL.</p>
+<p>The 2026-05-14 focused linear <code>sw-farrar-score</code> exact-fill run still applies:
+SSE4.1 reaches <code>6.04x</code> generic, AVX2 <code>10.67x</code>, and AVX512BWVL <code>14.41x</code> by
+focused geomean.</p>
+<p>AVX2's only remaining sub-parity rows are short linear SW 1:1 cigar/path-info
+at width 16 (<code>sw-cigar</code> and <code>sw-path-info</code>); AVX512BWVL's worst row is
+0.909x. Both backends now have only a handful of rows below 1.0x.</p>
+<p><code>generic</code> is for correctness/baseline reference, not as a parasail competitor.
+It loses every score-only row badly; a handful of linear NW path/CIGAR rows
+are competitive but not consistently.</p>
+<h2 id="arm-graviton4-linux-aarch64-2026-05-18">ARM Graviton4 (Linux aarch64) - 2026-05-18</h2>
+<p>Raw artifacts:</p>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="benchmarks/graviton4-arm-simd-parasail-2026-05-18.csv"><code>benchmarks/graviton4-arm-simd-parasail-2026-05-18.csv</code></a></td>
+<td>Full 400-row sweep after the CIGAR builder rework and the <code>5174571</code> SVE/SVE2 fix: <code>generic</code>, <code>linux_aarch64_neon</code>, <code>linux_aarch64_sve</code>, <code>linux_aarch64_sve2</code>, <code>parasail</code>, all 7 variants, <code>1:1</code> and <code>1:many</code>, widths 16/32.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/graviton4-arm-simd-parasail-2026-05-16.csv"><code>benchmarks/graviton4-arm-simd-parasail-2026-05-16.csv</code></a></td>
+<td>Pre-<code>5174571</code> SVE/SVE2 snapshot.</td>
+</tr>
+</tbody>
+</table>
+<p>Build context: AWS Graviton4 (Neoverse V2), Ubuntu noble, Python 3.14.4,
+GCC, system CMake + venv-local ninja. Pinned with <code>taskset -c 0</code>. Backends
+measured: <code>linux_aarch64_neon</code>, <code>linux_aarch64_sve</code>, <code>linux_aarch64_sve2</code>,
+plus <code>generic</code> and <code>parasail</code>. <code>linux_aarch64_asimd</code> was merged into NEON
+in commit <code>617d282</code>; the public NEON backend covers both.</p>
+<h3 id="overall-vs-parasail_1">Overall vs parasail</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">51</td>
+<td style="text-align: right;">1.138x</td>
+<td style="text-align: right;">1.138x</td>
+<td style="text-align: right;">0.260x</td>
+<td style="text-align: right;">2.637x</td>
+</tr>
+<tr>
+<td><code>linux_aarch64_sve2</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">49</td>
+<td style="text-align: right;">1.081x</td>
+<td style="text-align: right;">1.108x</td>
+<td style="text-align: right;">0.261x</td>
+<td style="text-align: right;">2.635x</td>
+</tr>
+<tr>
+<td><code>linux_aarch64_sve</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">47</td>
+<td style="text-align: right;">1.042x</td>
+<td style="text-align: right;">1.101x</td>
+<td style="text-align: right;">0.259x</td>
+<td style="text-align: right;">2.647x</td>
+</tr>
+</tbody>
+</table>
+<p>Score-only:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">28</td>
+<td style="text-align: right;">1.100x</td>
+<td style="text-align: right;">1.098x</td>
+</tr>
+<tr>
+<td><code>linux_aarch64_sve2</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">28</td>
+<td style="text-align: right;">1.022x</td>
+<td style="text-align: right;">1.071x</td>
+</tr>
+<tr>
+<td><code>linux_aarch64_sve</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">0.973x</td>
+<td style="text-align: right;">1.070x</td>
+</tr>
+</tbody>
+</table>
+<p>Path/CIGAR:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">23</td>
+<td style="text-align: right;">1.198x</td>
+<td style="text-align: right;">1.230x</td>
+</tr>
+<tr>
+<td><code>linux_aarch64_sve2</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">1.178x</td>
+<td style="text-align: right;">1.188x</td>
+</tr>
+<tr>
+<td><code>linux_aarch64_sve</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">1.155x</td>
+<td style="text-align: right;">1.206x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="by-variant-vs-parasail-geomean">By variant (vs parasail geomean)</h3>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">NEON</th>
+<th style="text-align: right;">SVE</th>
+<th style="text-align: right;">SVE2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">2.052x</td>
+<td style="text-align: right;">1.953x</td>
+<td style="text-align: right;">2.163x</td>
+</tr>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">1.465x</td>
+<td style="text-align: right;">1.268x</td>
+<td style="text-align: right;">1.269x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">1.318x</td>
+<td style="text-align: right;">1.300x</td>
+<td style="text-align: right;">1.275x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">1.144x</td>
+<td style="text-align: right;">1.066x</td>
+<td style="text-align: right;">1.059x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">0.953x</td>
+<td style="text-align: right;">0.883x</td>
+<td style="text-align: right;">1.020x</td>
+</tr>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">0.952x</td>
+<td style="text-align: right;">0.822x</td>
+<td style="text-align: right;">0.824x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">0.665x</td>
+<td style="text-align: right;">0.657x</td>
+<td style="text-align: right;">0.659x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="worst-rows-vs-parasail-neon">Worst rows vs parasail (NEON)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Ratio</th>
+<th>Pass</th>
+<th>Case</th>
+<th>Shape</th>
+<th>Variant</th>
+<th style="text-align: right;">Width</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.260x</td>
+<td>chinese</td>
+<td>affine</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+</tbody>
+</table>
+<h3 id="takeaways_1">Takeaways</h3>
+<p>The 2026-05-18 sweep is the first post-<code>5174571</code> SVE/SVE2 capture against
+parasail. SVE/SVE2 jumped from <code>0.450x</code> parasail geomean (pre-fix snapshot
+in the 2026-05-16 CSV) to <code>1.042x</code> / <code>1.081x</code> respectively — within rounding
+of the <code>1.04x</code> / <code>1.08x</code> numbers advertised by the SVE-fix commit.</p>
+<p>NEON remains the headline Graviton4 backend at <code>1.138x</code> parasail geomean.
+NEON, SVE, and SVE2 cluster within <code>~10%</code> of each other on this Neoverse V2.
+SVE2 edges SVE on score-only thanks to its native <code>svqadd_s*</code> vector-vector
+saturating add for affine sentinels.</p>
+<p>Remaining weak spots common to all three backends:
+* affine/linear <code>sw-cigar</code> width 16 — still the worst variant
+  (<code>0.665x</code> NEON geomean); the trace-table representation favors parasail
+  on aarch64 even after the CIGAR builder rework.
+* <code>sw-farrar-score</code> width 16 1:1 — 0.82-0.95x geomean across the three.</p>
+<h3 id="recommended-graviton4-next-steps">Recommended Graviton4 next steps</h3>
+<ol>
+<li>Target <code>sw-cigar</code> width 16 next — still the lone variant where all three SIMD backends lose to parasail by geomean.</li>
+<li>Investigate <code>sw-farrar-score</code> width 16 1:1; the 0.82-0.95x range suggests a striped-trace cache miss specific to the short query.</li>
+<li>Either delete the merged <code>linux_aarch64_asimd</code> import alias or surface it explicitly in <code>available_backends()</code> so external users have a stable name.</li>
+</ol>
+<h2 id="arm-macos-arm64-apple-m-series-2026-05-18">ARM macOS arm64 (Apple M-series) - 2026-05-18</h2>
+<p>Raw macOS arm64 artifacts:</p>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-2026-05-18.csv"><code>benchmarks/macos-arm64-neon-2026-05-18.csv</code></a></td>
+<td>Full 240-row sweep after the CIGAR builder rework: <code>generic</code>, <code>macos_arm64_neon</code>, <code>parasail</code>, all 7 variants, <code>1:1</code> and <code>1:many</code>, widths 16/32.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-score-native-2026-05-13.csv"><code>benchmarks/macos-arm64-neon-score-native-2026-05-13.csv</code></a></td>
+<td>Native <code>generic</code>, <code>swar</code>, and NEON score rows for <code>1:1</code> and <code>1:many</code>.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-score-parasail-2026-05-13.csv"><code>benchmarks/macos-arm64-neon-score-parasail-2026-05-13.csv</code></a></td>
+<td>Score rows including locally installed parasail.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-path-parasail-2026-05-13.csv"><code>benchmarks/macos-arm64-neon-path-parasail-2026-05-13.csv</code></a></td>
+<td>Path/CIGAR timing-split rows including parasail.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-focused-2026-05-14.csv"><code>benchmarks/macos-arm64-neon-focused-2026-05-14.csv</code></a></td>
+<td>Pre-CIGAR-fix focused comparison against parasail.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-microbench-2026-05-14.txt"><code>benchmarks/macos-arm64-neon-microbench-2026-05-14.txt</code></a></td>
+<td>Native NEON microbench.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-sw-farrar-parasail-study-2026-05-14.csv"><code>benchmarks/macos-arm64-neon-sw-farrar-parasail-study-2026-05-14.csv</code></a></td>
+<td>Focused run after adding exact-fill linear SW Farrar score paths.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-linear-trace-onepass-parasail-study-2026-05-14.csv"><code>benchmarks/macos-arm64-neon-linear-trace-onepass-parasail-study-2026-05-14.csv</code></a></td>
+<td>Negative-control one-pass striped linear SW trace experiment (reverted).</td>
+</tr>
+<tr>
+<td><a href="benchmarks/macos-arm64-neon-2026-05-13.html"><code>benchmarks/macos-arm64-neon-2026-05-13.md</code></a>, <a href="benchmarks/macos-arm64-neon-2026-05-14.html"><code>benchmarks/macos-arm64-neon-2026-05-14.md</code></a></td>
+<td>macOS-specific notes and recommendations.</td>
+</tr>
+</tbody>
+</table>
+<p>Build context: macOS 15.3.1 on Apple M-series (host <code>wopr</code>), Python 3.13 from
+Homebrew, Apple clang 17. Parasail is locally installed <code>parasail==1.3.4</code>
+backed by parasail library <code>2.6.2</code>. Installing parasail from source on
+homebrew required autotools/libtool with <code>/opt/homebrew/bin</code> on <code>PATH</code> for
+<code>glibtoolize</code>. The 2026-05-18 sweep was regenerated after the CIGAR builder
+rework (<code>to_chars</code>-based digit emission + capacity reservation).</p>
+<p>This is a <strong>different chip and toolchain</strong> from Graviton4 — do not transfer
+ratios between the two ARM sections.</p>
+<h3 id="overall-vs-parasail-2026-05-18">Overall vs parasail (2026-05-18)</h3>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Overall</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">46</td>
+<td style="text-align: right;">1.065x</td>
+<td style="text-align: right;">1.046x</td>
+<td style="text-align: right;">0.592x</td>
+<td style="text-align: right;">2.400x</td>
+</tr>
+<tr>
+<td>Score-only</td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">0.947x</td>
+<td style="text-align: right;">0.931x</td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+<tr>
+<td>Path/CIGAR</td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">1.272x</td>
+<td style="text-align: right;">1.308x</td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+</tbody>
+</table>
+<h3 id="by-variant-macos_arm64_neon-vs-parasail">By variant (macos_arm64_neon vs parasail)</h3>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.645x</td>
+<td style="text-align: right;">1.518x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.616x</td>
+<td style="text-align: right;">1.575x</td>
+</tr>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">1.206x</td>
+<td style="text-align: right;">1.215x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">1.010x</td>
+<td style="text-align: right;">1.042x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0.973x</td>
+<td style="text-align: right;">0.974x</td>
+</tr>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0.951x</td>
+<td style="text-align: right;">0.905x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.740x</td>
+<td style="text-align: right;">0.753x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="takeaways_2">Takeaways</h3>
+<p>NEON on Mac has crossed parasail parity. The 2026-05-18 sweep is <code>1.065x</code>
+parasail geomean across 80 rows (was <code>0.720x</code> on the 2026-05-14 focused
+sweep). The path/CIGAR group is now the strongest (<code>1.272x</code> geomean) — the
+inverse of the pre-fix state where it was the worst. The CIGAR builder
+rework lands cleanly here: <code>nw-cigar</code> reaches <code>1.616x</code> and <code>sw-cigar</code>
+crosses parity at <code>1.010x</code>.</p>
+<p>Score-only is still the weak group at <code>0.947x</code>. <code>nw-score</code> is the only
+variant where every row loses (<code>0.740x</code> geomean), driven by parasail's
+striped score kernel on width 16. <code>sw-farrar-score</code> is also slightly behind
+(<code>0.951x</code>). The exact-fill linear SW Farrar score path lands its earlier
+gains here.</p>
+<h3 id="recommended-mac-m-series-next-steps">Recommended Mac M-series next steps</h3>
+<ol>
+<li>Target affine <code>nw-score</code> next — it is the largest remaining gap and the only variant where every comparison loses.</li>
+<li>Investigate <code>sw-farrar-score</code> width 16: still trailing parasail at <code>0.905x</code> median.</li>
+<li>Keep the exact-fill linear SW Farrar score path enabled.</li>
+<li>Do not reuse the shared masked-trace helpers for NEON linear SW path/CIGAR without redesigning the trace representation.</li>
+<li>Add a native parasail comparison mode to the arm64 microbench before instruction-level parity work.</li>
+<li>Keep SWAR off the mac performance path (geomean <code>0.64x</code> generic on the 2026-05-13 native sweep) — correctness/reference only.</li>
+</ol>
+<h2 id="loongson-loongarch64-lsxlasx-2026-05-18">Loongson LoongArch64 (LSX/LASX) - 2026-05-18</h2>
+<p>Raw Loongson artifacts:</p>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="benchmarks/loongson-native-2026-05-18.csv"><code>benchmarks/loongson-native-2026-05-18.csv</code></a></td>
+<td>Full 320-row native sweep after the CIGAR builder rework: <code>generic</code>, <code>swar</code>, LSX, LASX, all 7 variants, <code>1:1</code> and <code>1:many</code>, widths 16/32.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/loongson-score-native-2026-05-13.csv"><code>benchmarks/loongson-score-native-2026-05-13.csv</code></a></td>
+<td>Earlier native score-only sweep.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/loongson-score-1to1-parasail-2026-05-13.csv"><code>benchmarks/loongson-score-1to1-parasail-2026-05-13.csv</code></a></td>
+<td><code>sw-score</code>/<code>nw-score</code> <code>1:1</code> comparison against patched generic LoongArch parasail.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/loongson-path-native-2026-05-13.csv"><code>benchmarks/loongson-path-native-2026-05-13.csv</code></a></td>
+<td>Pre-CIGAR-fix path/CIGAR timing-split rows, no parasail.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv"><code>benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv</code></a></td>
+<td>Focused linear <code>sw-farrar-score</code> baseline before exact-fill hooks.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv"><code>benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv</code></a></td>
+<td>Focused linear <code>sw-farrar-score</code> run after exact-fill hooks.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/loongson-2026-05-13.html"><code>benchmarks/loongson-2026-05-13.md</code></a></td>
+<td>Loongson-specific notes and recommendations.</td>
+</tr>
+</tbody>
+</table>
+<p>Build context: Loongson 3A6000-class host, Python 3.13.13, GCC 15.2.0, CMake
+4.3.2. The LoongArch Python extension modules were built with static C++
+runtime linkage; <code>ldd</code> shows no dynamic <code>libstdc++</code>/<code>libgcc</code> dependency.
+Numpy is sourced from a host-local source build (<code>/data/home/adam/dev/numpy</code>)
+linked against the GCC 15.2 runtime at <code>/opt/loongson-gcc-15.2.0/lib</code>, since
+no upstream loongarch64 wheel exists.</p>
+<p>Parasail status: upstream <code>pip install parasail</code> failed on LoongArch. A
+patched source build works for direct score calls after treating LoongArch as
+a non-x86 <code>cpuid</code> stub target, but it is generic parasail, not LSX/LASX
+optimized. Its profile API returned NULL profiles and trace/CIGAR was not
+usable, so parasail is included only for direct <code>sw-score</code>/<code>nw-score</code> <code>1:1</code>
+score rows. The 2026-05-18 sweep is native-only.</p>
+<h3 id="overall-vs-generic-2026-05-18-native">Overall vs <code>generic</code> (2026-05-18 native)</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">68</td>
+<td style="text-align: right;">4.909x</td>
+<td style="text-align: right;">5.149x</td>
+<td style="text-align: right;">0.499x</td>
+<td style="text-align: right;">29.707x</td>
+</tr>
+<tr>
+<td><code>linux_loongarch64_lsx</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">72</td>
+<td style="text-align: right;">2.876x</td>
+<td style="text-align: right;">3.081x</td>
+<td style="text-align: right;">0.350x</td>
+<td style="text-align: right;">16.085x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="score-only-vs-generic-2026-05-18-native">Score-only vs <code>generic</code> (2026-05-18 native)</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">11.624x</td>
+<td style="text-align: right;">13.370x</td>
+<td style="text-align: right;">29.707x</td>
+</tr>
+<tr>
+<td><code>linux_loongarch64_lsx</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">5.185x</td>
+<td style="text-align: right;">5.334x</td>
+<td style="text-align: right;">16.085x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="path-cigar-vs-generic-2026-05-18-native">Path / CIGAR vs <code>generic</code> (2026-05-18 native)</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">1.347x</td>
+<td style="text-align: right;">1.069x</td>
+<td style="text-align: right;">7.127x</td>
+</tr>
+<tr>
+<td><code>linux_loongarch64_lsx</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">1.188x</td>
+<td style="text-align: right;">1.249x</td>
+<td style="text-align: right;">3.752x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="by-variant-vs-generic">By variant (vs generic)</h3>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">LSX geomean</th>
+<th style="text-align: right;">LASX geomean</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">6.440x</td>
+<td style="text-align: right;">19.281x</td>
+</tr>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">6.089x</td>
+<td style="text-align: right;">17.770x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">3.556x</td>
+<td style="text-align: right;">4.585x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">1.194x</td>
+<td style="text-align: right;">1.915x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">1.677x</td>
+<td style="text-align: right;">1.797x</td>
+</tr>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">1.257x</td>
+<td style="text-align: right;">1.182x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">0.791x</td>
+<td style="text-align: right;">0.809x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="score-only-vs-patched-loongarch-parasail-11">Score-only vs patched LoongArch parasail (1:1)</h3>
+<p>The 2026-05-13 parasail comparison (16-row 1:1 score-only, unaffected by the
+CIGAR builder rework):</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">7.517x</td>
+<td style="text-align: right;">6.502x</td>
+<td style="text-align: right;">22.365x</td>
+</tr>
+<tr>
+<td><code>linux_loongarch64_lsx</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">5.307x</td>
+<td style="text-align: right;">5.395x</td>
+<td style="text-align: right;">13.205x</td>
+</tr>
+<tr>
+<td><code>swar</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.061x</td>
+<td style="text-align: right;">1.161x</td>
+<td style="text-align: right;">2.201x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="takeaways_3">Takeaways</h3>
+<p>LASX is the clear Loongson win: 11.6x geomean over generic on score-only,
+7.5x over patched parasail on 1:1 direct score calls, and up to 29.7x on the
+best row. LSX trails LASX by roughly the expected 2x register-width factor.
+LSX/LASX score-only numbers shifted up from the 2026-05-13 sweep (LSX
+4.234x → 5.185x, LASX 6.220x → 11.624x); the bulk of the LASX jump is the
+exact-fill <code>sw-farrar-score</code> and <code>sw-score</code> paths landing at the 1024-cell
+shape used in the sweep.</p>
+<p><code>sw-cigar</code> moved from path-trace-bound to comfortably ahead of generic: LSX
+went from below 1.0x to 1.194x; LASX reaches 1.915x. The CIGAR builder
+rework (<code>to_chars</code> + capacity reservation) is the proximate cause; the
+sw-cigar path now spends almost all of its time in the SIMD score kernel
+plus the affine reverse-build, not the digit serialization.</p>
+<p><code>sw-path-info</code> is the lone remaining weak variant on both LSX (0.791x) and
+LASX (0.809x). <code>profile_traceback</code> materialization still dominates over the
+SIMD score lift for that shape.</p>
+<p>SWAR is essentially a regression on score-only (<code>~0.63x</code> generic on the
+2026-05-13 native sweep) but is roughly at parity with parasail on the
+patched 1:1 score comparison (<code>1.06x</code> geomean) — useful as a correctness
+reference, not as a performance path.</p>
+<h3 id="recommended-loongson-next-steps">Recommended Loongson next steps</h3>
+<ol>
+<li>Keep exact-fill LSX/LASX score hooks enabled — large score-only win.</li>
+<li>Target a Loongson-specific linear SW trace/CIGAR redesign before doing instruction scheduling.</li>
+<li>Start with LASX width 16/32 trace-traffic reduction, then port to LSX.</li>
+<li>Add a native Loongson microbench/perf entrypoint before micro-optimizing LSX/LASX loops.</li>
+<li>Treat parasail as a generic LoongArch comparison until a maintained LSX/LASX parasail build becomes available.</li>
+</ol>
+<h2 id="powerpc64-vsx-power8-linux-2026-05-18">PowerPC64 VSX (Power8 Linux) - 2026-05-18</h2>
+<p>Raw Power8 artifacts:</p>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="benchmarks/power8-vsx-2026-05-18.csv"><code>benchmarks/power8-vsx-2026-05-18.csv</code></a></td>
+<td>Full 240-row sweep after the CIGAR builder rework: <code>generic</code>, <code>swar</code>, and <code>linux_powerpc64_vsx</code> for all 7 variants, <code>1:1</code> and <code>1:many</code>, widths 16/32.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/power8-vsx-2026-05-17.csv"><code>benchmarks/power8-vsx-2026-05-17.csv</code></a></td>
+<td>Pre-CIGAR-fix sweep on the same host.</td>
+</tr>
+<tr>
+<td><a href="benchmarks/power8-vsx-2026-05-17.html"><code>benchmarks/power8-vsx-2026-05-17.md</code></a></td>
+<td>Power8-specific notes, semantic-delta writeup, and recommendations.</td>
+</tr>
+</tbody>
+</table>
+<p>Build context: real POWER8 silicon (PVR <code>004b 0201</code>, 4.157 GHz), KVM-virtualized
+as a single-core <code>pSeries</code> guest. Ubuntu 20.04 ppc64le, IBM Advance Toolchain
+15.0 (GCC 11.4.1), Python 3.13.13 from miniforge, system CMake + Ninja.
+Numpy 2.4.5 from <code>pip</code>. <strong>Parasail was not built</strong> (no upstream ppc64le
+wheel; source build not attempted), so all ratios in this section are
+against <code>generic</code> on the same machine. The 2026-05-18 sweep was pinned with
+<code>taskset -c 0</code>.</p>
+<h3 id="overall-vs-generic-2026-05-18">Overall vs <code>generic</code> (2026-05-18)</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">74</td>
+<td style="text-align: right;">3.772x</td>
+<td style="text-align: right;">4.128x</td>
+<td style="text-align: right;">0.915x</td>
+<td style="text-align: right;">16.797x</td>
+</tr>
+<tr>
+<td><code>swar</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">31</td>
+<td style="text-align: right;">0.789x</td>
+<td style="text-align: right;">1.000x</td>
+<td style="text-align: right;">0.411x</td>
+<td style="text-align: right;">1.669x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="score-only-vs-generic">Score-only vs <code>generic</code></h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">6.911x</td>
+<td style="text-align: right;">6.763x</td>
+<td style="text-align: right;">16.797x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="path-cigar-vs-generic">Path / CIGAR vs <code>generic</code></h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">1.521x</td>
+<td style="text-align: right;">1.266x</td>
+<td style="text-align: right;">4.592x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="by-variant-vsx-vs-generic">By variant (VSX vs generic)</h3>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Wins</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">7.759x</td>
+<td style="text-align: right;">7.072x</td>
+</tr>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">7.544x</td>
+<td style="text-align: right;">7.103x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">5.639x</td>
+<td style="text-align: right;">5.156x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">1.958x</td>
+<td style="text-align: right;">2.183x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">1.825x</td>
+<td style="text-align: right;">1.862x</td>
+</tr>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">1.225x</td>
+<td style="text-align: right;">1.266x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.224x</td>
+<td style="text-align: right;">1.173x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="worst-rows-vs-generic">Worst rows vs generic</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Ratio</th>
+<th>Pass</th>
+<th>Case</th>
+<th>Shape</th>
+<th>Variant</th>
+<th style="text-align: right;">Width</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0.915x</td>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.934x</td>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">32</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.954x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">32</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.955x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">32</td>
+</tr>
+<tr>
+<td style="text-align: right;">0.964x</td>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">16</td>
+</tr>
+</tbody>
+</table>
+<h3 id="takeaways_4">Takeaways</h3>
+<p>Power8 VSX is a uniform win or tie. The <code>0.96x</code> worst case is a short 1:1
+linear path-info row at width 16 where SIMD setup dominates. The biggest wins
+(~16x) are <code>sw-farrar-score</code> and <code>sw-score</code> for both English and Chinese
+1024x1024 at width 16. Affine <code>sw-cigar</code> and <code>nw-cigar</code> reach ~4.2x because
+they route through the SIMD score kernel plus
+<code>profile_traceback::affine_cigar_with_score</code> and skip the trace table.</p>
+<p>Routing decisions that differ from x86_avx2 / Loongson: linear SW path /
+path-info / linear CIGAR and affine path / path-info stay on
+<code>profile_traceback</code> on Power8. The shared masked striped traceback wins on
+ISAs with one-instruction lane bitmask extract and good striped-trace cache
+behavior. On Power8 they measured 0.46-0.60x of the scalar byte-table path,
+so the helper hooks (<code>trace_mask_*</code>, <code>mask_or</code>, <code>store_masked_cells</code>, the
+<code>vbpermq</code>-based collapse described inline) are present but the public path /
+path-info / linear CIGAR APIs route through <code>profile_traceback</code>. The affine
+CIGAR entry stays on the SIMD score kernel + scalar reverse-build, beating
+generic by 2-4x without a trace table.</p>
+<p>SWAR regresses on Power8 across most rows (geomean <code>0.79x</code> generic on the
+2026-05-18 sweep). AT15 GCC 11.4 auto-vectorizes the generic score loop
+well enough that SWAR's 64-bit packed lanes give no benefit. SWAR remains
+useful as a correctness/reference backend only.</p>
+<h3 id="recommended-power8-next-steps">Recommended Power8 next steps</h3>
+<ol>
+<li>Try a <code>vbpermq</code>-based <code>trace_mask_*</code> on real hardware; combined with a row-major linear SW trace table this might bring the masked path above <code>1.0x</code> of generic.</li>
+<li>Add a Power8 <code>local_affine_score_exact_segment*_raw</code> mirroring the NEON helpers if the 1024-character query shape becomes a target; current <code>sw-farrar-score</code> is already 7-8x ahead of generic.</li>
+<li>Re-bench on a multi-core / non-virtualized Power8 host to characterise SMT throughput and shared L2/L3 effects.</li>
+<li>Build parasail from source for ppc64le and add a parasail column to the next sweep — every other family in this file has at least one parasail point of reference.</li>
+<li>Investigate why SWAR loses to generic on Power8 via an asm dump of the generic score loop.</li>
+</ol>
+<h2 id="notes-on-comparing-across-families">Notes on comparing across families</h2>
+<p>These numbers are intended for engineering direction, not publication-grade
+claims. Different families used different baselines (parasail where
+available, otherwise <code>generic</code>), different sweep sizes, different host pinning
+strategies, and different parasail builds (bundled wheel, locally compiled,
+patched-for-LoongArch, or absent). For any cross-family claim, rerun the
+relevant sweeps with matched conditions and use native microbench rows for
+the specific kernels under discussion.</p>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

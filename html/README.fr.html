@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="fr" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stride-align — Français</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>stride-align</h1>
+<p class="tagline">Smith-Waterman &amp; Needleman-Wunsch · Français</p>
+</header>
+<nav class="nav">
+<a class="home" href="README.html">README</a>
+<div class="lang-switch" aria-label="Translations">
+  <a hreflang="en" href="README.html">English</a>
+  <a hreflang="zh-CN" href="README.zh-CN.html">简体中文</a>
+  <a hreflang="zh-TW" href="README.zh-TW.html">繁體中文</a>
+  <a hreflang="ja" href="README.ja.html">日本語</a>
+  <a hreflang="de" href="README.de.html">Deutsch</a>
+  <a hreflang="ko" href="README.ko.html">한국어</a>
+  <a hreflang="fr" href="README.fr.html" class="active">Français</a>
+  <a hreflang="es" href="README.es.html">Español</a>
+  <a hreflang="pt-BR" href="README.pt-BR.html">Português do Brasil</a>
+  <a hreflang="ru" href="README.ru.html">Русский</a>
+  <a hreflang="vi" href="README.vi.html">Tiếng Việt</a>
+  <a hreflang="id" href="README.id.html">Bahasa Indonesia</a>
+  <a hreflang="hi" href="README.hi.html">हिन्दी</a>
+  <a hreflang="ar" href="README.ar.html">العربية</a>
+  <a hreflang="tr" href="README.tr.html">Türkçe</a>
+  <a hreflang="pl" href="README.pl.html">Polski</a>
+</div>
+</nav>
+<main class="content">
+<p><strong>Langues:</strong> <a href="README.html">English</a> · <a href="README.zh-CN.html">简体中文</a> · <a href="README.zh-TW.html">繁體中文</a> · <a href="README.ja.html">日本語</a> · <a href="README.de.html">Deutsch</a> · <a href="README.ko.html">한국어</a> · <strong><a href="README.fr.html">Français</a></strong> · <a href="README.es.html">Español</a> · <a href="README.pt-BR.html">Português do Brasil</a> · <a href="README.ru.html">Русский</a> · <a href="README.vi.html">Tiếng Việt</a> · <a href="README.id.html">Bahasa Indonesia</a> · <a href="README.hi.html">हिन्दी</a> · <a href="README.ar.html">العربية</a> · <a href="README.tr.html">Türkçe</a> · <a href="README.pl.html">Polski</a></p>
+<p><code>stride-align</code> est une <a href="BENCHMARK.html">bibliothèque fulgurante</a> qui te dit à quel point deux chaînes se ressemblent. Elle le fait en implémentant les algorithmes Smith-Waterman et Needleman-Wunsch. Plutôt que de faire un cours, on va apprendre en pratiquant. Entrons directement dans le fonctionnement.</p>
+<h2 id="installation">Installation</h2>
+<pre><code class="language-bash">pip install stride-align
+</code></pre>
+<p>Sur les systèmes Loongson, installe NumPy depuis ta distribution Linux avant d’installer <code>stride-align</code> :</p>
+<pre><code class="language-bash">sudo apt install python3-numpy
+pip install stride-align
+</code></pre>
+<p>D’abord, une précision : je n’utilise pas des textes religieux ici pour pousser une idée. Pour cette démo, j’ai besoin de plusieurs documents assez grands, dans le domaine public, qui ont le même sens mais des formulations différentes. La Bible se trouve simplement répondre à ce besoin de façon presque bizarrement parfaite.</p>
+<p>Imaginons deux phrases ; utilisons la première phrase de la Genèse pour cela :</p>
+<p>Dans l’American Standard Version, on a : "In the beginning God created the heavens and the earth."</p>
+<p>Dans la King James Version, on a : "In the beginning God created the heaven and the earth."</p>
+<p>À l’œil nu, on voit une différence : heavens contre heaven. Mais comment la quantifier ? On utilise ce petit morceau de code :</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;In the beginning God created the heaven and the earth.&quot;))
+</code></pre>
+<p>Quand on l’exécute, il affiche :</p>
+<pre><code class="language-python">0.9907407407407407
+</code></pre>
+<p>Les scores normalisés sont compris entre <code>0</code> et <code>1</code>. Un score de <code>1</code> signifie que les entrées correspondent exactement avec le modèle de score par défaut. Des scores proches de <code>0</code> signifient que les entrées ont peu en commun, même si Smith-Waterman peut encore trouver de petits appariements locaux dans des chaînes par ailleurs sans rapport.</p>
+<p>Changeons maintenant le texte et regardons ce qui arrive au score.</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;The quick brown fox jumped over the lazy dog.&quot;))
+</code></pre>
+<p>et Python affiche :</p>
+<pre><code>0.12222222222222222
+</code></pre>
+<p>Tu vois l’idée ? Plus les chaînes se ressemblent, plus le score est élevé.</p>
+<p>Construisons un exemple plus grand, pour sentir les performances de la bibliothèque. Tu remarqueras sans doute qu’on alterne entre Smith-Waterman et Needleman-Wunsch et tu peux te demander lequel utiliser quand. Utilise Needleman-Wunsch quand tu veux comparer toute l’entrée à toute l’entrée. Utilise Smith-Waterman quand tu veux trouver la meilleure région correspondante à l’intérieur d’entrées plus grandes.</p>
+<p>Passons au code de démonstration. Il faut <code>requests</code> pour cette partie :</p>
+<pre><code class="language-bash">pip install requests
+</code></pre>
+<pre><code class="language-python">import os, time, requests
+import stride_align as sa
+
+if not os.path.exists(&quot;kjv.txt&quot;):
+    response = requests.get(&quot;https://openbible.com/textfiles/kjv.txt&quot;)
+    response.raise_for_status()
+    response.encoding = &quot;utf-8-sig&quot;
+    open(&quot;kjv.txt&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;).write(response.text)
+
+lines = [line.strip().lower() for line in open(&quot;kjv.txt&quot;)][2:]
+
+while True:
+    if not (query := input(&quot;Enter a snippet to match.  Press enter to end.\n&quot;)):
+        break
+    t = time.perf_counter()
+    scores = sa.needleman_wunsch_normalized_scores(query.lower(), lines)
+    best = int(scores.argmax())
+    print()
+    print(&quot;Score:&quot;, float(scores[best]))
+    print(lines[best])
+    print(&quot;Search time: %0.2fms&quot; % ((time.perf_counter() - t) * 1000))
+    print()
+    print()
+</code></pre>
+<p>Comment utiliser cela ? Supposons que nous ayons un verset biblique au hasard et que nous voulions savoir de quel chapitre et de quel verset il vient. Tu dis <code>grep</code> ? Ah non, ciel, on a fait une erreur. Le verset vient d’une autre traduction, disons Catholic Public Domain, et ce que nous avons sur l’ordinateur est la King James Bible. La correspondance exacte de chaînes de <code>grep</code> ne fonctionnera pas ici. Comment trouver le chapitre et le verset ? On cherche bien sûr la chaîne « la plus proche » ou « la plus similaire » avec <code>stride-align</code>.</p>
+<p>Dans notre démo, la première partie s’occupe du téléchargement et de la mise en cache. Les braves gens de <a href="https://openbible.com">Open Bible</a> ont mis ce texte à portée de HTTP, mais nous voulons respecter leur budget informatique, donc nous mettons en cache ce que nous téléchargeons. C’est simplement être un bon citoyen du réseau.</p>
+<p>Ensuite, nous chargeons toutes les lignes dans une liste. Nous supprimons les retours à la ligne et mettons tout en minuscules, parce que nous ne voulons pas chipoter sur la touche Maj.</p>
+<p>Enfin, la boucle <code>while True:</code> récupère une ligne de texte, probablement le verset de la version Catholic de la Bible dont nous voulons retrouver le chapitre et le verset, puis la compare à toutes les lignes de la King James Bible avec la forme par lot de Needleman-Wunsch. Elle renvoie un tableau de scores. Nous utilisons <code>argmax()</code> pour trouver la ligne au meilleur score, puis nous affichons la ligne associée à cet indice. Essayons.</p>
+<p>Je vais utiliser Jeremiah 4:28 de la Catholic Bible ; il est en fait assez différent du même verset dans la King James Bible. Voyons ce qui se passe…</p>
+<pre><code>$ python3 demo2.py
+Enter a snippet to match.  Press enter to end.
+The earth will mourn, and the heavens will lament from above. For I have spoken, I have decided, and I have not regretted. Neither will I be turned away from it.
+
+Score: 0.3598901098901099
+jeremiah 4:28   for this shall the earth mourn, and the heavens above be black: because i have spoken [it], i have purposed [it], and will not repent, neither will i turn back from it.
+Search time: 206.51ms
+
+</code></pre>
+<p>… et nous l’avons trouvé ! Et assez vite en plus.</p>
+<h2 id="autre-demonstration-correction-orthographique">Autre démonstration : correction orthographique</h2>
+<p>C’est un correcteur orthographique jouet, pas un outil de production. Il ignore la ponctuation, les majuscules, la fréquence des mots, les noms propres et le contexte. Le but est de montrer le même motif « une requête contre beaucoup de candidats » sur une tâche familière.</p>
+<pre><code class="language-python">import os, sys
+import stride_align as sa
+
+paths = ['/usr/share/dict/words',
+         '/usr/dict/words',
+         '/var/lib/dict/words',
+         '/etc/dictionaries-common/words']
+
+for path in paths:
+    if os.path.exists(path):
+        break
+else:
+    print(&quot;Sorry, I can't find your dictionary&quot;, file=sys.stderr)
+    exit(1)
+
+
+words = [line.strip().lower() for line in open(path)]
+
+
+for line in sys.stdin:
+    new_line = []
+    for word in line.split():
+        scores = sa.needleman_wunsch_normalized_scores(word.lower(), words)
+        word = words[int(scores.argmax())]
+        new_line.append(word)
+    print(' '.join(new_line), flush=True)
+</code></pre>
+<p>La première chose que fait ce script est de chercher la liste de mots correctement orthographiés fournie par le système d’exploitation. Son emplacement peut varier d’une distribution à l’autre. Une fois trouvée, nous la chargeons, supprimons les retours à la ligne et lançons la correction.</p>
+<p>La correction ressemble beaucoup à l’appariement précédent. Pour chaque mot candidat, nous le comparons à tous les mots de notre liste de mots corrects, utilisons <code>argmax()</code> pour trouver le candidat au meilleur score, puis remplaçons le mot par ce candidat. On pourrait accélérer cela avec des optimisations, par exemple en ne cherchant pas de correspondance pour les mots déjà corrects, mais c’est une démo et cette optimisation est laissée au lecteur.</p>
+<p>Voyons ce que cela donne !</p>
+<pre><code class="language-bash">$ cat - | python3 demo3.py
+this is a demonstrtion of a spel checker
+it doesn't matter that I can't spell corectly
+
+this is a demonstration of a spell checker
+it doesn't matter that i can't spell correctly
+</code></pre>
+<h2 id="details">Détails</h2>
+<p>L’échafaudage actuel fournit :</p>
+<ul>
+<li>alignement Needleman-Wunsch avec score seulement</li>
+<li>alignement Needleman-Wunsch avec rétrotraçage</li>
+<li>alignement Smith-Waterman avec score seulement</li>
+<li>alignement Smith-Waterman avec rétrotraçage</li>
+<li>une disposition de backends qui correspond au motif de spécialisation utilisé dans <code>massive-speedup</code></li>
+<li>détection CPU/backend et répartition des backends côté Python</li>
+</ul>
+<p>La frontière native accepte :</p>
+<ul>
+<li><code>bytes</code> contre <code>bytes</code></li>
+<li><code>str</code> contre <code>str</code></li>
+<li>des séquences d’objets Python immuables et hachables</li>
+<li>des entrées mixtes séquence/objet où le côté <code>str</code> ou <code>bytes</code> est traité comme une séquence</li>
+</ul>
+<p>Les paires directes <code>bytes</code> contre <code>str</code> lèvent <code>TypeError</code>.</p>
+<p>Les implémentations actuelles sont des noyaux génériques de programmation dynamique avec un prétraitement qui sérialise les entrées Python en flux de jetons de 8, 16, 32 ou 64 bits. Des backends spécialisés SIMD pourront remplacer plus tard les unités de traduction backend sans changer l’API Python.</p>
+<p>Les fonctions à score seul renvoient des scores numériques. Les variantes normalisées renvoient des scores entre <code>0</code> et <code>1</code>. Les fonctions de chemin renvoient des objets de résultat d’alignement contenant le score, les valeurs alignées, les opérations et, quand c’est disponible, des résumés de style CIGAR.</p>
+<h2 id="api">API</h2>
+<pre><code class="language-python">import stride_align
+
+score = stride_align.needleman_wunsch_score(&quot;ACGT&quot;, &quot;ACCT&quot;)
+scores = stride_align.Scores(&quot;ACGT&quot;, variant=&quot;needleman_wunsch&quot;).compare([&quot;ACCT&quot;, &quot;AGGT&quot;])
+result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;)
+wide_result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;, width=64)
+object_result = stride_align.needleman_wunsch_path(
+    [frozenset({1}), frozenset({2})],
+    [frozenset({1}), frozenset({3})],
+)
+
+print(score)
+print(scores)
+print(result.score, result.aligned_query, result.aligned_target, result.operations)
+print(wide_result.score)
+print(object_result.aligned_query, object_result.aligned_target)
+</code></pre>
+<p>Utilise <code>Scores(...).compare([...])</code> ou les fonctions <code>*_scores()</code> pour les charges de travail avec une requête contre beaucoup de cibles. Ce chemin prépare la requête/le profil une seule fois et constitue l’API de performance préférée pour les comparaisons répétées de textes anglais/chinois.</p>
+<p>Les sorties de rétrotraçage préservent le type de chemin rapide apparié :</p>
+<ul>
+<li><code>str</code> en entrée renvoie des <code>str</code> alignées</li>
+<li><code>bytes</code> en entrée renvoie des <code>bytes</code> alignés</li>
+<li>les entrées séquence/objet renvoient des valeurs <code>tuple</code> alignées avec des trous <code>None</code></li>
+</ul>
+<p>Passe <code>width=8</code>, <code>16</code>, <code>32</code> ou <code>64</code> pour forcer la largeur interne des jetons/scores au lieu d’utiliser la sélection automatique.</p>
+<p>Certaines fonctions exposent des chaînes CIGAR, abréviation de “Concise Idiosyncratic Gapped Alignment Report”. CIGAR est la notation compacte des opérations d’alignement utilisée par les outils SAM/BAM. Pour la version formelle complète, voir la <a href="https://samtools.github.io/hts-specs/SAMv1.pdf">spécification SAM</a>.</p>
+<h2 id="optimisations-et-bancs-dessai">Optimisations et bancs d’essai</h2>
+<p>Une attention sérieuse a été portée, et continue de l’être, aux performances de <code>stride-align</code>. La bibliothèque inclut des optimisations SIMD pour plusieurs cibles courantes, dont x86, Arm et LoongArch.</p>
+<p><strong>LoongArch / Loongson.</strong> L’histoire d’optimisation Loongson est particulièrement parlante : dans le cas de benchmark vérifié portant sur du texte anglais, une largeur de score de 16 bits et un Smith-Waterman à score seul, le backend LASX est 16 fois plus rapide que le backend générique et <strong>22,4 fois</strong> plus rapide que Parasail.</p>
+<p>Si tu es chercheur, que tu utilises des serveurs Loongson et que tu profites de cette accélération, les citations, rapports de bogues, cas de banc d’essai et petits souvenirs chinois bon marché sont appréciés. Thé, marque-pages de calligraphie, ornements en papier découpé, porte-bonheur en nœud chinois, porte-clés panda et petits objets de bureau en forme de dragon sont les bienvenus. Merci de ne rien envoyer de cher ni rien qui exige des formalités douanières.</p>
+<p>Voir les <a href="BENCHMARKS.html">bancs d’essai complets</a>.</p>
+<h2 id="micro-banc-natif">Micro-banc natif</h2>
+<p>Pour du profilage de performance sans trames Python ni orchestration de banc d’essai, configure une construction de micro-banc x86 native :</p>
+<pre><code class="language-bash">nanobind_dir=&quot;$(.venv/bin/python -m nanobind --cmake_dir)&quot;
+cmake -S . -B build/perf \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+  -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+  -DPython_EXECUTABLE=.venv/bin/python \
+  -Dnanobind_DIR=&quot;$nanobind_dir&quot;
+cmake --build build/perf --target stride_align_x86_microbench
+build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+python tools/x86_microbench_regression.py \
+  --binary build/perf/stride_align_x86_microbench \
+  --cpu 2 \
+  --backends avx2,avx512bwvl \
+  --shapes 1:1,1:many \
+  --passes english,chinese \
+  --widths 16,32 \
+  --write-json /tmp/stride-align-x86-microbench.json
+.venv/bin/python tools/pinned_benchmark_sweep.py \
+  --output-dir /tmp/stride-align-pinned \
+  --cpu 2 \
+  --iterations 15 \
+  --warmups 3
+</code></pre>
+<p><code>STRIDE_ALIGN_PERF_SYMBOLS=ON</code> garde les modules nanobind non dépouillés et ajoute des symboles de débogage ainsi que des pointeurs de trame tout en conservant <code>-O3</code>.</p>
+<p>La ligne de base du micro-banc natif enregistrée dans le dépôt se trouve dans <code>benchmarks/x86_microbench_baseline.json</code>. Traite-la comme un garde-fou local à seuil lâche, pas comme un SLA entre machines.</p>
+<h2 id="citations">Citations</h2>
+<p>Si tu utilises mon logiciel dans tes recherches, cite-moi s’il te plaît.</p>
+<pre><code class="language-bibtex">@software{deprince_stride_align,
+  author       = {DePrince, Adam},
+  title        = {stride-align: Fast Smith-Waterman and Needleman-Wunsch alignment for Python},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/adamdeprince/stride-align},
+  note         = {Python/C++ library for sequence and string alignment}
+}
+</code></pre>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>
