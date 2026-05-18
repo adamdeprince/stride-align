@@ -1029,6 +1029,8 @@ struct Implementation {
         gap_extend_score,
         width);
   }
+
+  static constexpr BackendKind backend_kind = BackendKind::swar;
 };
 
 }  // namespace stride_align::backend_swar

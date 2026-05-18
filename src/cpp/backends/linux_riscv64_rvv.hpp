@@ -973,6 +973,8 @@ struct Implementation {
         gap_extend_score,
         width);
   }
+
+  static constexpr BackendKind backend_kind = BackendKind::linux_riscv64_rvv;
 };
 
 }  // namespace stride_align::backend_linux_riscv64_rvv

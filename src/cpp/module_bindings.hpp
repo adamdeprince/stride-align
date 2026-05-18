@@ -12,6 +12,9 @@
 #include "affine.hpp"
 #include "backends/profile_traceback.hpp"
 #include "levenshtein_dispatch.hpp"
+#include "levenshtein_simd.hpp"
+#include "levenshtein_simd_ops.hpp"
+#include "levenshtein_traits.hpp"
 #include "stride_align/alignment.hpp"
 #include "stride_align/levenshtein.hpp"
 
@@ -2145,18 +2148,17 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   // --- Levenshtein -------------------------------------------------------
   //
   // No match/mismatch/gap scores: Levenshtein is fixed at unit cost. The
-  // bindings call backend-specific overrides when available (x86 backends
-  // override *_scores with a multi-target SIMD path); otherwise they fall
-  // through to the shared scalar dispatch in levenshtein_dispatch.hpp.
+  // batch *_scores entry points dispatch on the backend's compile-time
+  // BackendKind to a SIMD multi-target Myers kernel (each SIMD lane runs
+  // one target's state, pattern <= 64 chars). Backends that don't define
+  // a matching ISA group fall through to the shared scalar dispatch in
+  // levenshtein_dispatch.hpp, which uses Hyyrö's multi-word Myers and so
+  // has no length cap.
 
   m.def(
       "levenshtein_score",
       [](nb::handle query, nb::handle target) {
-        if constexpr (requires { Implementation::levenshtein_score(query, target); }) {
-          return Implementation::levenshtein_score(query, target);
-        } else {
-          return ::stride_align::levenshtein::dispatch_score(query, target);
-        }
+        return ::stride_align::levenshtein::dispatch_score(query, target);
       },
       nb::arg("query"),
       nb::arg("target"));
@@ -2164,23 +2166,25 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "levenshtein_normalized_score",
       [](nb::handle query, nb::handle target) {
-        if constexpr (requires { Implementation::levenshtein_normalized_score(query, target); }) {
-          return Implementation::levenshtein_normalized_score(query, target);
-        } else {
-          return ::stride_align::levenshtein::dispatch_normalized_score(query, target);
-        }
+        return ::stride_align::levenshtein::dispatch_normalized_score(query, target);
       },
       nb::arg("query"),
       nb::arg("target"));
 
+  // Dispatch to a SIMD multi-target kernel when the backend's BackendKind
+  // has a OpsFor specialization that defines a non-void ops type; otherwise
+  // fall through to the scalar Hyyrö multi-word dispatch. All ISA gating
+  // lives in levenshtein_traits.hpp.
   m.def(
       "levenshtein_scores",
       [](nb::handle query, nb::handle targets) {
-        if constexpr (requires { Implementation::levenshtein_scores(query, targets); }) {
-          return as_score_ndarray(Implementation::levenshtein_scores(query, targets));
-        } else {
+        using Ops = ::stride_align::levenshtein_simd::OpsFor_t<Implementation::backend_kind>;
+        if constexpr (std::is_void_v<Ops>) {
           return as_score_ndarray(
               ::stride_align::levenshtein::dispatch_scores(query, targets));
+        } else {
+          return as_score_ndarray(
+              ::stride_align::levenshtein_simd::levenshtein_scores_simd<Ops>(query, targets));
         }
       },
       nb::arg("query"),
@@ -2189,14 +2193,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "levenshtein_normalized_scores",
       [](nb::handle query, nb::handle targets) {
-        if constexpr (requires {
-                        Implementation::levenshtein_normalized_scores(query, targets);
-                      }) {
-          return as_normalized_ndarray(
-              Implementation::levenshtein_normalized_scores(query, targets));
-        } else {
+        using Ops = ::stride_align::levenshtein_simd::OpsFor_t<Implementation::backend_kind>;
+        if constexpr (std::is_void_v<Ops>) {
           return as_normalized_ndarray(
               ::stride_align::levenshtein::dispatch_normalized_scores(query, targets));
+        } else {
+          return as_normalized_ndarray(
+              ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<Ops>(
+                  query, targets));
         }
       },
       nb::arg("query"),

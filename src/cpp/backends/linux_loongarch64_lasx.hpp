@@ -2181,6 +2181,8 @@ struct Implementation {
         gap_extend_score,
         width);
   }
+
+  static constexpr BackendKind backend_kind = BackendKind::linux_loongarch64_lasx;
 };
 
 }  // namespace stride_align::backend_linux_loongarch64_lasx

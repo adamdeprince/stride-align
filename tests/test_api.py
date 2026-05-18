@@ -226,6 +226,27 @@ def test_levenshtein_unicode_str_inputs() -> None:
     assert levenshtein_score("🎉🎈", "🎈🎉") == 2
 
 
+@pytest.mark.parametrize("backend_module,kind", [
+    pytest.param("stride_align._sse41", BackendKind.X86_SSE41, id="sse41"),
+    pytest.param("stride_align._avx2", BackendKind.X86_AVX2, id="avx2"),
+    pytest.param("stride_align._avx512bwvl", BackendKind.X86_AVX512BWVL, id="avx512bwvl"),
+])
+def test_levenshtein_x86_simd_matches_scalar(backend_module: str, kind: BackendKind) -> None:
+    if not backend_is_available(kind):
+        pytest.skip(f"{kind.name} backend not available on this host")
+    backend = importlib.import_module(backend_module)
+    generic = importlib.import_module("stride_align._generic")
+
+    rng = np.random.default_rng(0)
+    alphabet = np.frombuffer(b"abcdefghijklmnopqrstuvwxyz", dtype=np.uint8)
+    for q_len in (3, 6, 16, 32, 50, 64):
+        query = bytes(rng.choice(alphabet, size=q_len))
+        targets = [bytes(rng.choice(alphabet, size=int(rng.integers(1, 80)))) for _ in range(50)]
+        scalar = generic.levenshtein_scores(query, targets)
+        simd = backend.levenshtein_scores(query, targets)
+        np.testing.assert_array_equal(simd, scalar)
+
+
 def test_scores_batch_api_rejects_single_string_target_collection() -> None:
     with pytest.raises(TypeError, match="targets must be an iterable"):
         Scores("foo").compare("bar")

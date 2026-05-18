@@ -3024,6 +3024,8 @@ struct Implementation {
         gap_extend_score,
         width);
   }
+
+  static constexpr BackendKind backend_kind = BackendKind::x86_avx2;
 };
 
 #undef STRIDE_ALIGN_X86_BASELINE

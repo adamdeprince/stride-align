@@ -1442,6 +1442,8 @@ struct Implementation {
         width,
         expected_score);
   }
+
+  static constexpr BackendKind backend_kind = BackendKind::x86_sse41;
 };
 
 }  // namespace stride_align::backend_sse41

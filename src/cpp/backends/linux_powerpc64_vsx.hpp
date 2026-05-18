@@ -1724,6 +1724,8 @@ struct Implementation {
     return TargetImplementation::needleman_wunsch_affine_score_prepared(prepared);
   }
 
+  static constexpr BackendKind backend_kind = BackendKind::linux_powerpc64_vsx;
+
 #undef STRIDE_ALIGN_VSX_FWD
 };
 
