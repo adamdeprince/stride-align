@@ -23,10 +23,10 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Intel x86 | `x86_avx2` | parasail | 80 | 1.377x | 1.302x | 0.474x | 3.513x |
 | ARM Graviton4 (Linux) | `linux_aarch64_neon`/`asimd` | parasail | 80 | **1.149x** | 1.137x | 0.261x | 2.636x |
 | ARM Graviton4 (Linux) | `linux_aarch64_sve2`† | parasail | 80 | 0.450x | 0.625x | 0.011x | 2.638x |
-| ARM Mac M4 (macOS) | `macos_arm64_neon` | parasail | 48 | 0.720x | 0.711x | 0.527x | 1.016x |
+| ARM Mac M4 (macOS) | `macos_arm64_neon` | parasail | 80 | **1.065x** | 1.046x | 0.592x | 2.400x |
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | patched parasail (1:1 score) | 16 | **7.517x** | 6.502x | 4.315x | 22.365x |
-| Loongson LoongArch64 | `linux_loongarch64_lasx` | generic (native, score-only) | 48 | 6.220x | 6.781x | 2.472x | 16.052x |
-| Power8 VSX (Linux) | `linux_powerpc64_vsx` | generic (no parasail) | 80 | **3.652x** | 4.126x | 0.960x | 16.821x |
+| Loongson LoongArch64 | `linux_loongarch64_lasx` | generic (native) | 80 | **4.909x** | 5.149x | 0.499x | 29.707x |
+| Power8 VSX (Linux) | `linux_powerpc64_vsx` | generic (no parasail) | 80 | **3.772x** | 4.128x | 0.915x | 16.797x |
 
 † The `graviton4-arm-simd-parasail-2026-05-16.csv` artifact pre-dates the
 `5174571` SVE/SVE2 fix in the git log, which advertises `0.45x → 1.04x/1.08x`
@@ -245,16 +245,17 @@ pre-fix snapshot — re-run on Graviton4 to refresh.
 2. Target affine `sw-cigar` width 16 next — both NEON and the SVE/SVE2 fixes still leave that row at 0.26-0.59x parasail.
 3. Drop one of `linux_aarch64_neon` / `linux_aarch64_asimd` from the published backend list now that they share kernels; keep one alias for compatibility.
 
-## ARM macOS arm64 (Apple M-series) - 2026-05-14
+## ARM macOS arm64 (Apple M-series) - 2026-05-18
 
 Raw macOS arm64 artifacts:
 
 | Artifact | Contents |
 | --- | --- |
+| [`benchmarks/macos-arm64-neon-2026-05-18.csv`](benchmarks/macos-arm64-neon-2026-05-18.csv) | Full 240-row sweep after the CIGAR builder rework: `generic`, `macos_arm64_neon`, `parasail`, all 7 variants, `1:1` and `1:many`, widths 16/32. |
 | [`benchmarks/macos-arm64-neon-score-native-2026-05-13.csv`](benchmarks/macos-arm64-neon-score-native-2026-05-13.csv) | Native `generic`, `swar`, and NEON score rows for `1:1` and `1:many`. |
 | [`benchmarks/macos-arm64-neon-score-parasail-2026-05-13.csv`](benchmarks/macos-arm64-neon-score-parasail-2026-05-13.csv) | Score rows including locally installed parasail. |
 | [`benchmarks/macos-arm64-neon-path-parasail-2026-05-13.csv`](benchmarks/macos-arm64-neon-path-parasail-2026-05-13.csv) | Path/CIGAR timing-split rows including parasail. |
-| [`benchmarks/macos-arm64-neon-focused-2026-05-14.csv`](benchmarks/macos-arm64-neon-focused-2026-05-14.csv) | Focused post-optimization comparison against parasail. |
+| [`benchmarks/macos-arm64-neon-focused-2026-05-14.csv`](benchmarks/macos-arm64-neon-focused-2026-05-14.csv) | Pre-CIGAR-fix focused comparison against parasail. |
 | [`benchmarks/macos-arm64-neon-microbench-2026-05-14.txt`](benchmarks/macos-arm64-neon-microbench-2026-05-14.txt) | Native NEON microbench. |
 | [`benchmarks/macos-arm64-neon-sw-farrar-parasail-study-2026-05-14.csv`](benchmarks/macos-arm64-neon-sw-farrar-parasail-study-2026-05-14.csv) | Focused run after adding exact-fill linear SW Farrar score paths. |
 | [`benchmarks/macos-arm64-neon-linear-trace-onepass-parasail-study-2026-05-14.csv`](benchmarks/macos-arm64-neon-linear-trace-onepass-parasail-study-2026-05-14.csv) | Negative-control one-pass striped linear SW trace experiment (reverted). |
@@ -264,56 +265,66 @@ Build context: macOS 15.3.1 on Apple M-series (host `wopr`), Python 3.13 from
 Homebrew, Apple clang 17. Parasail is locally installed `parasail==1.3.4`
 backed by parasail library `2.6.2`. Installing parasail from source on
 homebrew required autotools/libtool with `/opt/homebrew/bin` on `PATH` for
-`glibtoolize`.
+`glibtoolize`. The 2026-05-18 sweep was regenerated after the CIGAR builder
+rework (`to_chars`-based digit emission + capacity reservation).
 
 This is a **different chip and toolchain** from Graviton4 — do not transfer
 ratios between the two ARM sections.
 
-### Score-only vs `generic` (native sweep)
+### Overall vs parasail (2026-05-18)
 
-| Backend | Rows | Wins | Geomean | Median | Best |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `macos_arm64_neon` | 48 | 44 | 2.385x | 2.506x | 5.074x |
-| `swar`             | 48 |  5 | 0.638x | 0.636x | 1.005x |
+| Group | Rows | Wins | Geomean | Median | Worst | Best |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Overall    | 80 | 46 | 1.065x | 1.046x | 0.592x | 2.400x |
+| Score-only | 48 | 21 | 0.947x | 0.931x |        |        |
+| Path/CIGAR | 32 | 25 | 1.272x | 1.308x |        |        |
 
-### Focused comparison vs parasail (2026-05-14)
+### By variant (macos_arm64_neon vs parasail)
 
-| Group | Rows | Wins | Geomean | Median |
+| Variant | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| Overall | 48 | 3 | 0.720x | 0.711x |
-| Score-only | 32 | 0 | 0.683x | 0.680x |
-| Path/CIGAR | 16 | 3 | 0.801x | 0.820x |
+| `nw-path-info`    |  8 |  8 | 1.645x | 1.518x |
+| `nw-cigar`        |  8 |  8 | 1.616x | 1.575x |
+| `sw-score`        | 16 | 16 | 1.206x | 1.215x |
+| `sw-cigar`        |  8 |  5 | 1.010x | 1.042x |
+| `sw-path-info`    |  8 |  4 | 0.973x | 0.974x |
+| `sw-farrar-score` | 16 |  5 | 0.951x | 0.905x |
+| `nw-score`        | 16 |  0 | 0.740x | 0.753x |
 
 ### Takeaways
 
-NEON on Mac is a real lift over generic score code (`~2.4x` geomean), but is
-not yet parasail-competitive — the focused 2026-05-14 sweep is `0.720x`
-parasail geomean across 48 rows. Affine SW path/CIGAR improved materially
-after exact-fill linear SW Farrar score paths landed (linear `sw-farrar-score`
-moved `~1.45x` geomean over the prior mac focused sweep, with width 32 at
-parasail parity for English/Chinese 1:1).
+NEON on Mac has crossed parasail parity. The 2026-05-18 sweep is `1.065x`
+parasail geomean across 80 rows (was `0.720x` on the 2026-05-14 focused
+sweep). The path/CIGAR group is now the strongest (`1.272x` geomean) — the
+inverse of the pre-fix state where it was the worst. The CIGAR builder
+rework lands cleanly here: `nw-cigar` reaches `1.616x` and `sw-cigar`
+crosses parity at `1.010x`.
 
-A one-pass striped linear SW trace experiment lost badly (`0.35x` parasail
-geomean and `0.45x` of the prior NEON trace baseline) and was reverted.
+Score-only is still the weak group at `0.947x`. `nw-score` is the only
+variant where every row loses (`0.740x` geomean), driven by parasail's
+striped score kernel on width 16. `sw-farrar-score` is also slightly behind
+(`0.951x`). The exact-fill linear SW Farrar score path lands its earlier
+gains here.
 
 ### Recommended Mac M-series next steps
 
-1. Keep the exact-fill linear SW Farrar score path enabled.
-2. Work on `sw-farrar-score` width 16 before width 32.
-3. Do not reuse the shared masked-trace helpers for NEON linear SW path/CIGAR without redesigning the trace representation.
-4. Redesign affine `nw-score` with a NEON-specific loop if revisited; do not reuse the x86-oriented dense/plain flags (they were measured and lost).
+1. Target affine `nw-score` next — it is the largest remaining gap and the only variant where every comparison loses.
+2. Investigate `sw-farrar-score` width 16: still trailing parasail at `0.905x` median.
+3. Keep the exact-fill linear SW Farrar score path enabled.
+4. Do not reuse the shared masked-trace helpers for NEON linear SW path/CIGAR without redesigning the trace representation.
 5. Add a native parasail comparison mode to the arm64 microbench before instruction-level parity work.
-6. Keep SWAR off the mac performance path (geomean `0.64x` generic) — correctness/reference only.
+6. Keep SWAR off the mac performance path (geomean `0.64x` generic on the 2026-05-13 native sweep) — correctness/reference only.
 
-## Loongson LoongArch64 (LSX/LASX) - 2026-05-13
+## Loongson LoongArch64 (LSX/LASX) - 2026-05-18
 
 Raw Loongson artifacts:
 
 | Artifact | Contents |
 | --- | --- |
-| [`benchmarks/loongson-score-native-2026-05-13.csv`](benchmarks/loongson-score-native-2026-05-13.csv) | Native `generic`, `swar`, LSX, and LASX score rows for `1:1` and `1:many`. |
+| [`benchmarks/loongson-native-2026-05-18.csv`](benchmarks/loongson-native-2026-05-18.csv) | Full 320-row native sweep after the CIGAR builder rework: `generic`, `swar`, LSX, LASX, all 7 variants, `1:1` and `1:many`, widths 16/32. |
+| [`benchmarks/loongson-score-native-2026-05-13.csv`](benchmarks/loongson-score-native-2026-05-13.csv) | Earlier native score-only sweep. |
 | [`benchmarks/loongson-score-1to1-parasail-2026-05-13.csv`](benchmarks/loongson-score-1to1-parasail-2026-05-13.csv) | `sw-score`/`nw-score` `1:1` comparison against patched generic LoongArch parasail. |
-| [`benchmarks/loongson-path-native-2026-05-13.csv`](benchmarks/loongson-path-native-2026-05-13.csv) | Native path/CIGAR timing-split rows, no parasail. |
+| [`benchmarks/loongson-path-native-2026-05-13.csv`](benchmarks/loongson-path-native-2026-05-13.csv) | Pre-CIGAR-fix path/CIGAR timing-split rows, no parasail. |
 | [`benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv`](benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv) | Focused linear `sw-farrar-score` baseline before exact-fill hooks. |
 | [`benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv`](benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv) | Focused linear `sw-farrar-score` run after exact-fill hooks. |
 | [`benchmarks/loongson-2026-05-13.md`](benchmarks/loongson-2026-05-13.md) | Loongson-specific notes and recommendations. |
@@ -321,23 +332,54 @@ Raw Loongson artifacts:
 Build context: Loongson 3A6000-class host, Python 3.13.13, GCC 15.2.0, CMake
 4.3.2. The LoongArch Python extension modules were built with static C++
 runtime linkage; `ldd` shows no dynamic `libstdc++`/`libgcc` dependency.
+Numpy is sourced from a host-local source build (`/data/home/adam/dev/numpy`)
+linked against the GCC 15.2 runtime at `/opt/loongson-gcc-15.2.0/lib`, since
+no upstream loongarch64 wheel exists.
 
 Parasail status: upstream `pip install parasail` failed on LoongArch. A
 patched source build works for direct score calls after treating LoongArch as
 a non-x86 `cpuid` stub target, but it is generic parasail, not LSX/LASX
 optimized. Its profile API returned NULL profiles and trace/CIGAR was not
 usable, so parasail is included only for direct `sw-score`/`nw-score` `1:1`
-score rows.
+score rows. The 2026-05-18 sweep is native-only.
 
-### Score-only vs `generic` (native)
+### Overall vs `generic` (2026-05-18 native)
 
-| Backend | Rows | Geomean | Median | Best |
-| --- | ---: | ---: | ---: | ---: |
-| `linux_loongarch64_lasx` | 48 | 6.220x | 6.781x | 16.052x |
-| `linux_loongarch64_lsx`  | 48 | 4.234x | 3.926x |  8.858x |
-| `swar`                   | 48 | 0.627x | 0.587x |  1.020x |
+| Backend | Rows | Wins | Geomean | Median | Worst | Best |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `linux_loongarch64_lasx` | 80 | 68 | 4.909x | 5.149x | 0.499x | 29.707x |
+| `linux_loongarch64_lsx`  | 80 | 72 | 2.876x | 3.081x | 0.350x | 16.085x |
+
+### Score-only vs `generic` (2026-05-18 native)
+
+| Backend | Rows | Wins | Geomean | Median | Best |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `linux_loongarch64_lasx` | 48 | 48 | 11.624x | 13.370x | 29.707x |
+| `linux_loongarch64_lsx`  | 48 | 48 |  5.185x |  5.334x | 16.085x |
+
+### Path / CIGAR vs `generic` (2026-05-18 native)
+
+| Backend | Rows | Wins | Geomean | Median | Best |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `linux_loongarch64_lasx` | 32 | 20 | 1.347x | 1.069x | 7.127x |
+| `linux_loongarch64_lsx`  | 32 | 24 | 1.188x | 1.249x | 3.752x |
+
+### By variant (vs generic)
+
+| Variant | LSX geomean | LASX geomean |
+| --- | ---: | ---: |
+| `sw-farrar-score` |  6.440x | 19.281x |
+| `sw-score`        |  6.089x | 17.770x |
+| `nw-score`        |  3.556x |  4.585x |
+| `sw-cigar`        |  1.194x |  1.915x |
+| `nw-cigar`        |  1.677x |  1.797x |
+| `nw-path-info`    |  1.257x |  1.182x |
+| `sw-path-info`    |  0.791x |  0.809x |
 
 ### Score-only vs patched LoongArch parasail (1:1)
+
+The 2026-05-13 parasail comparison (16-row 1:1 score-only, unaffected by the
+CIGAR builder rework):
 
 | Backend | Rows | Wins | Geomean | Median | Best |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -345,34 +387,30 @@ score rows.
 | `linux_loongarch64_lsx`  | 16 | 16 | 5.307x | 5.395x | 13.205x |
 | `swar`                   | 16 |  8 | 1.061x | 1.161x |  2.201x |
 
-### Path / CIGAR vs `generic` (native, no parasail)
-
-| Backend | Rows | Geomean | Median |
-| --- | ---: | ---: | ---: |
-| `linux_loongarch64_lasx` | 32 | 1.244x | 1.055x |
-| `linux_loongarch64_lsx`  | 32 | 1.177x | 1.206x |
-| `swar`                   | 32 | 1.144x | 1.032x |
-
 ### Takeaways
 
-LASX is the clear Loongson win: 6.2x geomean over generic on score-only, 7.5x
-over patched parasail on 1:1 direct score calls, and up to 22.4x on the best
-row. LSX trails LASX by roughly the expected 2x register-width factor.
+LASX is the clear Loongson win: 11.6x geomean over generic on score-only,
+7.5x over patched parasail on 1:1 direct score calls, and up to 29.7x on the
+best row. LSX trails LASX by roughly the expected 2x register-width factor.
+LSX/LASX score-only numbers shifted up from the 2026-05-13 sweep (LSX
+4.234x → 5.185x, LASX 6.220x → 11.624x); the bulk of the LASX jump is the
+exact-fill `sw-farrar-score` and `sw-score` paths landing at the 1024-cell
+shape used in the sweep.
 
-Exact-fill linear `sw-farrar-score` hooks added after the mac NEON study
-improved LSX `1.73x` geomean and LASX `1.63x` geomean over the pre-change
-focused baseline. After the change, focused linear `sw-farrar-score` is
-`10.24x` generic on LSX and `17.50x` generic on LASX.
+`sw-cigar` moved from path-trace-bound to comfortably ahead of generic: LSX
+went from below 1.0x to 1.194x; LASX reaches 1.915x. The CIGAR builder
+rework (`to_chars` + capacity reservation) is the proximate cause; the
+sw-cigar path now spends almost all of its time in the SIMD score kernel
+plus the affine reverse-build, not the digit serialization.
 
-Path/CIGAR is not uniformly better. Affine CIGAR is strong (LASX `~4.32x`
-generic), but linear SW path/CIGAR is the weak point: the worst LSX linear SW
-path row is `0.34x` generic and the worst LASX row is `0.48x` generic,
-pointing at trace-table and materialization traffic rather than raw score DP
-throughput.
+`sw-path-info` is the lone remaining weak variant on both LSX (0.791x) and
+LASX (0.809x). `profile_traceback` materialization still dominates over the
+SIMD score lift for that shape.
 
-SWAR is essentially a regression on score-only (`~0.63x` generic) but is
-roughly at parity with parasail on the patched 1:1 score comparison (`1.06x`
-geomean) — useful as a correctness reference, not as a performance path.
+SWAR is essentially a regression on score-only (`~0.63x` generic on the
+2026-05-13 native sweep) but is roughly at parity with parasail on the
+patched 1:1 score comparison (`1.06x` geomean) — useful as a correctness
+reference, not as a performance path.
 
 ### Recommended Loongson next steps
 
@@ -382,64 +420,64 @@ geomean) — useful as a correctness reference, not as a performance path.
 4. Add a native Loongson microbench/perf entrypoint before micro-optimizing LSX/LASX loops.
 5. Treat parasail as a generic LoongArch comparison until a maintained LSX/LASX parasail build becomes available.
 
-## PowerPC64 VSX (Power8 Linux) - 2026-05-17
+## PowerPC64 VSX (Power8 Linux) - 2026-05-18
 
 Raw Power8 artifacts:
 
 | Artifact | Contents |
 | --- | --- |
-| [`benchmarks/power8-vsx-2026-05-17.csv`](benchmarks/power8-vsx-2026-05-17.csv) | Native `generic`, `swar`, and `linux_powerpc64_vsx` rows for `english`/`chinese`, `linear`/`affine`, widths 16/32, `1:1` and `1:many`, with `--timing-split`. |
+| [`benchmarks/power8-vsx-2026-05-18.csv`](benchmarks/power8-vsx-2026-05-18.csv) | Full 240-row sweep after the CIGAR builder rework: `generic`, `swar`, and `linux_powerpc64_vsx` for all 7 variants, `1:1` and `1:many`, widths 16/32. |
+| [`benchmarks/power8-vsx-2026-05-17.csv`](benchmarks/power8-vsx-2026-05-17.csv) | Pre-CIGAR-fix sweep on the same host. |
 | [`benchmarks/power8-vsx-2026-05-17.md`](benchmarks/power8-vsx-2026-05-17.md) | Power8-specific notes, semantic-delta writeup, and recommendations. |
 
 Build context: real POWER8 silicon (PVR `004b 0201`, 4.157 GHz), KVM-virtualized
 as a single-core `pSeries` guest. Ubuntu 20.04 ppc64le, IBM Advance Toolchain
-15.0 (GCC 11.4.1), Python 3.13.13 from miniforge, CMake 4.3.2 + Ninja from
-pip. **Parasail was not built** (no upstream ppc64le wheel; source build not
-attempted), so all ratios in this section are against `generic` on the same
-machine.
+15.0 (GCC 11.4.1), Python 3.13.13 from miniforge, system CMake + Ninja.
+Numpy 2.4.5 from `pip`. **Parasail was not built** (no upstream ppc64le
+wheel; source build not attempted), so all ratios in this section are
+against `generic` on the same machine. The 2026-05-18 sweep was pinned with
+`taskset -c 0`.
 
-### Overall vs `generic`
+### Overall vs `generic` (2026-05-18)
 
 | Backend | Rows | Wins | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `linux_powerpc64_vsx` | 80 | 73 | 3.652x | 4.126x | 0.960x | 16.821x |
-| `swar`                | 80 | 28 | 0.767x | 0.975x | 0.410x |  1.598x |
+| `linux_powerpc64_vsx` | 80 | 74 | 3.772x | 4.128x | 0.915x | 16.797x |
+| `swar`                | 80 | 31 | 0.789x | 1.000x | 0.411x |  1.669x |
 
 ### Score-only vs `generic`
 
 | Backend | Rows | Wins | Geomean | Median | Best |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `linux_powerpc64_vsx` | 48 | 48 | 6.608x | 6.753x | 16.821x |
-| `swar`                | 48 |  7 | 0.602x | 0.534x |  1.030x |
+| `linux_powerpc64_vsx` | 48 | 48 | 6.911x | 6.763x | 16.797x |
 
 ### Path / CIGAR vs `generic`
 
-| Backend | Rows | Wins | Geomean | Median |
-| --- | ---: | ---: | ---: | ---: |
-| `linux_powerpc64_vsx` | 32 | 25 | 1.501x | 1.139x |
-| `swar`                | 32 | 21 | 1.104x | 1.042x |
+| Backend | Rows | Wins | Geomean | Median | Best |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `linux_powerpc64_vsx` | 32 | 26 | 1.521x | 1.266x | 4.592x |
 
 ### By variant (VSX vs generic)
 
 | Variant | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `sw-farrar-score` | 16 | 16 | 7.753x | 7.072x |
-| `sw-score`        | 16 | 16 | 7.585x | 7.100x |
-| `nw-score`        | 16 | 16 | 4.906x | 5.118x |
-| `nw-cigar`        |  8 |  6 | 1.890x | 2.028x |
-| `sw-cigar`        |  8 |  5 | 1.875x | 2.004x |
-| `sw-path-info`    |  8 |  8 | 1.228x | 1.206x |
-| `nw-path-info`    |  8 |  6 | 1.167x | 1.139x |
+| `sw-farrar-score` | 16 | 16 | 7.759x | 7.072x |
+| `sw-score`        | 16 | 16 | 7.544x | 7.103x |
+| `nw-score`        | 16 | 16 | 5.639x | 5.156x |
+| `sw-cigar`        |  8 |  5 | 1.958x | 2.183x |
+| `nw-cigar`        |  8 |  7 | 1.825x | 1.862x |
+| `nw-path-info`    |  8 |  6 | 1.225x | 1.266x |
+| `sw-path-info`    |  8 |  8 | 1.224x | 1.173x |
 
 ### Worst rows vs generic
 
 | Ratio | Pass | Case | Shape | Variant | Width |
 | ---: | --- | --- | --- | --- | ---: |
-| 0.960x | english | linear | 1:1 | `nw-path-info` | 16 |
-| 0.964x | chinese | linear | 1:1 | `sw-cigar` | 16 |
-| 0.965x | english | linear | 1:1 | `sw-cigar` | 16 |
-| 0.971x | chinese | linear | 1:1 | `nw-path-info` | 16 |
-| 0.984x | english | linear | 1:1 | `nw-cigar` | 32 |
+| 0.915x | english | linear | 1:1 | `nw-path-info` | 16 |
+| 0.934x | english | linear | 1:1 | `sw-cigar`     | 32 |
+| 0.954x | chinese | linear | 1:1 | `nw-cigar`     | 32 |
+| 0.955x | chinese | linear | 1:1 | `sw-cigar`     | 32 |
+| 0.964x | chinese | linear | 1:1 | `nw-path-info` | 16 |
 
 ### Takeaways
 
@@ -461,10 +499,10 @@ path-info / linear CIGAR APIs route through `profile_traceback`. The affine
 CIGAR entry stays on the SIMD score kernel + scalar reverse-build, beating
 generic by 2-4x without a trace table.
 
-SWAR regresses on Power8 across most rows (geomean `0.77x` generic). AT15 GCC
-11.4 auto-vectorizes the generic score loop well enough that SWAR's 64-bit
-packed lanes give no benefit. SWAR remains useful as a correctness/reference
-backend only.
+SWAR regresses on Power8 across most rows (geomean `0.79x` generic on the
+2026-05-18 sweep). AT15 GCC 11.4 auto-vectorizes the generic score loop
+well enough that SWAR's 64-bit packed lanes give no benefit. SWAR remains
+useful as a correctness/reference backend only.
 
 ### Recommended Power8 next steps
 

@@ -1,5 +1,8 @@
 # stride-align
 
+**Languages:** **[English](README.md)** · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português do Brasil](README.pt-BR.md) · [Русский](README.ru.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [हिन्दी](README.hi.md) · [العربية](README.ar.md) · [Türkçe](README.tr.md) · [Polski](README.pl.md)
+
+
 `stride-align` is a library to tell you how "similar" two strings are.
 It does this by implementing the Smith-Waterman and Needleman-Wunsch
 algorithms. Instead of giving you a lecture, we're going to learn by
@@ -8,6 +11,14 @@ doing. Let's dive right into how it works.
 ## Installation
 
 ```bash
+pip install stride-align
+```
+
+On Loongson systems, install NumPy from your Linux distribution before
+installing `stride-align`:
+
+```bash
+sudo apt install python3-numpy
 pip install stride-align
 ```
 
@@ -29,7 +40,7 @@ We can see with our eyes there's a difference - heavens vs heaven.
 But how do we quantify this difference? We'd use this little bit of
 code:
 
-```python3
+```python
 import stride_align as sa
 
 print(sa.smith_waterman_normalized_score(
@@ -50,7 +61,7 @@ still find small local matches inside otherwise unrelated strings.
 
 Now let's change the text and see what happens to the score.
 
-```python3
+```python
 import stride_align as sa
 
 print(sa.smith_waterman_normalized_score(
@@ -129,9 +140,8 @@ Lastly that `while True:` loop collects a line of text, presumably the
 Bible verse from the Catholic version of the Bible we want to look up
 the chapter and verse for, and matches it against all of the lines in
 the King James Bible using the batch form of Needleman-Wunsch. It
-returns a list of scores. We find the highest, search the scores again
-to find the index, and print the line associated with that index.
-Let's try it.
+returns an array of scores. We use `argmax()` to find the best-scoring
+line and then print the line associated with that index. Let's try it.
 
 I'm going to use Jeremiah 4:28 from the Catholic Bible - it's actually
 quite different from the same verse in the King James Bible. Let's see
@@ -193,10 +203,11 @@ newlines and start the act of spell checking.
 
 The spell checking looks a lot like the matching we did before. For each
 candidate word, we match it against all of the words in our list of
-correctly spelled words and replace it with the one with the highest
-score. We could speed things up with some optimizations, like not
-searching for a match for correctly spelled words, but this is a demo
-and that optimization is left as an exercise for the reader.
+correctly spelled words, use `argmax()` to find the highest-scoring
+candidate, and replace the word with that candidate. We could speed
+things up with some optimizations, like not searching for a match for
+correctly spelled words, but this is a demo and that optimization is
+left as an exercise for the reader.
 
 Let's see how it works!
 
@@ -234,9 +245,10 @@ The current implementations are generic dynamic-programming kernels with preproc
 that serializes Python inputs into 8, 16, 32, or 64-bit token streams. SIMD-specialized
 backends can replace the backend translation units later without changing the Python API.
 
-Score-only functions return normalized numeric scores. Path functions return
-alignment result objects containing the score, aligned values, operations, and
-CIGAR-style summaries where available.
+Score-only functions return numeric scores. The normalized variants return
+scores between `0` and `1`. Path functions return alignment result objects
+containing the score, aligned values, operations, and CIGAR-style summaries
+where available.
 
 ## API
 
@@ -296,7 +308,7 @@ Chinese knot charms, panda keychains, and small dragon desk objects are all
 welcome. Please do not send anything expensive or anything that requires
 customs paperwork.
 
-[Complete benchmarks are here](BENCHMARKS.md).
+See [complete benchmarks](BENCHMARKS.md).
 
 ## Native Microbench
 
