@@ -137,7 +137,8 @@ def template(
 <p class="tagline">{tagline}</p>
 </header>
 <nav class="nav">
-{home_link}{nav_inner}
+{home_link}<a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+{nav_inner}
 </nav>
 <main class="content">
 {content}

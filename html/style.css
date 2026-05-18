@@ -98,12 +98,19 @@ a:hover {
   font-size: 15px;
 }
 
-.nav .home {
+.nav .home,
+.nav .github {
   margin-right: 22px;
   color: var(--green-dark);
   text-transform: uppercase;
   letter-spacing: .08em;
   font-weight: 700;
+}
+
+[dir="rtl"] .nav .home,
+[dir="rtl"] .nav .github {
+  margin-right: 0;
+  margin-left: 22px;
 }
 
 .lang-switch {
