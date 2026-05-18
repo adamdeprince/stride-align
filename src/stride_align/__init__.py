@@ -1168,40 +1168,58 @@ def needleman_wunsch_trade_cigar(
     )
 
 
-def _levenshtein_backend() -> ModuleType:
-    # Levenshtein has no match/mismatch/gap parameters and a fixed scoring
-    # model, so backend selection is simpler than for SW/NW. Until x86
-    # SIMD specialization lands, every backend's binding routes through
-    # the shared scalar dispatch anyway, so the generic backend is fine.
-    return _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
+# Levenshtein has no per-call scoring parameters, so the best backend is
+# pinned once at module import instead of being rediscovered on every
+# call. _LEVENSHTEIN_BACKEND holds the same module object the public
+# functions used to look up via _first_available; if the available
+# backend set changes at runtime (rare; mostly for tests that monkey-
+# patch _AVAILABLE_BACKENDS), call _refresh_levenshtein_backend().
+_LEVENSHTEIN_BACKEND = (
+    _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
+)
+
+
+def _refresh_levenshtein_backend() -> None:
+    global _LEVENSHTEIN_BACKEND
+    _LEVENSHTEIN_BACKEND = (
+        _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
+    )
 
 
 def levenshtein_score(query: object, target: object) -> int:
     """Levenshtein edit distance between two sequences (lower is more similar)."""
-    return int(_levenshtein_backend().levenshtein_score(query, target))
+    return int(_LEVENSHTEIN_BACKEND.levenshtein_score(query, target))
 
 
 def levenshtein_normalized_score(query: object, target: object) -> float:
     """Length-normalized Levenshtein similarity in [0, 1] (1 = identical)."""
-    return float(_levenshtein_backend().levenshtein_normalized_score(query, target))
+    return float(_LEVENSHTEIN_BACKEND.levenshtein_normalized_score(query, target))
 
 
 def levenshtein_scores(query: object, targets: object) -> np.ndarray:
     """Distance from query to every target, returned as a numpy ndarray[int64]."""
-    target_tuple = _materialize_targets(targets)
-    return np.asarray(
-        _levenshtein_backend().levenshtein_scores(query, target_tuple),
-        dtype=np.int64,
-    )
+    # The native binding accepts any sequence (PySequence_Fast handles
+    # lists and tuples natively), so we skip the tuple() materialization
+    # when the input is already one. The native call returns int64
+    # ndarray, so np.asarray on top is a no-op we can drop entirely.
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.levenshtein_scores(query, targets)
 
 
 def levenshtein_normalized_scores(query: object, targets: object) -> np.ndarray:
     """Normalized similarity to every target, returned as a numpy ndarray[float64]."""
-    target_tuple = _materialize_targets(targets)
-    return np.asarray(
-        _levenshtein_backend().levenshtein_normalized_scores(query, target_tuple),
-        dtype=np.float64,
-    )
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.levenshtein_normalized_scores(query, targets)
 
 
 __all__ = [

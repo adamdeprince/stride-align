@@ -29,6 +29,9 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | patched parasail (1:1 score) | 16 | **7.517x** | 6.502x | 4.315x | 22.365x |
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | generic (native) | 80 | **4.909x** | 5.149x | 0.499x | 29.707x |
 | Power8 VSX (Linux) | `linux_powerpc64_vsx` | generic (no parasail) | 80 | **3.772x** | 4.128x | 0.915x | 16.797x |
+| Levenshtein (Intel x86) | `x86_avx512bwvl` | python-Levenshtein | 14 | **1.159x** | 1.151x | 1.039x | 1.353x |
+| Levenshtein (Intel x86) | `x86_avx512bwvl` | rapidfuzz | 14 | 1.075x | 1.070x | 0.898x | 1.364x |
+| Levenshtein (Intel x86) | `x86_avx512bwvl` | editdistance | 14 | 13.564x | 13.758x | 11.099x | 15.880x |
 
 ## Intel x86 - 2026-05-18
 
@@ -156,6 +159,61 @@ at width 16 (`sw-cigar` and `sw-path-info`); AVX512BWVL's worst row is
 `generic` is for correctness/baseline reference, not as a parasail competitor.
 It loses every score-only row badly; a handful of linear NW path/CIGAR rows
 are competitive but not consistently.
+
+## Levenshtein (Intel x86) - 2026-05-19
+
+Raw artifact: [`benchmarks/intel-levenshtein-2026-05-19.csv`](benchmarks/intel-levenshtein-2026-05-19.csv).
+
+Build context: same host as Intel x86 above (11th Gen Core i7-1195G7,
+Python 3.13, `taskset -c 2`), running on the `x86_avx512bwvl` backend. The
+multi-target Myers kernel runs one target per SIMD lane (8x 64-bit lanes
+under AVX512) and reads bytes / 1-byte unicode strings zero-copy from
+CPython buffers. Patterns over 64 chars fall through to the scalar
+Hyyrö multi-word dispatch in `levenshtein_dispatch.hpp`.
+
+Command:
+
+```bash
+taskset -c 2 .venv/bin/python tools/benchmark_libs.py \
+  --input-file kjv_subset.txt --levenshtein \
+  --iterations 25 --warmups 3 < lev_queries.txt > intel-levenshtein-2026-05-19.csv
+```
+
+Corpus: first 1000 lines of `demo/kjv.txt`. Queries: 14 single words and
+short phrases (3-29 chars) covering the pattern lengths that hit the
+SIMD fast path.
+
+### Overall
+
+| Backend | Rows | Geomean | Median | Worst | Best |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `stride_align` vs `python-Levenshtein` | 14 | **1.159x** | 1.151x | 1.039x | 1.353x |
+| `stride_align` vs `rapidfuzz`          | 14 | 1.075x | 1.070x | 0.898x | 1.364x |
+| `stride_align` vs `editdistance`       | 14 | 13.564x | 13.758x | 11.099x | 15.880x |
+
+Per-call wall time at 1000 targets (median across 14 queries):
+
+| Library | µs/call | ns/target |
+| --- | ---: | ---: |
+| `stride_align` (`x86_avx512bwvl`) | **496** | **496** |
+| `rapidfuzz`                       | 540  | 540  |
+| `python-Levenshtein`              | 567  | 567  |
+| `editdistance`                    | 6806 | 6806 |
+
+### Takeaways
+
+The multi-target Myers kernel keeps stride-align ahead of every popular
+Python Levenshtein library on this corpus. python-Levenshtein loses by
+1.16x geomean across all 14 queries; rapidfuzz loses by 1.07x with one
+sub-parity row (0.898x on a 26-char query). editdistance is roughly
+13.5x slower, reflecting its pure-C scalar DP loop with no batching.
+
+The "vs rapidfuzz" worst row is the only sub-parity result of the
+sweep. rapidfuzz also uses bit-parallel Myers in its hot path, so the
+remaining headroom is mostly per-call overhead — list traversal, the
+Python ABI, the ndarray allocation — rather than the inner loop. The
+SIMD multi-target kernel pulls ahead on shorter queries where the
+per-target setup dominates.
 
 ## ARM Graviton4 (Linux aarch64) - 2026-05-18
 

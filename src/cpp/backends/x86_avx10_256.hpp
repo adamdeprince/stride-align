@@ -16,6 +16,8 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
 #include "backends/x86_fixed_kernel.hpp"
+#include "levenshtein_simd.hpp"
+#include "levenshtein_simd_ops.hpp"
 
 namespace stride_align::backend_avx10_256 {
 
@@ -754,6 +756,19 @@ struct TargetImplementation {
         gap_extend_score,
         width);
   }
+
+  // AVX10.1-256 vectors are 256-bit; we reuse Avx2Ops for 4-lane 64-bit Myers.
+  static std::vector<Score> levenshtein_scores(nb::handle query, nb::handle targets) {
+    return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
+        ::stride_align::levenshtein_simd::Avx2Ops>(query, targets);
+  }
+
+  static std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets) {
+    return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::Avx2Ops>(query, targets);
+  }
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -1130,6 +1145,20 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::levenshtein_scores(query, targets);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::levenshtein_normalized_scores(query, targets);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx10_256;

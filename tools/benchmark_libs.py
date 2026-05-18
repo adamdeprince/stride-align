@@ -63,10 +63,23 @@ def _try_import(name: str, install_hint: str):
 MODULES = {name: _try_import(name, hint) for name, hint, _modes in LIBRARIES}
 
 
+# Per-call timings on 100-1000-target corpora land in the sub-millisecond
+# range and are noisy at a single shot. ITERATIONS is overridden by --iterations
+# at runtime; the time-per-call is reported as the best-of-N median.
+ITERATIONS = 1
+WARMUPS = 0
+
+
 def _time(fn: Callable[[], None]) -> float:
-    start = time.perf_counter()
-    fn()
-    return time.perf_counter() - start
+    for _ in range(WARMUPS):
+        fn()
+    samples = []
+    for _ in range(ITERATIONS):
+        start = time.perf_counter()
+        fn()
+        samples.append(time.perf_counter() - start)
+    samples.sort()
+    return samples[len(samples) // 2]
 
 
 # Each adapter takes (query, targets, mode) and returns elapsed seconds, or
@@ -217,11 +230,26 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run Levenshtein (compared against stringzilla).",
     )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=11,
+        help="timed iterations per query per library (median is reported, default 11).",
+    )
+    parser.add_argument(
+        "--warmups",
+        type=int,
+        default=2,
+        help="untimed warmup passes per query per library (default 2).",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
+    global ITERATIONS, WARMUPS
     args = parse_args()
+    ITERATIONS = args.iterations
+    WARMUPS = args.warmups
     if args.smith_waterman:
         mode = "sw"
     elif args.needleman_wunsch:

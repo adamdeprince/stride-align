@@ -19,6 +19,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "levenshtein_dispatch.hpp"
 #include "preprocess.hpp"
 #include "stride_align/alignment.hpp"
 #include "stride_align/levenshtein.hpp"
@@ -136,11 +137,68 @@ inline std::array<std::uint64_t, 256> build_peq(std::span<const std::uint8_t> pa
   return peq;
 }
 
+// Kinds we can read byte-identically without copying.
+enum class ByteCompatKind : std::uint8_t { None, Bytes, Unicode1Byte };
+
+inline ByteCompatKind classify(PyObject* obj) {
+  if (PyBytes_Check(obj) != 0) {
+    return ByteCompatKind::Bytes;
+  }
+  if (PyUnicode_Check(obj) != 0 &&
+      PyUnicode_KIND(obj) == PyUnicode_1BYTE_KIND) {
+    return ByteCompatKind::Unicode1Byte;
+  }
+  return ByteCompatKind::None;
+}
+
+inline void byte_view(
+    PyObject* obj,
+    ByteCompatKind kind,
+    const std::uint8_t*& ptr,
+    std::size_t& len) {
+  if (kind == ByteCompatKind::Bytes) {
+    char* raw = nullptr;
+    Py_ssize_t size = 0;
+    if (PyBytes_AsStringAndSize(obj, &raw, &size) != 0) {
+      throw nb::python_error();
+    }
+    ptr = reinterpret_cast<const std::uint8_t*>(raw);
+    len = static_cast<std::size_t>(size);
+  } else {
+    // Unicode1Byte. PyUnicode_1BYTE_DATA returns an internal pointer the
+    // PyObject owns; we keep the items array (via `owner`) alive across
+    // the kernel, so the pointer stays valid.
+    ptr = PyUnicode_1BYTE_DATA(obj);
+    len = static_cast<std::size_t>(PyUnicode_GET_LENGTH(obj));
+  }
+}
+
+// Try to view every target as bytes or 1-byte unicode (either is
+// byte-identical to a `const uint8_t*` buffer). The check is per-target;
+// each target picks its own kind. Returns true on success with `ptrs` /
+// `lens` populated; returns false on the first target that is neither
+// (caller falls back to scalar dispatch).
+inline bool view_all_byte_compat(
+    PyObject* const* items,
+    std::size_t count,
+    std::vector<const std::uint8_t*>& ptrs,
+    std::vector<std::size_t>& lens) {
+  ptrs.resize(count);
+  lens.resize(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const ByteCompatKind kind = classify(items[i]);
+    if (kind == ByteCompatKind::None) {
+      return false;
+    }
+    byte_view(items[i], kind, ptrs[i], lens[i]);
+  }
+  return true;
+}
+
 template <typename Ops>
 inline std::vector<Score> levenshtein_scores_simd(
     nb::handle query,
     nb::handle targets) {
-  // Materialize each target so we can probe lengths + bytes uniformly.
   PyObject* fast_targets =
       PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
   if (fast_targets == nullptr) {
@@ -150,85 +208,59 @@ inline std::vector<Score> levenshtein_scores_simd(
   const auto count = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
   PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
 
-  // Tokenize query once. If the query is wider than uint8 we can't use the
-  // SIMD batch and fall back per-row to the scalar dispatch.
-  std::uint64_t q_symbol_limit = 0;
-  TokenStorage q_storage;
-  if (PyBytes_Check(query.ptr()) != 0) {
-    q_storage = detail::copy_bytes_tokens(query.ptr(), q_symbol_limit);
-  } else if (PyUnicode_Check(query.ptr()) != 0) {
-    q_storage = detail::copy_unicode_tokens(query.ptr(), q_symbol_limit);
-  } else {
-    // Not bytes or str (e.g. sequence of objects). Fall back per-row.
-    std::vector<Score> out;
-    out.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      out.push_back(::stride_align::levenshtein::dispatch_score(query, nb::handle(items[i])));
-    }
-    return out;
-  }
+  // Fast path: query is bytes or a 1-byte unicode string, each target
+  // is independently bytes or 1-byte unicode (mixed is fine; their byte
+  // representations are identical), and pattern length is in (0, 64].
+  // We read CPython buffers directly with no per-target copy or
+  // allocation. The PyObjects stay alive through `owner` for the
+  // duration of this function.
+  const ByteCompatKind q_kind = classify(query.ptr());
+  if (q_kind != ByteCompatKind::None) {
+    const std::uint8_t* q_ptr = nullptr;
+    std::size_t q_len = 0;
+    byte_view(query.ptr(), q_kind, q_ptr, q_len);
+    if (q_len > 0 && q_len <= 64U) {
+      std::vector<const std::uint8_t*> ptrs;
+      std::vector<std::size_t> lens;
+      if (view_all_byte_compat(items, count, ptrs, lens)) {
+        const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
 
-  // Pre-tokenize all targets matching the query kind. If any target widens
-  // beyond uint8 (or doesn't match the query kind), fall back per-row.
-  const bool query_is_bytes = PyBytes_Check(query.ptr()) != 0;
-  std::vector<TokenStorage> target_storage;
-  target_storage.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    PyObject* item = items[i];
-    if (query_is_bytes != (PyBytes_Check(item) != 0)) {
-      std::vector<Score> out;
-      out.reserve(count);
-      for (std::size_t j = 0; j < count; ++j) {
-        out.push_back(::stride_align::levenshtein::dispatch_score(query, nb::handle(items[j])));
+        constexpr std::size_t lanes = Ops::lanes;
+        std::vector<Score> out(count);
+        std::array<const std::uint8_t*, lanes> batch_ptrs{};
+        std::array<std::size_t, lanes> batch_lens{};
+        for (std::size_t b = 0; b < count; b += lanes) {
+          const std::size_t batch_count = std::min(lanes, count - b);
+          for (std::size_t l = 0; l < batch_count; ++l) {
+            batch_ptrs[l] = ptrs[b + l];
+            batch_lens[l] = lens[b + l];
+          }
+          for (std::size_t l = batch_count; l < lanes; ++l) {
+            batch_ptrs[l] = nullptr;
+            batch_lens[l] = 0;
+          }
+          myers_batch_single_word<Ops>(
+              peq.data(),
+              batch_ptrs.data(),
+              batch_lens.data(),
+              batch_count,
+              q_len,
+              out.data() + b);
+        }
+        return out;
       }
-      return out;
-    }
-    std::uint64_t t_symbol_limit = 0;
-    if (query_is_bytes) {
-      target_storage.push_back(detail::copy_bytes_tokens(item, t_symbol_limit));
-    } else {
-      target_storage.push_back(detail::copy_unicode_tokens(item, t_symbol_limit));
     }
   }
 
-  if (!eligible_for_simd(q_storage, target_storage)) {
-    std::vector<Score> out;
-    out.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      out.push_back(::stride_align::levenshtein::dispatch_score(query, nb::handle(items[i])));
-    }
-    return out;
+  // Slow path: anything that doesn't fit the byte-compatible-kind +
+  // pattern <= 64 fast path falls back to the scalar dispatch, which
+  // covers wider unicode storage, sequence-of-object inputs, and long
+  // patterns via Hyyrö's multi-word Myers.
+  std::vector<Score> out;
+  out.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    out.push_back(::stride_align::levenshtein::dispatch_score(query, nb::handle(items[i])));
   }
-
-  const auto& q_vec = std::get<std::vector<std::uint8_t>>(q_storage);
-  const auto peq = build_peq(std::span<const std::uint8_t>(q_vec.data(), q_vec.size()));
-
-  // Stack pointer+length arrays per batch.
-  constexpr std::size_t lanes = Ops::lanes;
-  std::vector<Score> out(count);
-  std::array<const std::uint8_t*, lanes> ptrs{};
-  std::array<std::size_t, lanes> lens{};
-
-  for (std::size_t b = 0; b < count; b += lanes) {
-    const std::size_t batch_count = std::min(lanes, count - b);
-    for (std::size_t l = 0; l < batch_count; ++l) {
-      const auto& tv = std::get<std::vector<std::uint8_t>>(target_storage[b + l]);
-      ptrs[l] = tv.data();
-      lens[l] = tv.size();
-    }
-    for (std::size_t l = batch_count; l < lanes; ++l) {
-      ptrs[l] = nullptr;
-      lens[l] = 0;
-    }
-    myers_batch_single_word<Ops>(
-        peq.data(),
-        ptrs.data(),
-        lens.data(),
-        batch_count,
-        q_vec.size(),
-        out.data() + b);
-  }
-
   return out;
 }
 

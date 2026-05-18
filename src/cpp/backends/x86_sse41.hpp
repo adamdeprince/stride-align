@@ -17,6 +17,8 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/generic.hpp"
 #include "backends/profile_traceback.hpp"
+#include "levenshtein_simd.hpp"
+#include "levenshtein_simd_ops.hpp"
 
 namespace stride_align::backend_sse41 {
 
@@ -1441,6 +1443,18 @@ struct Implementation {
         gap_extend_score,
         width,
         expected_score);
+  }
+
+  static std::vector<Score> levenshtein_scores(nb::handle query, nb::handle targets) {
+    return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
+        ::stride_align::levenshtein_simd::SseOps>(query, targets);
+  }
+
+  static std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets) {
+    return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::SseOps>(query, targets);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_sse41;
