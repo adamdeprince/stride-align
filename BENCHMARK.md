@@ -22,17 +22,13 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Intel x86 | `x86_avx512bwvl` | parasail | 80 | **1.752x** | 1.678x | 0.909x | 3.794x |
 | Intel x86 | `x86_avx2` | parasail | 80 | 1.377x | 1.302x | 0.474x | 3.513x |
-| ARM Graviton4 (Linux) | `linux_aarch64_neon`/`asimd` | parasail | 80 | **1.149x** | 1.137x | 0.261x | 2.636x |
-| ARM Graviton4 (Linux) | `linux_aarch64_sve2`† | parasail | 80 | 0.450x | 0.625x | 0.011x | 2.638x |
+| ARM Graviton4 (Linux) | `linux_aarch64_neon`/`asimd` | parasail | 80 | **1.138x** | 1.138x | 0.260x | 2.637x |
+| ARM Graviton4 (Linux) | `linux_aarch64_sve2` | parasail | 80 | 1.081x | 1.108x | 0.261x | 2.635x |
+| ARM Graviton4 (Linux) | `linux_aarch64_sve` | parasail | 80 | 1.042x | 1.101x | 0.259x | 2.647x |
 | ARM Mac M4 (macOS) | `macos_arm64_neon` | parasail | 80 | **1.065x** | 1.046x | 0.592x | 2.400x |
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | patched parasail (1:1 score) | 16 | **7.517x** | 6.502x | 4.315x | 22.365x |
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | generic (native) | 80 | **4.909x** | 5.149x | 0.499x | 29.707x |
 | Power8 VSX (Linux) | `linux_powerpc64_vsx` | generic (no parasail) | 80 | **3.772x** | 4.128x | 0.915x | 16.797x |
-
-† The `graviton4-arm-simd-parasail-2026-05-16.csv` artifact pre-dates the
-`5174571` SVE/SVE2 fix in the git log, which advertises `0.45x → 1.04x/1.08x`
-parasail. The 0.450x row above is the pre-fix snapshot in the CSV; the
-post-fix numbers have not been re-captured into a tracked artifact.
 
 ## Intel x86 - 2026-05-18
 
@@ -161,90 +157,86 @@ at width 16 (`sw-cigar` and `sw-path-info`); AVX512BWVL's worst row is
 It loses every score-only row badly; a handful of linear NW path/CIGAR rows
 are competitive but not consistently.
 
-## ARM Graviton4 (Linux aarch64) - 2026-05-16
+## ARM Graviton4 (Linux aarch64) - 2026-05-18
 
-Raw artifact:
-[`benchmarks/graviton4-arm-simd-parasail-2026-05-16.csv`](benchmarks/graviton4-arm-simd-parasail-2026-05-16.csv)
-(480 rows across English/Chinese, linear/affine, widths 16/32, `1:1` and
-`1:many`, with `--timing-split`).
+Raw artifacts:
 
-Build context: AWS Graviton4 (Neoverse V2). Backends measured:
-`linux_aarch64_neon`, `linux_aarch64_asimd`, `linux_aarch64_sve`,
-`linux_aarch64_sve2`, plus `generic` and `parasail`.
+| Artifact | Contents |
+| --- | --- |
+| [`benchmarks/graviton4-arm-simd-parasail-2026-05-18.csv`](benchmarks/graviton4-arm-simd-parasail-2026-05-18.csv) | Full 400-row sweep after the CIGAR builder rework and the `5174571` SVE/SVE2 fix: `generic`, `linux_aarch64_neon`, `linux_aarch64_sve`, `linux_aarch64_sve2`, `parasail`, all 7 variants, `1:1` and `1:many`, widths 16/32. |
+| [`benchmarks/graviton4-arm-simd-parasail-2026-05-16.csv`](benchmarks/graviton4-arm-simd-parasail-2026-05-16.csv) | Pre-`5174571` SVE/SVE2 snapshot. |
 
-NEON and ASIMD report essentially identical numbers because commit `617d282`
-merged the Linux ASIMD backend into the NEON backend; both names now resolve
-to the same kernel set.
+Build context: AWS Graviton4 (Neoverse V2), Ubuntu noble, Python 3.14.4,
+GCC, system CMake + venv-local ninja. Pinned with `taskset -c 0`. Backends
+measured: `linux_aarch64_neon`, `linux_aarch64_sve`, `linux_aarch64_sve2`,
+plus `generic` and `parasail`. `linux_aarch64_asimd` was merged into NEON
+in commit `617d282`; the public NEON backend covers both.
 
 ### Overall vs parasail
 
 | Backend | Rows | Wins | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `linux_aarch64_neon`  | 80 | 51 | 1.149x | 1.137x | 0.261x | 2.634x |
-| `linux_aarch64_asimd` | 80 | 51 | 1.149x | 1.138x | 0.261x | 2.636x |
-| `linux_aarch64_sve2`† | 80 | 24 | 0.450x | 0.625x | 0.011x | 2.638x |
-| `linux_aarch64_sve`†  | 80 | 24 | 0.450x | 0.616x | 0.011x | 2.649x |
+| `linux_aarch64_neon`  | 80 | 51 | 1.138x | 1.138x | 0.260x | 2.637x |
+| `linux_aarch64_sve2`  | 80 | 49 | 1.081x | 1.108x | 0.261x | 2.635x |
+| `linux_aarch64_sve`   | 80 | 47 | 1.042x | 1.101x | 0.259x | 2.647x |
 
 Score-only:
 
 | Backend | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `linux_aarch64_neon`  | 48 | 28 | 1.113x | 1.101x |
-| `linux_aarch64_sve2`† | 48 |  8 | 0.280x | 0.426x |
+| `linux_aarch64_neon`  | 48 | 28 | 1.100x | 1.098x |
+| `linux_aarch64_sve2`  | 48 | 28 | 1.022x | 1.071x |
+| `linux_aarch64_sve`   | 48 | 26 | 0.973x | 1.070x |
 
-Score-only vs `generic` (raw SIMD lift, no parasail involved):
+Path/CIGAR:
 
-| Backend | Rows | Geomean | Median | Best |
+| Backend | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `linux_aarch64_neon`  | 48 | 3.056x | 3.053x | 9.106x |
-| `linux_aarch64_sve2`† | 48 | 0.768x | 0.849x | 5.235x |
+| `linux_aarch64_neon`  | 32 | 23 | 1.198x | 1.230x |
+| `linux_aarch64_sve2`  | 32 | 21 | 1.178x | 1.188x |
+| `linux_aarch64_sve`   | 32 | 21 | 1.155x | 1.206x |
 
-### By variant (NEON / ASIMD vs parasail)
+### By variant (vs parasail geomean)
 
-| Variant | Rows | Wins | Geomean | Median |
-| --- | ---: | ---: | ---: | ---: |
-| `nw-path-info`    |  8 | 8 | 2.050x | 1.937x |
-| `sw-score`        | 16 | 16 | 1.494x | 1.496x |
-| `nw-cigar`        |  8 | 6 | 1.323x | 1.477x |
-| `sw-path-info`    |  8 | 7 | 1.165x | 1.170x |
-| `sw-farrar-score` | 16 | 4 | 0.967x | 0.939x |
-| `nw-score`        | 16 | 8 | 0.954x | 0.945x |
-| `sw-cigar`        |  8 | 2 | 0.665x | 0.741x |
+| Variant | NEON | SVE | SVE2 |
+| --- | ---: | ---: | ---: |
+| `nw-path-info`    | 2.052x | 1.953x | 2.163x |
+| `sw-score`        | 1.465x | 1.268x | 1.269x |
+| `nw-cigar`        | 1.318x | 1.300x | 1.275x |
+| `sw-path-info`    | 1.144x | 1.066x | 1.059x |
+| `nw-score`        | 0.953x | 0.883x | 1.020x |
+| `sw-farrar-score` | 0.952x | 0.822x | 0.824x |
+| `sw-cigar`        | 0.665x | 0.657x | 0.659x |
 
 ### Worst rows vs parasail (NEON)
 
 | Ratio | Pass | Case | Shape | Variant | Width |
 | ---: | --- | --- | --- | --- | ---: |
-| 0.261x | chinese | affine | 1:1 | `sw-cigar` | 16 |
-| 0.424x | english | affine | 1:1 | `sw-cigar` | 16 |
-| 0.532x | english | affine | 1:1 | `nw-cigar` | 16 |
-| 0.541x | chinese | linear | 1:1 | `sw-cigar` | 16 |
-| 0.585x | chinese | affine | 1:1 | `nw-cigar` | 16 |
+| 0.260x | chinese | affine | 1:1 | `sw-cigar` | 16 |
 
 ### Takeaways
 
-NEON / ASIMD is the headline Graviton4 backend. It wins `sw-score`/`nw-path-info`
-families decisively (~1.5x and ~2.0x geomean) and clears `1.0x` on most
-score-only rows. The weak point is affine `sw-cigar` at width 16, where
-parasail's striped trace-table representation runs roughly 2-4x ahead.
+The 2026-05-18 sweep is the first post-`5174571` SVE/SVE2 capture against
+parasail. SVE/SVE2 jumped from `0.450x` parasail geomean (pre-fix snapshot
+in the 2026-05-16 CSV) to `1.042x` / `1.081x` respectively — within rounding
+of the `1.04x` / `1.08x` numbers advertised by the SVE-fix commit.
 
-† The SVE and SVE2 numbers in this artifact are pre-fix. Commit `5174571`
-(`SVE/SVE2 backend: 0.45x -> 1.04x/1.08x parasail on Graviton4`) gates
-`shift_left_insert`/`first_lane_vector`/`add_sentinel` behind
-`if constexpr (requires {...})`, provides SVE intrinsic overrides, pins SVE to
-128-bit registers with `-msve-vector-bits=128`, adds a parallel prefix-carry
-lazy-F, and routes affine SW/NW CIGAR/path-info through `profile_traceback`
-plus ported NEON exact-fill kernels for the 1024-character query shape. After
-that commit the live SVE/SVE2 backends are reported as `1.04x`/`1.08x`
-parasail geomean respectively, but no fresh CSV has been captured. The
-table-row numbers reflect what is in this tree's CSV, which is the broken
-pre-fix snapshot — re-run on Graviton4 to refresh.
+NEON remains the headline Graviton4 backend at `1.138x` parasail geomean.
+NEON, SVE, and SVE2 cluster within `~10%` of each other on this Neoverse V2.
+SVE2 edges SVE on score-only thanks to its native `svqadd_s*` vector-vector
+saturating add for affine sentinels.
+
+Remaining weak spots common to all three backends:
+* affine/linear `sw-cigar` width 16 — still the worst variant
+  (`0.665x` NEON geomean); the trace-table representation favors parasail
+  on aarch64 even after the CIGAR builder rework.
+* `sw-farrar-score` width 16 1:1 — 0.82-0.95x geomean across the three.
 
 ### Recommended Graviton4 next steps
 
-1. Re-run the focused parasail sweep with the patched SVE/SVE2 path enabled and store as `graviton4-arm-simd-parasail-YYYY-MM-DD.csv` so the headline numbers in this file no longer carry the asterisk.
-2. Target affine `sw-cigar` width 16 next — both NEON and the SVE/SVE2 fixes still leave that row at 0.26-0.59x parasail.
-3. Drop one of `linux_aarch64_neon` / `linux_aarch64_asimd` from the published backend list now that they share kernels; keep one alias for compatibility.
+1. Target `sw-cigar` width 16 next — still the lone variant where all three SIMD backends lose to parasail by geomean.
+2. Investigate `sw-farrar-score` width 16 1:1; the 0.82-0.95x range suggests a striped-trace cache miss specific to the short query.
+3. Either delete the merged `linux_aarch64_asimd` import alias or surface it explicitly in `available_backends()` so external users have a stable name.
 
 ## ARM macOS arm64 (Apple M-series) - 2026-05-18
 
