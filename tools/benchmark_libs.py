@@ -5,7 +5,8 @@ For each line on stdin, run the line as a query against every line in
 
   --smith-waterman    : compares stride-align against the SW-capable libs
   --needleman-wunsch  : compares stride-align against the NW-capable libs
-  --levenshtein       : compares stride-align against stringzilla
+  --levenshtein       : compares stride-align against Levenshtein,
+                        rapidfuzz, and editdistance
 
 Libraries are imported lazily. If a library is not installed the script
 prints a one-line `pip install ...` hint to stderr and skips that column
@@ -41,7 +42,9 @@ LIBRARIES = [
     ("swalign",       "pip install swalign",       {"sw"}),
     ("minineedle",    "pip install minineedle",    {"sw", "nw"}),
     ("pyalign",       "pip install pyalign",       {"sw", "nw"}),
-    ("stringzilla",   "pip install stringzilla",   {"lev"}),
+    ("Levenshtein",   "pip install Levenshtein",   {"lev"}),
+    ("rapidfuzz",     "pip install rapidfuzz",     {"lev"}),
+    ("editdistance",  "pip install editdistance",  {"lev"}),
 ]
 
 
@@ -156,25 +159,29 @@ def run_pyalign(query: str, targets: Sequence[str], mode: str) -> float | None:
     return _time(lambda: [solver(query, t) for t in targets])
 
 
-def run_stringzilla(query: str, targets: Sequence[str], mode: str) -> float | None:
+def run_Levenshtein(query, targets: Sequence, mode: str) -> float | None:
     if mode != "lev":
         return None
-    sz = MODULES["stringzilla"]
-    # API has shifted across stringzilla versions. Try the documented
-    # module-level helpers first, fall back to per-Str-instance methods.
-    if hasattr(sz, "edit_distance"):
-        return _time(lambda: [sz.edit_distance(query, t) for t in targets])
-    if hasattr(sz, "levenshtein_distance"):
-        return _time(lambda: [sz.levenshtein_distance(query, t) for t in targets])
-    Str = getattr(sz, "Str", None)
-    if Str is not None:
-        q = Str(query)
-        if hasattr(q, "edit_distance"):
-            return _time(lambda: [q.edit_distance(Str(t)) for t in targets])
-        if hasattr(q, "levenshtein_distance"):
-            return _time(lambda: [q.levenshtein_distance(Str(t)) for t in targets])
-    print("# stringzilla: no edit_distance / levenshtein_distance API found", file=sys.stderr)
-    return None
+    Lev = MODULES["Levenshtein"]
+    return _time(lambda: [Lev.distance(query, t) for t in targets])
+
+
+def run_rapidfuzz(query, targets: Sequence, mode: str) -> float | None:
+    if mode != "lev":
+        return None
+    # `rapidfuzz.distance.Levenshtein.distance` is the canonical entrypoint
+    # for the pure Levenshtein metric; rapidfuzz.fuzz is for similarity
+    # ratios. Import the submodule explicitly since it doesn't import
+    # eagerly with the package.
+    from rapidfuzz.distance import Levenshtein as rf_lev  # type: ignore
+    return _time(lambda: [rf_lev.distance(query, t) for t in targets])
+
+
+def run_editdistance(query, targets: Sequence, mode: str) -> float | None:
+    if mode != "lev":
+        return None
+    ed = MODULES["editdistance"]
+    return _time(lambda: [ed.eval(query, t) for t in targets])
 
 
 ADAPTERS = {
@@ -187,7 +194,9 @@ ADAPTERS = {
     "swalign":       run_swalign,
     "minineedle":    run_minineedle,
     "pyalign":       run_pyalign,
-    "stringzilla":   run_stringzilla,
+    "Levenshtein":   run_Levenshtein,
+    "rapidfuzz":     run_rapidfuzz,
+    "editdistance":  run_editdistance,
 }
 
 

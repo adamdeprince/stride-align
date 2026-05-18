@@ -5,7 +5,7 @@ For each line on stdin, run the line as a query against every line in
 
   --smith-waterman    : parasail.sw_*
   --needleman-wunsch  : parasail.nw_*
-  --levenshtein       : stringzilla.edit_distance
+  --levenshtein       : Levenshtein.distance (the python-Levenshtein package)
 
 Edit weights for the SW / NW comparison are pinned so the two libraries
 produce comparable integer scores:
@@ -71,11 +71,11 @@ def _import_parasail():
     return parasail
 
 
-def _import_stringzilla():
-    sz = _try_import("stringzilla", "pip install stringzilla")
-    if sz is None:
+def _import_levenshtein():
+    lev = _try_import("Levenshtein", "pip install Levenshtein")
+    if lev is None:
         sys.exit(1)
-    return sz
+    return lev
 
 
 def _build_full_byte_matrix(parasail):
@@ -131,24 +131,9 @@ def _stride_align_scores(sa, mode: str, query: str, targets: Sequence[str]) -> n
     )
 
 
-def _stringzilla_distance(sz, query: str, target: str) -> int:
-    if hasattr(sz, "edit_distance"):
-        return int(sz.edit_distance(query, target))
-    if hasattr(sz, "levenshtein_distance"):
-        return int(sz.levenshtein_distance(query, target))
-    Str = getattr(sz, "Str", None)
-    if Str is not None:
-        q = Str(query)
-        if hasattr(q, "edit_distance"):
-            return int(q.edit_distance(Str(target)))
-        if hasattr(q, "levenshtein_distance"):
-            return int(q.levenshtein_distance(Str(target)))
-    raise RuntimeError("stringzilla: no edit_distance / levenshtein_distance API found")
-
-
-def _stringzilla_scores(sz, query: str, targets: Sequence[str]) -> np.ndarray:
+def _levenshtein_scores(lev, query, targets: Sequence) -> np.ndarray:
     return np.fromiter(
-        (_stringzilla_distance(sz, query, t) for t in targets),
+        (lev.distance(query, t) for t in targets),
         dtype=np.int64,
         count=len(targets),
     )
@@ -169,7 +154,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--needleman-wunsch", action="store_true",
                       help="compare needleman_wunsch_scores against parasail.nw_striped_16.")
     mode.add_argument("--levenshtein", action="store_true",
-                      help="compare levenshtein_scores against stringzilla.edit_distance.")
+                      help="compare levenshtein_scores against Levenshtein.distance.")
     parser.add_argument(
         "--max-diff-rows",
         type=int,
@@ -192,15 +177,15 @@ def main() -> int:
 
     parasail = None
     matrix = None
-    sz = None
+    lev_lib = None
     reference_name = ""
     if mode in {"sw", "nw"}:
         parasail = _import_parasail()
         matrix = _build_full_byte_matrix(parasail)
         reference_name = "parasail"
     else:
-        sz = _import_stringzilla()
-        reference_name = "stringzilla"
+        lev_lib = _import_levenshtein()
+        reference_name = "Levenshtein"
 
     # We operate at the byte level: stride-align and parasail's matrix
     # both index by byte value, so encoding str inputs to UTF-8 bytes
@@ -246,7 +231,7 @@ def main() -> int:
             ref = _parasail_scores(parasail, matrix, mode, query, targets)
         else:
             ours = sa.levenshtein_scores(query, targets)
-            ref = _stringzilla_scores(sz, query, targets)
+            ref = _levenshtein_scores(lev_lib, query, targets)
 
         diff_idx = np.where(ours != ref)[0]
         n_mismatch = int(diff_idx.size)
