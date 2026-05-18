@@ -111,8 +111,7 @@ def template(
     tagline: str,
     nav_inner: str,
     content: str,
-    home_label: str,
-    home_href: str,
+    home_link: str = "",
 ) -> str:
     return f"""<!doctype html>
 <html lang="{lang}" dir="{direction}">
@@ -138,8 +137,7 @@ def template(
 <p class="tagline">{tagline}</p>
 </header>
 <nav class="nav">
-<a class="home" href="{home_href}">{home_label}</a>
-{nav_inner}
+{home_link}{nav_inner}
 </nav>
 <main class="content">
 {content}
@@ -183,13 +181,7 @@ def build_readme(suffix: str) -> None:
         tagline=tagline,
         nav_inner=nav,
         content=body.rstrip(),
-        home_label={
-            "en": "README", "ja": "README", "de": "README", "fr": "README",
-            "es": "README", "ko": "README", "zh-CN": "README", "zh-TW": "README",
-            "pt-BR": "README", "ru": "README", "vi": "README", "id": "README",
-            "hi": "README", "ar": "README", "tr": "README", "pl": "README",
-        }[lang],
-        home_href="README.html",
+        home_link="",
     )
     out_path = OUT / html_filename(suffix)
     out_path.write_text(out_html, encoding="utf-8")
@@ -211,8 +203,7 @@ def build_benchmark() -> None:
         tagline="Cross-architecture performance: Intel x86, ARM, Loongson, Power",
         nav_inner="",
         content=body.rstrip(),
-        home_label="README",
-        home_href="README.html",
+        home_link='<a class="home" href="index.html">README</a>',
     )
     out_path = OUT / "BENCHMARK.html"
     out_path.write_text(out_html, encoding="utf-8")
