@@ -1,18 +1,24 @@
-"""Time stride-align against other SW/NW Python libraries on a fixed corpus.
+"""Time stride-align against other SW / NW / Levenshtein Python libraries.
 
 For each line on stdin, run the line as a query against every line in
 --input-file using each available library and emit a CSV row of timings.
 
-Libraries are imported lazily. If a library is not installed, the script
+  --smith-waterman    : compares stride-align against the SW-capable libs
+  --needleman-wunsch  : compares stride-align against the NW-capable libs
+  --levenshtein       : compares stride-align against stringzilla
+
+Libraries are imported lazily. If a library is not installed the script
 prints a one-line `pip install ...` hint to stderr and skips that column
 for the rest of the run.
 
 Usage:
     cat queries.txt | tools/benchmark_libs.py \
         --input-file kjv.txt --needleman-wunsch > timings.csv
+    cat words.txt   | tools/benchmark_libs.py \
+        --input-file /usr/share/dict/words --levenshtein > lev-timings.csv
 
-The script does not modify pyproject.toml. Install whichever libraries you
-want included via pip.
+The script does not modify pyproject.toml. Install whichever libraries
+you want included via pip.
 """
 
 from __future__ import annotations
@@ -24,17 +30,18 @@ import time
 from typing import Callable, Sequence
 
 
-# Each entry: (name, pip_hint).
+# Each entry: (name, pip_hint, supported_modes).
 LIBRARIES = [
-    ("stride_align", "pip install stride-align"),
-    ("parasail",     "pip install parasail"),
-    ("ssw",          "pip install ssw-py"),
-    ("pyssw",        "pip install pyssw"),
-    ("string2string","pip install string2string"),
-    ("textdistance", "pip install textdistance"),
-    ("swalign",      "pip install swalign"),
-    ("minineedle",   "pip install minineedle"),
-    ("pyalign",      "pip install pyalign"),
+    ("stride_align",  "pip install stride-align",  {"sw", "nw", "lev"}),
+    ("parasail",      "pip install parasail",      {"sw", "nw"}),
+    ("ssw",           "pip install ssw-py",        {"sw"}),
+    ("pyssw",         "pip install pyssw",         {"sw"}),
+    ("string2string", "pip install string2string", {"sw", "nw"}),
+    ("textdistance",  "pip install textdistance",  {"sw", "nw"}),
+    ("swalign",       "pip install swalign",       {"sw"}),
+    ("minineedle",    "pip install minineedle",    {"sw", "nw"}),
+    ("pyalign",       "pip install pyalign",       {"sw", "nw"}),
+    ("stringzilla",   "pip install stringzilla",   {"lev"}),
 ]
 
 
@@ -50,23 +57,24 @@ def _try_import(name: str, install_hint: str):
         return None
 
 
-# Build a lookup of imported modules.
-MODULES = {name: _try_import(name, hint) for name, hint in LIBRARIES}
+MODULES = {name: _try_import(name, hint) for name, hint, _modes in LIBRARIES}
 
 
-# Each adapter takes (query, targets, mode) and returns elapsed seconds, or
-# None if the library does not support the requested mode.
 def _time(fn: Callable[[], None]) -> float:
     start = time.perf_counter()
     fn()
     return time.perf_counter() - start
 
 
+# Each adapter takes (query, targets, mode) and returns elapsed seconds, or
+# None if the library does not support the requested mode at runtime.
 def run_stride_align(query: str, targets: Sequence[str], mode: str) -> float | None:
     sa = MODULES["stride_align"]
     if mode == "sw":
         return _time(lambda: sa.smith_waterman_normalized_scores(query, targets))
-    return _time(lambda: sa.needleman_wunsch_normalized_scores(query, targets))
+    if mode == "nw":
+        return _time(lambda: sa.needleman_wunsch_normalized_scores(query, targets))
+    return _time(lambda: sa.levenshtein_scores(query, targets))
 
 
 def run_parasail(query: str, targets: Sequence[str], mode: str) -> float | None:
@@ -79,7 +87,7 @@ def run_parasail(query: str, targets: Sequence[str], mode: str) -> float | None:
 
 def run_ssw(query: str, targets: Sequence[str], mode: str) -> float | None:
     if mode != "sw":
-        return None  # ssw-py is Smith-Waterman only
+        return None
     ssw = MODULES["ssw"]
     Aligner = ssw.Aligner
     aligner = Aligner(query, match=2, mismatch=-1, gap_open=1, gap_extend=1)
@@ -90,7 +98,6 @@ def run_pyssw(query: str, targets: Sequence[str], mode: str) -> float | None:
     if mode != "sw":
         return None
     pyssw = MODULES["pyssw"]
-    # pyssw exposes a `ssw` C-extension wrapper; try the high-level call first.
     if hasattr(pyssw, "Aligner"):
         aligner = pyssw.Aligner(query)
         return _time(lambda: [aligner.align(t) for t in targets])
@@ -101,9 +108,8 @@ def run_pyssw(query: str, targets: Sequence[str], mode: str) -> float | None:
 
 
 def run_string2string(query: str, targets: Sequence[str], mode: str) -> float | None:
-    s2s = MODULES["string2string"]
     from string2string.alignment import NeedlemanWunsch, SmithWaterman  # type: ignore
-    aligner = (SmithWaterman() if mode == "sw" else NeedlemanWunsch())
+    aligner = SmithWaterman() if mode == "sw" else NeedlemanWunsch()
     return _time(lambda: [aligner.get_alignment(query, t) for t in targets])
 
 
@@ -115,7 +121,7 @@ def run_textdistance(query: str, targets: Sequence[str], mode: str) -> float | N
 
 def run_swalign(query: str, targets: Sequence[str], mode: str) -> float | None:
     if mode != "sw":
-        return None  # swalign is Smith-Waterman only
+        return None
     sw_lib = MODULES["swalign"]
     matrix = sw_lib.NucleotideScoringMatrix(match=2, mismatch=-1)
     sw = sw_lib.LocalAlignment(matrix, gap_penalty=-1, gap_extension_penalty=-1)
@@ -123,7 +129,6 @@ def run_swalign(query: str, targets: Sequence[str], mode: str) -> float | None:
 
 
 def run_minineedle(query: str, targets: Sequence[str], mode: str) -> float | None:
-    mn = MODULES["minineedle"]
     if mode == "sw":
         from minineedle.smith import SmithWaterman  # type: ignore
         Cls = SmithWaterman
@@ -141,8 +146,6 @@ def run_minineedle(query: str, targets: Sequence[str], mode: str) -> float | Non
 
 def run_pyalign(query: str, targets: Sequence[str], mode: str) -> float | None:
     pa = MODULES["pyalign"]
-    # The modern pyalign API exposes `pyalign.global_alignment` /
-    # `pyalign.local_alignment` solvers.
     if mode == "sw":
         solver = getattr(pa, "local_alignment", None) or getattr(pa, "smith_waterman", None)
     else:
@@ -151,6 +154,27 @@ def run_pyalign(query: str, targets: Sequence[str], mode: str) -> float | None:
         print("# pyalign: no global/local_alignment entry point found", file=sys.stderr)
         return None
     return _time(lambda: [solver(query, t) for t in targets])
+
+
+def run_stringzilla(query: str, targets: Sequence[str], mode: str) -> float | None:
+    if mode != "lev":
+        return None
+    sz = MODULES["stringzilla"]
+    # API has shifted across stringzilla versions. Try the documented
+    # module-level helpers first, fall back to per-Str-instance methods.
+    if hasattr(sz, "edit_distance"):
+        return _time(lambda: [sz.edit_distance(query, t) for t in targets])
+    if hasattr(sz, "levenshtein_distance"):
+        return _time(lambda: [sz.levenshtein_distance(query, t) for t in targets])
+    Str = getattr(sz, "Str", None)
+    if Str is not None:
+        q = Str(query)
+        if hasattr(q, "edit_distance"):
+            return _time(lambda: [q.edit_distance(Str(t)) for t in targets])
+        if hasattr(q, "levenshtein_distance"):
+            return _time(lambda: [q.levenshtein_distance(Str(t)) for t in targets])
+    print("# stringzilla: no edit_distance / levenshtein_distance API found", file=sys.stderr)
+    return None
 
 
 ADAPTERS = {
@@ -163,12 +187,13 @@ ADAPTERS = {
     "swalign":       run_swalign,
     "minineedle":    run_minineedle,
     "pyalign":       run_pyalign,
+    "stringzilla":   run_stringzilla,
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Time SW/NW libraries on a corpus loaded from a file.",
+        description="Time SW / NW / Levenshtein libraries on a corpus loaded from a file.",
     )
     parser.add_argument(
         "--input-file",
@@ -178,26 +203,44 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--smith-waterman", action="store_true", help="run Smith-Waterman.")
     mode.add_argument("--needleman-wunsch", action="store_true", help="run Needleman-Wunsch.")
+    mode.add_argument(
+        "--levenshtein",
+        action="store_true",
+        help="run Levenshtein (compared against stringzilla).",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    mode = "sw" if args.smith_waterman else "nw"
+    if args.smith_waterman:
+        mode = "sw"
+    elif args.needleman_wunsch:
+        mode = "nw"
+    else:
+        mode = "lev"
 
-    with open(args.input_file, encoding="utf-8") as fh:
-        targets = [line.rstrip("\n") for line in fh]
+    # Read corpus and queries as bytes — parasail's bindings hold the
+    # input via latin-1 and can't accept arbitrary unicode. stride-align,
+    # stringzilla, and the rest accept bytes too, so this gives every
+    # library the same input and lets the user point at unicode-rich
+    # corpora (e.g. demo/kjv.txt with its smart quotes).
+    with open(args.input_file, "rb") as fh:
+        targets = [line.rstrip(b"\n") for line in fh]
 
-    # Drop libraries that failed to import; order preserved from LIBRARIES.
-    active = [name for name, _hint in LIBRARIES if MODULES[name] is not None]
+    # Drop libraries that failed to import or don't support this mode.
+    active = [
+        name for name, _hint, modes in LIBRARIES
+        if MODULES[name] is not None and mode in modes
+    ]
 
     writer = csv.writer(sys.stdout)
     writer.writerow(
         ["query", "query_length", "n_targets", "mode"] + [f"{name}_s" for name in active]
     )
 
-    for raw_line in sys.stdin:
-        query = raw_line.rstrip("\n")
+    for raw_line in sys.stdin.buffer:
+        query = raw_line.rstrip(b"\n")
         if not query:
             continue
 
@@ -206,8 +249,11 @@ def main() -> int:
             try:
                 seconds = ADAPTERS[name](query, targets, mode)
             except Exception as exc:  # noqa: BLE001
-                print(f"# {name}: runtime error on query of len {len(query)}: "
-                      f"{exc.__class__.__name__}: {exc}", file=sys.stderr)
+                print(
+                    f"# {name}: runtime error on query of len {len(query)}: "
+                    f"{exc.__class__.__name__}: {exc}",
+                    file=sys.stderr,
+                )
                 seconds = None
             timings.append(f"{seconds:.6f}" if seconds is not None else "")
 
