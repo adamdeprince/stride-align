@@ -233,7 +233,7 @@ TracebackResult traceback(
     }
 
     if (direction == TraceDirection::diagonal) {
-      result.operations.push_back(query[row - 1] == target[column - 1] ? 'M' : 'X');
+      result.operations.push_back(query[row - 1] == target[column - 1] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -302,7 +302,7 @@ TracebackResult token_independent_global_traceback(
           : 0;
   result.operations.reserve(query.size() + target.size() - diagonal_count);
   for (std::size_t index = 0; index < diagonal_count; ++index) {
-    result.operations.push_back(query[index] == target[index] ? 'M' : 'X');
+    result.operations.push_back(query[index] == target[index] ? '=' : 'X');
   }
   result.operations.append(query.size() - diagonal_count, 'D');
   result.operations.append(target.size() - diagonal_count, 'I');
@@ -321,7 +321,7 @@ TracebackResult token_independent_local_traceback(
   result.target_end = diagonal_count;
   result.operations.reserve(diagonal_count);
   for (std::size_t index = 0; index < diagonal_count; ++index) {
-    result.operations.push_back(query[index] == target[index] ? 'M' : 'X');
+    result.operations.push_back(query[index] == target[index] ? '=' : 'X');
   }
   return result;
 }
@@ -370,7 +370,7 @@ std::optional<TracebackResult> fast_traceback(
     result.score = static_cast<Score>(query.size()) * static_cast<Score>(match_score);
     result.query_end = query.size();
     result.target_end = target.size();
-    result.operations.assign(query.size(), 'M');
+    result.operations.assign(query.size(), '=');
     return result;
   }
 

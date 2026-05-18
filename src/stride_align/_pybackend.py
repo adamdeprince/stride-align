@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 
 @dataclass(frozen=True, slots=True)
 class AlignmentResult:
@@ -430,7 +432,7 @@ def _alignment_path_from_result(result: AlignmentResult) -> AlignmentPath:
         target_end=result.target_end,
         operations=operations,
         cigar=_cigar_from_operations(operations),
-        matches=operations.count("M"),
+        matches=operations.count("="),
         mismatches=operations.count("X"),
         insertions=operations.count("I"),
         deletions=operations.count("D"),
@@ -641,7 +643,7 @@ def _affine_traceback(
                     mismatch_score,
                 )
                 if h[row][column] == diagonal:
-                    operations.append("M" if query[row - 1] == target[column - 1] else "X")
+                    operations.append("=" if query[row - 1] == target[column - 1] else "X")
                     row -= 1
                     column -= 1
                     continue
@@ -762,7 +764,7 @@ def _traceback(
         if direction == "stop":
             break
         if direction == "diagonal":
-            operations.append("M" if query[row - 1] == target[column - 1] else "X")
+            operations.append("=" if query[row - 1] == target[column - 1] else "X")
             row -= 1
             column -= 1
             continue
@@ -989,20 +991,23 @@ def smith_waterman_scores(
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
-) -> list[int]:
-    return [
-        smith_waterman_score(
-            query,
-            target,
-            match_score=match_score,
-            mismatch_score=mismatch_score,
-            gap_score=gap_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
-            width=width,
-        )
-        for target in targets  # type: ignore[union-attr]
-    ]
+) -> np.ndarray:
+    return np.fromiter(
+        (
+            smith_waterman_score(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+                width=width,
+            )
+            for target in targets  # type: ignore[union-attr]
+        ),
+        dtype=np.int64,
+    )
 
 
 def smith_waterman_farrar_score(
@@ -1056,20 +1061,23 @@ def smith_waterman_farrar_scores(
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
-) -> list[int]:
-    return [
-        smith_waterman_farrar_score(
-            query,
-            target,
-            match_score=match_score,
-            mismatch_score=mismatch_score,
-            gap_score=gap_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
-            width=width,
-        )
-        for target in targets  # type: ignore[union-attr]
-    ]
+) -> np.ndarray:
+    return np.fromiter(
+        (
+            smith_waterman_farrar_score(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+                width=width,
+            )
+            for target in targets  # type: ignore[union-attr]
+        ),
+        dtype=np.int64,
+    )
 
 
 def needleman_wunsch_score(
@@ -1123,20 +1131,23 @@ def needleman_wunsch_scores(
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
-) -> list[int]:
-    return [
-        needleman_wunsch_score(
-            query,
-            target,
-            match_score=match_score,
-            mismatch_score=mismatch_score,
-            gap_score=gap_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
-            width=width,
-        )
-        for target in targets  # type: ignore[union-attr]
-    ]
+) -> np.ndarray:
+    return np.fromiter(
+        (
+            needleman_wunsch_score(
+                query,
+                target,
+                match_score=match_score,
+                mismatch_score=mismatch_score,
+                gap_score=gap_score,
+                gap_open_score=gap_open_score,
+                gap_extend_score=gap_extend_score,
+                width=width,
+            )
+            for target in targets  # type: ignore[union-attr]
+        ),
+        dtype=np.int64,
+    )
 
 
 def needleman_wunsch_path(

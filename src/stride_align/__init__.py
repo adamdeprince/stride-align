@@ -7,6 +7,8 @@ import warnings
 from types import ModuleType
 from typing import Any
 
+import numpy as np
+
 from ._cpu import (
     BackendKind,
     BackendRecord,
@@ -161,6 +163,66 @@ def _resolve_gap_scores(
     gap_open = gap_score if gap_open_score is None else gap_open_score
     gap_extend = gap_open if gap_extend_score is None else gap_extend_score
     return int(gap_open), int(gap_extend)
+
+
+def _normalize_alignment_score(
+    raw_score: int,
+    query_length: int,
+    target_length: int,
+    *,
+    is_local: bool,
+    match_score: int,
+) -> float:
+    # Length-normalized similarity in [0, 1]. SW divides by the shorter
+    # length (the strict upper bound for any local alignment); NW divides
+    # by the longer length (the upper bound when one string fully embeds
+    # in the other).
+    if match_score <= 0:
+        raise ValueError(
+            "match_score must be positive to compute a normalized score"
+        )
+    if query_length == 0 and target_length == 0:
+        return 1.0
+    denominator = (
+        min(query_length, target_length)
+        if is_local
+        else max(query_length, target_length)
+    ) * match_score
+    if denominator <= 0:
+        return 0.0
+    return min(1.0, max(0.0, raw_score / denominator))
+
+
+def _normalize_alignment_scores(
+    raw_scores: np.ndarray,
+    query_length: int,
+    target_lengths: np.ndarray,
+    *,
+    is_local: bool,
+    match_score: int,
+) -> np.ndarray:
+    # Vectorized form of _normalize_alignment_score over a batch.
+    if match_score <= 0:
+        raise ValueError(
+            "match_score must be positive to compute a normalized score"
+        )
+    if raw_scores.size == 0:
+        return np.empty(0, dtype=np.float64)
+    if is_local:
+        denoms = np.minimum(query_length, target_lengths) * match_score
+    else:
+        denoms = np.maximum(query_length, target_lengths) * match_score
+    out = np.zeros(raw_scores.shape, dtype=np.float64)
+    np.divide(
+        raw_scores.astype(np.float64, copy=False),
+        denoms,
+        out=out,
+        where=denoms > 0,
+    )
+    np.clip(out, 0.0, 1.0, out=out)
+    if query_length == 0:
+        out = np.where(target_lengths == 0, 1.0, out)
+    return out
 
 
 def _forced_width(width: int | None) -> int:
@@ -407,10 +469,10 @@ def _dispatch_many(
     gap_open_score: int | None,
     gap_extend_score: int | None,
     width: int | None,
-) -> list[int]:
+) -> np.ndarray:
     target_tuple = _materialize_targets(targets)
     if not target_tuple:
-        return []
+        return np.empty(0, dtype=np.int64)
 
     canonical_variant = _canonical_score_variant(variant)
     gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
@@ -427,22 +489,21 @@ def _dispatch_many(
     many_name, scalar_name = _SCORE_MANY_FUNCTIONS[canonical_variant]
     many_function = getattr(backend, many_name, None)
     if many_function is not None:
-        return list(
-            many_function(
-                query,
-                target_tuple,
-                match_score=match_score,
-                mismatch_score=mismatch_score,
-                gap_score=gap_score,
-                gap_open_score=gap_open_score,
-                gap_extend_score=gap_extend_score,
-                width=width,
-            )
+        result = many_function(
+            query,
+            target_tuple,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
         )
+        return np.asarray(result, dtype=np.int64)
 
     scalar_function = getattr(backend, scalar_name)
-    return [
-        int(
+    return np.fromiter(
+        (
             scalar_function(
                 query,
                 target,
@@ -453,9 +514,11 @@ def _dispatch_many(
                 gap_extend_score=gap_extend_score,
                 width=width,
             )
-        )
-        for target in target_tuple
-    ]
+            for target in target_tuple
+        ),
+        dtype=np.int64,
+        count=len(target_tuple),
+    )
 
 
 class Scores:
@@ -493,7 +556,7 @@ class Scores:
         self.gap_extend_score = None if gap_extend_score is None else int(gap_extend_score)
         self.width = None if width is None else _forced_width(width)
 
-    def compare(self, targets: object) -> list[int]:
+    def compare(self, targets: object) -> np.ndarray:
         return _dispatch_many(
             self.variant,
             self.query,
@@ -517,7 +580,7 @@ def smith_waterman_scores(
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
-) -> list[int]:
+) -> np.ndarray:
     return _dispatch_many(
         "sw-score",
         query,
@@ -531,6 +594,43 @@ def smith_waterman_scores(
     )
 
 
+def smith_waterman_normalized_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> np.ndarray:
+    target_tuple = _materialize_targets(targets)
+    raw_scores = _dispatch_many(
+        "sw-score",
+        query,
+        target_tuple,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+    target_lengths = np.fromiter(
+        (len(t) for t in target_tuple),  # type: ignore[arg-type]
+        dtype=np.int64,
+        count=len(target_tuple),
+    )
+    return _normalize_alignment_scores(
+        raw_scores,
+        len(query),  # type: ignore[arg-type]
+        target_lengths,
+        is_local=True,
+        match_score=match_score,
+    )
+
+
 def needleman_wunsch_scores(
     query: object,
     targets: object,
@@ -541,7 +641,7 @@ def needleman_wunsch_scores(
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
-) -> list[int]:
+) -> np.ndarray:
     return _dispatch_many(
         "nw-score",
         query,
@@ -555,6 +655,43 @@ def needleman_wunsch_scores(
     )
 
 
+def needleman_wunsch_normalized_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> np.ndarray:
+    target_tuple = _materialize_targets(targets)
+    raw_scores = _dispatch_many(
+        "nw-score",
+        query,
+        target_tuple,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+    target_lengths = np.fromiter(
+        (len(t) for t in target_tuple),  # type: ignore[arg-type]
+        dtype=np.int64,
+        count=len(target_tuple),
+    )
+    return _normalize_alignment_scores(
+        raw_scores,
+        len(query),  # type: ignore[arg-type]
+        target_lengths,
+        is_local=False,
+        match_score=match_score,
+    )
+
+
 def smith_waterman_farrar_scores(
     query: object,
     targets: object,
@@ -565,7 +702,7 @@ def smith_waterman_farrar_scores(
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
-) -> list[int]:
+) -> np.ndarray:
     return _dispatch_many(
         "sw-farrar-score",
         query,
@@ -576,6 +713,43 @@ def smith_waterman_farrar_scores(
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
         width=width,
+    )
+
+
+def smith_waterman_farrar_normalized_scores(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> np.ndarray:
+    target_tuple = _materialize_targets(targets)
+    raw_scores = _dispatch_many(
+        "sw-farrar-score",
+        query,
+        target_tuple,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+    target_lengths = np.fromiter(
+        (len(t) for t in target_tuple),  # type: ignore[arg-type]
+        dtype=np.int64,
+        count=len(target_tuple),
+    )
+    return _normalize_alignment_scores(
+        raw_scores,
+        len(query),  # type: ignore[arg-type]
+        target_lengths,
+        is_local=True,
+        match_score=match_score,
     )
 
 
@@ -601,6 +775,36 @@ def smith_waterman_score(
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
         width=width,
+    )
+
+
+def smith_waterman_normalized_score(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> float:
+    raw = smith_waterman_score(
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+    return _normalize_alignment_score(
+        int(raw),
+        len(query),  # type: ignore[arg-type]
+        len(target),  # type: ignore[arg-type]
+        is_local=True,
+        match_score=match_score,
     )
 
 
@@ -754,6 +958,36 @@ def smith_waterman_farrar_score(
     )
 
 
+def smith_waterman_farrar_normalized_score(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> float:
+    raw = smith_waterman_farrar_score(
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+    return _normalize_alignment_score(
+        int(raw),
+        len(query),  # type: ignore[arg-type]
+        len(target),  # type: ignore[arg-type]
+        is_local=True,
+        match_score=match_score,
+    )
+
+
 def needleman_wunsch_score(
     query: object,
     target: object,
@@ -776,6 +1010,36 @@ def needleman_wunsch_score(
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
         width=width,
+    )
+
+
+def needleman_wunsch_normalized_score(
+    query: object,
+    target: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> float:
+    raw = needleman_wunsch_score(
+        query,
+        target,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+    return _normalize_alignment_score(
+        int(raw),
+        len(query),  # type: ignore[arg-type]
+        len(target),  # type: ignore[arg-type]
+        is_local=False,
+        match_score=match_score,
     )
 
 
@@ -914,6 +1178,8 @@ __all__ = [
     "backend_is_available",
     "detect_best_backend",
     "needleman_wunsch_cigar",
+    "needleman_wunsch_normalized_score",
+    "needleman_wunsch_normalized_scores",
     "needleman_wunsch_path",
     "needleman_wunsch_path_info",
     "needleman_wunsch_score",
@@ -921,8 +1187,12 @@ __all__ = [
     "needleman_wunsch_trace_cigar",
     "needleman_wunsch_trade_cigar",
     "smith_waterman_cigar",
+    "smith_waterman_farrar_normalized_score",
+    "smith_waterman_farrar_normalized_scores",
     "smith_waterman_farrar_score",
     "smith_waterman_farrar_scores",
+    "smith_waterman_normalized_score",
+    "smith_waterman_normalized_scores",
     "smith_waterman_path",
     "smith_waterman_path_info",
     "smith_waterman_score",

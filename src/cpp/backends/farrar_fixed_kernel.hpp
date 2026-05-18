@@ -2278,7 +2278,7 @@ AlignmentPath build_affine_path_from_striped_trace(
         break;
       }
       if (direction == TraceDirection::diagonal) {
-        operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;
@@ -2358,7 +2358,7 @@ std::string build_affine_cigar_from_striped_trace(
         break;
       }
       if (direction == TraceDirection::diagonal) {
-        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;
@@ -3831,7 +3831,7 @@ inline std::string build_linear_operations_from_masked_trace(
       break;
     }
     if (direction == TraceDirection::diagonal) {
-      operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -3959,7 +3959,7 @@ inline LinearCigarTrace build_linear_cigar_trace_from_masked_trace(
       break;
     }
     if (direction == TraceDirection::diagonal) {
-      cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -4690,7 +4690,7 @@ std::string build_linear_cigar_from_striped_trace(
       break;
     }
     if (direction == TraceDirection::diagonal) {
-      cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -5252,7 +5252,7 @@ std::string linear_sw_checkpointed_cigar(
         break;
       }
       if (direction == TraceDirection::diagonal) {
-        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;

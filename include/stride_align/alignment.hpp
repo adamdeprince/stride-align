@@ -1,5 +1,6 @@
 #pragma once
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -46,6 +47,14 @@ inline std::string build_cigar(std::string_view operations) {
     return cigar;
   }
 
+  cigar.reserve(operations.size());
+
+  char digits[20];
+  const auto emit_count = [&](std::size_t value) {
+    const auto end = std::to_chars(digits, digits + sizeof(digits), value).ptr;
+    cigar.append(digits, end);
+  };
+
   char current = operations.front();
   std::size_t count = 0;
   for (const char operation : operations) {
@@ -53,12 +62,12 @@ inline std::string build_cigar(std::string_view operations) {
       ++count;
       continue;
     }
-    cigar += std::to_string(count);
+    emit_count(count);
     cigar.push_back(current);
     current = operation;
     count = 1;
   }
-  cigar += std::to_string(count);
+  emit_count(count);
   cigar.push_back(current);
   return cigar;
 }
@@ -79,6 +88,10 @@ inline std::string expand_cigar(std::string_view cigar) {
 
 class ReverseCigarBuilder {
  public:
+  ReverseCigarBuilder() {
+    runs_.reserve(64U);
+  }
+
   void push(char operation) {
     if (!runs_.empty() && runs_.back().operation == operation) {
       ++runs_.back().count;
@@ -89,8 +102,11 @@ class ReverseCigarBuilder {
 
   std::string str() const {
     std::string cigar;
+    cigar.reserve(runs_.size() * 4U);
+    char digits[20];
     for (auto it = runs_.rbegin(); it != runs_.rend(); ++it) {
-      cigar += std::to_string(it->count);
+      const auto end = std::to_chars(digits, digits + sizeof(digits), it->count).ptr;
+      cigar.append(digits, end);
       cigar.push_back(it->operation);
     }
     return cigar;
@@ -124,7 +140,7 @@ inline AlignmentPath make_alignment_path(
 
   for (const char operation : operations) {
     switch (operation) {
-      case 'M':
+      case '=':
         ++path.matches;
         break;
       case 'X':
@@ -168,7 +184,7 @@ inline AlignmentPath make_alignment_path_from_cigar(
     path.operations.append(count, value);
     path.aligned_length += count;
     switch (value) {
-      case 'M':
+      case '=':
         path.matches += count;
         break;
       case 'X':

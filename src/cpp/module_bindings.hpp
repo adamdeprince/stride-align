@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -54,8 +55,28 @@ inline GapScores resolve_gap_scores(
   throw nb::python_error();
 }
 
+using ScoreNDArray = nb::ndarray<nb::numpy, std::int64_t, nb::ndim<1>>;
+
+inline ScoreNDArray as_score_ndarray(std::vector<Score> scores) {
+  // Transfer ownership of the std::vector to a capsule so the numpy array
+  // can reference its buffer zero-copy. Static_assert keeps the contract
+  // explicit if Score ever changes width.
+  static_assert(sizeof(Score) == sizeof(std::int64_t),
+                "Score must be 64-bit to alias np.int64 without copying");
+  auto* heap_vec = new std::vector<Score>(std::move(scores));
+  nb::capsule owner(heap_vec, [](void* p) noexcept {
+    delete static_cast<std::vector<Score>*>(p);
+  });
+  const std::size_t shape[1] = {heap_vec->size()};
+  return ScoreNDArray(
+      reinterpret_cast<std::int64_t*>(heap_vec->data()),
+      1,
+      shape,
+      owner);
+}
+
 template <typename Function>
-std::vector<Score> call_score_many(nb::handle targets, Function&& function) {
+ScoreNDArray call_score_many(nb::handle targets, Function&& function) {
   PyObject* fast_targets =
       PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
   if (fast_targets == nullptr) {
@@ -71,7 +92,7 @@ std::vector<Score> call_score_many(nb::handle targets, Function&& function) {
   for (std::size_t index = 0; index < size; ++index) {
     scores.push_back(function(nb::handle(items[index])));
   }
-  return scores;
+  return as_score_ndarray(std::move(scores));
 }
 
 inline void bind_alignment_result_type(nb::module_& m) {
@@ -819,14 +840,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                               forced_width);
                         }) {
             if (gaps.open <= 0 && gaps.extend <= 0) {
-              return Implementation::smith_waterman_affine_scores(
+              return as_score_ndarray(Implementation::smith_waterman_affine_scores(
                   query,
                   targets,
                   match_score,
                   mismatch_score,
                   gaps.open,
                   gaps.extend,
-                  forced_width);
+                  forced_width));
             }
           }
         } else {
@@ -840,13 +861,13 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                               forced_width);
                         }) {
             if (gaps.open <= 0) {
-              return Implementation::smith_waterman_scores(
+              return as_score_ndarray(Implementation::smith_waterman_scores(
                   query,
                   targets,
                   match_score,
                   mismatch_score,
                   gaps.open,
-                  forced_width);
+                  forced_width));
             }
           }
         }
@@ -1226,14 +1247,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                               forced_width);
                         }) {
             if (gaps.open <= 0 && gaps.extend <= 0) {
-              return Implementation::smith_waterman_affine_farrar_scores(
+              return as_score_ndarray(Implementation::smith_waterman_affine_farrar_scores(
                   query,
                   targets,
                   match_score,
                   mismatch_score,
                   gaps.open,
                   gaps.extend,
-                  forced_width);
+                  forced_width));
             }
           }
         } else {
@@ -1247,13 +1268,13 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                               forced_width);
                         }) {
             if (gaps.open <= 0) {
-              return Implementation::smith_waterman_farrar_scores(
+              return as_score_ndarray(Implementation::smith_waterman_farrar_scores(
                   query,
                   targets,
                   match_score,
                   mismatch_score,
                   gaps.open,
-                  forced_width);
+                  forced_width));
             }
           }
         }
@@ -1493,7 +1514,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
     m.def(
         "_smith_waterman_scores_prepared",
         [](PreparedScoreBatch& prepared) {
-          return Implementation::smith_waterman_scores_prepared(prepared);
+          return as_score_ndarray(Implementation::smith_waterman_scores_prepared(prepared));
         },
         nb::arg("prepared"));
 
@@ -1534,7 +1555,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
     m.def(
         "_smith_waterman_farrar_scores_prepared",
         [](PreparedScoreBatch& prepared) {
-          return Implementation::smith_waterman_farrar_scores_prepared(prepared);
+          return as_score_ndarray(Implementation::smith_waterman_farrar_scores_prepared(prepared));
         },
         nb::arg("prepared"));
 
@@ -1575,7 +1596,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
     m.def(
         "_needleman_wunsch_scores_prepared",
         [](PreparedScoreBatch& prepared) {
-          return Implementation::needleman_wunsch_scores_prepared(prepared);
+          return as_score_ndarray(Implementation::needleman_wunsch_scores_prepared(prepared));
         },
         nb::arg("prepared"));
   }
@@ -1618,7 +1639,8 @@ void bind_backend_module(nb::module_& m, const char* doc) {
     m.def(
         "_smith_waterman_affine_scores_prepared",
         [](PreparedAffineScoreBatch& prepared) {
-          return Implementation::smith_waterman_affine_scores_prepared(prepared);
+          return as_score_ndarray(
+              Implementation::smith_waterman_affine_scores_prepared(prepared));
         },
         nb::arg("prepared"));
 
@@ -1656,7 +1678,8 @@ void bind_backend_module(nb::module_& m, const char* doc) {
     m.def(
         "_smith_waterman_affine_farrar_scores_prepared",
         [](PreparedAffineScoreBatch& prepared) {
-          return Implementation::smith_waterman_affine_farrar_scores_prepared(prepared);
+          return as_score_ndarray(
+              Implementation::smith_waterman_affine_farrar_scores_prepared(prepared));
         },
         nb::arg("prepared"));
 
@@ -1694,7 +1717,8 @@ void bind_backend_module(nb::module_& m, const char* doc) {
     m.def(
         "_needleman_wunsch_affine_scores_prepared",
         [](PreparedAffineScoreBatch& prepared) {
-          return Implementation::needleman_wunsch_affine_scores_prepared(prepared);
+          return as_score_ndarray(
+              Implementation::needleman_wunsch_affine_scores_prepared(prepared));
         },
         nb::arg("prepared"));
   }
@@ -1763,14 +1787,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                               forced_width);
                         }) {
             if (gaps.open <= 0 && gaps.extend <= 0) {
-              return Implementation::needleman_wunsch_affine_scores(
+              return as_score_ndarray(Implementation::needleman_wunsch_affine_scores(
                   query,
                   targets,
                   match_score,
                   mismatch_score,
                   gaps.open,
                   gaps.extend,
-                  forced_width);
+                  forced_width));
             }
           }
         } else {
@@ -1784,13 +1808,13 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                               forced_width);
                         }) {
             if (gaps.open <= 0) {
-              return Implementation::needleman_wunsch_scores(
+              return as_score_ndarray(Implementation::needleman_wunsch_scores(
                   query,
                   targets,
                   match_score,
                   mismatch_score,
                   gaps.open,
-                  forced_width);
+                  forced_width));
             }
           }
         }

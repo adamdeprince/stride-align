@@ -238,7 +238,7 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
       }
 
       if (direction == TraceDirection::diagonal) {
-        result.operations.push_back(query[row - 1] == target[column - 1] ? 'M' : 'X');
+        result.operations.push_back(query[row - 1] == target[column - 1] ? '=' : 'X');
         --row;
         --column;
         continue;

@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from stride_align import (
@@ -13,6 +14,8 @@ from stride_align import (
     backend_is_available,
     detect_best_backend,
     needleman_wunsch_cigar,
+    needleman_wunsch_normalized_score,
+    needleman_wunsch_normalized_scores,
     needleman_wunsch_path,
     needleman_wunsch_path_info,
     needleman_wunsch_score,
@@ -20,8 +23,12 @@ from stride_align import (
     needleman_wunsch_trace_cigar,
     needleman_wunsch_trade_cigar,
     smith_waterman_cigar,
+    smith_waterman_farrar_normalized_score,
+    smith_waterman_farrar_normalized_scores,
     smith_waterman_farrar_score,
     smith_waterman_farrar_scores,
+    smith_waterman_normalized_score,
+    smith_waterman_normalized_scores,
     smith_waterman_path,
     smith_waterman_path_info,
     smith_waterman_score,
@@ -58,29 +65,106 @@ def test_scores_batch_api_matches_scalar_scores() -> None:
     query = "foo"
     targets = ["foo", "bar", "food"]
 
-    assert Scores(query).compare(targets) == [
-        smith_waterman_score(query, target) for target in targets
-    ]
-    assert Scores(query, variant="needleman_wunsch").compare(targets) == [
-        needleman_wunsch_score(query, target) for target in targets
-    ]
-    assert Scores(query, variant="farrar").compare(targets) == [
-        smith_waterman_farrar_score(query, target) for target in targets
-    ]
+    sw = Scores(query).compare(targets)
+    nw = Scores(query, variant="needleman_wunsch").compare(targets)
+    farrar = Scores(query, variant="farrar").compare(targets)
+    assert isinstance(sw, np.ndarray) and sw.dtype == np.int64
+    assert sw.tolist() == [smith_waterman_score(query, target) for target in targets]
+    assert nw.tolist() == [needleman_wunsch_score(query, target) for target in targets]
+    assert farrar.tolist() == [smith_waterman_farrar_score(query, target) for target in targets]
 
 
 def test_public_plural_score_functions_match_scalar_scores() -> None:
     query = "foo"
     targets = ["foo", "bar", "food"]
 
-    assert smith_waterman_scores(query, targets) == [
-        smith_waterman_score(query, target) for target in targets
+    sw = smith_waterman_scores(query, targets)
+    nw = needleman_wunsch_scores(query, targets)
+    farrar = smith_waterman_farrar_scores(query, targets)
+    assert isinstance(sw, np.ndarray) and sw.dtype == np.int64
+    assert isinstance(nw, np.ndarray) and nw.dtype == np.int64
+    assert isinstance(farrar, np.ndarray) and farrar.dtype == np.int64
+    assert sw.tolist() == [smith_waterman_score(query, target) for target in targets]
+    assert nw.tolist() == [needleman_wunsch_score(query, target) for target in targets]
+    assert farrar.tolist() == [smith_waterman_farrar_score(query, target) for target in targets]
+
+
+def test_smith_waterman_normalized_score_perfect_match_is_one() -> None:
+    assert smith_waterman_normalized_score("hello", "hello") == 1.0
+    assert smith_waterman_normalized_score("hello", "say hello world") == 1.0
+
+
+def test_smith_waterman_normalized_score_divides_by_shorter_length() -> None:
+    # 3 matches at match_score=2 over a query of length 3: 6 / (3*2) == 1.0.
+    assert smith_waterman_normalized_score("abc", "abcxyz", match_score=2) == 1.0
+    # Half the query matches: 2*2 / (3*2) ≈ 0.6667.
+    assert smith_waterman_normalized_score(
+        "abc", "abXXX", match_score=2
+    ) == pytest.approx(4 / 6)
+
+
+def test_needleman_wunsch_normalized_score_divides_by_longer_length() -> None:
+    # Identical strings: match_score=2, length 3 → 6 / (3*2) == 1.0.
+    assert needleman_wunsch_normalized_score("abc", "abc", match_score=2) == 1.0
+    # 3 matches + 3 trailing gaps: score = 6 + 3*(-1) = 3; denom = 6*2 = 12.
+    assert needleman_wunsch_normalized_score(
+        "abc", "abcxyz", match_score=2, gap_score=-1
+    ) == pytest.approx(3 / 12)
+
+
+def test_normalized_scores_match_per_pair_normalization() -> None:
+    query = "foo"
+    targets = ["foo", "bar", "food", "foobar"]
+
+    sw_expected = [
+        smith_waterman_normalized_score(query, target) for target in targets
     ]
-    assert needleman_wunsch_scores(query, targets) == [
-        needleman_wunsch_score(query, target) for target in targets
+    nw_expected = [
+        needleman_wunsch_normalized_score(query, target) for target in targets
     ]
-    assert smith_waterman_farrar_scores(query, targets) == [
-        smith_waterman_farrar_score(query, target) for target in targets
+    farrar_expected = [
+        smith_waterman_farrar_normalized_score(query, target) for target in targets
+    ]
+
+    sw_result = smith_waterman_normalized_scores(query, targets)
+    nw_result = needleman_wunsch_normalized_scores(query, targets)
+    farrar_result = smith_waterman_farrar_normalized_scores(query, targets)
+    assert isinstance(sw_result, np.ndarray) and sw_result.dtype == np.float64
+    np.testing.assert_allclose(sw_result, sw_expected)
+    np.testing.assert_allclose(nw_result, nw_expected)
+    np.testing.assert_allclose(farrar_result, farrar_expected)
+
+
+def test_normalized_score_rejects_non_positive_match_score() -> None:
+    with pytest.raises(ValueError, match="match_score must be positive"):
+        smith_waterman_normalized_score("abc", "abc", match_score=0)
+    with pytest.raises(ValueError, match="match_score must be positive"):
+        needleman_wunsch_normalized_score("abc", "abc", match_score=-1)
+    with pytest.raises(ValueError, match="match_score must be positive"):
+        smith_waterman_farrar_normalized_scores("abc", ["abc"], match_score=0)
+
+
+def test_normalized_score_clamps_negative_scores_to_zero() -> None:
+    # Two disjoint short strings under NW: score is negative, but clamps to 0.
+    assert needleman_wunsch_normalized_score(
+        "aaa", "bbbbbb", match_score=2, mismatch_score=-5, gap_score=-5
+    ) == 0.0
+
+
+def test_normalized_score_handles_empty_inputs() -> None:
+    assert smith_waterman_normalized_score("", "") == 1.0
+    assert needleman_wunsch_normalized_score("", "") == 1.0
+    # One empty side: SW denominator is min(0, n)*match == 0 → returns 0.0.
+    assert smith_waterman_normalized_score("", "abc") == 0.0
+
+
+def test_smith_waterman_farrar_normalized_score_matches_standard_normalized() -> None:
+    # Farrar SW must produce the same final score as standard SW, so the
+    # normalized variants should agree row-for-row.
+    query = "needle"
+    targets = ["needle", "n33dle", "haystack"]
+    assert [smith_waterman_farrar_normalized_score(query, t) for t in targets] == [
+        smith_waterman_normalized_score(query, t) for t in targets
     ]
 
 
@@ -210,7 +294,7 @@ def test_needleman_wunsch_path_on_strings() -> None:
     assert result.target_end == 4
     assert result.aligned_query == "ACGT"
     assert result.aligned_target == "ACCT"
-    assert result.operations == "MMXM"
+    assert result.operations == "==X="
 
 
 def test_needleman_wunsch_path_info_on_strings() -> None:
@@ -222,8 +306,8 @@ def test_needleman_wunsch_path_info_on_strings() -> None:
     assert result.query_end == 4
     assert result.target_start == 0
     assert result.target_end == 4
-    assert result.operations == "MMXM"
-    assert result.cigar == "2M1X1M"
+    assert result.operations == "==X="
+    assert result.cigar == "2=1X1="
     assert result.matches == 3
     assert result.mismatches == 1
     assert result.insertions == 0
@@ -246,7 +330,7 @@ def test_string_fast_path_handles_wide_unicode() -> None:
     assert result.score == 4
     assert result.aligned_query == "A🙂"
     assert result.aligned_target == "A🙂"
-    assert result.operations == "MM"
+    assert result.operations == "=="
 
 
 def test_smith_waterman_score_on_strings() -> None:
@@ -311,11 +395,11 @@ def test_affine_gap_scores_are_supported_by_public_api() -> None:
     assert result.score == 7
     assert result.aligned_query == "AAA---BBB"
     assert result.aligned_target == "AAACCCBBB"
-    assert result.operations == "MMMIIIMMM"
-    assert smith_waterman_cigar(query, target, **kwargs) == "3M3I3M"
-    assert smith_waterman_trace_cigar(query, target, **kwargs) == "3M3I3M"
-    assert smith_waterman_trade_cigar(query, target, **kwargs) == "3M3I3M"
-    assert needleman_wunsch_cigar(query, target, **kwargs) == "3M3I3M"
+    assert result.operations == "===III==="
+    assert smith_waterman_cigar(query, target, **kwargs) == "3=3I3="
+    assert smith_waterman_trace_cigar(query, target, **kwargs) == "3=3I3="
+    assert smith_waterman_trade_cigar(query, target, **kwargs) == "3=3I3="
+    assert needleman_wunsch_cigar(query, target, **kwargs) == "3=3I3="
 
 
 def test_smith_waterman_path_on_bytes_returns_bytes() -> None:
@@ -329,7 +413,7 @@ def test_smith_waterman_path_on_bytes_returns_bytes() -> None:
     assert result.target_end == 3
     assert result.aligned_query == b"CCG"
     assert result.aligned_target == b"CCG"
-    assert result.operations == "MMM"
+    assert result.operations == "==="
 
 
 def test_smith_waterman_path_info_on_bytes() -> None:
@@ -341,8 +425,8 @@ def test_smith_waterman_path_info_on_bytes() -> None:
     assert result.query_end == 4
     assert result.target_start == 0
     assert result.target_end == 3
-    assert result.operations == "MMM"
-    assert result.cigar == "3M"
+    assert result.operations == "==="
+    assert result.cigar == "3="
     assert result.matches == 3
     assert result.mismatches == 0
     assert result.insertions == 0
@@ -371,7 +455,7 @@ def _linear_cigar_score(
         if character.isdigit():
             count = count * 10 + int(character)
             continue
-        if character == "M":
+        if character == "=":
             score += count * match_score
         elif character == "X":
             score += count * mismatch_score
@@ -419,7 +503,7 @@ def test_sequence_inputs_are_serialized_and_return_tuples() -> None:
     assert result.target_end == 2
     assert result.aligned_query == (frozenset({2}), frozenset({3}))
     assert result.aligned_target == (frozenset({2}), frozenset({3}))
-    assert result.operations == "MM"
+    assert result.operations == "=="
 
 
 def test_mixed_sequence_and_bytes_treats_bytes_as_sequence() -> None:
@@ -428,7 +512,7 @@ def test_mixed_sequence_and_bytes_treats_bytes_as_sequence() -> None:
     assert result.score == 4
     assert result.aligned_query == (1, 2)
     assert result.aligned_target == (1, 2)
-    assert result.operations == "MM"
+    assert result.operations == "=="
 
 
 def test_width_parameter_can_force_a_wider_kernel() -> None:
@@ -437,7 +521,7 @@ def test_width_parameter_can_force_a_wider_kernel() -> None:
     assert result.score == 6
     assert result.aligned_query == "CCG"
     assert result.aligned_target == "CCG"
-    assert result.operations == "MMM"
+    assert result.operations == "==="
 
 
 def test_width_parameter_rejects_narrower_kernel() -> None:
@@ -1080,10 +1164,10 @@ def test_direct_generic_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1115,7 +1199,8 @@ def test_direct_avx2_prepared_batch_scores_match_direct_scores() -> None:
         gap_score=-1,
         width=16,
     )
-    assert avx2._smith_waterman_farrar_scores_prepared(prepared) == (
+    np.testing.assert_array_equal(
+        avx2._smith_waterman_farrar_scores_prepared(prepared),
         avx2.smith_waterman_farrar_scores(
             query,
             targets,
@@ -1123,7 +1208,7 @@ def test_direct_avx2_prepared_batch_scores_match_direct_scores() -> None:
             mismatch_score=-1,
             gap_score=-1,
             width=16,
-        )
+        ),
     )
 
     prepared_affine = avx2._prepare_needleman_wunsch_affine_scores(
@@ -1131,8 +1216,9 @@ def test_direct_avx2_prepared_batch_scores_match_direct_scores() -> None:
         targets,
         **affine_kwargs,
     )
-    assert avx2._needleman_wunsch_affine_scores_prepared(prepared_affine) == (
-        avx2.needleman_wunsch_scores(query, targets, **affine_kwargs)
+    np.testing.assert_array_equal(
+        avx2._needleman_wunsch_affine_scores_prepared(prepared_affine),
+        avx2.needleman_wunsch_scores(query, targets, **affine_kwargs),
     )
 
 
@@ -1152,10 +1238,10 @@ def test_direct_swar_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 FARRAR_BACKENDS = [
@@ -1253,11 +1339,11 @@ def test_direct_backends_accept_affine_gap_scores(
     assert module.needleman_wunsch_score("AAABBB", "AAACCCBBB", width=width, **kwargs) == 7
     assert (
         module.smith_waterman_path("AAABBB", "AAACCCBBB", width=width, **kwargs).operations
-        == "MMMIIIMMM"
+        == "===III==="
     )
-    assert module.smith_waterman_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3M3I3M"
-    assert module.smith_waterman_trace_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3M3I3M"
-    assert module.smith_waterman_trade_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3M3I3M"
+    assert module.smith_waterman_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3=3I3="
+    assert module.smith_waterman_trace_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3=3I3="
+    assert module.smith_waterman_trade_cigar("AAABBB", "AAACCCBBB", width=width, **kwargs) == "3=3I3="
 
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])
@@ -1487,10 +1573,10 @@ def test_direct_sse41_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1509,10 +1595,10 @@ def test_direct_avx2_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1531,10 +1617,10 @@ def test_direct_avx512bwvl_backend_supports_all_kernel_widths(width: int) -> Non
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1564,10 +1650,10 @@ def test_direct_avx10_256_backend_supports_all_kernel_widths(width: int) -> None
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1597,10 +1683,10 @@ def test_direct_avx10_512_backend_supports_all_kernel_widths(width: int) -> None
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1630,10 +1716,10 @@ def test_direct_macos_arm64_neon_backend_supports_all_kernel_widths(width: int) 
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1652,10 +1738,10 @@ def test_direct_neon_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1674,10 +1760,10 @@ def test_direct_sve_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1696,10 +1782,10 @@ def test_direct_sve2_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1718,10 +1804,10 @@ def test_direct_lsx_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1740,10 +1826,10 @@ def test_direct_lasx_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1762,10 +1848,10 @@ def test_direct_vsx_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 @pytest.mark.skipif(
@@ -1784,10 +1870,10 @@ def test_direct_rvv_backend_supports_all_kernel_widths(width: int) -> None:
 
     assert sw_result.aligned_query == "CCG"
     assert sw_result.aligned_target == "CCG"
-    assert sw_result.operations == "MMM"
+    assert sw_result.operations == "==="
     assert nw_result.aligned_query == "ACGT"
     assert nw_result.aligned_target == "ACCT"
-    assert nw_result.operations == "MMXM"
+    assert nw_result.operations == "==X="
 
 
 def test_zero_score_local_alignment_returns_empty_path() -> None:

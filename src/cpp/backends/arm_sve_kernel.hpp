@@ -240,7 +240,7 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
             break;
           }
           if (direction == TraceDirection::diagonal) {
-            operations.push_back(query[row - 1] == target[column - 1] ? 'M' : 'X');
+            operations.push_back(query[row - 1] == target[column - 1] ? '=' : 'X');
             --row;
             --column;
           } else if (direction == TraceDirection::up) {
@@ -284,7 +284,7 @@ KernelResult<OpsTemplate, Token, Cell, TrackDirections> run_kernel(
             break;
           }
           if (direction == TraceDirection::diagonal) {
-            operations.push_back(query[row - 1] == target[column - 1] ? 'M' : 'X');
+            operations.push_back(query[row - 1] == target[column - 1] ? '=' : 'X');
             --row;
             --column;
           } else if (direction == TraceDirection::up) {

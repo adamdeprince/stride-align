@@ -244,7 +244,7 @@ TracebackResult traceback(
                 match_score,
                 mismatch_score));
         if (h[cell_index] == diagonal) {
-          result.operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+          result.operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
           --row;
           --column;
           continue;

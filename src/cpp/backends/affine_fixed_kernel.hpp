@@ -288,7 +288,7 @@ generic_detail::TracebackResult traceback_result(
         break;
       }
       if (direction == generic_detail::TraceDirection::diagonal) {
-        result.operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        result.operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;

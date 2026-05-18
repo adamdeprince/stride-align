@@ -10,6 +10,8 @@ import random
 import statistics
 import sys
 import time
+
+import numpy as np
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -1433,8 +1435,8 @@ def _output_for_variant(backend_name: str, variant: str) -> str:
 
 
 def _result_score(result: Any) -> int:
-    if isinstance(result, int):
-        return result
+    if isinstance(result, (int, np.integer)):
+        return int(result)
     return int(result.score)
 
 

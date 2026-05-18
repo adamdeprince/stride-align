@@ -289,7 +289,7 @@ std::string linear_small_global_operations(
   while (row > 0 || column > 0) {
     const Direction direction = directions[matrix_index(row, column, columns)];
     if (direction == Direction::diagonal) {
-      reversed_operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      reversed_operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -654,7 +654,7 @@ AlignmentPath linear_path_info(
     }
 
     if (direction == Direction::diagonal) {
-      operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -792,7 +792,7 @@ std::string linear_cigar(
     }
 
     if (direction == Direction::diagonal) {
-      cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+      cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
       --row;
       --column;
       continue;
@@ -1023,7 +1023,7 @@ AlignmentPath affine_path_info(
 
       const Direction source = trace_direction(trace_cell);
       if (source == Direction::diagonal) {
-        operations.push_back(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;
@@ -1197,7 +1197,7 @@ AffineCigarTrace affine_full_cigar_trace(
 
       const Direction source = trace_direction(trace_cell);
       if (source == Direction::diagonal) {
-        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;
@@ -1432,7 +1432,7 @@ std::optional<AffineCigarTrace> affine_banded_cigar_trace(
 
       const Direction source = trace_direction(trace_cell);
       if (source == Direction::diagonal) {
-        cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+        cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
         --row;
         --column;
         continue;
@@ -1865,7 +1865,7 @@ std::string affine_checkpointed_cigar(
       if (state == AffineState::h) {
         const Direction source = trace_direction(trace_cell);
         if (source == Direction::diagonal) {
-          cigar.push(query[row - 1U] == target[column - 1U] ? 'M' : 'X');
+          cigar.push(query[row - 1U] == target[column - 1U] ? '=' : 'X');
           --row;
           --column;
           continue;

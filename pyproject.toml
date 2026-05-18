@@ -23,7 +23,9 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Bio-Informatics",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = []
+dependencies = [
+  "numpy>=1.22",
+]
 
 [project.scripts]
 stride-align-benchmark = "stride_align.benchmark:main"
