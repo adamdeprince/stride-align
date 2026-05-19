@@ -1,0 +1,17 @@
+workload,algo,q_len,n_targets,stride_align_us,baseline_us,baseline,ratio
+1-vs-1000 short,levenshtein,5,1000,52.6,140.4,python-Levenshtein,2.67x
+1-vs-1000 short,osa,5,1000,56.8,129.1,rapidfuzz OSA,2.27x
+1-vs-1000 short,levenshtein,10,1000,52.8,148.0,python-Levenshtein,2.80x
+1-vs-1000 short,osa,10,1000,56.9,142.3,rapidfuzz OSA,2.50x
+1-vs-1000 short,levenshtein,20,1000,52.8,175.9,python-Levenshtein,3.33x
+1-vs-1000 short,osa,20,1000,56.9,179.4,rapidfuzz OSA,3.15x
+1-vs-1000 short,levenshtein,30,1000,52.7,213.1,python-Levenshtein,4.05x
+1-vs-1000 short,osa,30,1000,56.9,221.3,rapidfuzz OSA,3.89x
+1-vs-200 medium,levenshtein,10,200,149.9,119.3,python-Levenshtein,0.80x
+1-vs-200 medium,osa,10,200,164.9,127.4,rapidfuzz OSA,0.77x
+1-vs-200 medium,levenshtein,32,200,149.9,121.4,python-Levenshtein,0.81x
+1-vs-200 medium,osa,32,200,165.1,130.0,rapidfuzz OSA,0.79x
+1-vs-200 medium,levenshtein,64,200,149.9,127.1,python-Levenshtein,0.85x
+1-vs-200 medium,osa,64,200,165.2,174.8,rapidfuzz OSA,1.06x
+1-vs-200 medium,levenshtein,100,200,163.2,255.6,python-Levenshtein,1.57x
+1-vs-200 medium,levenshtein,200,200,223.9,433.8,python-Levenshtein,1.94x

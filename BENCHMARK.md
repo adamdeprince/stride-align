@@ -41,6 +41,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Damerau-Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | rapidfuzz OSA | 4 | **5.49x** | 5.43x | 4.35x | 7.45x |
 | Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 7 | **2.17x** | 2.18x | 1.54x | 3.34x |
 | Damerau-Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 6 | **1.43x** | 1.43x | 1.14x | 1.97x |
+| Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | python-Levenshtein | 4 | **3.18x** | 3.06x | 2.67x | 4.05x |
+| Damerau-Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | rapidfuzz OSA | 4 | **2.85x** | 2.83x | 2.27x | 3.89x |
 
 ## Intel x86 - 2026-05-18
 
@@ -382,6 +384,63 @@ Backends specialized for the new SIMD batch kernel: `x86_sse41`,
 shared `NeonOps` bundle. Other architectures (SVE / Loongson / Power)
 still fall through to the shared scalar bit-parallel dispatch and
 remain correct.
+
+## Levenshtein + Damerau-Levenshtein (Graviton4 NEON/SVE/SVE2) - 2026-05-19
+
+Raw artifact: [`benchmarks/graviton4-lev-osa-2026-05-19.csv`](benchmarks/graviton4-lev-osa-2026-05-19.csv).
+
+Build context: AWS Graviton4 (Neoverse V2, 1 vCPU c8g.medium), Ubuntu
+24.04, Python 3.14, GCC 13.x. The Graviton4 host has only 1.8 GiB RAM
+and 1 vCPU, so the build required `CMAKE_BUILD_PARALLEL_LEVEL=1` and a
+4 GiB swapfile to keep cc1plus from OOM-killing on the template-heavy
+TUs.
+
+All three ARM backends (`linux_aarch64_neon`, `linux_aarch64_sve`,
+`linux_aarch64_sve2`) share the same SIMD path: the SVE backends are
+built with `-msve-vector-bits=128`, so they hold the same 2 lanes of
+64-bit as NEON. Both wire through `NeonOps` rather than a separate
+`SveOps` bundle — the bit-parallel Lev/OSA kernel uses no
+SVE-specific feature.
+
+### Levenshtein 1-vs-1000 short (3-15 char corpus)
+
+| `q_len` | stride_align | python-Levenshtein | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 |  53 µs | 140 µs | 2.67x |
+| 10 |  53 µs | 148 µs | 2.80x |
+| 20 |  53 µs | 176 µs | 3.33x |
+| 30 |  53 µs | 213 µs | **4.05x** |
+
+### Levenshtein 1-vs-200 medium (30-250 char corpus)
+
+| `q_len` | stride_align | python-Levenshtein | ratio |
+| ---: | ---: | ---: | ---: |
+|  10 | 150 µs | **119 µs** | 0.80x |
+|  32 | 150 µs | **121 µs** | 0.81x |
+|  64 | 150 µs | **127 µs** | 0.85x |
+| 100 | **163 µs** | 256 µs | 1.57x |
+| 200 | **224 µs** | 434 µs | 1.94x |
+
+Single-word multi-target (q ≤ 64): we trail python-Levenshtein on
+medium-length targets because the per-target SIMD setup outpaces the
+2-lane parallelism gain. Multi-word kicks in at q=100; we then pull
+ahead 1.57-1.94x.
+
+### Damerau-Levenshtein 1-vs-1000 short
+
+| `q_len` | stride_align | rapidfuzz OSA | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 |  57 µs | 129 µs | 2.27x |
+| 10 |  57 µs | 142 µs | 2.50x |
+| 20 |  57 µs | 179 µs | 3.15x |
+| 30 |  57 µs | 221 µs | **3.89x** |
+
+### NEON vs SVE vs SVE2
+
+All three ARM backends produce identical results and identical
+performance (53 µs for q=10 short, etc.). The auto-detect picks SVE2
+on Graviton4 since it ranks first in the priority list, but routing
+through `NeonOps` means swapping backends is observationally a no-op.
 
 ## Levenshtein + Damerau-Levenshtein (Loongson LASX/LSX) - 2026-05-19
 
