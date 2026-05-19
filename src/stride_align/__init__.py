@@ -1291,6 +1291,47 @@ def damerau_levenshtein_normalized_scores(query: object, targets: object) -> np.
     return _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_scores(query, targets)
 
 
+def hamming_score(query: object, target: object) -> int:
+    """Hamming distance between two equal-length sequences.
+
+    Raises ``ValueError`` when ``len(query) != len(target)``. Pad inputs
+    yourself if you want length-tolerant behavior.
+    """
+    return int(_LEVENSHTEIN_BACKEND.hamming_score(query, target))
+
+
+def hamming_normalized_score(query: object, target: object) -> float:
+    """Hamming similarity in [0, 1] (1 = identical). Raises ValueError on length mismatch."""
+    return float(_LEVENSHTEIN_BACKEND.hamming_normalized_score(query, target))
+
+
+def hamming_scores(query: object, targets: object) -> np.ndarray:
+    """Hamming distance from query to every target, returned as ndarray[int64].
+
+    Every target must have the same length as ``query``; otherwise
+    ``ValueError`` is raised (the call processes targets in order and
+    raises at the first mismatch).
+    """
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.hamming_scores(query, targets)
+
+
+def hamming_normalized_scores(query: object, targets: object) -> np.ndarray:
+    """Hamming similarity per target, returned as ndarray[float64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.hamming_normalized_scores(query, targets)
+
+
 __all__ = [
     "AlignmentPath",
     "AlignmentResult",
@@ -1304,6 +1345,10 @@ __all__ = [
     "damerau_levenshtein_score",
     "damerau_levenshtein_scores",
     "detect_best_backend",
+    "hamming_normalized_score",
+    "hamming_normalized_scores",
+    "hamming_score",
+    "hamming_scores",
     "levenshtein_normalized_score",
     "levenshtein_normalized_scores",
     "levenshtein_score",

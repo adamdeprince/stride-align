@@ -11,8 +11,10 @@
 
 #include "affine.hpp"
 #include "backends/profile_traceback.hpp"
+#include "hamming_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "stride_align/alignment.hpp"
+#include "stride_align/hamming.hpp"
 #include "stride_align/levenshtein.hpp"
 
 namespace stride_align::bindings {
@@ -2282,6 +2284,49 @@ void bind_backend_module(nb::module_& m, const char* doc) {
               ::stride_align::levenshtein::dispatch_osa_normalized_scores(
                   query, targets));
         }
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
+  // --- Hamming ----------------------------------------------------------
+  //
+  // Requires `len(query) == len(target)`; mismatched lengths raise
+  // ValueError. The SIMD path uses two custom kernels: within-string
+  // bytewise cmpne + popcount for the singular API, and across-target
+  // byte-lane counters for the batch API (one target per byte lane,
+  // up to 16/32/64 targets in parallel depending on ISA). Wider unicode
+  // and sequence-of-object inputs fall through to scalar.
+
+  m.def(
+      "hamming_score",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::hamming::dispatch_score(query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "hamming_normalized_score",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::hamming::dispatch_normalized_score(query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "hamming_scores",
+      [](nb::handle query, nb::handle targets) {
+        return as_score_ndarray(
+            ::stride_align::hamming::dispatch_scores(query, targets));
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
+  m.def(
+      "hamming_normalized_scores",
+      [](nb::handle query, nb::handle targets) {
+        return as_normalized_ndarray(
+            ::stride_align::hamming::dispatch_normalized_scores(query, targets));
       },
       nb::arg("query"),
       nb::arg("targets"));
