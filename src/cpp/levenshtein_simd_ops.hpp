@@ -245,8 +245,10 @@ struct LsxOps {
   static Vec shl1(Vec a) { return __lsx_vslli_d(a, 1); }
   static Vec cmpeq(Vec a, Vec b) { return __lsx_vseq_d(a, b); }
   static Vec andnot_(Vec a, Vec b) {
-    // LSX vandn(x, y) = x & ~y → andnot_(a, b) = ~a & b = vandn(b, a).
-    return __lsx_vandn_v(b, a);
+    // LSX vandn(x, y) = ~x & y (Intel-style, contrary to the LoongArch
+    // ISA reference's mnemonic name); same semantics as Intel
+    // andnot_si128.
+    return __lsx_vandn_v(a, b);
   }
   static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
     Vec out = __lsx_vreplgr2vr_d(static_cast<long>(base[indices[0]]));
@@ -292,7 +294,8 @@ struct LasxOps {
   static Vec shl1(Vec a) { return __lasx_xvslli_d(a, 1); }
   static Vec cmpeq(Vec a, Vec b) { return __lasx_xvseq_d(a, b); }
   static Vec andnot_(Vec a, Vec b) {
-    return __lasx_xvandn_v(b, a);
+    // Same Intel-style convention as LSX: xvandn(x, y) = ~x & y.
+    return __lasx_xvandn_v(a, b);
   }
   static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
     Vec out = __lasx_xvreplgr2vr_d(static_cast<long>(base[indices[0]]));
