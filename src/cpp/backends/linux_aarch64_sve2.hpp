@@ -7,6 +7,9 @@
 #include <nanobind/nanobind.h>
 
 #include "backends/arm_sve_backend.hpp"
+#include "levenshtein_simd.hpp"
+#include "levenshtein_simd_ops.hpp"
+#include "osa_simd.hpp"
 
 namespace stride_align::backend_linux_aarch64_sve2 {
 
@@ -383,6 +386,41 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  // Same NeonOps routing as the SVE backend: -msve-vector-bits=128
+  // makes SVE/SVE2 use 128-bit vectors that map onto the same hardware
+  // path as NEON for our 2-lane bit-parallel kernel.
+  static std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    ensure_supported();
+    return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
+        ::stride_align::levenshtein_simd::NeonOps>(query, targets, cutoff);
+  }
+
+  static std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    ensure_supported();
+    return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::NeonOps>(query, targets, cutoff);
+  }
+
+  static std::vector<Score> damerau_levenshtein_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return ::stride_align::osa_simd::osa_scores_simd<
+        ::stride_align::levenshtein_simd::NeonOps>(query, targets);
+  }
+
+  static std::vector<double> damerau_levenshtein_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return ::stride_align::osa_simd::osa_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::NeonOps>(query, targets);
   }
 };
 
