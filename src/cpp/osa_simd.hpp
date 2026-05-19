@@ -188,6 +188,15 @@ inline std::vector<Score> osa_scores_simd(
         std::vector<Score> out(count);
         std::array<const std::uint8_t*, lanes> batch_ptrs{};
         std::array<std::size_t, lanes> batch_lens{};
+
+        // Same conditional-release policy as levenshtein_scores_simd:
+        // release the GIL once we've snapshotted the Python objects
+        // and are about to enter the pure-SIMD loop, but only if the
+        // batch is large enough that the lock round-trip stays under
+        // 2% of total kernel time.
+        const ::stride_align::levenshtein_simd::ConditionalGilRelease gil_release(
+            ::stride_align::levenshtein_simd::should_release_gil<Ops>(count, q_len));
+
         for (std::size_t b = 0; b < count; b += lanes) {
           const std::size_t batch_count = std::min(lanes, count - b);
           for (std::size_t l = 0; l < batch_count; ++l) {

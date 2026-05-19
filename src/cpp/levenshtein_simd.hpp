@@ -391,6 +391,45 @@ inline void byte_view(
   ::stride_align::byte_view::view(obj, kind, ptr, len);
 }
 
+// Decide whether the SIMD batch is large enough to justify releasing the
+// GIL. The PyEval_SaveThread / PyEval_RestoreThread pair costs roughly
+// 1 µs round-trip on modern CPython; the user constraint is that this
+// overhead must stay under 2% of total kernel time, so the kernel must
+// take at least ~50 µs before the release pays for itself.
+//
+// Per-column kernel work is ~15 SIMD ops at ~1 ns each (single-word).
+// Total kernel time ≈ q_len * count * 15 / lanes nanoseconds. Solving
+// `total >= 50,000 ns` for `q_len * count` gives the per-lane threshold
+// 3333 * lanes. Multi-word (W ≥ 2) only inflates the per-column cost,
+// so the same threshold stays conservative.
+template <typename Ops>
+constexpr inline bool should_release_gil(std::size_t count, std::size_t q_len) {
+  return count * q_len > 3000U * Ops::lanes;
+}
+
+// RAII wrapper that releases the GIL only if the work estimate justifies
+// it. Movable but not copyable. Uses the raw Python C API rather than
+// nanobind's gil_scoped_release so the "do nothing" path is a literal
+// no-op (no heap allocation, no exception machinery).
+class ConditionalGilRelease {
+ public:
+  explicit ConditionalGilRelease(bool release) noexcept {
+    if (release) {
+      saved_ = PyEval_SaveThread();
+    }
+  }
+  ~ConditionalGilRelease() {
+    if (saved_ != nullptr) {
+      PyEval_RestoreThread(saved_);
+    }
+  }
+  ConditionalGilRelease(const ConditionalGilRelease&) = delete;
+  ConditionalGilRelease& operator=(const ConditionalGilRelease&) = delete;
+
+ private:
+  PyThreadState* saved_ = nullptr;
+};
+
 // Try to view every target as bytes or 1-byte unicode (either is
 // byte-identical to a `const uint8_t*` buffer). The check is per-target;
 // each target picks its own kind. Returns true on success with `ptrs` /
@@ -453,6 +492,14 @@ inline std::vector<Score> levenshtein_scores_simd(
         std::array<std::size_t, lanes> batch_lens{};
         const bool has_cutoff =
             cutoff != ::stride_align::levenshtein::kNoCutoff;
+
+        // The SIMD batch loop below touches only raw uint8_t* buffers
+        // (kept alive by `owner`) and our own scratch arrays — no
+        // Python ABI calls. Release the GIL for the duration if the
+        // workload is large enough that the save/restore round-trip is
+        // a small fraction of total kernel time. For tiny batches we
+        // keep the GIL to avoid adding overhead to fast paths.
+        const ConditionalGilRelease gil_release(should_release_gil<Ops>(count, q_len));
 
         // Pick the right kernel based on pattern length. Single-word
         // covers (0, 64]; multi-word handles (64, 256] in 64-char
