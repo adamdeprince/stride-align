@@ -21,7 +21,7 @@ sudo apt install python3-numpy
 
 PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.1.0/stride_align-0.1.0-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.2.0/stride_align-0.2.0-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 Prebuilt LoongArch64 wheels are available for Python 3.10, 3.11, 3.12,
@@ -297,6 +297,47 @@ Some functions expose CIGAR strings, short for "Concise Idiosyncratic
 Gapped Alignment Report". CIGAR is the compact alignment-operation notation
 used by SAM/BAM tooling. If you want the full formal version, see the
 [SAM specification](https://samtools.github.io/hts-specs/SAMv1.pdf).
+
+### Levenshtein and Damerau-Levenshtein
+
+Beyond Smith-Waterman and Needleman-Wunsch, `stride-align` exposes two
+unit-cost edit-distance metrics with their own SIMD-batched code paths:
+
+```python
+import stride_align
+
+# Levenshtein (Myers 1999 bit-parallel) — inserts, deletes, substitutes
+stride_align.levenshtein_score("kitten", "sitting")               # -> 3
+stride_align.levenshtein_normalized_score("kitten", "sitting")    # -> 0.571...
+stride_align.levenshtein_scores("kitten", ["kit", "sitting"])     # -> ndarray[int64]
+stride_align.levenshtein_normalized_scores("kitten", targets)     # -> ndarray[float64]
+
+# Optional `score_cutoff` (rapidfuzz convention): bail early per-target,
+# results that exceed the cutoff come back as `cutoff + 1`.
+stride_align.levenshtein_scores(query, targets, score_cutoff=3)
+
+# Damerau-Levenshtein (OSA-restricted, Hyyrö 2002) — adds adjacent
+# transposition at unit cost. This is what rapidfuzz exposes as
+# OSA.distance and is what most callers asking for
+# "Damerau-Levenshtein" actually want.
+stride_align.damerau_levenshtein_score("ab", "ba")                # -> 1
+stride_align.damerau_levenshtein_scores(query, targets)           # -> ndarray[int64]
+```
+
+Both algorithms use a bit-parallel Myers-style inner loop. The batch
+variants pack one target per SIMD lane (`*_scores`) and currently
+specialize on every architecture's primary 64-bit-lane SIMD:
+
+- x86: SSE4.1 / AVX2 / AVX-512 / AVX10-256 / AVX10-512
+- ARM: NEON (Linux + macOS), SVE / SVE2
+- LoongArch: LSX / LASX
+- PowerPC: VSX
+
+Patterns up to 64 chars run a single-word Myers; 65-256 chars use the
+multi-word kernel (W=2/3/4). Beyond 256, the implementation falls
+through to a scalar bit-parallel dispatch.
+
+See [BENCHMARK.md](BENCHMARK.md) for cross-architecture numbers.
 
 ## Optimizations and Benchmarks
 
