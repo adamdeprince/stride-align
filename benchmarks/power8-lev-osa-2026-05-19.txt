@@ -1,0 +1,22 @@
+Levenshtein 1-vs-1000 short (Power8 VSX vs generic):
+  q= 5: gen= 103.3 us  VSX=  43.7 us  ratio=2.37x
+  q=10: gen= 109.1 us  VSX=  43.7 us  ratio=2.49x
+  q=20: gen= 110.9 us  VSX=  43.7 us  ratio=2.54x
+  q=30: gen= 125.1 us  VSX=  43.6 us  ratio=2.87x
+
+Levenshtein 1-vs-200 medium:
+  q= 10: gen=  152.9 us  VSX=   97.8 us  ratio=1.56x
+  q= 64: gen=  199.5 us  VSX=   97.7 us  ratio=2.04x
+  q=100: gen=  468.0 us  VSX=  172.1 us  ratio=2.72x
+  q=200: gen=  675.1 us  VSX=  222.8 us  ratio=3.03x
+
+Damerau-Levenshtein 1-vs-1000 short:
+  q= 5: gen= 108.7 us  VSX=  48.4 us  ratio=2.25x
+  q=10: gen= 107.6 us  VSX=  48.4 us  ratio=2.22x
+  q=20: gen= 111.5 us  VSX=  48.4 us  ratio=2.30x
+  q=30: gen= 124.2 us  VSX=  48.4 us  ratio=2.57x
+
+Damerau-Levenshtein 1-vs-200 medium:
+  q=10: gen=  159.3 us  VSX=  109.2 us  ratio=1.46x
+  q=32: gen=  182.4 us  VSX=  109.3 us  ratio=1.67x
+  q=64: gen=  203.9 us  VSX=  109.2 us  ratio=1.87x

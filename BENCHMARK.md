@@ -43,6 +43,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Damerau-Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 6 | **1.43x** | 1.43x | 1.14x | 1.97x |
 | Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | python-Levenshtein | 4 | **3.18x** | 3.06x | 2.67x | 4.05x |
 | Damerau-Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | rapidfuzz OSA | 4 | **2.85x** | 2.83x | 2.27x | 3.89x |
+| Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 8 | **2.40x** | 2.51x | 1.56x | 3.03x |
+| Damerau-Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 7 | **1.99x** | 2.22x | 1.46x | 2.57x |
 
 ## Intel x86 - 2026-05-18
 
@@ -384,6 +386,67 @@ Backends specialized for the new SIMD batch kernel: `x86_sse41`,
 shared `NeonOps` bundle. Other architectures (SVE / Loongson / Power)
 still fall through to the shared scalar bit-parallel dispatch and
 remain correct.
+
+## Levenshtein + Damerau-Levenshtein (Power8 VSX) - 2026-05-19
+
+Raw artifact: [`benchmarks/power8-lev-osa-2026-05-19.txt`](benchmarks/power8-lev-osa-2026-05-19.txt).
+
+Build context: Power8 KVM-virtualized core (4.157 GHz), Ubuntu 20.04,
+Python 3.13, AT15.0 GCC 11.4 at `/opt/at15.0/bin/g++` (the system GCC
+9.4 is too old for `cxx_std_23`), CMake 4.3.2. `VsxOps` is the new
+128-bit / 2-lane bundle (same shape as SSE / NEON / LSX) using
+`__vector unsigned long long` and Altivec intrinsics. Power8's ISA
+2.07 has native unsigned `vec_cmpgt` for 64-bit lanes so the kernel
+ports without emulation.
+
+No rapidfuzz / python-Levenshtein wheels exist for ppc64le on PyPI;
+comparison is against our generic backend (which runs tight bit-parallel
+Myers/OSA scalars).
+
+### Levenshtein 1-vs-1000 short (3-15 char corpus)
+
+| `q_len` | generic | VSX | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 | 103 µs | **44 µs** | 2.37x |
+| 10 | 109 µs | **44 µs** | 2.49x |
+| 20 | 111 µs | **44 µs** | 2.54x |
+| 30 | 125 µs | **44 µs** | **2.87x** |
+
+### Levenshtein 1-vs-200 medium (30-250 char corpus)
+
+| `q_len` | generic | VSX | ratio |
+| ---: | ---: | ---: | ---: |
+|  10 | 153 µs |  98 µs | 1.56x |
+|  64 | 200 µs |  98 µs | 2.04x |
+| 100 | 468 µs | 172 µs | 2.72x |
+| 200 | 675 µs | 223 µs | **3.03x** |
+
+Multi-word kernel takes over at q=100; the ratio grows because the
+W-block SIMD scales with q while generic scalar's overhead scales
+linearly with q too.
+
+### Damerau-Levenshtein 1-vs-1000 short
+
+| `q_len` | generic | VSX | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 | 109 µs | **48 µs** | 2.25x |
+| 10 | 108 µs | **48 µs** | 2.22x |
+| 20 | 112 µs | **48 µs** | 2.30x |
+| 30 | 124 µs | **48 µs** | **2.57x** |
+
+### Damerau-Levenshtein 1-vs-200 medium
+
+| `q_len` | generic | VSX | ratio |
+| ---: | ---: | ---: | ---: |
+| 10 | 159 µs | 109 µs | 1.46x |
+| 32 | 182 µs | 109 µs | 1.67x |
+| 64 | 204 µs | 109 µs | **1.87x** |
+
+Unlike LSX (which trails generic on the 2-lane Damerau medium
+workload), Power8 VSX wins consistently here. Power8's faster
+`vec_extract` for the per-lane gather setup and the native unsigned
+`vec_cmpgt` keep the 2-lane SIMD competitive even on short-pattern
+inner loops.
 
 ## Levenshtein + Damerau-Levenshtein (Graviton4 NEON/SVE/SVE2) - 2026-05-19
 
