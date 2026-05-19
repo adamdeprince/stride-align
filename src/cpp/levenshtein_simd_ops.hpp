@@ -261,9 +261,12 @@ struct LsxOps {
   static Vec shl1(Vec a) { return __lsx_vslli_d(a, 1); }
   static Vec cmpeq(Vec a, Vec b) { return __lsx_vseq_d(a, b); }
   static Vec andnot_(Vec a, Vec b) {
-    // LSX vandn(x, y) = ~x & y (Intel-style, contrary to the LoongArch
-    // ISA reference's mnemonic name); same semantics as Intel
-    // andnot_si128.
+    // LSX vandn(x, y) = ~x & y (Intel-style), contrary to what the
+    // LoongArch ISA reference's "AND-NOT" mnemonic suggests when read
+    // against Power's vandc or ARM's bic (both of which are a & ~b).
+    // The ISA pseudocode states the formula correctly; the mnemonic
+    // is the trap. See docs/loongarch_lsx_lasx_vandn_gotcha.md for the
+    // full story.
     return __lsx_vandn_v(a, b);
   }
   static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
@@ -311,6 +314,7 @@ struct LasxOps {
   static Vec cmpeq(Vec a, Vec b) { return __lasx_xvseq_d(a, b); }
   static Vec andnot_(Vec a, Vec b) {
     // Same Intel-style convention as LSX: xvandn(x, y) = ~x & y.
+    // See docs/loongarch_lsx_lasx_vandn_gotcha.md.
     return __lasx_xvandn_v(a, b);
   }
   static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
