@@ -15,6 +15,14 @@
 #include <arm_neon.h>
 #endif
 
+#if defined(__loongarch_sx)
+#include <lsxintrin.h>
+#endif
+
+#if defined(__loongarch_asx)
+#include <lasxintrin.h>
+#endif
+
 namespace stride_align::levenshtein_simd {
 
 #if defined(__SSE4_1__)
@@ -210,5 +218,106 @@ struct NeonOps {
 };
 
 #endif  // __ARM_NEON
+
+#if defined(__loongarch_sx)
+
+// LoongArch LSX: 128-bit, 2x 64-bit lanes. Same lane count as SSE/NEON.
+// LSX semantics quirks:
+//   * vandn_v(a, b) = a & ~b (operand order swapped vs Intel andnot)
+//   * NOT via NOR with self
+//   * No native gather — scalar lane inserts
+//   * Unsigned cmpgt via vslt_du with operands swapped
+// Used by the linux_loongarch64_lsx backend.
+struct LsxOps {
+  static constexpr std::size_t lanes = 2;
+  using Vec = __m128i;
+
+  static Vec set1(std::uint64_t v) {
+    return __lsx_vreplgr2vr_d(static_cast<long>(v));
+  }
+  static Vec zero() { return __lsx_vreplgr2vr_d(0); }
+  static Vec and_(Vec a, Vec b) { return __lsx_vand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lsx_vor_v(a, b); }
+  static Vec xor_(Vec a, Vec b) { return __lsx_vxor_v(a, b); }
+  static Vec not_(Vec a) { return __lsx_vnor_v(a, a); }
+  static Vec add(Vec a, Vec b) { return __lsx_vadd_d(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lsx_vsub_d(a, b); }
+  static Vec shl1(Vec a) { return __lsx_vslli_d(a, 1); }
+  static Vec cmpeq(Vec a, Vec b) { return __lsx_vseq_d(a, b); }
+  static Vec andnot_(Vec a, Vec b) {
+    // LSX vandn(x, y) = x & ~y → andnot_(a, b) = ~a & b = vandn(b, a).
+    return __lsx_vandn_v(b, a);
+  }
+  static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
+    Vec out = __lsx_vreplgr2vr_d(static_cast<long>(base[indices[0]]));
+    out = __lsx_vinsgr2vr_d(out, static_cast<long>(base[indices[1]]), 1);
+    return out;
+  }
+  static Vec load_aligned(const std::uint64_t* data) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  static void store_aligned(std::uint64_t* dst, Vec v) {
+    __lsx_vst(v, reinterpret_cast<void*>(dst), 0);
+  }
+  // Unsigned cmpgt: vslt_du(b, a) returns a > b unsigned.
+  static Vec gt_u64(Vec a, Vec b) { return __lsx_vslt_du(b, a); }
+  static Vec shr63(Vec a) { return __lsx_vsrli_d(a, 63); }
+  static bool is_zero(Vec a) {
+    const long lo = __lsx_vpickve2gr_du(a, 0);
+    const long hi = __lsx_vpickve2gr_du(a, 1);
+    return (lo | hi) == 0;
+  }
+};
+
+#endif  // __loongarch_sx
+
+#if defined(__loongarch_asx)
+
+// LoongArch LASX: 256-bit, 4x 64-bit lanes. Same lane count as AVX2.
+// Same semantics as LSX but with `xv*` intrinsics.
+struct LasxOps {
+  static constexpr std::size_t lanes = 4;
+  using Vec = __m256i;
+
+  static Vec set1(std::uint64_t v) {
+    return __lasx_xvreplgr2vr_d(static_cast<long>(v));
+  }
+  static Vec zero() { return __lasx_xvreplgr2vr_d(0); }
+  static Vec and_(Vec a, Vec b) { return __lasx_xvand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lasx_xvor_v(a, b); }
+  static Vec xor_(Vec a, Vec b) { return __lasx_xvxor_v(a, b); }
+  static Vec not_(Vec a) { return __lasx_xvnor_v(a, a); }
+  static Vec add(Vec a, Vec b) { return __lasx_xvadd_d(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lasx_xvsub_d(a, b); }
+  static Vec shl1(Vec a) { return __lasx_xvslli_d(a, 1); }
+  static Vec cmpeq(Vec a, Vec b) { return __lasx_xvseq_d(a, b); }
+  static Vec andnot_(Vec a, Vec b) {
+    return __lasx_xvandn_v(b, a);
+  }
+  static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
+    Vec out = __lasx_xvreplgr2vr_d(static_cast<long>(base[indices[0]]));
+    out = __lasx_xvinsgr2vr_d(out, static_cast<long>(base[indices[1]]), 1);
+    out = __lasx_xvinsgr2vr_d(out, static_cast<long>(base[indices[2]]), 2);
+    out = __lasx_xvinsgr2vr_d(out, static_cast<long>(base[indices[3]]), 3);
+    return out;
+  }
+  static Vec load_aligned(const std::uint64_t* data) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  static void store_aligned(std::uint64_t* dst, Vec v) {
+    __lasx_xvst(v, reinterpret_cast<void*>(dst), 0);
+  }
+  static Vec gt_u64(Vec a, Vec b) { return __lasx_xvslt_du(b, a); }
+  static Vec shr63(Vec a) { return __lasx_xvsrli_d(a, 63); }
+  static bool is_zero(Vec a) {
+    const long l0 = __lasx_xvpickve2gr_du(a, 0);
+    const long l1 = __lasx_xvpickve2gr_du(a, 1);
+    const long l2 = __lasx_xvpickve2gr_du(a, 2);
+    const long l3 = __lasx_xvpickve2gr_du(a, 3);
+    return (l0 | l1 | l2 | l3) == 0;
+  }
+};
+
+#endif  // __loongarch_asx
 
 }  // namespace stride_align::levenshtein_simd

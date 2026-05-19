@@ -17,6 +17,9 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/loongarch_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
+#include "levenshtein_simd.hpp"
+#include "levenshtein_simd_ops.hpp"
+#include "osa_simd.hpp"
 
 namespace stride_align::backend_linux_loongarch64_lsx {
 
@@ -2017,6 +2020,34 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+  static std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
+        ::stride_align::levenshtein_simd::LsxOps>(query, targets, cutoff);
+  }
+
+  static std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::LsxOps>(query, targets, cutoff);
+  }
+
+  static std::vector<Score> damerau_levenshtein_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::osa_simd::osa_scores_simd<
+        ::stride_align::levenshtein_simd::LsxOps>(query, targets);
+  }
+
+  static std::vector<double> damerau_levenshtein_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::osa_simd::osa_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::LsxOps>(query, targets);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_loongarch64_lsx;
