@@ -11,6 +11,10 @@
 #include <immintrin.h>
 #endif
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 namespace stride_align::levenshtein_simd {
 
 #if defined(__SSE4_1__)
@@ -158,5 +162,53 @@ struct Avx512Ops {
 };
 
 #endif  // __AVX512F__
+
+#if defined(__ARM_NEON)
+
+// 128-bit NEON: 2 lanes of 64-bit. Same lane count as SseOps; the
+// difference is NEON's native unsigned cmpgt_u64 (no XOR-sign trick
+// needed) and the slightly weirder ~a (uint32 lane reinterpret).
+// Used by the macos_arm64_neon backend (Apple Silicon M-series) and
+// the linux_aarch64_neon backend (Graviton4 etc.).
+struct NeonOps {
+  static constexpr std::size_t lanes = 2;
+  using Vec = uint64x2_t;
+
+  static Vec set1(std::uint64_t v) { return vdupq_n_u64(v); }
+  static Vec zero() { return vdupq_n_u64(0); }
+  static Vec and_(Vec a, Vec b) { return vandq_u64(a, b); }
+  static Vec or_(Vec a, Vec b) { return vorrq_u64(a, b); }
+  static Vec xor_(Vec a, Vec b) { return veorq_u64(a, b); }
+  static Vec not_(Vec a) {
+    // NEON has vmvnq_u32 but no 64-bit equivalent — reinterpret through
+    // u32 and back.
+    return vreinterpretq_u64_u32(vmvnq_u32(vreinterpretq_u32_u64(a)));
+  }
+  static Vec add(Vec a, Vec b) { return vaddq_u64(a, b); }
+  static Vec sub(Vec a, Vec b) { return vsubq_u64(a, b); }
+  static Vec shl1(Vec a) { return vshlq_n_u64(a, 1); }
+  static Vec cmpeq(Vec a, Vec b) { return vceqq_u64(a, b); }
+  // ~a & b. NEON's `vbicq` computes `a & ~b` (bit clear), so we have
+  // to swap the operands.
+  static Vec andnot_(Vec a, Vec b) { return vbicq_u64(b, a); }
+  static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
+    // No native NEON gather — issue two scalar loads.
+    Vec out = vdupq_n_u64(base[indices[0]]);
+    out = vsetq_lane_u64(base[indices[1]], out, 1);
+    return out;
+  }
+  static Vec load_aligned(const std::uint64_t* data) { return vld1q_u64(data); }
+  static void store_aligned(std::uint64_t* dst, Vec v) { vst1q_u64(dst, v); }
+  // NEON has native unsigned cmpgt for 64-bit lanes (ARMv8+).
+  static Vec gt_u64(Vec a, Vec b) { return vcgtq_u64(a, b); }
+  static Vec shr63(Vec a) { return vshrq_n_u64(a, 63); }
+  static bool is_zero(Vec a) {
+    // OR both halves; result is zero iff every bit of v is zero.
+    uint64x1_t combined = vorr_u64(vget_low_u64(a), vget_high_u64(a));
+    return vget_lane_u64(combined, 0) == 0;
+  }
+};
+
+#endif  // __ARM_NEON
 
 }  // namespace stride_align::levenshtein_simd

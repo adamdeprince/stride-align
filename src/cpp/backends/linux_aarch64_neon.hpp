@@ -378,6 +378,34 @@ struct Implementation {
         gap_extend_score,
         width);
   }
+
+  static std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    ensure_supported();
+    return TargetImplementation::levenshtein_scores(query, targets, cutoff);
+  }
+
+  static std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    ensure_supported();
+    return TargetImplementation::levenshtein_normalized_scores(query, targets, cutoff);
+  }
+
+  static std::vector<Score> damerau_levenshtein_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::damerau_levenshtein_scores(query, targets);
+  }
+
+  static std::vector<double> damerau_levenshtein_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::damerau_levenshtein_normalized_scores(query, targets);
+  }
 };
 
 }  // namespace stride_align::backend_linux_aarch64_neon
