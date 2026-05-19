@@ -29,7 +29,7 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <numeric>
+#include <utility>
 #include <vector>
 
 #include <nanobind/nanobind.h>
@@ -62,11 +62,21 @@ enum class Scorer : int {
 // scores); `false` returns the k smallest (use for raw distance
 // scores).
 //
-// Order within the returned list is unspecified: nth_element only
-// partitions, it doesn't sort. The contract is "this is the top-k by
-// score", not "this is the top-k by score, in score order". Callers
-// who want them sorted can `sorted(result, key=lambda r: r[1])` — that
+// Order within the returned list is unspecified — we maintain a heap,
+// not a sorted list. The contract is "this is the top-k by score",
+// not "this is the top-k by score, in score order". Callers who want
+// them sorted can `sorted(result, key=lambda r: r[1])` — that
 // O(k log k) cost is opt-in instead of forced on every call.
+//
+// Implementation: streaming selection with a k-element heap. Most
+// inputs are read once, compared to the heap root, and discarded; only
+// the (few) ones that beat the current heap root trigger an
+// O(log k) heap update. Working set is k pairs (a few hundred bytes
+// for typical k = 1..50) and stays resident in L1, where a partition-
+// based approach has to read or write an N-element auxiliary buffer.
+// For k << N this is the right shape; for k approaching N the
+// partition form would win in operation count, but that's not the
+// "top-k" workload this entry point is for.
 template <typename T>
 inline nb::list make_top_k(
     PyObject* const* items,
@@ -81,25 +91,54 @@ inline nb::list make_top_k(
     return result;
   }
 
-  // Index permutation: cheaper to shuffle 8-byte indices than to drag
-  // the (item, score) pair around during nth_element.
-  std::vector<std::size_t> idx(count);
-  std::iota(idx.begin(), idx.end(), std::size_t{0});
+  using Pair = std::pair<T, std::size_t>;
 
-  if (take < count) {
-    const auto cmp = [&](std::size_t a, std::size_t b) {
-      return higher_is_better ? scores[a] > scores[b] : scores[a] < scores[b];
-    };
-    std::nth_element(idx.begin(), idx.begin() + take, idx.end(), cmp);
+  // Cheap path when caller asks for everything: skip selection.
+  if (take == count) {
+    for (std::size_t i = 0; i < count; ++i) {
+      result.append(nb::make_tuple(
+          nb::borrow(nb::handle(items[i])),
+          scores[i],
+          i));
+    }
+    return result;
   }
-  // If take == count, we want all of them; idx already covers them.
 
-  for (std::size_t i = 0; i < take; ++i) {
-    const std::size_t pos = idx[i];
+  // Heap orientation is inverted from "what we keep". For the
+  // k *smallest* (lower-is-better), we want a max-heap so the root is
+  // the *largest* of the k-so-far — a smaller incoming score evicts
+  // it. Mirror for the k largest.
+  std::vector<Pair> heap;
+  heap.reserve(take);
+
+  const auto run = [&](auto worse_than_root) {
+    for (std::size_t i = 0; i < take; ++i) {
+      heap.emplace_back(scores[i], i);
+    }
+    std::make_heap(heap.begin(), heap.end(), worse_than_root);
+    for (std::size_t i = take; i < count; ++i) {
+      const T s = scores[i];
+      if (worse_than_root(Pair{s, i}, heap.front())) {
+        std::pop_heap(heap.begin(), heap.end(), worse_than_root);
+        heap.back() = {s, i};
+        std::push_heap(heap.begin(), heap.end(), worse_than_root);
+      }
+    }
+  };
+
+  if (higher_is_better) {
+    // min-heap on score: root is the worst (smallest) of the top-k.
+    run([](const Pair& a, const Pair& b) { return a.first > b.first; });
+  } else {
+    // max-heap on score: root is the worst (largest) of the bottom-k.
+    run([](const Pair& a, const Pair& b) { return a.first < b.first; });
+  }
+
+  for (const auto& pair : heap) {
     result.append(nb::make_tuple(
-        nb::borrow(nb::handle(items[pos])),
-        scores[pos],
-        pos));
+        nb::borrow(nb::handle(items[pair.second])),
+        pair.first,
+        pair.second));
   }
   return result;
 }
