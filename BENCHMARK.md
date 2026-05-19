@@ -37,6 +37,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Lev (cutoff, q=50) | `x86_avx512bwvl` | rapidfuzz | 3 | **3.91x** | 2.41x | 2.41x | 6.03x |
 | Damerau-Lev (short tgts) | `x86_avx512bwvl` | rapidfuzz | 4 | **3.13x** | 3.03x | 2.38x | 4.22x |
 | Damerau-Lev (medium tgts) | `x86_avx512bwvl` | rapidfuzz | 3 | 0.98x | 0.87x | 0.85x | 1.25x |
+| Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | python-Levenshtein | 4 | **6.61x** | 6.42x | 5.49x | 8.54x |
+| Damerau-Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | rapidfuzz OSA | 4 | **5.49x** | 5.43x | 4.35x | 7.45x |
 
 ## Intel x86 - 2026-05-18
 
@@ -373,9 +375,64 @@ stride_align.damerau_levenshtein_normalized_scores(query, targets)  # float64
 ```
 
 Backends specialized for the new SIMD batch kernel: `x86_sse41`,
-`x86_avx2`, `x86_avx512bwvl`, `x86_avx10_256`, `x86_avx10_512`. Other
-architectures (NEON / SVE / Loongson / Power) fall through to the
-shared scalar bit-parallel dispatch and remain correct.
+`x86_avx2`, `x86_avx512bwvl`, `x86_avx10_256`, `x86_avx10_512`, and
+(added 2026-05-19) `macos_arm64_neon` and `linux_aarch64_neon` via the
+shared `NeonOps` bundle. Other architectures (SVE / Loongson / Power)
+still fall through to the shared scalar bit-parallel dispatch and
+remain correct.
+
+## Levenshtein + Damerau-Levenshtein (Mac M4 NEON) - 2026-05-19
+
+Raw artifact: [`benchmarks/macos-arm64-neon-lev-osa-2026-05-19.csv`](benchmarks/macos-arm64-neon-lev-osa-2026-05-19.csv).
+
+Build context: Apple M4 (T6041), macOS 15.x, Python 3.13 in the
+project virtualenv. Uses the new `macos_arm64_neon` SIMD batch kernel
+(2 lanes × 64-bit, NEON intrinsics in `levenshtein_simd_ops.hpp`). The
+Mac is 2-lane (NEON 128-bit), so per-call SIMD speedup is smaller than
+on AVX-512 (8 lanes); the win comes from skipping Python ABI per-pair
+overhead on the batch path.
+
+### Levenshtein, 1-vs-1000 short targets (3-15 char corpus)
+
+| `q_len` | stride_align | python-Levenshtein | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 | **17 µs** |  92 µs | 5.49x |
+| 10 | **17 µs** |  97 µs | 5.80x |
+| 20 | **17 µs** | 118 µs | 7.04x |
+| 30 | **17 µs** | 143 µs | **8.54x** |
+
+### Levenshtein, 1-vs-200 medium targets (30-250 char corpus)
+
+| `q_len` | stride_align | python-Levenshtein | ratio |
+| ---: | ---: | ---: | ---: |
+|  10 |  80 µs |  89 µs | 1.12x |
+|  32 |  80 µs |  94 µs | 1.18x |
+|  64 |  80 µs |  95 µs | 1.19x |
+| 100 |  94 µs | 152 µs | 1.61x |
+| 200 | **112 µs** | 260 µs | **2.33x** |
+
+The 100/200-char rows exercise the multi-word kernel (W=2/3); the
+ratio grows because python-Levenshtein's overhead scales with pattern
+length while our W-block SIMD scales with `q_len / (64 * lanes)`.
+
+### Damerau-Levenshtein, 1-vs-1000 short
+
+| `q_len` | stride_align | rapidfuzz OSA | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 | **20 µs** |  87 µs | 4.35x |
+| 10 | **20 µs** |  95 µs | 4.81x |
+| 20 | **20 µs** | 120 µs | 6.06x |
+| 30 | **20 µs** | 148 µs | **7.45x** |
+
+### 1-vs-1 singular
+
+Parity territory — Python ABI dominates, no algorithmic gap.
+
+| `q_len` | Lev sa / Lev rf | OSA sa / OSA rf |
+| ---: | ---: | ---: |
+| 10 | 0.13 / 0.13 µs | 0.13 / 0.13 µs |
+| 30 | 0.21 / 0.21 µs | **0.17** / 0.21 µs |
+| 60 | **0.29** / 0.33 µs | 0.29 / 0.29 µs |
 
 ## ARM Graviton4 (Linux aarch64) - 2026-05-18
 
