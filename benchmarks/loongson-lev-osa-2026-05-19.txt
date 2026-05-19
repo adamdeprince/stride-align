@@ -1,0 +1,20 @@
+Levenshtein 1-vs-1000 short (Loongson 3A6000):
+  q= 5: gen= 103.1 us  LSX=  66.9 us (1.54x)  LASX=  49.1 us (2.10x)
+  q=10: gen= 107.6 us  LSX=  67.0 us (1.61x)  LASX=  49.2 us (2.18x)
+  q=30: gen= 126.1 us  LSX=  67.0 us (1.88x)  LASX=  49.2 us (2.56x)
+
+Levenshtein 1-vs-200 medium:
+  q= 10: gen=  174.9 us  LSX=  162.1 us (1.08x)  LASX=  113.8 us (1.54x)
+  q= 64: gen=  185.0 us  LSX=  162.2 us (1.14x)  LASX=  113.6 us (1.63x)
+  q=100: gen=  492.3 us  LSX=  202.9 us (2.43x)  LASX=  147.3 us (3.34x)
+  q=200: gen=  777.3 us  LSX=  350.6 us (2.22x)  LASX=  259.6 us (2.99x)
+
+Damerau-Levenshtein 1-vs-1000 short:
+  q= 5: gen=  96.7 us  LSX=  90.9 us (1.06x)  LASX=  61.3 us (1.58x)
+  q=10: gen= 103.2 us  LSX=  91.0 us (1.13x)  LASX=  61.2 us (1.69x)
+  q=30: gen= 120.1 us  LSX=  91.0 us (1.32x)  LASX=  61.1 us (1.97x)
+
+Damerau-Levenshtein 1-vs-200 medium:
+  q=10: gen=  177.6 us  LSX=  248.7 us (0.71x)  LASX=  155.2 us (1.14x)
+  q=32: gen=  181.5 us  LSX=  248.7 us (0.73x)  LASX=  155.4 us (1.17x)
+  q=64: gen=  188.4 us  LSX=  249.0 us (0.76x)  LASX=  155.4 us (1.21x)

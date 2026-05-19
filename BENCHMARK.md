@@ -39,6 +39,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Damerau-Lev (medium tgts) | `x86_avx512bwvl` | rapidfuzz | 3 | 0.98x | 0.87x | 0.85x | 1.25x |
 | Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | python-Levenshtein | 4 | **6.61x** | 6.42x | 5.49x | 8.54x |
 | Damerau-Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | rapidfuzz OSA | 4 | **5.49x** | 5.43x | 4.35x | 7.45x |
+| Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 7 | **2.17x** | 2.18x | 1.54x | 3.34x |
+| Damerau-Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 6 | **1.43x** | 1.43x | 1.14x | 1.97x |
 
 ## Intel x86 - 2026-05-18
 
@@ -380,6 +382,72 @@ Backends specialized for the new SIMD batch kernel: `x86_sse41`,
 shared `NeonOps` bundle. Other architectures (SVE / Loongson / Power)
 still fall through to the shared scalar bit-parallel dispatch and
 remain correct.
+
+## Levenshtein + Damerau-Levenshtein (Loongson LASX/LSX) - 2026-05-19
+
+Raw artifact: [`benchmarks/loongson-lev-osa-2026-05-19.txt`](benchmarks/loongson-lev-osa-2026-05-19.txt).
+
+Build context: Loongson 3A6000 (LoongArch64), Kylin V10 SP1, Python
+3.13, GCC 15.2.0 (`/opt/loongson-gcc-15.2.0`), CMake 4.3.2. No
+rapidfuzz / python-Levenshtein wheels exist for LoongArch on PyPI, so
+the comparison is against our generic scalar backend (which already
+runs the bit-parallel Myers / OSA kernels in tight C++).
+
+`LsxOps` is 128-bit / 2 lanes (similar to SSE & NEON);
+`LasxOps` is 256-bit / 4 lanes (similar to AVX2).
+
+### Caveat on `vandn`
+
+Initial port had LSX/LASX returning negative scores on simple inputs.
+Root cause: `__lsx_vandn_v(a, b)` returns `~a & b` (Intel-style),
+contrary to what the LoongArch ISA reference's mnemonic name "VANDN"
+suggested. The fix was a single-line operand swap; correctness on the
+generic-reference test set is now 3200/3200 across q_lens 10/32/64/100.
+
+### Levenshtein 1-vs-1000 short (3-15 char corpus)
+
+| `q_len` | generic | LSX | LASX |
+| ---: | ---: | ---: | ---: |
+|  5 | 103 µs | 67 µs (1.54x) | **49 µs (2.10x)** |
+| 10 | 108 µs | 67 µs (1.61x) | **49 µs (2.18x)** |
+| 30 | 126 µs | 67 µs (1.88x) | **49 µs (2.56x)** |
+
+### Levenshtein 1-vs-200 medium (30-250 char corpus)
+
+| `q_len` | generic | LSX | LASX |
+| ---: | ---: | ---: | ---: |
+|  10 | 175 µs | 162 µs (1.08x) | **114 µs (1.54x)** |
+|  64 | 185 µs | 162 µs (1.14x) | **114 µs (1.63x)** |
+| 100 | 492 µs | 203 µs (2.43x) | **147 µs (3.34x)** |
+| 200 | 777 µs | 351 µs (2.22x) | **260 µs (2.99x)** |
+
+The multi-word kernel (q_len > 64, W=2/3) pulls ahead more
+dramatically than the single-word range because the SIMD batch
+amortizes the wide-add carry chain across 4 lanes (LASX) on the
+LoongArch's 3 GHz cores.
+
+### Damerau-Levenshtein 1-vs-1000 short
+
+| `q_len` | generic | LSX | LASX |
+| ---: | ---: | ---: | ---: |
+|  5 |  97 µs | 91 µs (1.06x) | **62 µs (1.57x)** |
+| 10 | 102 µs | 91 µs (1.12x) | **61 µs (1.66x)** |
+| 30 | 121 µs | 91 µs (1.32x) | **61 µs (1.97x)** |
+
+### Damerau-Levenshtein 1-vs-200 medium
+
+| `q_len` | generic | LSX | LASX |
+| ---: | ---: | ---: | ---: |
+| 10 | 176 µs | 249 µs (0.71x) | **155 µs (1.14x)** |
+| 32 | 182 µs | 249 µs (0.73x) | **155 µs (1.17x)** |
+| 64 | 189 µs | 249 µs (0.76x) | **155 µs (1.21x)** |
+
+LSX trails the generic backend on the OSA medium workload: 2 lanes of
+SIMD overhead (extra gather / mask / state-shift cost) outpaces the
+parallelism gain when the per-target scalar bit-parallel Myers loop is
+already tight. LASX keeps 4-lane parallelism worthwhile. Backend
+auto-detect picks LASX where available, so this only matters on
+machines that lack LASX.
 
 ## Levenshtein + Damerau-Levenshtein (Mac M4 NEON) - 2026-05-19
 
