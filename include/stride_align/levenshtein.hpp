@@ -279,6 +279,197 @@ std::size_t myers_distance(
       cutoff);
 }
 
+// =================================================================
+// Optimal String Alignment (OSA) distance — a.k.a. "restricted
+// Damerau-Levenshtein". Same as Levenshtein but adjacent transpositions
+// cost 1 instead of 2 substitutions. "Restricted" means each character
+// can participate in at most one edit operation, so a transposition
+// can't be combined with another edit on the same characters.
+//
+// Most Python users who ask for "Damerau-Levenshtein" actually want
+// OSA — it's what rapidfuzz exposes as `OSA.distance` and is much
+// faster to compute than true Damerau-Levenshtein (which needs an
+// alphabet-sized auxiliary array per cell).
+// =================================================================
+
+namespace detail {
+
+// Scalar DP reference implementation. O(m*n) time, O(m) space (rolling
+// rows). Correctness oracle for the bit-parallel variants below; not on
+// any hot path.
+template <typename Token>
+inline std::size_t osa_dp(
+    std::span<const Token> pattern,
+    std::span<const Token> text) {
+  const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0) {
+    return n;
+  }
+  if (n == 0) {
+    return m;
+  }
+
+  // Three rolling rows: prev2[i] = d[i][j-2], prev1[i] = d[i][j-1],
+  // curr[i] = d[i][j]. The transposition step reads d[i-2][j-2] which
+  // is prev2[i-2].
+  std::vector<std::size_t> prev2(m + 1U);
+  std::vector<std::size_t> prev1(m + 1U);
+  std::vector<std::size_t> curr(m + 1U);
+  for (std::size_t i = 0; i <= m; ++i) {
+    prev1[i] = i;
+  }
+
+  for (std::size_t j = 1; j <= n; ++j) {
+    curr[0] = j;
+    for (std::size_t i = 1; i <= m; ++i) {
+      const std::size_t sub_cost =
+          (pattern[i - 1U] == text[j - 1U]) ? 0U : 1U;
+      std::size_t best = curr[i - 1U] + 1U;            // insertion
+      best = std::min(best, prev1[i] + 1U);             // deletion
+      best = std::min(best, prev1[i - 1U] + sub_cost);  // substitution
+      if (i >= 2U && j >= 2U &&
+          pattern[i - 1U] == text[j - 2U] &&
+          pattern[i - 2U] == text[j - 1U]) {
+        best = std::min(best, prev2[i - 2U] + 1U);  // transposition
+      }
+      curr[i] = best;
+    }
+    std::swap(prev2, prev1);
+    std::swap(prev1, curr);
+  }
+  return prev1[m];
+}
+
+}  // namespace detail
+
+// Bit-parallel OSA for uint8 patterns of length <= 64 (Hyyrö 2002).
+// Augments Myers' Levenshtein recurrence with a transposition mask:
+//   TR = (((~D0_prev) & PM) << 1) & PM_old
+// Bit i of TR is set iff the (i-1, j-1) cell was *not* a "diagonal
+// match" in the previous column AND P[i-1] == T[j] AND P[i] == T[j-1]
+// — i.e. exactly the OSA transposition condition with the right
+// predecessor state. The ~D0_prev gate is the non-obvious bit that
+// keeps the algorithm correct under OSA's "each character touched at
+// most once" restriction; without it, the kernel double-counts edits.
+inline std::size_t osa_single_word_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) noexcept {
+  const std::size_t m = pattern.size();
+  if (m == 0) {
+    return text.size();
+  }
+  if (text.empty()) {
+    return m;
+  }
+
+  std::uint64_t peq[256] = {0};
+  const std::uint64_t one = 1U;
+  for (std::size_t i = 0; i < m; ++i) {
+    peq[pattern[i]] |= one << i;
+  }
+
+  const std::uint64_t top_bit = one << (m - 1U);
+  std::uint64_t vp = (m == 64U)
+      ? ~std::uint64_t{0}
+      : ((one << m) - 1U);
+  std::uint64_t vn = 0;
+  std::uint64_t d0_prev = 0;
+  std::uint64_t pm_old = 0;
+  std::size_t score = m;
+
+  for (const std::uint8_t c : text) {
+    const std::uint64_t pm = peq[c];
+    const std::uint64_t trans = (((~d0_prev) & pm) << 1) & pm_old;
+    std::uint64_t d0 = (((pm & vp) + vp) ^ vp) | pm | vn;
+    d0 |= trans;
+
+    const std::uint64_t hp = vn | ~(d0 | vp);
+    const std::uint64_t hn = d0 & vp;
+    if (hp & top_bit) {
+      ++score;
+    } else if (hn & top_bit) {
+      --score;
+    }
+    const std::uint64_t hp_shift = (hp << 1) | one;
+    const std::uint64_t hn_shift = hn << 1;
+    vp = hn_shift | ~(d0 | hp_shift);
+    vn = hp_shift & d0;
+    d0_prev = d0;
+    pm_old = pm;
+  }
+  return score;
+}
+
+// OSA dispatch: bit-parallel single-word for short u8 patterns, scalar
+// DP otherwise. A bit-parallel multi-word OSA (analogous to Hyyrö's
+// multi-word Levenshtein) is doable but deferred — needs per-block
+// carry propagation for the transposition mask as well as for the
+// standard d0 chain.
+inline std::size_t osa_distance_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) {
+  if (pattern.size() > 0 && pattern.size() <= 64U) {
+    return osa_single_word_u8(pattern, text);
+  }
+  return detail::osa_dp<std::uint8_t>(pattern, text);
+}
+
+template <typename Token>
+inline std::size_t osa_distance(
+    std::span<const Token> pattern,
+    std::span<const Token> text) {
+  static_assert(std::is_integral_v<Token> || std::is_unsigned_v<Token>);
+  const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0) {
+    return n;
+  }
+  if (n == 0) {
+    return m;
+  }
+  if (m > 64U) {
+    return detail::osa_dp<Token>(pattern, text);
+  }
+
+  // Bit-parallel with hashmap PEQ for wide alphabets.
+  std::unordered_map<Token, std::uint64_t> peq;
+  const std::uint64_t one = 1U;
+  for (std::size_t i = 0; i < m; ++i) {
+    peq[pattern[i]] |= one << i;
+  }
+
+  const std::uint64_t top_bit = one << (m - 1U);
+  std::uint64_t vp = (m == 64U) ? ~std::uint64_t{0} : ((one << m) - 1U);
+  std::uint64_t vn = 0;
+  std::uint64_t d0_prev = 0;
+  std::uint64_t pm_old = 0;
+  std::size_t score = m;
+
+  for (const auto c : text) {
+    auto it = peq.find(c);
+    const std::uint64_t pm = (it == peq.end()) ? 0U : it->second;
+    const std::uint64_t trans = (((~d0_prev) & pm) << 1) & pm_old;
+    std::uint64_t d0 = (((pm & vp) + vp) ^ vp) | pm | vn;
+    d0 |= trans;
+
+    const std::uint64_t hp = vn | ~(d0 | vp);
+    const std::uint64_t hn = d0 & vp;
+    if (hp & top_bit) {
+      ++score;
+    } else if (hn & top_bit) {
+      --score;
+    }
+    const std::uint64_t hp_shift = (hp << 1) | one;
+    const std::uint64_t hn_shift = hn << 1;
+    vp = hn_shift | ~(d0 | hp_shift);
+    vn = hp_shift & d0;
+    d0_prev = d0;
+    pm_old = pm;
+  }
+  return score;
+}
+
 inline double normalize(std::size_t distance, std::size_t a_len, std::size_t b_len) noexcept {
   const std::size_t longer = (a_len > b_len) ? a_len : b_len;
   if (longer == 0U) {

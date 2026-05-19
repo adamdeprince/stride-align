@@ -21,6 +21,7 @@
 #include "backends/x86_fixed_kernel.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
+#include "osa_simd.hpp"
 
 namespace stride_align::backend_avx2 {
 
@@ -2337,6 +2338,18 @@ struct TargetImplementation {
     return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
         ::stride_align::levenshtein_simd::Avx2Ops>(query, targets, cutoff);
   }
+
+  static std::vector<Score> damerau_levenshtein_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::osa_simd::osa_scores_simd<
+        ::stride_align::levenshtein_simd::Avx2Ops>(query, targets);
+  }
+
+  static std::vector<double> damerau_levenshtein_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::osa_simd::osa_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::Avx2Ops>(query, targets);
+  }
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -3057,6 +3070,18 @@ struct Implementation {
       std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
     ensure_supported();
     return TargetImplementation::levenshtein_normalized_scores(query, targets, cutoff);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<Score> damerau_levenshtein_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::damerau_levenshtein_scores(query, targets);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<double>
+  damerau_levenshtein_normalized_scores(nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::damerau_levenshtein_normalized_scores(query, targets);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx2;

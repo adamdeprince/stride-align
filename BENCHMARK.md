@@ -35,6 +35,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Lev (long, >64 chars) | `x86_avx512bwvl` | rapidfuzz | 5 | **2.35x** | 2.55x | 1.45x | 2.88x |
 | Lev (1-vs-1, q>=100) | `x86_avx512bwvl` | rapidfuzz | 2 | **1.36x** | 1.36x | 1.34x | 1.39x |
 | Lev (cutoff, q=50) | `x86_avx512bwvl` | rapidfuzz | 3 | **3.91x** | 2.41x | 2.41x | 6.03x |
+| Damerau-Lev (short tgts) | `x86_avx512bwvl` | rapidfuzz | 4 | **3.13x** | 3.03x | 2.38x | 4.22x |
+| Damerau-Lev (medium tgts) | `x86_avx512bwvl` | rapidfuzz | 3 | 0.98x | 0.87x | 0.85x | 1.25x |
 
 ## Intel x86 - 2026-05-18
 
@@ -304,6 +306,76 @@ stride-align yet — see "Future work" below.
   from the main; sliding window across columns.
 - **Pattern lengths > 256**: the multi-word SIMD kernel currently caps
   at W=4. Extending to W=8 (pattern up to 512) is a recompile.
+
+## Damerau-Levenshtein / OSA (Intel x86) - 2026-05-19
+
+Raw artifact: [`benchmarks/intel-damerau-levenshtein-2026-05-19.csv`](benchmarks/intel-damerau-levenshtein-2026-05-19.csv).
+
+Build context: same host as the Levenshtein section (11th Gen Core
+i7-1195G7, Python 3.13, `taskset -c 2`). The algorithm is OSA-restricted
+(Optimal String Alignment) Damerau-Levenshtein: like Levenshtein but
+adjacent transpositions cost 1 instead of two substitutions, and each
+character can participate in at most one edit. Hyyrö's bit-parallel
+recurrence (the `TR = (((~D0_prev) & PM) << 1) & PM_old` formulation
+that rapidfuzz also uses), wrapped in the same multi-target SIMD batch
+architecture as our Levenshtein kernel — one target per SIMD lane
+(2/4/8 lanes for SSE4.1/AVX2/AVX-512).
+
+### Short targets (1-vs-1000, 3-15 char corpus)
+
+This is the SIMD batch sweet spot: short alignments amortize the
+gather + state-shift cost across 8 lanes, and rapidfuzz's per-pair
+overhead dominates its loop.
+
+| `q_len` | stride_align | rapidfuzz | ratio |
+| ---: | ---: | ---: | ---: |
+|  5 | **41 µs** |  99 µs | 2.38x |
+| 10 | **42 µs** | 108 µs | 2.59x |
+| 20 | **42 µs** | 176 µs | **4.22x** |
+| 30 | **47 µs** | 163 µs | 3.47x |
+
+### Medium targets (1-vs-200, 30-250 char corpus)
+
+| `q_len` | stride_align | rapidfuzz | ratio |
+| ---: | ---: | ---: | ---: |
+| 10 | 117 µs | **100 µs** | 0.85x |
+| 30 | 117 µs | **102 µs** | 0.87x |
+| 64 | **117 µs** | 147 µs | 1.25x |
+
+For medium-target workloads we trail rapidfuzz by ~15% under 60 chars
+(their inner loop is slightly tighter — fewer SIMD ops per column),
+then pull ahead at q_len=64 where their bit-parallel fallback path
+kicks in.
+
+### 1-vs-1 singular
+
+| `q_len` | stride_align | rapidfuzz | ratio |
+| ---: | ---: | ---: | ---: |
+| 10 | 0.18 µs | 0.15 µs | 0.85x |
+| 30 | 0.23 µs | 0.21 µs | 0.92x |
+| 60 | 0.35 µs | 0.32 µs | 0.90x |
+
+Per-call Python ABI dominates; we're within 15% of rapidfuzz on every
+length.
+
+### API
+
+```python
+import stride_align
+
+# Singular
+stride_align.damerau_levenshtein_score(query, target)            # int
+stride_align.damerau_levenshtein_normalized_score(query, target) # float in [0, 1]
+
+# Batch (returns numpy ndarray)
+stride_align.damerau_levenshtein_scores(query, targets)             # int64
+stride_align.damerau_levenshtein_normalized_scores(query, targets)  # float64
+```
+
+Backends specialized for the new SIMD batch kernel: `x86_sse41`,
+`x86_avx2`, `x86_avx512bwvl`, `x86_avx10_256`, `x86_avx10_512`. Other
+architectures (NEON / SVE / Loongson / Power) fall through to the
+shared scalar bit-parallel dispatch and remain correct.
 
 ## ARM Graviton4 (Linux aarch64) - 2026-05-18
 

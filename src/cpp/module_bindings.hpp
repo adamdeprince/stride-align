@@ -2228,6 +2228,63 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("query"),
       nb::arg("targets"),
       nb::arg("score_cutoff") = nb::none());
+
+  // --- Damerau-Levenshtein (OSA-restricted) ----------------------------
+  //
+  // Same dispatch shape as Levenshtein: requires-check picks the backend
+  // SIMD batch kernel when available, otherwise the shared scalar OSA
+  // path (single-word bit-parallel for m <= 64, rolling-row DP above).
+  // No cutoff yet — adding it requires per-column bail with pm_old in
+  // SIMD lanes, which is doable but not implemented.
+
+  m.def(
+      "damerau_levenshtein_score",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::levenshtein::dispatch_osa_score(query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "damerau_levenshtein_normalized_score",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::levenshtein::dispatch_osa_normalized_score(query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "damerau_levenshtein_scores",
+      [](nb::handle query, nb::handle targets) {
+        if constexpr (requires {
+                        Implementation::damerau_levenshtein_scores(query, targets);
+                      }) {
+          return as_score_ndarray(
+              Implementation::damerau_levenshtein_scores(query, targets));
+        } else {
+          return as_score_ndarray(
+              ::stride_align::levenshtein::dispatch_osa_scores(query, targets));
+        }
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
+  m.def(
+      "damerau_levenshtein_normalized_scores",
+      [](nb::handle query, nb::handle targets) {
+        if constexpr (requires {
+                        Implementation::damerau_levenshtein_normalized_scores(query, targets);
+                      }) {
+          return as_normalized_ndarray(
+              Implementation::damerau_levenshtein_normalized_scores(query, targets));
+        } else {
+          return as_normalized_ndarray(
+              ::stride_align::levenshtein::dispatch_osa_normalized_scores(
+                  query, targets));
+        }
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
 }
 
 }  // namespace stride_align::bindings

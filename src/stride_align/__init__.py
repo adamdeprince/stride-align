@@ -1252,6 +1252,45 @@ def levenshtein_normalized_scores(
     )
 
 
+def damerau_levenshtein_score(query: object, target: object) -> int:
+    """Optimal String Alignment (OSA) distance between two sequences.
+
+    Like Levenshtein but adjacent transpositions ("ab" → "ba") cost 1
+    instead of 2 substitutions. Restricted in the OSA sense: each
+    character can participate in at most one edit operation, so a
+    transposition can't be combined with another edit on the same chars.
+    This is what rapidfuzz exposes as ``OSA.distance``.
+    """
+    return int(_LEVENSHTEIN_BACKEND.damerau_levenshtein_score(query, target))
+
+
+def damerau_levenshtein_normalized_score(query: object, target: object) -> float:
+    """Length-normalized OSA similarity in [0, 1] (1 = identical)."""
+    return float(_LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_score(query, target))
+
+
+def damerau_levenshtein_scores(query: object, targets: object) -> np.ndarray:
+    """OSA distance from query to every target, returned as ndarray[int64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.damerau_levenshtein_scores(query, targets)
+
+
+def damerau_levenshtein_normalized_scores(query: object, targets: object) -> np.ndarray:
+    """Normalized OSA similarity per target, returned as ndarray[float64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_scores(query, targets)
+
+
 __all__ = [
     "AlignmentPath",
     "AlignmentResult",
@@ -1260,6 +1299,10 @@ __all__ = [
     "Scores",
     "available_backends",
     "backend_is_available",
+    "damerau_levenshtein_normalized_score",
+    "damerau_levenshtein_normalized_scores",
+    "damerau_levenshtein_score",
+    "damerau_levenshtein_scores",
     "detect_best_backend",
     "levenshtein_normalized_score",
     "levenshtein_normalized_scores",
