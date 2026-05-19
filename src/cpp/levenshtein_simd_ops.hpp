@@ -23,6 +23,22 @@
 #include <lasxintrin.h>
 #endif
 
+#if defined(__VSX__) || defined(__POWER8_VECTOR__)
+#include <altivec.h>
+// Altivec headers leak macro names like `vector`, `bool`, `pixel`.
+// `vector` is the worst offender — undefine it so it doesn't clash
+// with std::vector. We use `__vector` explicitly throughout.
+#ifdef vector
+#undef vector
+#endif
+#ifdef bool
+#undef bool
+#endif
+#ifdef pixel
+#undef pixel
+#endif
+#endif
+
 namespace stride_align::levenshtein_simd {
 
 #if defined(__SSE4_1__)
@@ -322,5 +338,59 @@ struct LasxOps {
 };
 
 #endif  // __loongarch_asx
+
+#if defined(__VSX__) || defined(__POWER8_VECTOR__)
+
+// PowerPC VSX: 128-bit, 2x 64-bit lanes. Similar shape to SSE / NEON /
+// LSX. Used by the linux_powerpc64_vsx backend (Power8+, ISA 2.07).
+// Conventions worth noting:
+//   * vec_andc(a, b) = a & ~b (NOT Intel-style), so andnot_ swaps
+//     operands to get ~a & b.
+//   * NOT via vec_nor with self.
+//   * No native gather — manual lane inserts via array-style indexing.
+//   * vec_cmpgt for unsigned long long is ISA 2.07 native.
+//   * Shift counts are per-lane vectors, not scalars (vec_sl/vec_sr).
+struct VsxOps {
+  static constexpr std::size_t lanes = 2;
+  using Vec = __vector unsigned long long;
+
+  static Vec set1(std::uint64_t v) {
+    return vec_splats(static_cast<unsigned long long>(v));
+  }
+  static Vec zero() { return vec_splats(0ULL); }
+  static Vec and_(Vec a, Vec b) { return vec_and(a, b); }
+  static Vec or_(Vec a, Vec b) { return vec_or(a, b); }
+  static Vec xor_(Vec a, Vec b) { return vec_xor(a, b); }
+  static Vec not_(Vec a) { return vec_nor(a, a); }
+  static Vec add(Vec a, Vec b) { return vec_add(a, b); }
+  static Vec sub(Vec a, Vec b) { return vec_sub(a, b); }
+  // vec_sl/vec_sr take per-lane shift counts.
+  static Vec shl1(Vec a) { return vec_sl(a, vec_splats(1ULL)); }
+  static Vec cmpeq(Vec a, Vec b) {
+    return reinterpret_cast<Vec>(vec_cmpeq(a, b));
+  }
+  // ~a & b. Power's vec_andc(x, y) = x & ~y, so swap operands.
+  static Vec andnot_(Vec a, Vec b) { return vec_andc(b, a); }
+  static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
+    Vec out = {base[indices[0]], base[indices[1]]};
+    return out;
+  }
+  static Vec load_aligned(const std::uint64_t* data) {
+    return *reinterpret_cast<const Vec*>(data);
+  }
+  static void store_aligned(std::uint64_t* dst, Vec v) {
+    *reinterpret_cast<Vec*>(dst) = v;
+  }
+  // Native unsigned 64-bit cmpgt on Power8+ (ISA 2.07).
+  static Vec gt_u64(Vec a, Vec b) {
+    return reinterpret_cast<Vec>(vec_cmpgt(a, b));
+  }
+  static Vec shr63(Vec a) { return vec_sr(a, vec_splats(63ULL)); }
+  static bool is_zero(Vec a) {
+    return (vec_extract(a, 0) | vec_extract(a, 1)) == 0ULL;
+  }
+};
+
+#endif  // __VSX__
 
 }  // namespace stride_align::levenshtein_simd

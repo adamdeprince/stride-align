@@ -21,6 +21,9 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/powerpc_vsx_kernel.hpp"
 #include "backends/profile_traceback.hpp"
+#include "levenshtein_simd.hpp"
+#include "levenshtein_simd_ops.hpp"
+#include "osa_simd.hpp"
 
 namespace stride_align::backend_linux_powerpc64_vsx {
 
@@ -1722,6 +1725,41 @@ struct Implementation {
   static Score needleman_wunsch_affine_score_prepared(PreparedAffineScore& prepared) {
     ensure_supported();
     return TargetImplementation::needleman_wunsch_affine_score_prepared(prepared);
+  }
+
+  // Levenshtein + Damerau-Levenshtein SIMD batch via VsxOps (128-bit,
+  // 2 lanes). Power8 ISA 2.07 has native unsigned cmpgt_u64 so the
+  // bit-parallel kernel ports cleanly.
+  static std::vector<Score> levenshtein_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    ensure_supported();
+    return ::stride_align::levenshtein_simd::levenshtein_scores_simd<
+        ::stride_align::levenshtein_simd::VsxOps>(query, targets, cutoff);
+  }
+
+  static std::vector<double> levenshtein_normalized_scores(
+      nb::handle query,
+      nb::handle targets,
+      std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    ensure_supported();
+    return ::stride_align::levenshtein_simd::levenshtein_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::VsxOps>(query, targets, cutoff);
+  }
+
+  static std::vector<Score> damerau_levenshtein_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return ::stride_align::osa_simd::osa_scores_simd<
+        ::stride_align::levenshtein_simd::VsxOps>(query, targets);
+  }
+
+  static std::vector<double> damerau_levenshtein_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return ::stride_align::osa_simd::osa_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::VsxOps>(query, targets);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_powerpc64_vsx;
