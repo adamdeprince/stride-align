@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import importlib
 import warnings
 from types import ModuleType
@@ -1332,27 +1333,318 @@ def hamming_normalized_scores(query: object, targets: object) -> np.ndarray:
     return _LEVENSHTEIN_BACKEND.hamming_normalized_scores(query, targets)
 
 
+# k-best (`*_top_k` and the unified `extract`). The native bindings fold
+# the SIMD scoring kernel and an O(N) std::nth_element partition into a
+# single C++ call, returning list[(target, score, index)] without a
+# numpy round-trip. Direction is baked into the function name:
+# `*_top_k` returns the k *smallest* distances; `*_normalized_top_k`
+# returns the k *largest* similarities. Order *within* the returned
+# list is unspecified — only that it contains the top-k. Sort it
+# yourself if you need it ordered. extract() dispatches by Scorer.
+
+
+class Scorer(enum.IntEnum):
+    """Algorithm identifier for ``extract()``.
+
+    Integer values are part of the user-visible contract and must stay
+    in sync with the ``Scorer`` enum class in ``src/cpp/topk.hpp``.
+    """
+
+    LEVENSHTEIN = 0
+    LEVENSHTEIN_NORMALIZED = 1
+    DAMERAU_LEVENSHTEIN = 2
+    DAMERAU_LEVENSHTEIN_NORMALIZED = 3
+    HAMMING = 4
+    HAMMING_NORMALIZED = 5
+
+
+def _coerce_targets(targets: object) -> object:
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        return tuple(targets)
+    return targets
+
+
+def levenshtein_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, int, int]]:
+    """Top-k targets by lowest Levenshtein distance (ascending).
+
+    Returns ``list[(target, score, index)]`` of at most ``k`` entries.
+    Each tuple gives the target object, its distance, and its position
+    in the input sequence. Distances are int64.
+    """
+    return _LEVENSHTEIN_BACKEND.levenshtein_top_k(query, _coerce_targets(targets), k)
+
+
+def levenshtein_normalized_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest Levenshtein similarity (descending)."""
+    return _LEVENSHTEIN_BACKEND.levenshtein_normalized_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def damerau_levenshtein_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, int, int]]:
+    """Top-k targets by lowest OSA (Damerau-Levenshtein) distance."""
+    return _LEVENSHTEIN_BACKEND.damerau_levenshtein_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def damerau_levenshtein_normalized_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest OSA similarity (descending)."""
+    return _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def hamming_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, int, int]]:
+    """Top-k targets by lowest Hamming distance.
+
+    Raises ``ValueError`` if any target's length differs from the
+    query's; pad inputs yourself if you want length-tolerant behavior.
+    """
+    return _LEVENSHTEIN_BACKEND.hamming_top_k(query, _coerce_targets(targets), k)
+
+
+def hamming_normalized_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest Hamming similarity (descending)."""
+    return _LEVENSHTEIN_BACKEND.hamming_normalized_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def smith_waterman_top_k(
+    query: object,
+    targets: object,
+    *,
+    k: int = 5,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> list[tuple[object, int, int]]:
+    """Top-k targets by highest Smith-Waterman score (descending).
+
+    Same scoring parameters as ``smith_waterman_scores``. Backend
+    selection is per-call (the same logic that ``smith_waterman_scores``
+    uses), so vector-width choice tracks the score range.
+    """
+    target_tuple = _materialize_targets(targets)
+    if not target_tuple:
+        return []
+    gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
+    backend = _select_backend(
+        variant="sw-score",
+        query=query,
+        target=_representative_target(target_tuple),
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_open_score=gap_open,
+        gap_extend_score=gap_extend,
+        width=width,
+    )
+    return backend.smith_waterman_top_k(
+        query,
+        target_tuple,
+        k=k,
+        match_score=match_score,
+        mismatch_score=mismatch_score,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+        width=width,
+    )
+
+
+def extract(
+    query: object,
+    targets: object,
+    *,
+    scorer: "Scorer",
+    k: int = 5,
+) -> list[tuple[object, int | float, int]]:
+    """Top-k targets ranked by ``scorer`` (a ``Scorer`` enum value).
+
+    Distance-based scorers (``LEVENSHTEIN``, ``DAMERAU_LEVENSHTEIN``,
+    ``HAMMING``) return the k smallest distances; normalized scorers
+    (``*_NORMALIZED``) return the k largest similarities. Order within
+    the returned list is unspecified.
+
+    Smith-Waterman is not in the enum — its score depends on scoring
+    parameters. Call ``smith_waterman_top_k`` directly for that.
+    """
+    return _LEVENSHTEIN_BACKEND.extract(
+        query, _coerce_targets(targets), scorer=int(scorer), k=k
+    )
+
+
+# `_best` is a convenience: top-k with k=1, returning the single match
+# directly (or None if targets is empty). Implemented as a thin wrapper
+# over `*_top_k(k=1)` so all the SIMD + selection logic stays in one
+# place; the per-call cost difference vs a dedicated min/max kernel is
+# in the noise (nth_element with k=1 is essentially std::min_element).
+
+
+def _first_or_none(result: list) -> object | None:
+    return result[0] if result else None
+
+
+def levenshtein_best(
+    query: object,
+    targets: object,
+) -> tuple[object, int, int] | None:
+    """Single target with the lowest Levenshtein distance.
+
+    Returns ``(target, score, index)`` or ``None`` for empty targets.
+    """
+    return _first_or_none(levenshtein_top_k(query, targets, 1))
+
+
+def levenshtein_normalized_best(
+    query: object,
+    targets: object,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest Levenshtein similarity."""
+    return _first_or_none(levenshtein_normalized_top_k(query, targets, 1))
+
+
+def damerau_levenshtein_best(
+    query: object,
+    targets: object,
+) -> tuple[object, int, int] | None:
+    """Single target with the lowest OSA distance."""
+    return _first_or_none(damerau_levenshtein_top_k(query, targets, 1))
+
+
+def damerau_levenshtein_normalized_best(
+    query: object,
+    targets: object,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest OSA similarity."""
+    return _first_or_none(damerau_levenshtein_normalized_top_k(query, targets, 1))
+
+
+def hamming_best(
+    query: object,
+    targets: object,
+) -> tuple[object, int, int] | None:
+    """Single target with the lowest Hamming distance.
+
+    Raises ``ValueError`` if any target's length differs from the
+    query's; pad inputs yourself if you want length-tolerant behavior.
+    """
+    return _first_or_none(hamming_top_k(query, targets, 1))
+
+
+def hamming_normalized_best(
+    query: object,
+    targets: object,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest Hamming similarity."""
+    return _first_or_none(hamming_normalized_top_k(query, targets, 1))
+
+
+def smith_waterman_best(
+    query: object,
+    targets: object,
+    *,
+    match_score: int = 2,
+    mismatch_score: int = -1,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
+    width: int | None = None,
+) -> tuple[object, int, int] | None:
+    """Single target with the highest Smith-Waterman score."""
+    return _first_or_none(
+        smith_waterman_top_k(
+            query,
+            targets,
+            k=1,
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+    )
+
+
+def extract_best(
+    query: object,
+    targets: object,
+    *,
+    scorer: "Scorer",
+) -> tuple[object, int | float, int] | None:
+    """Single best target by ``scorer`` (a ``Scorer`` enum value)."""
+    return _first_or_none(extract(query, targets, scorer=scorer, k=1))
+
+
 __all__ = [
     "AlignmentPath",
     "AlignmentResult",
     "BackendKind",
     "BackendRecord",
+    "Scorer",
     "Scores",
     "available_backends",
     "backend_is_available",
+    "damerau_levenshtein_best",
+    "damerau_levenshtein_normalized_best",
     "damerau_levenshtein_normalized_score",
     "damerau_levenshtein_normalized_scores",
+    "damerau_levenshtein_normalized_top_k",
     "damerau_levenshtein_score",
     "damerau_levenshtein_scores",
+    "damerau_levenshtein_top_k",
     "detect_best_backend",
+    "extract",
+    "extract_best",
+    "hamming_best",
+    "hamming_normalized_best",
     "hamming_normalized_score",
     "hamming_normalized_scores",
+    "hamming_normalized_top_k",
     "hamming_score",
     "hamming_scores",
+    "hamming_top_k",
+    "levenshtein_best",
+    "levenshtein_normalized_best",
     "levenshtein_normalized_score",
     "levenshtein_normalized_scores",
+    "levenshtein_normalized_top_k",
     "levenshtein_score",
     "levenshtein_scores",
+    "levenshtein_top_k",
     "needleman_wunsch_cigar",
     "needleman_wunsch_normalized_score",
     "needleman_wunsch_normalized_scores",
@@ -1372,7 +1664,9 @@ __all__ = [
     "smith_waterman_path",
     "smith_waterman_path_info",
     "smith_waterman_score",
+    "smith_waterman_best",
     "smith_waterman_scores",
+    "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
 ]

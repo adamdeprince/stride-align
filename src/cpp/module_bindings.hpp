@@ -16,6 +16,7 @@
 #include "stride_align/alignment.hpp"
 #include "stride_align/hamming.hpp"
 #include "stride_align/levenshtein.hpp"
+#include "topk.hpp"
 
 namespace stride_align::bindings {
 
@@ -2330,6 +2331,369 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       },
       nb::arg("query"),
       nb::arg("targets"));
+
+  // -------------------------------------------------------------------
+  // k-best selection (`*_top_k` and the unified `extract`)
+  // -------------------------------------------------------------------
+  //
+  // Each `*_top_k` function runs the same SIMD batch kernel as the
+  // matching `*_scores` entry point, then folds an O(N) average
+  // partial-sort over the score vector into the same C++ call. The
+  // result is `list[(target, score, index)]` — one Python boundary
+  // crossing for "score N targets and return the best k", versus
+  // *_scores → numpy.argpartition → indexed gather. See
+  // src/cpp/topk.hpp for the selection helper and the rationale.
+  //
+  // Direction is encoded in the function name: `*_top_k` returns the
+  // k *lowest* distances (smaller = closer); `*_normalized_top_k`
+  // returns the k *highest* similarities (larger = closer). That
+  // matches the underlying score's natural direction and avoids a
+  // `descending=` flag the caller has to remember.
+  //
+  // `extract(query, targets, scorer, k)` is a thin convenience that
+  // routes by Scorer enum to the same kernels. Smith-Waterman is not
+  // in the enum because its score depends on match/mismatch/gap
+  // parameters — call `smith_waterman_top_k` directly for that.
+
+  // The user-facing `Scorer` is a Python IntEnum defined in
+  // stride_align/__init__.py. nanobind's nb::enum_ would force a fresh
+  // C++ type registration in every backend shared library (which
+  // crashes nanobind), so the binding boundary takes a plain int and
+  // re-interprets it as the C++ Scorer enum inside extract().
+
+  m.def(
+      "levenshtein_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        std::vector<Score> scores;
+        if constexpr (requires {
+                        Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+                      }) {
+          scores = Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+        } else {
+          scores = ::stride_align::levenshtein::dispatch_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+        }
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/false);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "levenshtein_normalized_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        std::vector<double> scores;
+        if constexpr (requires {
+                        Implementation::levenshtein_normalized_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+                      }) {
+          scores = Implementation::levenshtein_normalized_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+        } else {
+          scores = ::stride_align::levenshtein::dispatch_normalized_scores(
+              query, targets, ::stride_align::levenshtein::kNoCutoff);
+        }
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "damerau_levenshtein_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        std::vector<Score> scores;
+        if constexpr (requires {
+                        Implementation::damerau_levenshtein_scores(query, targets);
+                      }) {
+          scores = Implementation::damerau_levenshtein_scores(query, targets);
+        } else {
+          scores = ::stride_align::levenshtein::dispatch_osa_scores(query, targets);
+        }
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/false);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "damerau_levenshtein_normalized_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        std::vector<double> scores;
+        if constexpr (requires {
+                        Implementation::damerau_levenshtein_normalized_scores(query, targets);
+                      }) {
+          scores = Implementation::damerau_levenshtein_normalized_scores(query, targets);
+        } else {
+          scores = ::stride_align::levenshtein::dispatch_osa_normalized_scores(
+              query, targets);
+        }
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "hamming_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        auto scores = ::stride_align::hamming::dispatch_scores(query, targets);
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/false);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "hamming_normalized_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        auto scores = ::stride_align::hamming::dispatch_normalized_scores(query, targets);
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "smith_waterman_top_k",
+      [](nb::handle query,
+         nb::handle targets,
+         std::size_t k,
+         Score match_score,
+         Score mismatch_score,
+         Score gap_score,
+         nb::object gap_open_score,
+         nb::object gap_extend_score,
+         nb::object width) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        const unsigned int forced_width =
+            width.is_none() ? 0U : nb::cast<unsigned int>(width);
+        const auto gaps =
+            resolve_gap_scores(gap_score, gap_open_score, gap_extend_score);
+        std::vector<Score> scores;
+        if (!gaps.is_linear()) {
+          if constexpr (requires {
+                          Implementation::smith_waterman_affine_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              gaps.extend,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0 && gaps.extend <= 0) {
+              scores = Implementation::smith_waterman_affine_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  gaps.extend,
+                  forced_width);
+            }
+          }
+        } else {
+          if constexpr (requires {
+                          Implementation::smith_waterman_scores(
+                              query,
+                              targets,
+                              match_score,
+                              mismatch_score,
+                              gaps.open,
+                              forced_width);
+                        }) {
+            if (gaps.open <= 0) {
+              scores = Implementation::smith_waterman_scores(
+                  query,
+                  targets,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  forced_width);
+            }
+          }
+        }
+        if (scores.empty()) {
+          // Fall back to scalar per-target like smith_waterman_scores does.
+          const auto count =
+              static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
+          scores.reserve(count);
+          for (std::size_t i = 0; i < count; ++i) {
+            nb::handle target(items[i]);
+            if (!gaps.is_linear()) {
+              scores.push_back(call_smith_waterman_affine_score<Implementation>(
+                  query,
+                  target,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  gaps.extend,
+                  forced_width));
+            } else {
+              scores.push_back(Implementation::smith_waterman_score(
+                  query,
+                  target,
+                  match_score,
+                  mismatch_score,
+                  gaps.open,
+                  forced_width));
+            }
+          }
+        }
+        // Smith-Waterman is a similarity score — higher is better.
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("k") = std::size_t{5},
+      nb::arg("match_score") = 2,
+      nb::arg("mismatch_score") = -1,
+      nb::arg("gap_score") = -1,
+      nb::arg("gap_open_score") = nb::none(),
+      nb::arg("gap_extend_score") = nb::none(),
+      nb::arg("width") = nb::none());
+
+  m.def(
+      "extract",
+      [](nb::handle query,
+         nb::handle targets,
+         int scorer_int,
+         std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        using ::stride_align::topk::Scorer;
+        const auto scorer = static_cast<Scorer>(scorer_int);
+        switch (scorer) {
+          case Scorer::Levenshtein: {
+            std::vector<Score> scores;
+            if constexpr (requires {
+                            Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+                          }) {
+              scores = Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+            } else {
+              scores = ::stride_align::levenshtein::dispatch_scores(
+                  query, targets, ::stride_align::levenshtein::kNoCutoff);
+            }
+            return ::stride_align::topk::make_top_k(items, scores, k, false);
+          }
+          case Scorer::LevenshteinNormalized: {
+            std::vector<double> scores;
+            if constexpr (requires {
+                            Implementation::levenshtein_normalized_scores(
+                                query, targets, ::stride_align::levenshtein::kNoCutoff);
+                          }) {
+              scores = Implementation::levenshtein_normalized_scores(
+                  query, targets, ::stride_align::levenshtein::kNoCutoff);
+            } else {
+              scores = ::stride_align::levenshtein::dispatch_normalized_scores(
+                  query, targets, ::stride_align::levenshtein::kNoCutoff);
+            }
+            return ::stride_align::topk::make_top_k(items, scores, k, true);
+          }
+          case Scorer::DamerauLevenshtein: {
+            std::vector<Score> scores;
+            if constexpr (requires {
+                            Implementation::damerau_levenshtein_scores(query, targets);
+                          }) {
+              scores = Implementation::damerau_levenshtein_scores(query, targets);
+            } else {
+              scores = ::stride_align::levenshtein::dispatch_osa_scores(query, targets);
+            }
+            return ::stride_align::topk::make_top_k(items, scores, k, false);
+          }
+          case Scorer::DamerauLevenshteinNormalized: {
+            std::vector<double> scores;
+            if constexpr (requires {
+                            Implementation::damerau_levenshtein_normalized_scores(
+                                query, targets);
+                          }) {
+              scores = Implementation::damerau_levenshtein_normalized_scores(
+                  query, targets);
+            } else {
+              scores =
+                  ::stride_align::levenshtein::dispatch_osa_normalized_scores(
+                      query, targets);
+            }
+            return ::stride_align::topk::make_top_k(items, scores, k, true);
+          }
+          case Scorer::Hamming: {
+            auto scores =
+                ::stride_align::hamming::dispatch_scores(query, targets);
+            return ::stride_align::topk::make_top_k(items, scores, k, false);
+          }
+          case Scorer::HammingNormalized: {
+            auto scores = ::stride_align::hamming::dispatch_normalized_scores(
+                query, targets);
+            return ::stride_align::topk::make_top_k(items, scores, k, true);
+          }
+        }
+        PyErr_SetString(PyExc_ValueError, "unknown Scorer value");
+        throw nb::python_error();
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("scorer"),
+      nb::arg("k") = std::size_t{5});
 }
 
 }  // namespace stride_align::bindings
