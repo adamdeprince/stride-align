@@ -1333,6 +1333,78 @@ def hamming_normalized_scores(query: object, targets: object) -> np.ndarray:
     return _LEVENSHTEIN_BACKEND.hamming_normalized_scores(query, targets)
 
 
+# Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
+# matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
+# prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
+# prefix_cap=4 characters of common prefix.
+
+
+def jaro_similarity(query: object, target: object) -> float:
+    """Jaro similarity in [0, 1] (1 = identical, 0 = no matches in window)."""
+    return float(_LEVENSHTEIN_BACKEND.jaro_similarity(query, target))
+
+
+def jaro_winkler_similarity(
+    query: object,
+    target: object,
+    *,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> float:
+    """Jaro-Winkler similarity in [0, 1].
+
+    Adds ``L * prefix_weight * (1 - jaro)`` to the base Jaro score
+    when the base score is at least ``prefix_threshold``; ``L`` is the
+    common-prefix length, capped at ``prefix_cap`` characters.
+    Defaults match ``rapidfuzz.distance.JaroWinkler``.
+    """
+    return float(
+        _LEVENSHTEIN_BACKEND.jaro_winkler_similarity(
+            query,
+            target,
+            prefix_weight=prefix_weight,
+            prefix_threshold=prefix_threshold,
+            prefix_cap=prefix_cap,
+        )
+    )
+
+
+def jaro_similarities(query: object, targets: object) -> np.ndarray:
+    """Jaro similarity per target, returned as ndarray[float64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.jaro_similarities(query, targets)
+
+
+def jaro_winkler_similarities(
+    query: object,
+    targets: object,
+    *,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> np.ndarray:
+    """Jaro-Winkler similarity per target, returned as ndarray[float64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.jaro_winkler_similarities(
+        query,
+        targets,
+        prefix_weight=prefix_weight,
+        prefix_threshold=prefix_threshold,
+        prefix_cap=prefix_cap,
+    )
+
+
 # k-best (`*_top_k` and the unified `extract`). The native bindings fold
 # the SIMD scoring kernel and an O(N) std::nth_element partition into a
 # single C++ call, returning list[(target, score, index)] without a
@@ -1356,6 +1428,8 @@ class Scorer(enum.IntEnum):
     DAMERAU_LEVENSHTEIN_NORMALIZED = 3
     HAMMING = 4
     HAMMING_NORMALIZED = 5
+    JARO = 6
+    JARO_WINKLER = 7
 
 
 def _coerce_targets(targets: object) -> object:
@@ -1436,6 +1510,35 @@ def hamming_normalized_top_k(
     """Top-k targets by highest Hamming similarity (descending)."""
     return _LEVENSHTEIN_BACKEND.hamming_normalized_top_k(
         query, _coerce_targets(targets), k
+    )
+
+
+def jaro_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest Jaro similarity."""
+    return _LEVENSHTEIN_BACKEND.jaro_top_k(query, _coerce_targets(targets), k)
+
+
+def jaro_winkler_top_k(
+    query: object,
+    targets: object,
+    *,
+    k: int = 5,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest Jaro-Winkler similarity."""
+    return _LEVENSHTEIN_BACKEND.jaro_winkler_top_k(
+        query,
+        _coerce_targets(targets),
+        k=k,
+        prefix_weight=prefix_weight,
+        prefix_threshold=prefix_threshold,
+        prefix_cap=prefix_cap,
     )
 
 
@@ -1572,6 +1675,35 @@ def hamming_normalized_best(
     return _first_or_none(hamming_normalized_top_k(query, targets, 1))
 
 
+def jaro_best(
+    query: object,
+    targets: object,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest Jaro similarity."""
+    return _first_or_none(jaro_top_k(query, targets, 1))
+
+
+def jaro_winkler_best(
+    query: object,
+    targets: object,
+    *,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest Jaro-Winkler similarity."""
+    return _first_or_none(
+        jaro_winkler_top_k(
+            query,
+            targets,
+            k=1,
+            prefix_weight=prefix_weight,
+            prefix_threshold=prefix_threshold,
+            prefix_cap=prefix_cap,
+        )
+    )
+
+
 def smith_waterman_best(
     query: object,
     targets: object,
@@ -1637,6 +1769,14 @@ __all__ = [
     "hamming_score",
     "hamming_scores",
     "hamming_top_k",
+    "jaro_best",
+    "jaro_similarities",
+    "jaro_similarity",
+    "jaro_top_k",
+    "jaro_winkler_best",
+    "jaro_winkler_similarities",
+    "jaro_winkler_similarity",
+    "jaro_winkler_top_k",
     "levenshtein_best",
     "levenshtein_normalized_best",
     "levenshtein_normalized_score",

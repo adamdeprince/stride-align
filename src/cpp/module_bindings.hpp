@@ -12,9 +12,11 @@
 #include "affine.hpp"
 #include "backends/profile_traceback.hpp"
 #include "hamming_dispatch.hpp"
+#include "jaro_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "stride_align/alignment.hpp"
 #include "stride_align/hamming.hpp"
+#include "stride_align/jaro.hpp"
 #include "stride_align/levenshtein.hpp"
 #include "topk.hpp"
 
@@ -2332,6 +2334,66 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("query"),
       nb::arg("targets"));
 
+  // --- Jaro / Jaro-Winkler ---------------------------------------------
+  //
+  // Both are similarity in [0, 1] (higher = closer); there's no
+  // separate "distance" form, since Jaro doesn't admit a meaningful
+  // bound to subtract from. Winkler adds a prefix bonus capped at
+  // `prefix_cap` characters when the base Jaro score crosses
+  // `prefix_threshold` (default 0.7 to match rapidfuzz).
+
+  m.def(
+      "jaro_similarity",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::jaro::dispatch_similarity(query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "jaro_winkler_similarity",
+      [](nb::handle query,
+         nb::handle target,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        return ::stride_align::jaro::dispatch_winkler_similarity(
+            query, target, prefix_weight, prefix_threshold, prefix_cap);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
+
+  m.def(
+      "jaro_similarities",
+      [](nb::handle query, nb::handle targets) {
+        return as_normalized_ndarray(
+            ::stride_align::jaro::dispatch_similarities(query, targets));
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
+  m.def(
+      "jaro_winkler_similarities",
+      [](nb::handle query,
+         nb::handle targets,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        return as_normalized_ndarray(
+            ::stride_align::jaro::dispatch_winkler_similarities(
+                query, targets, prefix_weight, prefix_threshold, prefix_cap));
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
+
   // -------------------------------------------------------------------
   // k-best selection (`*_top_k` and the unified `extract`)
   // -------------------------------------------------------------------
@@ -2498,6 +2560,52 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("query"),
       nb::arg("targets"),
       nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "jaro_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        auto scores = ::stride_align::jaro::dispatch_similarities(query, targets);
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "jaro_winkler_top_k",
+      [](nb::handle query,
+         nb::handle targets,
+         std::size_t k,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(), "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        auto scores = ::stride_align::jaro::dispatch_winkler_similarities(
+            query, targets, prefix_weight, prefix_threshold, prefix_cap);
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("k") = std::size_t{5},
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
 
   m.def(
       "smith_waterman_top_k",
@@ -2683,6 +2791,23 @@ void bind_backend_module(nb::module_& m, const char* doc) {
           case Scorer::HammingNormalized: {
             auto scores = ::stride_align::hamming::dispatch_normalized_scores(
                 query, targets);
+            return ::stride_align::topk::make_top_k(items, scores, k, true);
+          }
+          case Scorer::Jaro: {
+            auto scores = ::stride_align::jaro::dispatch_similarities(
+                query, targets);
+            return ::stride_align::topk::make_top_k(items, scores, k, true);
+          }
+          case Scorer::JaroWinkler: {
+            // extract() uses default Winkler parameters; callers who
+            // need a non-default prefix_weight / threshold / cap should
+            // call jaro_winkler_top_k directly.
+            auto scores = ::stride_align::jaro::dispatch_winkler_similarities(
+                query,
+                targets,
+                ::stride_align::jaro::kDefaultPrefixWeight,
+                ::stride_align::jaro::kDefaultPrefixThreshold,
+                ::stride_align::jaro::kDefaultPrefixCap);
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
         }
