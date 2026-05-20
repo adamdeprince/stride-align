@@ -21,6 +21,8 @@
 // defaults used by the bindings layer.
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -119,6 +121,112 @@ inline double jaro_scalar(
   // literature and every common implementation accept that rounding-
   // down convention; matching it keeps our values bit-equivalent to
   // rapidfuzz's so users can swap one for the other.
+  const double matches_d = static_cast<double>(matches);
+  const double trans_d = static_cast<double>(half_trans / 2U);
+  return (matches_d / static_cast<double>(n)
+       + matches_d / static_cast<double>(m)
+       + (matches_d - trans_d) / matches_d)
+       / 3.0;
+}
+
+// ---------------------------------------------------------------------
+// Bit-parallel Jaro (single 64-bit word per side).
+//
+// Replaces the O(n * window) scalar inner loop with an iteration over
+// `b` where each step is an O(1) bitwise update: for j-th char of b,
+// `peq[b[j]] & window_mask & ~used_a` is the set of unused matching
+// positions in a; the lowest set bit picks the leftmost. After the
+// scan, `used_a` and `b_matched` are popcount-able bitmaps, and
+// transpositions fall out of a parallel walk over set bits.
+//
+// Constraint: both n and m must fit in 64 bits. The caller checks
+// this before dispatching here; the scalar reference handles the
+// long-string fallback.
+// ---------------------------------------------------------------------
+
+// Build PEQ over `a` for the byte alphabet (256 entries). Bit i of
+// peq[c] is set iff a[i] == c. Returned by value because the caller
+// usually owns it on the stack.
+inline std::array<std::uint64_t, 256> build_peq_byte_64(
+    std::span<const std::uint8_t> a) noexcept {
+  std::array<std::uint64_t, 256> peq{};
+  const std::size_t n = std::min<std::size_t>(a.size(), 64U);
+  for (std::size_t i = 0; i < n; ++i) {
+    peq[a[i]] |= std::uint64_t{1} << i;
+  }
+  return peq;
+}
+
+// Bits [lo, hi) of a 64-bit word. Caller guarantees 0 <= lo <= hi <= 64.
+inline constexpr std::uint64_t bit_range(std::size_t lo, std::size_t hi) noexcept {
+  // Build the [0, hi) half as a right-shift of all-ones; that
+  // sidesteps the UB of `1ULL << 64`. The empty range hi==0 collapses
+  // to zero because the high_bits term becomes ~0 >> 64 (= 0 under
+  // unsigned arithmetic via the special case below).
+  const std::uint64_t high_bits =
+      (hi >= 64U) ? ~std::uint64_t{0} : (~std::uint64_t{0} >> (64U - hi));
+  const std::uint64_t low_bits = (lo == 0U) ? 0U : ((std::uint64_t{1} << lo) - 1U);
+  return high_bits & ~low_bits;
+}
+
+// One-shot bit-parallel Jaro for byte inputs with n <= 64 and m <= 64.
+// Returns the (already-divided-by-3) similarity in [0, 1].
+inline double jaro_bp_byte_64(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) noexcept {
+  const std::size_t n = a.size();
+  const std::size_t m = b.size();
+  if (n == 0U && m == 0U) {
+    return 1.0;
+  }
+  if (n == 0U || m == 0U) {
+    return 0.0;
+  }
+
+  const std::size_t window = match_window(n, m);
+  const auto peq = build_peq_byte_64(a);
+
+  std::uint64_t used_a = 0;
+  std::uint64_t b_matched = 0;
+  for (std::size_t j = 0; j < m; ++j) {
+    const std::size_t lo = j > window ? j - window : 0U;
+    const std::size_t hi = std::min(j + window + 1U, n);
+    if (lo >= hi) {
+      continue;
+    }
+    const std::uint64_t window_mask = bit_range(lo, hi);
+    const std::uint64_t candidate =
+        peq[b[j]] & window_mask & ~used_a;
+    if (candidate == 0U) {
+      continue;
+    }
+    // Lowest set bit (= leftmost unused match position in a).
+    const std::uint64_t lowest = candidate & (~candidate + 1U);
+    used_a |= lowest;
+    b_matched |= std::uint64_t{1} << j;
+  }
+
+  const std::size_t matches =
+      static_cast<std::size_t>(std::popcount(used_a));
+  if (matches == 0U) {
+    return 0.0;
+  }
+
+  // Transposition count: walk set bits of used_a and b_matched in
+  // ascending order and count mismatched pairs.
+  std::uint64_t a_bits = used_a;
+  std::uint64_t b_bits = b_matched;
+  std::size_t half_trans = 0;
+  while (a_bits != 0U) {
+    const std::size_t i = static_cast<std::size_t>(std::countr_zero(a_bits));
+    const std::size_t k = static_cast<std::size_t>(std::countr_zero(b_bits));
+    if (a[i] != b[k]) {
+      ++half_trans;
+    }
+    a_bits &= a_bits - 1U;
+    b_bits &= b_bits - 1U;
+  }
+
   const double matches_d = static_cast<double>(matches);
   const double trans_d = static_cast<double>(half_trans / 2U);
   return (matches_d / static_cast<double>(n)
