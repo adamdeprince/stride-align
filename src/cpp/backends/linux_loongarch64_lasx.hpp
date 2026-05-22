@@ -17,6 +17,7 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/loongarch_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
+#include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
 #include "osa_simd.hpp"
@@ -2211,6 +2212,23 @@ struct Implementation {
       nb::handle query, nb::handle targets) {
     return ::stride_align::osa_simd::osa_normalized_scores_simd<
         ::stride_align::levenshtein_simd::LasxOps>(query, targets);
+  }
+
+  static std::vector<double> jaro_similarities(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::jaro_simd::jaro_similarities_simd<
+        ::stride_align::levenshtein_simd::LasxOps>(query, targets);
+  }
+
+  static std::vector<double> jaro_winkler_similarities(
+      nb::handle query,
+      nb::handle targets,
+      double prefix_weight,
+      double prefix_threshold,
+      std::size_t prefix_cap) {
+    return ::stride_align::jaro_simd::jaro_winkler_similarities_simd<
+        ::stride_align::levenshtein_simd::LasxOps>(
+        query, targets, prefix_weight, prefix_threshold, prefix_cap);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_loongarch64_lasx;

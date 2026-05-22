@@ -2370,6 +2370,14 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "jaro_similarities",
       [](nb::handle query, nb::handle targets) {
+        if constexpr (requires {
+                        Implementation::jaro_similarities(query, targets);
+                      }) {
+          auto result = Implementation::jaro_similarities(query, targets);
+          if (!result.empty()) {
+            return as_normalized_ndarray(std::move(result));
+          }
+        }
         return as_normalized_ndarray(
             ::stride_align::jaro::dispatch_similarities(query, targets));
       },
@@ -2383,6 +2391,17 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          double prefix_weight,
          double prefix_threshold,
          std::size_t prefix_cap) {
+        if constexpr (requires {
+                        Implementation::jaro_winkler_similarities(
+                            query, targets,
+                            prefix_weight, prefix_threshold, prefix_cap);
+                      }) {
+          auto result = Implementation::jaro_winkler_similarities(
+              query, targets, prefix_weight, prefix_threshold, prefix_cap);
+          if (!result.empty()) {
+            return as_normalized_ndarray(std::move(result));
+          }
+        }
         return as_normalized_ndarray(
             ::stride_align::jaro::dispatch_winkler_similarities(
                 query, targets, prefix_weight, prefix_threshold, prefix_cap));
@@ -2571,7 +2590,15 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         }
         nb::object owner = nb::steal<nb::object>(fast_targets);
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
-        auto scores = ::stride_align::jaro::dispatch_similarities(query, targets);
+        std::vector<double> scores;
+        if constexpr (requires {
+                        Implementation::jaro_similarities(query, targets);
+                      }) {
+          scores = Implementation::jaro_similarities(query, targets);
+        }
+        if (scores.empty()) {
+          scores = ::stride_align::jaro::dispatch_similarities(query, targets);
+        }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
       },
@@ -2594,8 +2621,19 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         }
         nb::object owner = nb::steal<nb::object>(fast_targets);
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
-        auto scores = ::stride_align::jaro::dispatch_winkler_similarities(
-            query, targets, prefix_weight, prefix_threshold, prefix_cap);
+        std::vector<double> scores;
+        if constexpr (requires {
+                        Implementation::jaro_winkler_similarities(
+                            query, targets,
+                            prefix_weight, prefix_threshold, prefix_cap);
+                      }) {
+          scores = Implementation::jaro_winkler_similarities(
+              query, targets, prefix_weight, prefix_threshold, prefix_cap);
+        }
+        if (scores.empty()) {
+          scores = ::stride_align::jaro::dispatch_winkler_similarities(
+              query, targets, prefix_weight, prefix_threshold, prefix_cap);
+        }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
       },
@@ -2794,20 +2832,44 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::Jaro: {
-            auto scores = ::stride_align::jaro::dispatch_similarities(
-                query, targets);
+            std::vector<double> scores;
+            if constexpr (requires {
+                            Implementation::jaro_similarities(query, targets);
+                          }) {
+              scores = Implementation::jaro_similarities(query, targets);
+            }
+            if (scores.empty()) {
+              scores = ::stride_align::jaro::dispatch_similarities(
+                  query, targets);
+            }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::JaroWinkler: {
             // extract() uses default Winkler parameters; callers who
             // need a non-default prefix_weight / threshold / cap should
             // call jaro_winkler_top_k directly.
-            auto scores = ::stride_align::jaro::dispatch_winkler_similarities(
-                query,
-                targets,
-                ::stride_align::jaro::kDefaultPrefixWeight,
-                ::stride_align::jaro::kDefaultPrefixThreshold,
-                ::stride_align::jaro::kDefaultPrefixCap);
+            std::vector<double> scores;
+            if constexpr (requires {
+                            Implementation::jaro_winkler_similarities(
+                                query, targets,
+                                ::stride_align::jaro::kDefaultPrefixWeight,
+                                ::stride_align::jaro::kDefaultPrefixThreshold,
+                                ::stride_align::jaro::kDefaultPrefixCap);
+                          }) {
+              scores = Implementation::jaro_winkler_similarities(
+                  query, targets,
+                  ::stride_align::jaro::kDefaultPrefixWeight,
+                  ::stride_align::jaro::kDefaultPrefixThreshold,
+                  ::stride_align::jaro::kDefaultPrefixCap);
+            }
+            if (scores.empty()) {
+              scores = ::stride_align::jaro::dispatch_winkler_similarities(
+                  query,
+                  targets,
+                  ::stride_align::jaro::kDefaultPrefixWeight,
+                  ::stride_align::jaro::kDefaultPrefixThreshold,
+                  ::stride_align::jaro::kDefaultPrefixCap);
+            }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
         }

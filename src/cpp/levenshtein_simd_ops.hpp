@@ -90,6 +90,28 @@ struct SseOps {
   // True iff every bit of `a` is zero. Used by the cutoff early-exit
   // path to test whether any lane is still live.
   static bool is_zero(Vec a) { return _mm_testz_si128(a, a) != 0; }
+  // Per-lane left/right shift by a per-lane count. SSE4.1 has no
+  // variable 64-bit shift (VPSLLVQ is AVX2+), so emulate via
+  // extract/insert. Two lanes means two scalar shifts — cheap enough
+  // for the Jaro window-mask computation that needs it.
+  static Vec shl_var_u64(Vec a, Vec shifts) {
+    const auto a0 = static_cast<std::uint64_t>(_mm_extract_epi64(a, 0));
+    const auto a1 = static_cast<std::uint64_t>(_mm_extract_epi64(a, 1));
+    const auto s0 = static_cast<std::uint64_t>(_mm_extract_epi64(shifts, 0));
+    const auto s1 = static_cast<std::uint64_t>(_mm_extract_epi64(shifts, 1));
+    return _mm_set_epi64x(
+        static_cast<long long>(a1 << s1),
+        static_cast<long long>(a0 << s0));
+  }
+  static Vec shr_var_u64(Vec a, Vec shifts) {
+    const auto a0 = static_cast<std::uint64_t>(_mm_extract_epi64(a, 0));
+    const auto a1 = static_cast<std::uint64_t>(_mm_extract_epi64(a, 1));
+    const auto s0 = static_cast<std::uint64_t>(_mm_extract_epi64(shifts, 0));
+    const auto s1 = static_cast<std::uint64_t>(_mm_extract_epi64(shifts, 1));
+    return _mm_set_epi64x(
+        static_cast<long long>(a1 >> s1),
+        static_cast<long long>(a0 >> s0));
+  }
 };
 
 #endif  // __SSE4_1__
@@ -139,6 +161,13 @@ struct Avx2Ops {
   }
   static Vec shr63(Vec a) { return _mm256_srli_epi64(a, 63); }
   static bool is_zero(Vec a) { return _mm256_testz_si256(a, a) != 0; }
+  // AVX2 has native variable 64-bit shifts (VPSLLVQ / VPSRLVQ).
+  static Vec shl_var_u64(Vec a, Vec shifts) {
+    return _mm256_sllv_epi64(a, shifts);
+  }
+  static Vec shr_var_u64(Vec a, Vec shifts) {
+    return _mm256_srlv_epi64(a, shifts);
+  }
 };
 
 #endif  // __AVX2__
@@ -183,6 +212,12 @@ struct Avx512Ops {
   }
   static Vec shr63(Vec a) { return _mm512_srli_epi64(a, 63); }
   static bool is_zero(Vec a) { return _mm512_test_epi64_mask(a, a) == 0; }
+  static Vec shl_var_u64(Vec a, Vec shifts) {
+    return _mm512_sllv_epi64(a, shifts);
+  }
+  static Vec shr_var_u64(Vec a, Vec shifts) {
+    return _mm512_srlv_epi64(a, shifts);
+  }
 };
 
 #endif  // __AVX512F__
@@ -230,6 +265,15 @@ struct NeonOps {
     // OR both halves; result is zero iff every bit of v is zero.
     uint64x1_t combined = vorr_u64(vget_low_u64(a), vget_high_u64(a));
     return vget_lane_u64(combined, 0) == 0;
+  }
+  // NEON's vshlq_u64 takes a SIGNED shift count: positive shifts left,
+  // negative shifts right. We expose left/right as two helpers using
+  // the same underlying instruction.
+  static Vec shl_var_u64(Vec a, Vec shifts) {
+    return vshlq_u64(a, vreinterpretq_s64_u64(shifts));
+  }
+  static Vec shr_var_u64(Vec a, Vec shifts) {
+    return vshlq_u64(a, vnegq_s64(vreinterpretq_s64_u64(shifts)));
   }
 };
 
@@ -288,6 +332,8 @@ struct LsxOps {
     const long hi = __lsx_vpickve2gr_du(a, 1);
     return (lo | hi) == 0;
   }
+  static Vec shl_var_u64(Vec a, Vec shifts) { return __lsx_vsll_d(a, shifts); }
+  static Vec shr_var_u64(Vec a, Vec shifts) { return __lsx_vsrl_d(a, shifts); }
 };
 
 #endif  // __loongarch_sx
@@ -339,6 +385,8 @@ struct LasxOps {
     const long l3 = __lasx_xvpickve2gr_du(a, 3);
     return (l0 | l1 | l2 | l3) == 0;
   }
+  static Vec shl_var_u64(Vec a, Vec shifts) { return __lasx_xvsll_d(a, shifts); }
+  static Vec shr_var_u64(Vec a, Vec shifts) { return __lasx_xvsrl_d(a, shifts); }
 };
 
 #endif  // __loongarch_asx
@@ -393,6 +441,9 @@ struct VsxOps {
   static bool is_zero(Vec a) {
     return (vec_extract(a, 0) | vec_extract(a, 1)) == 0ULL;
   }
+  // Power's vec_sl / vec_sr take per-lane unsigned shift counts.
+  static Vec shl_var_u64(Vec a, Vec shifts) { return vec_sl(a, shifts); }
+  static Vec shr_var_u64(Vec a, Vec shifts) { return vec_sr(a, shifts); }
 };
 
 #endif  // __VSX__

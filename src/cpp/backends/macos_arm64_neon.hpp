@@ -460,6 +460,23 @@ struct Implementation {
     ensure_supported();
     return TargetImplementation::damerau_levenshtein_normalized_scores(query, targets);
   }
+
+  static std::vector<double> jaro_similarities(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::jaro_similarities(query, targets);
+  }
+
+  static std::vector<double> jaro_winkler_similarities(
+      nb::handle query,
+      nb::handle targets,
+      double prefix_weight,
+      double prefix_threshold,
+      std::size_t prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::jaro_winkler_similarities(
+        query, targets, prefix_weight, prefix_threshold, prefix_cap);
+  }
 };
 
 }  // namespace stride_align::backend_macos_arm64_neon

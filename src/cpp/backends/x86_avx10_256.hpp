@@ -16,6 +16,7 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
 #include "backends/x86_fixed_kernel.hpp"
+#include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
 #include "osa_simd.hpp"
@@ -786,6 +787,23 @@ struct TargetImplementation {
     return ::stride_align::osa_simd::osa_normalized_scores_simd<
         ::stride_align::levenshtein_simd::Avx2Ops>(query, targets);
   }
+
+  static std::vector<double> jaro_similarities(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::jaro_simd::jaro_similarities_simd<
+        ::stride_align::levenshtein_simd::Avx2Ops>(query, targets);
+  }
+
+  static std::vector<double> jaro_winkler_similarities(
+      nb::handle query,
+      nb::handle targets,
+      double prefix_weight,
+      double prefix_threshold,
+      std::size_t prefix_cap) {
+    return ::stride_align::jaro_simd::jaro_winkler_similarities_simd<
+        ::stride_align::levenshtein_simd::Avx2Ops>(
+        query, targets, prefix_weight, prefix_threshold, prefix_cap);
+  }
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -1190,6 +1208,24 @@ struct Implementation {
   damerau_levenshtein_normalized_scores(nb::handle query, nb::handle targets) {
     ensure_supported();
     return TargetImplementation::damerau_levenshtein_normalized_scores(query, targets);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<double>
+  jaro_similarities(nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::jaro_similarities(query, targets);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE std::vector<double>
+  jaro_winkler_similarities(
+      nb::handle query,
+      nb::handle targets,
+      double prefix_weight,
+      double prefix_threshold,
+      std::size_t prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::jaro_winkler_similarities(
+        query, targets, prefix_weight, prefix_threshold, prefix_cap);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx10_256;

@@ -17,6 +17,7 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/generic.hpp"
 #include "backends/profile_traceback.hpp"
+#include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
 #include "osa_simd.hpp"
@@ -1472,6 +1473,27 @@ struct Implementation {
       nb::handle query, nb::handle targets) {
     return ::stride_align::osa_simd::osa_normalized_scores_simd<
         ::stride_align::levenshtein_simd::SseOps>(query, targets);
+  }
+
+  // Jaro / Jaro-Winkler multi-target SIMD batch. Single-word kernel,
+  // one target per 64-bit lane. Returns an empty vector when inputs
+  // don't fit (bytes-only, lens <= 64); the binding layer falls
+  // through to scalar dispatch in that case.
+  static std::vector<double> jaro_similarities(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::jaro_simd::jaro_similarities_simd<
+        ::stride_align::levenshtein_simd::SseOps>(query, targets);
+  }
+
+  static std::vector<double> jaro_winkler_similarities(
+      nb::handle query,
+      nb::handle targets,
+      double prefix_weight,
+      double prefix_threshold,
+      std::size_t prefix_cap) {
+    return ::stride_align::jaro_simd::jaro_winkler_similarities_simd<
+        ::stride_align::levenshtein_simd::SseOps>(
+        query, targets, prefix_weight, prefix_threshold, prefix_cap);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_sse41;

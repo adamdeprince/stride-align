@@ -21,6 +21,7 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/powerpc_vsx_kernel.hpp"
 #include "backends/profile_traceback.hpp"
+#include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
 #include "osa_simd.hpp"
@@ -1760,6 +1761,25 @@ struct Implementation {
     ensure_supported();
     return ::stride_align::osa_simd::osa_normalized_scores_simd<
         ::stride_align::levenshtein_simd::VsxOps>(query, targets);
+  }
+
+  static std::vector<double> jaro_similarities(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return ::stride_align::jaro_simd::jaro_similarities_simd<
+        ::stride_align::levenshtein_simd::VsxOps>(query, targets);
+  }
+
+  static std::vector<double> jaro_winkler_similarities(
+      nb::handle query,
+      nb::handle targets,
+      double prefix_weight,
+      double prefix_threshold,
+      std::size_t prefix_cap) {
+    ensure_supported();
+    return ::stride_align::jaro_simd::jaro_winkler_similarities_simd<
+        ::stride_align::levenshtein_simd::VsxOps>(
+        query, targets, prefix_weight, prefix_threshold, prefix_cap);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_powerpc64_vsx;
