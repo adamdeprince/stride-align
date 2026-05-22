@@ -1051,17 +1051,47 @@ dispatch (which the singular-API path already uses for q > 64).
 Future work: native pre-shuffle of the gather indices, or a Power-
 specific tuned gather using `vec_perm`.
 
+### Multi-word target batch (q_len ≤ 256, m_len in (64, 256])
+
+The second multi-word axis: target length crossing the 64-bit
+register boundary, in addition to (or independent of) the query
+length. b_matched becomes `std::array<Vec, W_target>`; the inner
+loop only updates block `j / 64` so the per-iteration work is the
+same as single-word target.
+
+| Host / backend | q | m | N | stride-align | rapidfuzz | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Tiger Lake `x86_avx512bwvl` | 100 | 100 | 500 | 196 us | 789 us | **4.02x** |
+| Tiger Lake `x86_avx512bwvl` | 200 | 150 | 500 | 440 us | 1305 us | **2.97x** |
+| Tiger Lake `x86_avx512bwvl` | 60 | 100 | 500 | 171 us | 631 us | **3.70x** |
+| Tiger Lake `x86_avx512bwvl` | 80 | 200 | 500 | 343 us | 1230 us | **3.58x** |
+| Graviton4 `linux_aarch64_neon` | 100 | 100 | 500 | 246 us | 643 us | **2.62x** |
+| Apple M-series `macos_arm64_neon` | 100 | 100 | 500 | 100 us | 296 us | **2.95x** |
+| Loongson `linux_loongarch64_lasx` | 100 | 100 | 500 | 509 us | 142,489 us | 279x |
+
+The dispatch picks `(W_query, W_target)` from the actual lengths in
+the batch, so short-target inputs still get `W_target = 1` (no wasted
+work). 16 instantiations max per backend.
+
 ### Constraints (v0.3.0)
 
-* Multi-word path covers query lengths up to 256 (W = 1..4 blocks of
-  64-bit bitmaps per lane). Above 256 it falls through to per-target
-  scalar dispatch (which is bit-parallel single-word for q ≤ 64 and
-  the scalar reference above).
-* Target length must be ≤ 64 (single-word b_matched). m > 64 also
-  falls through to per-target scalar dispatch. Multi-word target is
-  a separate axis still pending.
+* SIMD path covers query lengths up to 256 AND target lengths up to
+  256 (W = 1..4 blocks per side). Above 256 on either side it falls
+  through to per-target scalar dispatch (bit-parallel single-word
+  for ≤ 64 inputs and the scalar reference above).
 * Byte-compatible inputs (bytes / 1-byte unicode). Wider unicode
   falls through to scalar via the prepared-token path.
+
+### Levenshtein audit (no changes needed)
+
+Lev's SIMD batch already handles query lengths up to 256 via the
+same W = 1..4 multi-word pattern. Target length on Lev's side is
+just an iteration count over the inner DP loop — no per-target
+register-width constraint — so multi-word target is a non-issue for
+Lev. Above q_len = 256, Lev's scalar dispatch picks up via Hyyrö's
+multi-word Myers (no upper bound on q_len). Future work to extend
+the SIMD batch beyond W = 4 is small but the use case (queries >
+256 chars in batches of 1000+) is rare.
 
 ## Notes on comparing across families
 
