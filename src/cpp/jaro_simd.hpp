@@ -76,6 +76,33 @@ inline ByteAlphabetPeq build_peq_byte(
   return peq;
 }
 
+// Multi-word PEQ for queries longer than 64 chars. `W` blocks of 64
+// bits per character (query length up to W*64). Block-major layout:
+// entries[b * 257 + c] is block b of the bitmap for character c.
+// Block-major lets the inner loop gather one block at a time with a
+// fixed per-block base pointer.
+template <std::size_t W>
+struct ByteAlphabetPeqMulti {
+  alignas(64) std::uint64_t entries[W * 257U];
+
+  const std::uint64_t* block(std::size_t b) const noexcept {
+    return entries + b * 257U;
+  }
+};
+
+template <std::size_t W>
+inline ByteAlphabetPeqMulti<W> build_peq_byte_multi(
+    const std::uint8_t* q_ptr, std::size_t q_len) noexcept {
+  ByteAlphabetPeqMulti<W> peq{};
+  const std::size_t n = std::min<std::size_t>(q_len, W * 64U);
+  for (std::size_t i = 0; i < n; ++i) {
+    const std::size_t b = i / 64U;
+    const std::size_t bit = i % 64U;
+    peq.entries[b * 257U + q_ptr[i]] |= std::uint64_t{1} << bit;
+  }
+  return peq;
+}
+
 // Per-batch SIMD bit-parallel Jaro inner. Writes Jaro similarity into
 // out[0..group). Lanes beyond `group` are filled with sentinel data
 // (lens=0, char index=256) so the SIMD work doesn't need a branch
@@ -215,6 +242,198 @@ inline void jaro_simd_inner(
   }
 }
 
+// Multi-word SIMD batch for queries longer than 64 chars. Targets
+// still ≤ 64 (b_matched stays a single 64-bit word per lane). W is
+// the number of 64-bit blocks the query bitmap spans (1 to 4 covers
+// query lengths 1..256).
+//
+// Per j iteration:
+//   * Compute per-lane char_idx and active_bit (single 64-bit word
+//     for b_matched, so j < 64 always).
+//   * For each block b, compute the per-lane window-mask restricted
+//     to that block (window in the query: bits [lo_q, hi_q) of the
+//     query, intersected with the block's [b*64, (b+1)*64) range).
+//   * Gather PEQ[c][b] per lane and AND in to form candidate[b].
+//   * Across the W candidate vectors, pick the lowest block with any
+//     non-zero lane and within that block take `x & -x` for the
+//     leftmost match. Update used_a[b] only on lanes that picked
+//     block b.
+//   * If any of the W blocks fired for a lane, set bit j in
+//     b_matched.
+//
+// Constraint: m ≤ 64 (b_matched is single-word). Above that the
+// caller falls through to per-target scalar dispatch.
+template <typename Ops, std::size_t W>
+inline void jaro_simd_inner_multi_word_query(
+    const ByteAlphabetPeqMulti<W>& peq,
+    const std::uint8_t* q_ptr,
+    std::size_t q_len,
+    const std::uint8_t* const* targets,
+    const std::size_t* lens,
+    std::size_t group,
+    double* out) {
+  static_assert(W >= 2U && W <= 4U,
+                "multi-word Jaro kernel only instantiated for W in [2, 4]");
+  constexpr std::size_t K = Ops::lanes;
+  using Vec = typename Ops::Vec;
+
+  LaneScratch<Ops> windows{};
+  std::size_t max_m = 0;
+  for (std::size_t l = 0; l < group; ++l) {
+    windows.values[l] = static_cast<std::uint64_t>(
+        ::stride_align::jaro::match_window(q_len, lens[l]));
+    max_m = std::max(max_m, lens[l]);
+  }
+
+  std::array<Vec, W> used_a;
+  for (auto& v : used_a) {
+    v = Ops::zero();
+  }
+  Vec b_matched = Ops::zero();
+  const Vec all_ones = Ops::set1(~std::uint64_t{0});
+
+  LaneScratch<Ops> char_idx{};
+  LaneScratch<Ops> active_bit{};
+  // Per-block scratch for the shift amounts that build the window
+  // mask restricted to that block.
+  std::array<LaneScratch<Ops>, W> lo_shift{};
+  std::array<LaneScratch<Ops>, W> hi_complement{};
+
+  for (std::size_t j = 0; j < max_m; ++j) {
+    for (std::size_t l = 0; l < K; ++l) {
+      const std::size_t m = lens[l];
+      const std::uint64_t w_lane = windows.values[l];
+      if (j >= m) {
+        char_idx.values[l] = 256U;
+        active_bit.values[l] = 0U;
+        for (std::size_t b = 0; b < W; ++b) {
+          lo_shift[b].values[l] = 63U;
+          hi_complement[b].values[l] = 63U;
+        }
+        continue;
+      }
+      char_idx.values[l] = targets[l][j];
+      active_bit.values[l] = std::uint64_t{1} << j;
+
+      const std::size_t lo_q =
+          j > w_lane ? j - static_cast<std::size_t>(w_lane) : 0U;
+      const std::size_t hi_q =
+          std::min(q_len, j + static_cast<std::size_t>(w_lane) + 1U);
+
+      for (std::size_t b = 0; b < W; ++b) {
+        const std::size_t block_start = b * 64U;
+        const std::size_t block_end = std::min(q_len, block_start + 64U);
+        if (lo_q >= block_end || hi_q <= block_start ||
+            block_start >= block_end) {
+          // No overlap with this block — encode mask = 0 via the same
+          // "shl 63 + shr 63 → AND = 0" trick used by the single-word
+          // kernel, keeping all shift amounts in [0, 63].
+          lo_shift[b].values[l] = 63U;
+          hi_complement[b].values[l] = 63U;
+          continue;
+        }
+        const std::size_t lo_local =
+            (lo_q > block_start) ? (lo_q - block_start) : 0U;
+        const std::size_t hi_local = std::min(
+            std::size_t{64U}, hi_q - block_start);
+        lo_shift[b].values[l] = static_cast<std::uint64_t>(lo_local);
+        hi_complement[b].values[l] =
+            static_cast<std::uint64_t>(64U - hi_local);
+      }
+    }
+
+    const Vec active_v = Ops::load_aligned(active_bit.values);
+
+    std::array<Vec, W> candidate;
+    for (std::size_t b = 0; b < W; ++b) {
+      const Vec lo_v = Ops::load_aligned(lo_shift[b].values);
+      const Vec hi_comp_v = Ops::load_aligned(hi_complement[b].values);
+      const Vec window_mask =
+          Ops::and_(Ops::shl_var_u64(all_ones, lo_v),
+                    Ops::shr_var_u64(all_ones, hi_comp_v));
+      const Vec peq_v = Ops::gather64(peq.block(b), char_idx.values);
+      candidate[b] = Ops::andnot_(used_a[b], Ops::and_(peq_v, window_mask));
+    }
+
+    // "Leftmost match" across blocks: pick the lowest block b that has
+    // a non-zero candidate per lane, take its `x & -x`, leave higher
+    // blocks unchanged for that lane.
+    Vec prev_all_zero = all_ones;
+    Vec any_matched = Ops::zero();
+    for (std::size_t b = 0; b < W; ++b) {
+      const Vec this_nonzero =
+          Ops::not_(Ops::cmpeq(candidate[b], Ops::zero()));
+      const Vec take_this = Ops::and_(prev_all_zero, this_nonzero);
+      const Vec lowest_in_block =
+          Ops::and_(candidate[b],
+                    Ops::sub(Ops::zero(), candidate[b]));
+      used_a[b] =
+          Ops::or_(used_a[b], Ops::and_(take_this, lowest_in_block));
+      any_matched = Ops::or_(any_matched, this_nonzero);
+      prev_all_zero =
+          Ops::and_(prev_all_zero, Ops::not_(this_nonzero));
+    }
+    b_matched =
+        Ops::or_(b_matched, Ops::and_(any_matched, active_v));
+  }
+
+  std::array<LaneScratch<Ops>, W> used_a_out{};
+  for (std::size_t b = 0; b < W; ++b) {
+    Ops::store_aligned(used_a_out[b].values, used_a[b]);
+  }
+  LaneScratch<Ops> b_matched_out{};
+  Ops::store_aligned(b_matched_out.values, b_matched);
+
+  for (std::size_t l = 0; l < group; ++l) {
+    const std::size_t n = q_len;
+    const std::size_t m = lens[l];
+    if (n == 0U && m == 0U) {
+      out[l] = 1.0;
+      continue;
+    }
+    if (n == 0U || m == 0U) {
+      out[l] = 0.0;
+      continue;
+    }
+
+    std::size_t matches = 0U;
+    for (std::size_t b = 0; b < W; ++b) {
+      matches += static_cast<std::size_t>(
+          std::popcount(used_a_out[b].values[l]));
+    }
+    if (matches == 0U) {
+      out[l] = 0.0;
+      continue;
+    }
+
+    // Walk matched bits across blocks in ascending order, parallel
+    // with b_matched's bit walk.
+    std::uint64_t b_bits = b_matched_out.values[l];
+    std::size_t half_trans = 0U;
+    for (std::size_t b = 0; b < W; ++b) {
+      std::uint64_t a_bits = used_a_out[b].values[l];
+      while (a_bits != 0U) {
+        const std::size_t i =
+            b * 64U + static_cast<std::size_t>(std::countr_zero(a_bits));
+        const std::size_t k =
+            static_cast<std::size_t>(std::countr_zero(b_bits));
+        if (q_ptr[i] != targets[l][k]) {
+          ++half_trans;
+        }
+        a_bits &= a_bits - 1U;
+        b_bits &= b_bits - 1U;
+      }
+    }
+
+    const double matches_d = static_cast<double>(matches);
+    const double trans_d = static_cast<double>(half_trans / 2U);
+    out[l] = (matches_d / static_cast<double>(n)
+           + matches_d / static_cast<double>(m)
+           + (matches_d - trans_d) / matches_d)
+           / 3.0;
+  }
+}
+
 namespace detail {
 
 inline bool view_all_byte_compat_short(
@@ -241,8 +460,11 @@ inline bool view_all_byte_compat_short(
 
 }  // namespace detail
 
+// Largest query length the multi-word SIMD batch covers (W * 64).
+inline constexpr std::size_t kJaroMaxSimdQueryLen = 256U;
+
 // SIMD batch entrypoint. Returns an empty vector when constraints are
-// not met (query not byte-compatible, query length > 64, any target
+// not met (query not byte-compatible, query length > 256, any target
 // not byte-compatible, or any target length > 64); the caller then
 // falls through to per-target scalar dispatch.
 template <typename Ops>
@@ -268,7 +490,7 @@ inline std::vector<double> jaro_similarities_simd(
   const std::uint8_t* q_ptr = nullptr;
   std::size_t q_len = 0;
   bv::view(query.ptr(), q_kind, q_ptr, q_len);
-  if (q_len > 64U) {
+  if (q_len > kJaroMaxSimdQueryLen) {
     return out;
   }
 
@@ -283,14 +505,11 @@ inline std::vector<double> jaro_similarities_simd(
     return out;
   }
 
-  const ByteAlphabetPeq peq = build_peq_byte(q_ptr, q_len);
-
   constexpr std::size_t K = Ops::lanes;
   std::array<const std::uint8_t*, K> batch_ptrs{};
   std::array<std::size_t, K> batch_lens{};
 
-  for (std::size_t base = 0; base < count; base += K) {
-    const std::size_t group = std::min(K, count - base);
+  auto fill_batch = [&](std::size_t base, std::size_t group) {
     for (std::size_t l = 0; l < group; ++l) {
       batch_ptrs[l] = ptrs[base + l];
       batch_lens[l] = lens[base + l];
@@ -299,6 +518,39 @@ inline std::vector<double> jaro_similarities_simd(
       batch_ptrs[l] = nullptr;
       batch_lens[l] = 0U;
     }
+  };
+
+  if (q_len > 64U) {
+    // Multi-word query path: W in {2, 3, 4} for query lengths
+    // 65..128, 129..192, 193..256. Targets still ≤ 64 (single-word
+    // b_matched).
+    const std::size_t W = (q_len + 63U) / 64U;
+    auto run_w = [&](auto W_const) {
+      constexpr std::size_t W_compile = decltype(W_const)::value;
+      const auto peq = build_peq_byte_multi<W_compile>(q_ptr, q_len);
+      for (std::size_t base = 0; base < count; base += K) {
+        const std::size_t group = std::min(K, count - base);
+        fill_batch(base, group);
+        jaro_simd_inner_multi_word_query<Ops, W_compile>(
+            peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
+            group, out.data() + base);
+      }
+    };
+    if (W == 2U) {
+      run_w(std::integral_constant<std::size_t, 2U>{});
+    } else if (W == 3U) {
+      run_w(std::integral_constant<std::size_t, 3U>{});
+    } else {
+      run_w(std::integral_constant<std::size_t, 4U>{});
+    }
+    return out;
+  }
+
+  // Single-word path
+  const ByteAlphabetPeq peq = build_peq_byte(q_ptr, q_len);
+  for (std::size_t base = 0; base < count; base += K) {
+    const std::size_t group = std::min(K, count - base);
+    fill_batch(base, group);
     jaro_simd_inner<Ops>(
         peq,
         q_ptr,
