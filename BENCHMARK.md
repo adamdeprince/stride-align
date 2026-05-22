@@ -1023,13 +1023,43 @@ but a different scratch pattern, so it didn't trip. Fix: switch VSX
 to `vec_xl` / `vec_xst`, the proper VSX load/store intrinsics.
 Documented in commit `8ae4905`.
 
+### Multi-word query batch (q_len in (64, 256], m_len ≤ 64)
+
+Same workload shape, query length stretched into the multi-word path
+(W = 2 for q in (64, 128], W = 3 for (128, 192], W = 4 for (192, 256]).
+Targets stay short; b_matched fits in a single word.
+
+| Host / backend | q_len | m_len | N | stride-align | rapidfuzz | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Tiger Lake `x86_avx512bwvl` | 50 | 20 | 500 | 45 us | 227 us | **5.01x** |
+| Tiger Lake `x86_avx512bwvl` | 100 | 20 | 500 | 44 us | 255 us | **5.81x** |
+| Tiger Lake `x86_avx512bwvl` | 150 | 20 | 500 | 52 us | 299 us | **5.79x** |
+| Tiger Lake `x86_avx512bwvl` | 200 | 20 | 500 | 60 us | 328 us | **5.45x** |
+| Graviton4 `linux_aarch64_neon` | 100 | 20 | 500 | 53 us | 238 us | **4.52x** |
+| Apple M-series `macos_arm64_neon` | 100 | 20 | 500 | 25 us | 124 us | **4.96x** |
+| Loongson `linux_loongarch64_lasx` | 100 | 20 | 500 | 110 us | 39,461 us | 358x |
+| Power8 `linux_powerpc64_vsx` | 100 | 20 | 500 | 1,532 us | 581 us | 0.38x |
+
+Power8 is the one regression. The 2-block (W=2) inner loop doubles
+the gather count per j vs the single-word path, and Power8's VSX
+gather is emulated as scalar `vec_extract`/`vec_insert` (no native
+ppc gather instruction at this lane count). The per-iteration
+overhead exceeds rapidfuzz's tight scalar loop at this size.
+Workaround: if q_len ≤ 64 the single-word path stays 3x ahead;
+above 64 on Power8 specifically, prefer the per-target scalar
+dispatch (which the singular-API path already uses for q > 64).
+Future work: native pre-shuffle of the gather indices, or a Power-
+specific tuned gather using `vec_perm`.
+
 ### Constraints (v0.3.0)
 
-* Single-word path only: both query and target lengths must be ≤ 64.
-  Above that the bindings fall through to per-target scalar dispatch,
-  which is itself bit-parallel single-word for ≤ 64 inputs and the
-  scalar reference above. Multi-word bit-parallel batch is the next
-  step.
+* Multi-word path covers query lengths up to 256 (W = 1..4 blocks of
+  64-bit bitmaps per lane). Above 256 it falls through to per-target
+  scalar dispatch (which is bit-parallel single-word for q ≤ 64 and
+  the scalar reference above).
+* Target length must be ≤ 64 (single-word b_matched). m > 64 also
+  falls through to per-target scalar dispatch. Multi-word target is
+  a separate axis still pending.
 * Byte-compatible inputs (bytes / 1-byte unicode). Wider unicode
   falls through to scalar via the prepared-token path.
 
