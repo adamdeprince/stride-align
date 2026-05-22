@@ -242,38 +242,41 @@ inline void jaro_simd_inner(
   }
 }
 
-// Multi-word SIMD batch for queries longer than 64 chars. Targets
-// still ≤ 64 (b_matched stays a single 64-bit word per lane). W is
-// the number of 64-bit blocks the query bitmap spans (1 to 4 covers
-// query lengths 1..256).
+// Multi-word SIMD batch covering query lengths up to W_query * 64 and
+// target lengths up to W_target * 64 (each W in {1, 2, 3, 4}; W=1
+// degenerates to the single-word special case but the dedicated
+// `jaro_simd_inner` is preferred for that). The query bitmap and
+// per-lane used_a are split into W_query blocks; b_matched is split
+// into W_target blocks. The j-loop touches only one b_matched block
+// per iteration (block = j / 64), so multi-word target adds storage
+// + finishing cost but no per-iteration inner-loop cost.
 //
 // Per j iteration:
-//   * Compute per-lane char_idx and active_bit (single 64-bit word
-//     for b_matched, so j < 64 always).
-//   * For each block b, compute the per-lane window-mask restricted
-//     to that block (window in the query: bits [lo_q, hi_q) of the
-//     query, intersected with the block's [b*64, (b+1)*64) range).
-//   * Gather PEQ[c][b] per lane and AND in to form candidate[b].
-//   * Across the W candidate vectors, pick the lowest block with any
-//     non-zero lane and within that block take `x & -x` for the
-//     leftmost match. Update used_a[b] only on lanes that picked
-//     block b.
-//   * If any of the W blocks fired for a lane, set bit j in
-//     b_matched.
+//   * Compute per-lane char_idx (target's char at position j).
+//   * For each query block b, compute the per-lane window-mask
+//     restricted to that block, gather PEQ[c][b] per lane, AND in to
+//     form candidate[b].
+//   * "Leftmost match across blocks": scan block order; for each lane
+//     track `prev_all_zero` and only take `x & -x` from the first
+//     block where the lane had a non-zero candidate.
+//   * If any block fired for a lane, set bit (j % 64) in
+//     b_matched[j / 64].
 //
-// Constraint: m ≤ 64 (b_matched is single-word). Above that the
-// caller falls through to per-target scalar dispatch.
-template <typename Ops, std::size_t W>
+// Above W_query*64 or W_target*64, the caller falls through to
+// per-target scalar dispatch.
+template <typename Ops, std::size_t W_query, std::size_t W_target>
 inline void jaro_simd_inner_multi_word_query(
-    const ByteAlphabetPeqMulti<W>& peq,
+    const ByteAlphabetPeqMulti<W_query>& peq,
     const std::uint8_t* q_ptr,
     std::size_t q_len,
     const std::uint8_t* const* targets,
     const std::size_t* lens,
     std::size_t group,
     double* out) {
-  static_assert(W >= 2U && W <= 4U,
-                "multi-word Jaro kernel only instantiated for W in [2, 4]");
+  static_assert(W_query >= 2U && W_query <= 4U,
+                "multi-word Jaro kernel only instantiated for W_query in [2, 4]");
+  static_assert(W_target >= 1U && W_target <= 4U,
+                "multi-word Jaro kernel only instantiated for W_target in [1, 4]");
   constexpr std::size_t K = Ops::lanes;
   using Vec = typename Ops::Vec;
 
@@ -285,42 +288,45 @@ inline void jaro_simd_inner_multi_word_query(
     max_m = std::max(max_m, lens[l]);
   }
 
-  std::array<Vec, W> used_a;
+  std::array<Vec, W_query> used_a;
   for (auto& v : used_a) {
     v = Ops::zero();
   }
-  Vec b_matched = Ops::zero();
+  std::array<Vec, W_target> b_matched;
+  for (auto& v : b_matched) {
+    v = Ops::zero();
+  }
   const Vec all_ones = Ops::set1(~std::uint64_t{0});
 
   LaneScratch<Ops> char_idx{};
-  LaneScratch<Ops> active_bit{};
-  // Per-block scratch for the shift amounts that build the window
-  // mask restricted to that block.
-  std::array<LaneScratch<Ops>, W> lo_shift{};
-  std::array<LaneScratch<Ops>, W> hi_complement{};
+  std::array<LaneScratch<Ops>, W_query> lo_shift{};
+  std::array<LaneScratch<Ops>, W_query> hi_complement{};
 
   for (std::size_t j = 0; j < max_m; ++j) {
+    // b_matched bit position for this j: same across all lanes.
+    const std::size_t target_block = j / 64U;
+    const std::size_t target_bit = j % 64U;
+    const Vec bit_for_j = Ops::set1(std::uint64_t{1} << target_bit);
+
     for (std::size_t l = 0; l < K; ++l) {
       const std::size_t m = lens[l];
       const std::uint64_t w_lane = windows.values[l];
       if (j >= m) {
         char_idx.values[l] = 256U;
-        active_bit.values[l] = 0U;
-        for (std::size_t b = 0; b < W; ++b) {
+        for (std::size_t b = 0; b < W_query; ++b) {
           lo_shift[b].values[l] = 63U;
           hi_complement[b].values[l] = 63U;
         }
         continue;
       }
       char_idx.values[l] = targets[l][j];
-      active_bit.values[l] = std::uint64_t{1} << j;
 
       const std::size_t lo_q =
           j > w_lane ? j - static_cast<std::size_t>(w_lane) : 0U;
       const std::size_t hi_q =
           std::min(q_len, j + static_cast<std::size_t>(w_lane) + 1U);
 
-      for (std::size_t b = 0; b < W; ++b) {
+      for (std::size_t b = 0; b < W_query; ++b) {
         const std::size_t block_start = b * 64U;
         const std::size_t block_end = std::min(q_len, block_start + 64U);
         if (lo_q >= block_end || hi_q <= block_start ||
@@ -342,10 +348,8 @@ inline void jaro_simd_inner_multi_word_query(
       }
     }
 
-    const Vec active_v = Ops::load_aligned(active_bit.values);
-
-    std::array<Vec, W> candidate;
-    for (std::size_t b = 0; b < W; ++b) {
+    std::array<Vec, W_query> candidate;
+    for (std::size_t b = 0; b < W_query; ++b) {
       const Vec lo_v = Ops::load_aligned(lo_shift[b].values);
       const Vec hi_comp_v = Ops::load_aligned(hi_complement[b].values);
       const Vec window_mask =
@@ -355,12 +359,10 @@ inline void jaro_simd_inner_multi_word_query(
       candidate[b] = Ops::andnot_(used_a[b], Ops::and_(peq_v, window_mask));
     }
 
-    // "Leftmost match" across blocks: pick the lowest block b that has
-    // a non-zero candidate per lane, take its `x & -x`, leave higher
-    // blocks unchanged for that lane.
+    // "Leftmost match" across query blocks.
     Vec prev_all_zero = all_ones;
     Vec any_matched = Ops::zero();
-    for (std::size_t b = 0; b < W; ++b) {
+    for (std::size_t b = 0; b < W_query; ++b) {
       const Vec this_nonzero =
           Ops::not_(Ops::cmpeq(candidate[b], Ops::zero()));
       const Vec take_this = Ops::and_(prev_all_zero, this_nonzero);
@@ -373,16 +375,24 @@ inline void jaro_simd_inner_multi_word_query(
       prev_all_zero =
           Ops::and_(prev_all_zero, Ops::not_(this_nonzero));
     }
-    b_matched =
-        Ops::or_(b_matched, Ops::and_(any_matched, active_v));
+    // For target_block: any_matched AND inactive-lane mask. We didn't
+    // explicitly compute an "active" mask any more because inactive
+    // lanes (j >= m) have char_idx = 256 → PEQ entry = 0 → candidate
+    // = 0 → any_matched = 0 for those lanes. So the lane mask is
+    // already baked into any_matched.
+    b_matched[target_block] =
+        Ops::or_(b_matched[target_block],
+                 Ops::and_(any_matched, bit_for_j));
   }
 
-  std::array<LaneScratch<Ops>, W> used_a_out{};
-  for (std::size_t b = 0; b < W; ++b) {
+  std::array<LaneScratch<Ops>, W_query> used_a_out{};
+  for (std::size_t b = 0; b < W_query; ++b) {
     Ops::store_aligned(used_a_out[b].values, used_a[b]);
   }
-  LaneScratch<Ops> b_matched_out{};
-  Ops::store_aligned(b_matched_out.values, b_matched);
+  std::array<LaneScratch<Ops>, W_target> b_matched_out{};
+  for (std::size_t b = 0; b < W_target; ++b) {
+    Ops::store_aligned(b_matched_out[b].values, b_matched[b]);
+  }
 
   for (std::size_t l = 0; l < group; ++l) {
     const std::size_t n = q_len;
@@ -397,7 +407,7 @@ inline void jaro_simd_inner_multi_word_query(
     }
 
     std::size_t matches = 0U;
-    for (std::size_t b = 0; b < W; ++b) {
+    for (std::size_t b = 0; b < W_query; ++b) {
       matches += static_cast<std::size_t>(
           std::popcount(used_a_out[b].values[l]));
     }
@@ -406,16 +416,33 @@ inline void jaro_simd_inner_multi_word_query(
       continue;
     }
 
-    // Walk matched bits across blocks in ascending order, parallel
-    // with b_matched's bit walk.
-    std::uint64_t b_bits = b_matched_out.values[l];
+    // Walk matched bits across blocks in ascending order: used_a's W_query
+    // blocks for the a-positions, b_matched's W_target blocks for the
+    // b-positions. Each loop iteration consumes one set bit from the
+    // current (a, b) block pair; when one block runs out, advance to
+    // the next non-empty block on that side.
     std::size_t half_trans = 0U;
-    for (std::size_t b = 0; b < W; ++b) {
-      std::uint64_t a_bits = used_a_out[b].values[l];
+    std::size_t b_block = 0U;
+    std::uint64_t b_bits = b_matched_out[0].values[l];
+    auto advance_b = [&]() {
+      while (b_bits == 0U && b_block + 1U < W_target) {
+        ++b_block;
+        b_bits = b_matched_out[b_block].values[l];
+      }
+    };
+    advance_b();
+    for (std::size_t a_block = 0; a_block < W_query; ++a_block) {
+      std::uint64_t a_bits = used_a_out[a_block].values[l];
       while (a_bits != 0U) {
+        advance_b();
+        if (b_bits == 0U) {
+          break;
+        }
         const std::size_t i =
-            b * 64U + static_cast<std::size_t>(std::countr_zero(a_bits));
+            a_block * 64U +
+            static_cast<std::size_t>(std::countr_zero(a_bits));
         const std::size_t k =
+            b_block * 64U +
             static_cast<std::size_t>(std::countr_zero(b_bits));
         if (q_ptr[i] != targets[l][k]) {
           ++half_trans;
@@ -460,12 +487,40 @@ inline bool view_all_byte_compat_short(
 
 }  // namespace detail
 
-// Largest query length the multi-word SIMD batch covers (W * 64).
-inline constexpr std::size_t kJaroMaxSimdQueryLen = 256U;
+// Largest query or target length the multi-word SIMD batch covers (W * 64).
+inline constexpr std::size_t kJaroMaxSimdLen = 256U;
+
+// View every target as byte-compatible, fill `ptrs`/`lens`, track the
+// running maximum length. Returns false (signaling scalar fallback)
+// if any target is non-byte-compatible or longer than `max_len`.
+inline bool view_all_byte_compat_capped(
+    PyObject* const* items,
+    std::size_t count,
+    std::size_t max_len,
+    std::vector<const std::uint8_t*>& ptrs,
+    std::vector<std::size_t>& lens,
+    std::size_t& max_observed) {
+  namespace bv = ::stride_align::byte_view;
+  ptrs.resize(count);
+  lens.resize(count);
+  max_observed = 0U;
+  for (std::size_t i = 0; i < count; ++i) {
+    const bv::ByteCompatKind kind = bv::classify(items[i]);
+    if (kind == bv::ByteCompatKind::None) {
+      return false;
+    }
+    bv::view(items[i], kind, ptrs[i], lens[i]);
+    if (lens[i] > max_len) {
+      return false;
+    }
+    max_observed = std::max(max_observed, lens[i]);
+  }
+  return true;
+}
 
 // SIMD batch entrypoint. Returns an empty vector when constraints are
 // not met (query not byte-compatible, query length > 256, any target
-// not byte-compatible, or any target length > 64); the caller then
+// not byte-compatible, or any target length > 256); the caller then
 // falls through to per-target scalar dispatch.
 template <typename Ops>
 inline std::vector<double> jaro_similarities_simd(
@@ -490,13 +545,14 @@ inline std::vector<double> jaro_similarities_simd(
   const std::uint8_t* q_ptr = nullptr;
   std::size_t q_len = 0;
   bv::view(query.ptr(), q_kind, q_ptr, q_len);
-  if (q_len > kJaroMaxSimdQueryLen) {
+  if (q_len > kJaroMaxSimdLen) {
     return out;
   }
 
   std::vector<const std::uint8_t*> ptrs;
   std::vector<std::size_t> lens;
-  if (!detail::view_all_byte_compat_short(items, count, 64U, ptrs, lens)) {
+  std::size_t max_m = 0;
+  if (!view_all_byte_compat_capped(items, count, kJaroMaxSimdLen, ptrs, lens, max_m)) {
     return out;
   }
 
@@ -520,47 +576,67 @@ inline std::vector<double> jaro_similarities_simd(
     }
   };
 
-  if (q_len > 64U) {
-    // Multi-word query path: W in {2, 3, 4} for query lengths
-    // 65..128, 129..192, 193..256. Targets still ≤ 64 (single-word
-    // b_matched).
-    const std::size_t W = (q_len + 63U) / 64U;
-    auto run_w = [&](auto W_const) {
-      constexpr std::size_t W_compile = decltype(W_const)::value;
-      const auto peq = build_peq_byte_multi<W_compile>(q_ptr, q_len);
-      for (std::size_t base = 0; base < count; base += K) {
-        const std::size_t group = std::min(K, count - base);
-        fill_batch(base, group);
-        jaro_simd_inner_multi_word_query<Ops, W_compile>(
-            peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
-            group, out.data() + base);
-      }
-    };
-    if (W == 2U) {
-      run_w(std::integral_constant<std::size_t, 2U>{});
-    } else if (W == 3U) {
-      run_w(std::integral_constant<std::size_t, 3U>{});
-    } else {
-      run_w(std::integral_constant<std::size_t, 4U>{});
+  if (q_len <= 64U && max_m <= 64U) {
+    // Single-word fast path.
+    const ByteAlphabetPeq peq = build_peq_byte(q_ptr, q_len);
+    for (std::size_t base = 0; base < count; base += K) {
+      const std::size_t group = std::min(K, count - base);
+      fill_batch(base, group);
+      jaro_simd_inner<Ops>(
+          peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
+          group, out.data() + base);
     }
     return out;
   }
 
-  // Single-word path
-  const ByteAlphabetPeq peq = build_peq_byte(q_ptr, q_len);
-  for (std::size_t base = 0; base < count; base += K) {
-    const std::size_t group = std::min(K, count - base);
-    fill_batch(base, group);
-    jaro_simd_inner<Ops>(
-        peq,
-        q_ptr,
-        q_len,
-        batch_ptrs.data(),
-        batch_lens.data(),
-        group,
-        out.data() + base);
-  }
+  // Multi-word path. Pick W_query and W_target based on actual lengths.
+  // W_query stays in [2, 4]; for q_len <= 64 with m > 64 we still pad
+  // the query to W_query=2 (block 1 is all-zero PEQ) so the inner
+  // loop's leftmost-block scan finds matches in block 0.
+  const std::size_t W_query =
+      q_len > 192U ? 4U : q_len > 128U ? 3U : q_len > 64U ? 2U : 2U;
+  const std::size_t W_target =
+      max_m > 192U ? 4U : max_m > 128U ? 3U : max_m > 64U ? 2U : 1U;
 
+  auto run = [&](auto WQ_const, auto WT_const) {
+    constexpr std::size_t WQ = decltype(WQ_const)::value;
+    constexpr std::size_t WT = decltype(WT_const)::value;
+    const auto peq = build_peq_byte_multi<WQ>(q_ptr, q_len);
+    for (std::size_t base = 0; base < count; base += K) {
+      const std::size_t group = std::min(K, count - base);
+      fill_batch(base, group);
+      jaro_simd_inner_multi_word_query<Ops, WQ, WT>(
+          peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
+          group, out.data() + base);
+    }
+  };
+
+  // Manual dispatch over the 4 * 4 = 16 (WQ, WT) combos. The compiler
+  // only instantiates the cases we actually call here.
+#define STRIDE_ALIGN_JARO_DISPATCH(WQ_VAL, WT_VAL)                       \
+  if (W_query == WQ_VAL && W_target == WT_VAL) {                         \
+    run(std::integral_constant<std::size_t, WQ_VAL>{},                   \
+        std::integral_constant<std::size_t, WT_VAL>{});                  \
+    return out;                                                          \
+  }
+  STRIDE_ALIGN_JARO_DISPATCH(2, 1)
+  STRIDE_ALIGN_JARO_DISPATCH(2, 2)
+  STRIDE_ALIGN_JARO_DISPATCH(2, 3)
+  STRIDE_ALIGN_JARO_DISPATCH(2, 4)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 1)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 2)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 3)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 4)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 1)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 2)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 3)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 4)
+#undef STRIDE_ALIGN_JARO_DISPATCH
+
+  // Unreachable in practice — the if-ladder above covers every valid
+  // (W_query, W_target) pair. Return empty to signal fallback if we
+  // somehow drop through.
+  out.clear();
   return out;
 }
 
