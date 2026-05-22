@@ -45,6 +45,7 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Damerau-Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | rapidfuzz OSA | 4 | **2.85x** | 2.83x | 2.27x | 3.89x |
 | Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 8 | **2.40x** | 2.51x | 1.56x | 3.03x |
 | Damerau-Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 7 | **1.99x** | 2.22x | 1.46x | 2.57x |
+| Jaro batch (cross-arch, N=1000) | `x86_avx512bwvl` / `*_neon` / `*_lasx` / `*_vsx` | rapidfuzz | 10 | **5.1x** | 3.7x | 1.54x | 263x |
 
 ## Intel x86 - 2026-05-18
 
@@ -971,6 +972,66 @@ useful as a correctness/reference backend only.
 3. Re-bench on a multi-core / non-virtualized Power8 host to characterise SMT throughput and shared L2/L3 effects.
 4. Build parasail from source for ppc64le and add a parasail column to the next sweep — every other family in this file has at least one parasail point of reference.
 5. Investigate why SWAR loses to generic on Power8 via an asm dump of the generic score loop.
+
+## Jaro + Jaro-Winkler (cross-arch) - 2026-05-23
+
+First cross-arch sweep of the new Jaro / Jaro-Winkler SIMD batch
+kernels. One target per 64-bit SIMD lane; the query's per-byte PEQ is
+gathered per-lane on each iteration, and the per-lane window mask is
+built via the new `shl_var_u64` / `shr_var_u64` Ops primitives. After
+the SIMD inner loop, a scalar finishing pass per lane computes
+match/transposition counts from the bitmaps.
+
+Same workload everywhere: random lowercase strings, one query of the
+listed length, 1000 targets of the same length. Median of 3 runs of
+50 iterations each. Baseline is `rapidfuzz.distance.Jaro.similarity`
+called in a Python list comprehension — the natural "fuzzy match one
+query against many targets" pattern.
+
+Output is bit-equivalent to rapidfuzz across all listed backends:
+verified on 500 random batches × ~25 targets each (~12,500 pairs per
+backend); 0 mismatches at machine precision.
+
+### Singular SIMD batch (one query, 1000 targets)
+
+| Host / backend | Query len | stride-align | rapidfuzz | Ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Tiger Lake `x86_avx512bwvl` | 12 | 40.7 us | 181.5 us | **4.46x** |
+| Tiger Lake `x86_avx512bwvl` | 32 | 105.1 us | 289.2 us | **2.75x** |
+| Graviton4 `linux_aarch64_neon` | 12 | 43 us | 269 us | **6.26x** |
+| Graviton4 `linux_aarch64_neon` | 32 | 100 us | 353 us | **3.53x** |
+| Apple M-series `macos_arm64_neon` | 12 | 16 us | 151 us | **9.36x** |
+| Apple M-series `macos_arm64_neon` | 32 | 48 us | 183 us | **3.86x** |
+| Loongson `linux_loongarch64_lasx` | 12 | 87 us | 13,952 us | 161x |
+| Loongson `linux_loongarch64_lasx` | 32 | 187 us | 49,299 us | 263x |
+| Power8 `linux_powerpc64_vsx` | 12 | 194 us | 600 us | **3.09x** |
+| Power8 `linux_powerpc64_vsx` | 32 | 467 us | 719 us | **1.54x** |
+
+The Loongson ratios are dramatic because rapidfuzz has no LSX/LASX
+SIMD path on LoongArch64 — it falls through to a scalar C kernel,
+while our LSX/LASX bit-parallel batch fans out 2/4 targets per vector
+iteration.
+
+### One bug surfaced during deployment
+
+VSX (`*reinterpret_cast<Vec*>(ptr)` for `load_aligned`/`store_aligned`)
+ran into a strict-aliasing miscompile under GCC -O3: the scalar
+writes to per-iteration `LaneScratch` could be reordered past the
+same-block Vec read, silently dropping lane-1 match updates on every
+2-target group. The Levenshtein SIMD kernel uses the same primitives
+but a different scratch pattern, so it didn't trip. Fix: switch VSX
+to `vec_xl` / `vec_xst`, the proper VSX load/store intrinsics.
+Documented in commit `8ae4905`.
+
+### Constraints (v0.3.0)
+
+* Single-word path only: both query and target lengths must be ≤ 64.
+  Above that the bindings fall through to per-target scalar dispatch,
+  which is itself bit-parallel single-word for ≤ 64 inputs and the
+  scalar reference above. Multi-word bit-parallel batch is the next
+  step.
+* Byte-compatible inputs (bytes / 1-byte unicode). Wider unicode
+  falls through to scalar via the prepared-token path.
 
 ## Notes on comparing across families
 
