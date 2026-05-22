@@ -428,10 +428,18 @@ struct VsxOps {
     return out;
   }
   static Vec load_aligned(const std::uint64_t* data) {
-    return *reinterpret_cast<const Vec*>(data);
+    // Use vec_xl rather than `*reinterpret_cast<const Vec*>(data)` to
+    // sidestep strict-aliasing reordering: GCC at -O3 is free to move
+    // scalar writes to `data` past a same-block Vec read through a
+    // reinterpret_cast (the Vec type is distinct from uint64_t), and
+    // the Jaro batch kernel's per-iteration scratch pattern is exactly
+    // the shape that triggers it. vec_xl is an explicit load
+    // intrinsic so the compiler must honor write-before-load ordering.
+    return vec_xl(0, const_cast<unsigned long long*>(
+        reinterpret_cast<const unsigned long long*>(data)));
   }
   static void store_aligned(std::uint64_t* dst, Vec v) {
-    *reinterpret_cast<Vec*>(dst) = v;
+    vec_xst(v, 0, reinterpret_cast<unsigned long long*>(dst));
   }
   // Native unsigned 64-bit cmpgt on Power8+ (ISA 2.07).
   static Vec gt_u64(Vec a, Vec b) {
