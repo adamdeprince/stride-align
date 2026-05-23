@@ -68,6 +68,37 @@ inline std::size_t hamming_within_string(
   return dist;
 }
 
+// Cutoff-aware variant. Bails with sentinel `cutoff + 1` once the
+// accumulated mismatch count is provably above cutoff. The inner
+// fixed-size CHUNK loop auto-vectorizes to the same cmpne +
+// VPSADBW (AVX-512) / cmpne + popcnt (AVX2) / vcntq (NEON) sequence as
+// the no-cutoff version; the bail check fires once per 64 bytes, so
+// throughput on the no-bail path is within a percent of the full
+// kernel.
+inline std::size_t hamming_within_string_cutoff(
+    const std::uint8_t* a,
+    const std::uint8_t* b,
+    std::size_t n,
+    std::size_t cutoff) noexcept {
+  constexpr std::size_t kChunk = 64U;
+  std::size_t mismatches = 0;
+  std::size_t i = 0;
+  for (; i + kChunk <= n; i += kChunk) {
+    std::size_t chunk_mm = 0;
+    for (std::size_t k = 0; k < kChunk; ++k) {
+      chunk_mm += static_cast<std::size_t>(a[i + k] != b[i + k]);
+    }
+    mismatches += chunk_mm;
+    if (mismatches > cutoff) {
+      return cutoff + 1U;
+    }
+  }
+  for (; i < n; ++i) {
+    mismatches += static_cast<std::size_t>(a[i] != b[i]);
+  }
+  return mismatches > cutoff ? cutoff + 1U : mismatches;
+}
+
 // -------------------------------------------------------------------
 // Across-target batch. Conceptually a 1-vs-N pattern: same query, many
 // equal-length targets. The natural-looking architecture is "one
@@ -110,6 +141,36 @@ inline void hamming_scores_simd_raw(
   for (std::size_t i = 0; i < count; ++i) {
     out[i] = static_cast<Score>(
         hamming_within_string(q_ptr, t_ptrs[i], q_len));
+  }
+}
+
+// Per-pair-cutoff raw kernel. `cutoffs_per_pair` may be:
+//   * nullptr: behaves identically to hamming_scores_simd_raw.
+//   * a length-`count` array: each pair gets its own distance cutoff.
+//     Pairs whose mismatch count exceeds the cutoff return the
+//     sentinel `cutoffs_per_pair[i] + 1` rather than the true distance.
+//
+// The cutoff path adds one branch per 64 bytes scanned per pair, so
+// throughput at threshold=0 (cutoff=q_len, never bails) is within
+// noise of the no-cutoff path on every backend we've measured.
+inline void hamming_scores_simd_raw_per_pair(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* /*t_lens*/,
+    std::size_t count,
+    const std::size_t* cutoffs_per_pair,
+    Score* out) {
+  if (cutoffs_per_pair == nullptr) {
+    for (std::size_t i = 0; i < count; ++i) {
+      out[i] = static_cast<Score>(
+          hamming_within_string(q_ptr, t_ptrs[i], q_len));
+    }
+    return;
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    out[i] = static_cast<Score>(
+        hamming_within_string_cutoff(
+            q_ptr, t_ptrs[i], q_len, cutoffs_per_pair[i]));
   }
 }
 

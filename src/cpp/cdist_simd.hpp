@@ -188,8 +188,26 @@ inline void compute_row_double(
     }
     case Scorer::HammingNormalized: {
       std::vector<Score> raw(count);
-      ::stride_align::hamming_simd::hamming_scores_simd_raw(
-          q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      if (normalized_cutoff > 0.0) {
+        // Hamming requires t_lens[i] == q_len upstream, so the
+        // per-pair max is just q_len — same cutoff for every pair.
+        // Build the per-pair array anyway so the kernel signature
+        // matches the Lev/OSA shape.
+        std::vector<std::size_t> cutoffs(count);
+        const std::size_t cutoff =
+            ::stride_align::cdist_runtime::
+                lev_distance_cutoff_for_normalized_threshold(
+                    normalized_cutoff, q_len, q_len);
+        for (std::size_t i = 0; i < count; ++i) {
+          cutoffs[i] = cutoff;
+        }
+        ::stride_align::hamming_simd::hamming_scores_simd_raw_per_pair(
+            q_ptr, q_len, t_ptrs, t_lens, count,
+            cutoffs.data(), raw.data());
+      } else {
+        ::stride_align::hamming_simd::hamming_scores_simd_raw(
+            q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      }
       normalize_hamming_row(reinterpret_cast<const std::int64_t*>(raw.data()),
                             row_out, q_len, t_lens, count);
       return;

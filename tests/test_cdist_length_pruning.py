@@ -204,6 +204,83 @@ def test_kernel_cutoff_pushdown_does_not_change_top_k_results(scorer, k):
     assert actual_scores == pytest.approx(expected_top)
 
 
+@pytest.mark.parametrize("n", [16, 50, 100, 200])
+@pytest.mark.parametrize("threshold", [0.0, 0.3, 0.5, 0.7, 0.85, 0.95, 0.99, 1.0])
+def test_hamming_cutoff_pushdown_does_not_change_above_threshold_results(
+    n, threshold
+):
+    """Hamming's kernel-level cutoff bails the inner loop once
+    accumulated mismatches exceed the cutoff. Verify the bailed
+    sentinel maps to sim < threshold so the downstream filter agrees
+    with the no-cutoff full cdist."""
+    rng = random.Random(hash((n, threshold)) & 0xFFFF)
+    qs = [_rand_str(rng, n) for _ in range(20)]
+    ts = [_rand_str(rng, n) for _ in range(25)]
+
+    full = sa.cdist(qs, ts, scorer=sa.Scorer.HAMMING_NORMALIZED)
+    expected = {
+        (round(full[i, j], 9), i, j)
+        for i in range(len(qs))
+        for j in range(len(ts))
+        if full[i, j] >= threshold
+    }
+
+    actual = set()
+    for score, q, t in sa.cdist_above_threshold(
+        qs, ts, scorer=sa.Scorer.HAMMING_NORMALIZED, threshold=threshold,
+        cpu_count=2,
+    ):
+        actual.add((round(score, 9), qs.index(q), ts.index(t)))
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize("n", [10, 20, 100])
+@pytest.mark.parametrize("k", [1, 5, 20])
+def test_hamming_cutoff_pushdown_does_not_change_top_k_results(n, k):
+    """The cdist_top_k path passes the dynamic heap-min as the cutoff;
+    verify top-k results still match the full cdist sort."""
+    rng = random.Random(hash((n, k)) & 0xFFFF)
+    qs = [_rand_str(rng, n) for _ in range(25)]
+    ts = [_rand_str(rng, n) for _ in range(30)]
+
+    full = sa.cdist(qs, ts, scorer=sa.Scorer.HAMMING_NORMALIZED).flatten()
+    expected_top = sorted(full, reverse=True)[: min(k, full.size)]
+
+    out = sa.cdist_top_k(
+        qs, ts, scorer=sa.Scorer.HAMMING_NORMALIZED, k=k, cpu_count=2,
+    )
+    actual_scores = sorted((s for s, _, _ in out), reverse=True)
+    assert actual_scores == pytest.approx(expected_top)
+
+
+def test_hamming_cutoff_fp_boundary_thresholds():
+    """For Hamming, (1-T)*n is the cutoff math; pick (T, n) pairs that
+    land on integer boundaries to expose FP-floor regressions."""
+    for n in [10, 20, 50, 100, 200]:
+        qs = ["a" * n, "b" * n, "a" * (n // 2) + "b" * (n - n // 2)]
+        ts = ["a" * n, "c" * n, "b" * n]
+        # T values where (1-T)*n is mathematically integer for these n's:
+        # 0.5 * n is integer for even n, 0.75 * n is integer for n%4==0.
+        for threshold in [0.5, 0.6, 0.75, 0.8, 0.9]:
+            full = sa.cdist(qs, ts, scorer=sa.Scorer.HAMMING_NORMALIZED)
+            expected = {
+                (round(full[i, j], 9), i, j)
+                for i in range(len(qs))
+                for j in range(len(ts))
+                if full[i, j] >= threshold
+            }
+            actual = set()
+            for score, q, t in sa.cdist_above_threshold(
+                qs, ts, scorer=sa.Scorer.HAMMING_NORMALIZED, threshold=threshold,
+            ):
+                actual.add((round(score, 9), qs.index(q), ts.index(t)))
+            assert actual == expected, (
+                f"Hamming FP-boundary regression at n={n} threshold={threshold}: "
+                f"missing={expected - actual} extra={actual - expected}"
+            )
+
+
 @pytest.mark.parametrize(
     "scorer",
     [sa.Scorer.LEVENSHTEIN_NORMALIZED, sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED],
