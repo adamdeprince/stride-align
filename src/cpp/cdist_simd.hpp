@@ -24,8 +24,13 @@
 // sizes — the bar moves smoothly in wall-clock time.
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include <nanobind/nanobind.h>
@@ -288,75 +293,98 @@ inline constexpr std::size_t kCdistMaxLen = 256U;
 // the calling backend). Returns the result matrix as an nb::object
 // holding either an int64 or float64 numpy ndarray depending on the
 // scorer.
+// Snapshot a Python sequence: PySequence_Tuple makes a new tuple that
+// holds new refs to the same string objects. That is enough to
+// protect the SIMD compute against another thread mutating the input
+// list — the tuple is private to this cdist call, and Python strings
+// are immutable so the pointers byte_view returns stay valid for the
+// strings' lifetime, which lasts at least as long as our tuple.
+//
+// The tuple owner must be kept alive (returned via out-param) until
+// after the compute finishes; we do NOT copy the bytes themselves.
+inline bool snapshot_byte_sequence(
+    PyObject* sequence,
+    nb::object& tuple_owner,
+    std::vector<const std::uint8_t*>& ptrs,
+    std::vector<std::size_t>& lens) {
+  namespace bv = ::stride_align::byte_view;
+  PyObject* tup = PySequence_Tuple(sequence);
+  if (tup == nullptr) {
+    return false;
+  }
+  tuple_owner = nb::steal<nb::object>(tup);
+  const auto count = static_cast<std::size_t>(PyTuple_GET_SIZE(tup));
+  ptrs.resize(count);
+  lens.resize(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    PyObject* item = PyTuple_GET_ITEM(tup, i);
+    const bv::ByteCompatKind kind = bv::classify(item);
+    if (kind == bv::ByteCompatKind::None) {
+      return false;
+    }
+    bv::view(item, kind, ptrs[i], lens[i]);
+  }
+  return true;
+}
+
 template <typename Ops>
 inline nb::object cdist_impl(
     nb::handle queries_handle,
     nb::handle targets_handle,
     int scorer_int,
     nb::object tqdm_factory,
+    std::size_t cpu_count,
     double jw_prefix_weight,
     double jw_prefix_threshold,
     std::size_t jw_prefix_cap) {
   const Scorer scorer = static_cast<Scorer>(scorer_int);
-
-  // Materialize queries + targets via PySequence_Fast.
-  PyObject* fast_q = PySequence_Fast(
-      queries_handle.ptr(), "queries must be a sequence of sequences");
-  if (fast_q == nullptr) {
-    throw nb::python_error();
-  }
-  nb::object q_owner = nb::steal<nb::object>(fast_q);
-  const std::size_t N =
-      static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_q));
-  PyObject* const* q_items = PySequence_Fast_ITEMS(fast_q);
-
   const bool symmetric = (queries_handle.ptr() == targets_handle.ptr());
 
-  PyObject* fast_t = nullptr;
-  PyObject* const* t_items = nullptr;
-  std::size_t M = 0;
-  nb::object t_owner;
-  if (symmetric) {
-    fast_t = fast_q;
-    t_items = q_items;
-    M = N;
-  } else {
-    fast_t = PySequence_Fast(
-        targets_handle.ptr(), "targets must be a sequence of sequences");
-    if (fast_t == nullptr) {
-      throw nb::python_error();
-    }
-    t_owner = nb::steal<nb::object>(fast_t);
-    M = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_t));
-    t_items = PySequence_Fast_ITEMS(fast_t);
-  }
-
-  // View all items byte-compatible. Mixed-kind cdist is not yet
-  // supported by the SIMD path; the caller can slice + recombine if
-  // needed.
+  // === Phase 1: snapshot inputs while holding the GIL ===============
+  //
+  // Tuple-copy the sequences so another thread mutating the original
+  // list during the compute can't disturb us. Shallow copy is enough
+  // — Python strings are immutable, so the byte_view pointers we
+  // record stay valid for the lifetime of the tuple. We keep the
+  // tuple owners alive on the stack through the rest of the call.
+  nb::object q_tuple_owner;
   std::vector<const std::uint8_t*> q_ptrs;
   std::vector<std::size_t> q_lens;
-  if (!view_all_byte_compat_full(q_items, N, q_ptrs, q_lens)) {
+  if (!snapshot_byte_sequence(queries_handle.ptr(), q_tuple_owner, q_ptrs, q_lens)) {
     PyErr_SetString(
         PyExc_NotImplementedError,
         "cdist currently requires all queries to be byte-compatible "
         "(bytes / 1-byte unicode). Wider unicode is not yet supported.");
     throw nb::python_error();
   }
-  std::vector<const std::uint8_t*> t_ptrs;
-  std::vector<std::size_t> t_lens;
+  const std::size_t N = q_lens.size();
+
+  nb::object t_tuple_owner;
+  std::vector<const std::uint8_t*> t_ptrs_storage;
+  std::vector<std::size_t> t_lens_storage;
+  const std::uint8_t* const* t_ptrs;
+  const std::size_t* t_lens;
+  std::size_t M;
   if (symmetric) {
-    t_ptrs = q_ptrs;
-    t_lens = q_lens;
-  } else if (!view_all_byte_compat_full(t_items, M, t_ptrs, t_lens)) {
-    PyErr_SetString(
-        PyExc_NotImplementedError,
-        "cdist currently requires all targets to be byte-compatible "
-        "(bytes / 1-byte unicode). Wider unicode is not yet supported.");
-    throw nb::python_error();
+    // Reuse the same tuple snapshot for both sides.
+    t_ptrs = q_ptrs.data();
+    t_lens = q_lens.data();
+    M = N;
+  } else {
+    if (!snapshot_byte_sequence(
+            targets_handle.ptr(), t_tuple_owner, t_ptrs_storage, t_lens_storage)) {
+      PyErr_SetString(
+          PyExc_NotImplementedError,
+          "cdist currently requires all targets to be byte-compatible "
+          "(bytes / 1-byte unicode). Wider unicode is not yet supported.");
+      throw nb::python_error();
+    }
+    t_ptrs = t_ptrs_storage.data();
+    t_lens = t_lens_storage.data();
+    M = t_lens_storage.size();
   }
 
-  // Validate length caps.
+  // Validate length caps before releasing GIL — PyErr_Format needs it.
   const std::size_t cap = kCdistMaxLen;
   for (std::size_t i = 0; i < N; ++i) {
     if (q_lens[i] > cap) {
@@ -379,13 +407,40 @@ inline nb::object cdist_impl(
     }
   }
 
+  // Hamming needs all strings (queries + targets) to share one
+  // length. Pick the first available as the reference and verify
+  // every other matches — O(N + M) instead of the naive O(N * M).
+  if ((scorer == Scorer::Hamming || scorer == Scorer::HammingNormalized) &&
+      (N > 0U || M > 0U)) {
+    const std::size_t ref_len = (N > 0U) ? q_lens[0] : t_lens[0];
+    for (std::size_t i = 1; i < N; ++i) {
+      if (q_lens[i] != ref_len) {
+        PyErr_Format(
+            PyExc_ValueError,
+            "Hamming requires equal-length inputs (query 0 has length "
+            "%zu, query %zu has length %zu)",
+            ref_len, i, q_lens[i]);
+        throw nb::python_error();
+      }
+    }
+    if (!symmetric) {
+      for (std::size_t j = 0; j < M; ++j) {
+        if (t_lens[j] != ref_len) {
+          PyErr_Format(
+              PyExc_ValueError,
+              "Hamming requires equal-length inputs (query 0 has length "
+              "%zu, target %zu has length %zu)",
+              ref_len, j, t_lens[j]);
+          throw nb::python_error();
+        }
+      }
+    }
+  }
+
   const bool returns_double = scorer_returns_double(scorer);
 
   // Allocate the heap-backed matrix exactly once; defer the ndarray
-  // wrapper until the return site. Default-constructing an
-  // nb::ndarray<...> trips an internal handle hash that throws
-  // std::bad_cast on some nanobind versions, so we avoid declaring an
-  // empty one.
+  // wrapper until the return site.
   std::int64_t* int_data = nullptr;
   double* dbl_data = nullptr;
   nb::capsule data_owner;
@@ -403,10 +458,10 @@ inline nb::object cdist_impl(
     int_data = heap->data();
   }
 
-  // Optional tqdm progress: total cost in pair-cost units.
+  // tqdm setup (still under the GIL).
   nb::object pbar;
-  std::uint64_t total_cost = 0;
   if (!tqdm_factory.is_none()) {
+    std::uint64_t total_cost = 0;
     if (symmetric) {
       for (std::size_t i = 0; i < N; ++i) {
         for (std::size_t j = i + 1U; j < M; ++j) {
@@ -422,9 +477,10 @@ inline nb::object cdist_impl(
     }
     pbar = tqdm_factory(nb::arg("total") = total_cost);
   }
+  const bool have_tqdm = pbar.is_valid() && !pbar.is_none();
 
-  // Pre-fill the diagonal for the symmetric path; we'll skip
-  // computing it.
+  // Pre-fill the diagonal for the symmetric path (still under GIL,
+  // but cheap; could be done either side of the release).
   if (symmetric) {
     if (returns_double) {
       const double diag = diagonal_double(scorer);
@@ -439,59 +495,150 @@ inline nb::object cdist_impl(
     }
   }
 
-  for (std::size_t i = 0; i < N; ++i) {
+  // === Phase 2: parallel compute (GIL released) ======================
+  //
+  // From here until phase 3, no thread touches a Python object except
+  // briefly to update tqdm (each such update reacquires the GIL).
+  // Work is distributed dynamically: every thread fetch-and-adds an
+  // atomic row index, which keeps the symmetric-upper-triangle's
+  // decreasing-row-size case load-balanced.
+
+  const std::size_t num_threads =
+      std::max<std::size_t>(1U, std::min(cpu_count, N));
+
+  auto process_row = [&](std::size_t i) {
     const std::size_t j_start = symmetric ? i + 1U : 0U;
     const std::size_t row_count = M - j_start;
+    if (row_count == 0U) {
+      return;
+    }
+    std::size_t max_m = 0;
+    for (std::size_t k = 0; k < row_count; ++k) {
+      max_m = std::max(max_m, t_lens[j_start + k]);
+    }
+    const std::uint8_t* const* row_ptrs = t_ptrs + j_start;
+    const std::size_t* row_lens = t_lens + j_start;
 
-    if (row_count > 0U) {
-      // Compute max target length in this row (Jaro needs it for the
-      // multi-word dispatch decision).
-      std::size_t max_m = 0;
-      for (std::size_t k = 0; k < row_count; ++k) {
-        max_m = std::max(max_m, t_lens[j_start + k]);
-      }
-
-      const std::uint8_t* const* row_ptrs = t_ptrs.data() + j_start;
-      const std::size_t* row_lens_ptr = t_lens.data() + j_start;
-
-      if (returns_double) {
-        double* row_out = dbl_data + i * M + j_start;
-        compute_row_double<Ops>(
-            scorer, q_ptrs[i], q_lens[i], row_ptrs, row_lens_ptr,
-            row_count, max_m, row_out, jw_prefix_weight, jw_prefix_threshold,
-            jw_prefix_cap);
-        if (symmetric) {
-          // Mirror upper -> lower.
-          for (std::size_t k = 0; k < row_count; ++k) {
-            const std::size_t j = j_start + k;
-            dbl_data[j * M + i] = row_out[k];
-          }
+    if (returns_double) {
+      double* row_out = dbl_data + i * M + j_start;
+      compute_row_double<Ops>(
+          scorer, q_ptrs[i], q_lens[i], row_ptrs, row_lens,
+          row_count, max_m, row_out, jw_prefix_weight, jw_prefix_threshold,
+          jw_prefix_cap);
+      if (symmetric) {
+        for (std::size_t k = 0; k < row_count; ++k) {
+          const std::size_t j = j_start + k;
+          dbl_data[j * M + i] = row_out[k];
         }
-      } else {
-        std::int64_t* row_out = int_data + i * M + j_start;
-        compute_row_int<Ops>(
-            scorer, q_ptrs[i], q_lens[i], row_ptrs, row_lens_ptr,
-            row_count, max_m, row_out);
-        if (symmetric) {
-          for (std::size_t k = 0; k < row_count; ++k) {
-            const std::size_t j = j_start + k;
-            int_data[j * M + i] = row_out[k];
-          }
+      }
+    } else {
+      std::int64_t* row_out = int_data + i * M + j_start;
+      compute_row_int<Ops>(
+          scorer, q_ptrs[i], q_lens[i], row_ptrs, row_lens,
+          row_count, max_m, row_out);
+      if (symmetric) {
+        for (std::size_t k = 0; k < row_count; ++k) {
+          const std::size_t j = j_start + k;
+          int_data[j * M + i] = row_out[k];
         }
       }
     }
+  };
 
-    // tqdm update: cost of the work just done in this row.
-    if (pbar.is_valid() && !pbar.is_none()) {
-      std::uint64_t row_cost = 0;
-      for (std::size_t k = 0; k < row_count; ++k) {
-        row_cost += pair_cost(q_lens[i], t_lens[j_start + k]);
+  auto row_cost_of = [&](std::size_t i) -> std::uint64_t {
+    const std::size_t j_start = symmetric ? i + 1U : 0U;
+    const std::size_t row_count = M - j_start;
+    std::uint64_t cost = 0;
+    for (std::size_t k = 0; k < row_count; ++k) {
+      cost += pair_cost(q_lens[i], t_lens[j_start + k]);
+    }
+    return cost;
+  };
+
+  // Workers don't touch Python — they just compute and push a
+  // row-done notification onto a shared queue. The main thread is
+  // the only one that calls into the tqdm bar; that keeps tqdm
+  // implementations that aren't thread-safe (or that have thread
+  // affinity) happy, and avoids a GIL-acquire from every worker.
+  std::atomic<std::size_t> next_row{0};
+  std::mutex done_mtx;
+  std::condition_variable done_cv;
+  std::deque<std::uint64_t> done_queue;  // per-row cost in pair units
+  std::atomic<std::size_t> rows_finished{0};
+
+  auto worker = [&]() {
+    while (true) {
+      const std::size_t i =
+          next_row.fetch_add(1U, std::memory_order_relaxed);
+      if (i >= N) {
+        return;
       }
-      if (row_cost > 0U) {
-        pbar.attr("update")(row_cost);
+      process_row(i);
+      const std::uint64_t cost = have_tqdm ? row_cost_of(i) : 0U;
+      {
+        std::lock_guard<std::mutex> lock(done_mtx);
+        done_queue.push_back(cost);
       }
+      rows_finished.fetch_add(1U, std::memory_order_release);
+      done_cv.notify_one();
+    }
+  };
+
+  if (num_threads == 1U) {
+    // Single-threaded: still want the GIL released for the duration so
+    // other Python threads can make progress, but no need for the
+    // queue at all. Just run the row loop in-place.
+    PyThreadState* saved_state = PyEval_SaveThread();
+    for (std::size_t i = 0; i < N; ++i) {
+      process_row(i);
+      if (have_tqdm) {
+        const std::uint64_t cost = row_cost_of(i);
+        if (cost > 0U) {
+          PyEval_RestoreThread(saved_state);
+          pbar.attr("update")(cost);
+          saved_state = PyEval_SaveThread();
+        }
+      }
+    }
+    PyEval_RestoreThread(saved_state);
+  } else {
+    // Multi-threaded: workers run with no GIL, main thread polls the
+    // done queue and dispatches the tqdm updates. The main thread
+    // sleeps on the cv with the GIL released so other Python threads
+    // can run; it re-acquires the GIL only for the brief tqdm.update
+    // call.
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+    {
+      PyThreadState* saved_state = PyEval_SaveThread();
+      for (std::size_t t = 0; t < num_threads; ++t) {
+        threads.emplace_back(worker);
+      }
+      // Main thread acts as the tqdm dispatcher.
+      std::size_t dispatched = 0;
+      while (dispatched < N) {
+        std::uint64_t cost;
+        {
+          std::unique_lock<std::mutex> lk(done_mtx);
+          done_cv.wait(lk, [&]() { return !done_queue.empty(); });
+          cost = done_queue.front();
+          done_queue.pop_front();
+        }
+        if (have_tqdm && cost > 0U) {
+          PyEval_RestoreThread(saved_state);
+          pbar.attr("update")(cost);
+          saved_state = PyEval_SaveThread();
+        }
+        ++dispatched;
+      }
+      for (auto& t : threads) {
+        t.join();
+      }
+      PyEval_RestoreThread(saved_state);
     }
   }
+
+  // === Phase 3: wrap up (GIL held) ==================================
 
   if (pbar.is_valid() && !pbar.is_none()) {
     pbar.attr("close")();

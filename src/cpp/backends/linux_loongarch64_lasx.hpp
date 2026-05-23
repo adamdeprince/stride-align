@@ -2234,12 +2234,12 @@ struct Implementation {
 
   static nb::object cdist(
       nb::handle queries, nb::handle targets, int scorer,
-      nb::object tqdm_factory,
+      nb::object tqdm_factory, std::size_t cpu_count,
       double jw_prefix_weight, double jw_prefix_threshold,
       std::size_t jw_prefix_cap) {
     return ::stride_align::cdist_simd::cdist_impl<
         ::stride_align::levenshtein_simd::LasxOps>(
-        queries, targets, scorer, tqdm_factory,
+        queries, targets, scorer, tqdm_factory, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 

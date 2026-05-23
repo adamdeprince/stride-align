@@ -84,25 +84,30 @@ inline std::size_t hamming_within_string(
 // from 1 to 32 in our benchmarks.
 // -------------------------------------------------------------------
 
-// Raw entry: query and targets pre-viewed by the caller. Writes the
-// Hamming distance per target into `out[0..count)`. Caller guarantees
-// all target lengths equal q_len; we validate per-target and raise
-// ValueError on mismatch (same as the wrapper).
+// Validates all targets match the query length. Returns -1 on
+// success, or the index of the first offending target on failure.
+// No Python interaction — caller raises ValueError using the returned
+// index while holding the GIL.
+inline std::ptrdiff_t hamming_lengths_validate(
+    std::size_t q_len, const std::size_t* t_lens, std::size_t count) noexcept {
+  for (std::size_t i = 0; i < count; ++i) {
+    if (t_lens[i] != q_len) {
+      return static_cast<std::ptrdiff_t>(i);
+    }
+  }
+  return -1;
+}
+
+// Raw kernel: pure compute, no Python touch. Caller MUST validate
+// that every target has length == q_len before calling (this function
+// may run without the GIL).
 inline void hamming_scores_simd_raw(
     const std::uint8_t* q_ptr, std::size_t q_len,
     const std::uint8_t* const* t_ptrs,
-    const std::size_t* t_lens,
+    const std::size_t* /*t_lens*/,
     std::size_t count,
     Score* out) {
   for (std::size_t i = 0; i < count; ++i) {
-    if (t_lens[i] != q_len) {
-      PyErr_Format(
-          PyExc_ValueError,
-          "Hamming requires equal-length inputs (target index %zu has "
-          "length %zu, query has length %zu)",
-          i, t_lens[i], q_len);
-      throw nb::python_error();
-    }
     out[i] = static_cast<Score>(
         hamming_within_string(q_ptr, t_ptrs[i], q_len));
   }

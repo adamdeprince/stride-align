@@ -209,3 +209,131 @@ def test_cdist_jaro_winkler_uses_prefix_kwargs():
     )
     # Higher prefix_weight magnifies the bonus when above threshold.
     assert heavier[0, 0] > default[0, 0]
+
+
+# --- threading + defensive copy ---
+
+
+def test_cdist_multi_threaded_matches_single_threaded():
+    rng = random.Random(13)
+    qs = [_rand_str(rng, rng.randint(1, 30)) for _ in range(40)]
+    ts = [_rand_str(rng, rng.randint(1, 30)) for _ in range(50)]
+    r1 = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=1)
+    r8 = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=8)
+    r_default = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN)  # cpu_count=0
+    assert np.array_equal(r1, r8)
+    assert np.array_equal(r1, r_default)
+
+
+def test_cdist_multi_threaded_symmetric_matches_single_threaded():
+    rng = random.Random(14)
+    qs = [_rand_str(rng, rng.randint(1, 30)) for _ in range(40)]
+    r1 = sa.cdist(qs, qs, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=1)
+    r8 = sa.cdist(qs, qs, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=8)
+    assert np.array_equal(r1, r8)
+    # And still symmetric.
+    assert np.array_equal(r8, r8.T)
+
+
+def test_cdist_multi_threaded_jaro_matches_scalar():
+    rng = random.Random(15)
+    qs = [_rand_str(rng, rng.randint(1, 30)) for _ in range(20)]
+    ts = [_rand_str(rng, rng.randint(1, 30)) for _ in range(25)]
+    actual = sa.cdist(qs, ts, scorer=sa.Scorer.JARO, cpu_count=8)
+    assert np.allclose(actual, _ref_jaro(qs, ts), atol=1e-12)
+
+
+def test_cdist_tqdm_updates_dispatched_from_main_thread():
+    """tqdm.update / .close must be called from the same thread that
+    constructed the bar — the thread that called cdist. Workers must
+    not touch the bar directly."""
+    import threading
+    construct_thread = []
+    update_threads = set()
+    close_threads = []
+
+    class FakeTqdm:
+        def __init__(self, total=None):
+            construct_thread.append(threading.get_ident())
+
+        def update(self, n):
+            update_threads.add(threading.get_ident())
+
+        def close(self):
+            close_threads.append(threading.get_ident())
+
+    qs = ["aaaaa" * 5 for _ in range(20)]
+    ts = ["bbbbb" * 5 for _ in range(25)]
+    sa.cdist(
+        qs, ts, scorer=sa.Scorer.LEVENSHTEIN, tqdm=FakeTqdm, cpu_count=4
+    )
+
+    assert len(construct_thread) == 1
+    main_thread = construct_thread[0]
+    assert update_threads == {main_thread}
+    assert close_threads == [main_thread]
+
+
+def test_cdist_defensive_copy_against_mutation_during_compute():
+    """cdist must snapshot the input list at entry. Even if another
+    thread clears or replaces the list mid-compute, cdist should
+    finish with the original contents."""
+    import threading
+    qs = [f"q{i}" * 4 for i in range(30)]
+    ts = [f"t{i}" * 4 for i in range(40)]
+    qs_original = list(qs)
+    ts_original = list(ts)
+
+    # Start cdist in a background thread so the foreground can mutate
+    # the lists.
+    result_holder = []
+
+    def run():
+        result_holder.append(
+            sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=4)
+        )
+
+    t = threading.Thread(target=run)
+    t.start()
+    # Mutate the original lists while cdist runs. The snapshot it took
+    # at entry should already protect us.
+    for _ in range(5):
+        qs.clear()
+        qs.extend(["MUTATED"] * 30)
+        ts.clear()
+        ts.extend(["xxx"] * 40)
+    t.join()
+
+    # The result must match what we'd compute against the original.
+    ref = sa.cdist(
+        qs_original, ts_original, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=1
+    )
+    assert np.array_equal(result_holder[0], ref)
+
+
+def test_cdist_releases_gil_during_compute():
+    """While cdist is computing on workers, other Python threads
+    should be able to make progress (the GIL is released)."""
+    import threading
+    counter = {"ticks": 0, "stop": False}
+
+    def background_tick():
+        while not counter["stop"]:
+            counter["ticks"] += 1
+
+    # Build a large enough workload that compute takes long enough for
+    # the background thread to make visible progress.
+    qs = ["a" * 30 for _ in range(200)]
+    ts = ["b" * 30 for _ in range(200)]
+
+    bg = threading.Thread(target=background_tick, daemon=True)
+    bg.start()
+    before = counter["ticks"]
+    sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=4)
+    after = counter["ticks"]
+    counter["stop"] = True
+    bg.join(timeout=1.0)
+
+    # If the GIL were held throughout, the background thread couldn't
+    # tick. We expect at least some ticks to have happened.
+    assert after > before

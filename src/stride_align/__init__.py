@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import importlib
+import os
 import warnings
 from types import ModuleType
 from typing import Any
@@ -1761,6 +1762,7 @@ def cdist(
     *,
     scorer: "Scorer | object",
     tqdm: object = None,
+    cpu_count: int = 0,
     prefix_weight: float = 0.1,
     prefix_threshold: float = 0.7,
     prefix_cap: int = 4,
@@ -1779,19 +1781,32 @@ def cdist(
     ``tqdm`` is an optional callable that constructs a ``tqdm``-style
     progress bar. cdist calls ``tqdm(total=N)`` with an estimated work
     total (in length-product units), then ``bar.update(n)`` after each
-    query row with ``n = sum_j q_len * t_len`` for that row. For
-    symmetric inputs (``queries is targets``), rows shrink as ``i``
-    grows; the cost-weighted updates make the bar advance smoothly in
-    wall-clock time.
+    query row with ``n = sum_j q_len * t_len`` for that row. Updates
+    are dispatched from the main thread; workers never touch the bar.
+    For symmetric inputs (``queries is targets``), rows shrink as
+    ``i`` grows; the cost-weighted updates make the bar advance
+    smoothly in wall-clock time.
+
+    ``cpu_count`` controls the worker thread count. ``0`` (default)
+    means ``os.cpu_count()``. ``1`` forces single-threaded mode. The
+    GIL is released for the SIMD compute either way.
 
     ``prefix_weight`` / ``prefix_threshold`` / ``prefix_cap`` are
     Jaro-Winkler hyperparameters used only when the scorer is
     Jaro-Winkler.
+
+    The input lists are tuple-snapshotted on entry, so it is safe for
+    another Python thread to mutate the original lists while cdist is
+    running.
     """
+    resolved_cpu_count = cpu_count
+    if resolved_cpu_count <= 0:
+        resolved_cpu_count = os.cpu_count() or 1
     return _LEVENSHTEIN_BACKEND.cdist(
         queries, targets,
         scorer=scorer,
         tqdm=tqdm,
+        cpu_count=int(resolved_cpu_count),
         prefix_weight=prefix_weight,
         prefix_threshold=prefix_threshold,
         prefix_cap=prefix_cap,

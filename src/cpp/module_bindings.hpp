@@ -2939,6 +2939,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          nb::object targets,
          nb::object scorer_obj,
          nb::object tqdm_factory,
+         std::size_t cpu_count,
          double prefix_weight,
          double prefix_threshold,
          std::size_t prefix_cap) {
@@ -2962,11 +2963,12 @@ void bind_backend_module(nb::module_& m, const char* doc) {
 
         if constexpr (requires {
                         Implementation::cdist(queries, targets, scorer_id,
-                                              tqdm_factory, prefix_weight,
+                                              tqdm_factory, cpu_count,
+                                              prefix_weight,
                                               prefix_threshold, prefix_cap);
                       }) {
           return Implementation::cdist(
-              queries, targets, scorer_id, tqdm_factory,
+              queries, targets, scorer_id, tqdm_factory, cpu_count,
               prefix_weight, prefix_threshold, prefix_cap);
         } else {
           PyErr_SetString(
@@ -2981,6 +2983,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::kw_only(),
       nb::arg("scorer"),
       nb::arg("tqdm") = nb::none(),
+      nb::arg("cpu_count") = std::size_t{1},
       nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
       nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
       nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
