@@ -11,7 +11,7 @@ if(NOT SKBUILD)
   )
 endif()
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" STRIDE_ALIGN_SYSTEM_PROCESSOR)
@@ -134,7 +134,12 @@ function(apply_stride_align_optimization_flags target_name)
 endfunction()
 
 function(configure_stride_align_target target_name)
-  target_compile_features(${target_name} PRIVATE cxx_std_23)
+  # C++20 is sufficient — we use std::popcount, <bit>, consteval,
+  # if-constexpr-requires; nothing from the C++23 stdlib (no expected,
+  # no format/print, no flat_*, no generator, no mdspan). Keeping the
+  # required standard at 20 lets older toolchains (gcc 10, e.g. on
+  # POWER8 Ubuntu 20.04) build the project.
+  target_compile_features(${target_name} PRIVATE cxx_std_20)
   target_include_directories(${target_name} PRIVATE include src/cpp)
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
