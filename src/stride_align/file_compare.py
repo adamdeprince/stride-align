@@ -45,6 +45,7 @@ _BACKEND_MODULES = {
     "linux_loongarch64_lsx": "stride_align._lsx",
     "linux_loongarch64_lasx": "stride_align._lasx",
     "linux_powerpc64_vsx": "stride_align._vsx",
+    "solaris_sparc_vis3": "stride_align._vis3",
     "linux_riscv64_rvv": "stride_align._rvv",
 }
 
@@ -62,6 +63,7 @@ _SHORT_BACKEND_ALIASES = {
     "lsx": "linux_loongarch64_lsx",
     "lasx": "linux_loongarch64_lasx",
     "vsx": "linux_powerpc64_vsx",
+    "vis3": "solaris_sparc_vis3",
     "rvv": "linux_riscv64_rvv",
 }
 

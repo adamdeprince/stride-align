@@ -1,6 +1,7 @@
 #include "cpu.hpp"
 
 #include <array>
+#include <cstdint>
 
 #if defined(__linux__) && defined(__aarch64__)
 #include <sys/auxv.h>
@@ -20,6 +21,11 @@
 #if defined(__linux__) && defined(__riscv)
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
+#endif
+
+#if defined(__sun) && (defined(__sparc__) || defined(__sparc) || defined(__sparcv9))
+#include <sys/auxv.h>
+#include <sys/auxv_SPARC.h>
 #endif
 
 namespace stride_align {
@@ -47,6 +53,7 @@ constexpr std::array kBackends = {
     BackendMetadata{BackendKind::linux_loongarch64_lasx, "linux_loongarch64_lasx"},
     BackendMetadata{BackendKind::linux_powerpc64_vsx, "linux_powerpc64_vsx"},
     BackendMetadata{BackendKind::linux_riscv64_rvv, "linux_riscv64_rvv"},
+    BackendMetadata{BackendKind::solaris_sparc_vis3, "solaris_sparc_vis3"},
 };
 
 bool x86_supports_sse41() noexcept {
@@ -160,6 +167,17 @@ bool linux_riscv64_supports_rvv() noexcept {
 #endif
 }
 
+bool solaris_sparc_supports_vis3() noexcept {
+#if defined(__sun) && (defined(__sparc__) || defined(__sparc) || defined(__sparcv9))
+  // getisax(2) returns the count of valid words. AV_SPARC_VIS3 lives in word 0.
+  std::uint32_t caps[2] = {0, 0};
+  if (getisax(caps, 2) == 0) return false;
+  return (caps[0] & AV_SPARC_VIS3) != 0;
+#else
+  return false;
+#endif
+}
+
 }  // namespace
 
 std::string_view backend_name(BackendKind kind) noexcept {
@@ -260,6 +278,12 @@ bool backend_is_compiled(BackendKind kind) noexcept {
 #else
       return false;
 #endif
+    case BackendKind::solaris_sparc_vis3:
+#ifdef STRIDE_ALIGN_HAVE_SOLARIS_SPARC_VIS3
+      return true;
+#else
+      return false;
+#endif
   }
 
   return false;
@@ -301,6 +325,8 @@ bool backend_is_available(BackendKind kind) noexcept {
       return linux_powerpc64_supports_vsx();
     case BackendKind::linux_riscv64_rvv:
       return linux_riscv64_supports_rvv();
+    case BackendKind::solaris_sparc_vis3:
+      return solaris_sparc_supports_vis3();
   }
 
   return false;
@@ -321,6 +347,7 @@ BackendKind detect_best_backend() noexcept {
       BackendKind::linux_loongarch64_lsx,
       BackendKind::linux_powerpc64_vsx,
       BackendKind::linux_riscv64_rvv,
+      BackendKind::solaris_sparc_vis3,
       BackendKind::generic,
   };
 

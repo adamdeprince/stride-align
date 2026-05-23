@@ -52,6 +52,8 @@ def _backend_module_name(kind: BackendKind) -> str:
             return "stride_align._vsx"
         case BackendKind.LINUX_RISCV64_RVV:
             return "stride_align._rvv"
+        case BackendKind.SOLARIS_SPARC_VIS3:
+            return "stride_align._vis3"
         case _:
             return "stride_align._generic"
 

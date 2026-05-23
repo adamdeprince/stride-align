@@ -295,6 +295,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES 
   list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_LINUX_RISCV64_RVV=1)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "SunOS" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "^(sparc|sparc64|sparcv9|sun4v|sun4u)$")
+  add_stride_align_backend(_vis3 src/cpp/backends/solaris_sparc_vis3.cpp)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(_vis3 PRIVATE -mcpu=niagara4 -mvis3)
+  endif()
+  list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_SOLARIS_SPARC_VIS3=1)
+endif()
+
 target_compile_definitions(_cpu PRIVATE ${STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS})
 install(TARGETS _cpu LIBRARY DESTINATION stride_align)
 

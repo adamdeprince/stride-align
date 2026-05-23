@@ -25,7 +25,8 @@ NB_MODULE(_cpu, m) {
       .value("LINUX_LOONGARCH64_LSX", BackendKind::linux_loongarch64_lsx)
       .value("LINUX_LOONGARCH64_LASX", BackendKind::linux_loongarch64_lasx)
       .value("LINUX_POWERPC64_VSX", BackendKind::linux_powerpc64_vsx)
-      .value("LINUX_RISCV64_RVV", BackendKind::linux_riscv64_rvv);
+      .value("LINUX_RISCV64_RVV", BackendKind::linux_riscv64_rvv)
+      .value("SOLARIS_SPARC_VIS3", BackendKind::solaris_sparc_vis3);
 
   nb::class_<BackendRecord>(m, "BackendRecord")
       .def_ro("kind", &BackendRecord::kind)

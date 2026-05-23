@@ -456,4 +456,44 @@ struct VsxOps {
 
 #endif  // __VSX__
 
+#if defined(__sparc__) || defined(__sparc) || defined(__sparcv9)
+
+// SPARC VIS3: 64-bit vector registers, no 64-bit partitioned arithmetic.
+// One u64 lane per register is what we get -- but the bit-parallel Myers
+// kernel still beats Hyyro's multi-word scalar fallback because it stays
+// in a single register.
+//
+// The cmpeq / gt_u64 helpers return all-ones-or-zero u64 to match the
+// SIMD bundles' API (other backends use vector comparisons that yield
+// the same lane-broadcast bitmask). The kernel uses these as bitmasks,
+// not as boolean predicates.
+struct Vis3Ops {
+  static constexpr std::size_t lanes = 1;
+  using Vec = std::uint64_t;
+
+  static Vec set1(std::uint64_t v) { return v; }
+  static Vec zero() { return 0ULL; }
+  static Vec and_(Vec a, Vec b) { return a & b; }
+  static Vec or_(Vec a, Vec b) { return a | b; }
+  static Vec xor_(Vec a, Vec b) { return a ^ b; }
+  static Vec not_(Vec a) { return ~a; }
+  static Vec add(Vec a, Vec b) { return a + b; }
+  static Vec sub(Vec a, Vec b) { return a - b; }
+  static Vec shl1(Vec a) { return a << 1; }
+  static Vec cmpeq(Vec a, Vec b) { return a == b ? ~0ULL : 0ULL; }
+  static Vec andnot_(Vec a, Vec b) { return (~a) & b; }
+  static Vec gather64(const std::uint64_t* base, const std::uint64_t* indices) {
+    return base[indices[0]];
+  }
+  static Vec load_aligned(const std::uint64_t* data) { return data[0]; }
+  static void store_aligned(std::uint64_t* dst, Vec v) { dst[0] = v; }
+  static Vec gt_u64(Vec a, Vec b) { return a > b ? ~0ULL : 0ULL; }
+  static Vec shr63(Vec a) { return a >> 63; }
+  static bool is_zero(Vec a) { return a == 0ULL; }
+  static Vec shl_var_u64(Vec a, Vec shifts) { return a << (shifts & 63); }
+  static Vec shr_var_u64(Vec a, Vec shifts) { return a >> (shifts & 63); }
+};
+
+#endif  // SPARC
+
 }  // namespace stride_align::levenshtein_simd

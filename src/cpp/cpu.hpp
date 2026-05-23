@@ -21,6 +21,7 @@ enum class BackendKind {
   linux_loongarch64_lasx,
   linux_powerpc64_vsx,
   linux_riscv64_rvv,
+  solaris_sparc_vis3,
 };
 
 struct BackendRecord {
