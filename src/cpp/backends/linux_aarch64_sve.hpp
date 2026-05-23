@@ -7,6 +7,7 @@
 #include <nanobind/nanobind.h>
 
 #include "backends/arm_sve_backend.hpp"
+#include "cdist_simd.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -442,6 +443,18 @@ struct Implementation {
     return ::stride_align::jaro_simd::jaro_winkler_similarities_simd<
         ::stride_align::levenshtein_simd::NeonOps>(
         query, targets, prefix_weight, prefix_threshold, prefix_cap);
+  }
+
+  static nb::object cdist(
+      nb::handle queries, nb::handle targets, int scorer,
+      nb::object tqdm_factory,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    ensure_supported();
+    return ::stride_align::cdist_simd::cdist_impl<
+        ::stride_align::levenshtein_simd::NeonOps>(
+        queries, targets, scorer, tqdm_factory,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 };
 

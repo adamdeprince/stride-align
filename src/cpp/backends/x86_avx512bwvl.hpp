@@ -17,6 +17,7 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
 #include "backends/x86_fixed_kernel.hpp"
+#include "cdist_simd.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -1728,6 +1729,17 @@ struct TargetImplementation {
         ::stride_align::levenshtein_simd::Avx512Ops>(
         query, targets, prefix_weight, prefix_threshold, prefix_cap);
   }
+
+  static nb::object cdist(
+      nb::handle queries, nb::handle targets, int scorer,
+      nb::object tqdm_factory,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_simd::cdist_impl<
+        ::stride_align::levenshtein_simd::Avx512Ops>(
+        queries, targets, scorer, tqdm_factory,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -2481,6 +2493,17 @@ struct Implementation {
     ensure_supported();
     return TargetImplementation::jaro_winkler_similarities(
         query, targets, prefix_weight, prefix_threshold, prefix_cap);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE nb::object cdist(
+      nb::handle queries, nb::handle targets, int scorer,
+      nb::object tqdm_factory,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::cdist(
+        queries, targets, scorer, tqdm_factory,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx512bwvl;

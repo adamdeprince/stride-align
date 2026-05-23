@@ -84,6 +84,30 @@ inline std::size_t hamming_within_string(
 // from 1 to 32 in our benchmarks.
 // -------------------------------------------------------------------
 
+// Raw entry: query and targets pre-viewed by the caller. Writes the
+// Hamming distance per target into `out[0..count)`. Caller guarantees
+// all target lengths equal q_len; we validate per-target and raise
+// ValueError on mismatch (same as the wrapper).
+inline void hamming_scores_simd_raw(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    Score* out) {
+  for (std::size_t i = 0; i < count; ++i) {
+    if (t_lens[i] != q_len) {
+      PyErr_Format(
+          PyExc_ValueError,
+          "Hamming requires equal-length inputs (target index %zu has "
+          "length %zu, query has length %zu)",
+          i, t_lens[i], q_len);
+      throw nb::python_error();
+    }
+    out[i] = static_cast<Score>(
+        hamming_within_string(q_ptr, t_ptrs[i], q_len));
+  }
+}
+
 inline std::vector<Score> hamming_scores_simd(
     nb::handle query,
     nb::handle targets) {

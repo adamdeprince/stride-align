@@ -6,7 +6,9 @@
 #include <nanobind/stl/vector.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 #include "affine.hpp"
@@ -2881,6 +2883,107 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::kw_only(),
       nb::arg("scorer"),
       nb::arg("k") = std::size_t{5});
+
+  // -------------------------------------------------------------------
+  // cdist: all-pairs distance / similarity matrix
+  // -------------------------------------------------------------------
+  //
+  // The scorer can be passed three ways:
+  //   * `Scorer.LEVENSHTEIN` etc — the IntEnum directly (Python int).
+  //   * `_BACKEND.levenshtein_scores` etc — a C++-bound function from
+  //     this module, looked up in the per-module scorer table built
+  //     below.
+  //   * Any other callable registered via `_register_scorer(fn, id)`,
+  //     used by stride_align/__init__.py to register the top-level
+  //     Python wrappers (which are what users normally pass).
+  //
+  // All three forms resolve to a single Scorer enum value in C++ once,
+  // up front. The per-row dispatch is a plain C++ switch in
+  // cdist_impl — no per-row Python calls.
+
+  using ::stride_align::topk::Scorer;
+  // Per-module map: PyObject* (function) -> Scorer enum value. Static
+  // local: one map per `bind_backend_module<Implementation>`
+  // instantiation, so each backend (.so) has its own table populated
+  // with its own bound functions plus whatever the Python wrapper
+  // layer registers later.
+  static std::unordered_map<PyObject*, int> scorer_map;
+
+  auto register_attr = [&m](const char* name, Scorer s) {
+    if (m.attr(name).ptr() != nullptr) {
+      scorer_map[m.attr(name).ptr()] = static_cast<int>(s);
+    }
+  };
+  register_attr("levenshtein_scores", Scorer::Levenshtein);
+  register_attr("levenshtein_normalized_scores", Scorer::LevenshteinNormalized);
+  register_attr("damerau_levenshtein_scores", Scorer::DamerauLevenshtein);
+  register_attr(
+      "damerau_levenshtein_normalized_scores",
+      Scorer::DamerauLevenshteinNormalized);
+  register_attr("hamming_scores", Scorer::Hamming);
+  register_attr("hamming_normalized_scores", Scorer::HammingNormalized);
+  register_attr("jaro_similarities", Scorer::Jaro);
+  register_attr("jaro_winkler_similarities", Scorer::JaroWinkler);
+
+  m.def(
+      "_register_scorer",
+      [](nb::object fn, int scorer_id) {
+        scorer_map[fn.ptr()] = scorer_id;
+      },
+      nb::arg("fn"),
+      nb::arg("scorer_id"));
+
+  m.def(
+      "cdist",
+      [](nb::object queries,
+         nb::object targets,
+         nb::object scorer_obj,
+         nb::object tqdm_factory,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        int scorer_id;
+        // IntEnum subclasses int, so PyLong_Check is the fast path
+        // for the canonical `Scorer.LEVENSHTEIN` usage.
+        if (PyLong_Check(scorer_obj.ptr())) {
+          scorer_id = nb::cast<int>(scorer_obj);
+        } else {
+          auto it = scorer_map.find(scorer_obj.ptr());
+          if (it == scorer_map.end()) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "cdist scorer must be a Scorer enum value or a known "
+                "stride_align scoring function (e.g. "
+                "stride_align.levenshtein_scores).");
+            throw nb::python_error();
+          }
+          scorer_id = it->second;
+        }
+
+        if constexpr (requires {
+                        Implementation::cdist(queries, targets, scorer_id,
+                                              tqdm_factory, prefix_weight,
+                                              prefix_threshold, prefix_cap);
+                      }) {
+          return Implementation::cdist(
+              queries, targets, scorer_id, tqdm_factory,
+              prefix_weight, prefix_threshold, prefix_cap);
+        } else {
+          PyErr_SetString(
+              PyExc_NotImplementedError,
+              "cdist is not implemented for this backend; "
+              "use a SIMD-capable backend (any non-generic).");
+          throw nb::python_error();
+        }
+      },
+      nb::arg("queries"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("scorer"),
+      nb::arg("tqdm") = nb::none(),
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
 }
 
 }  // namespace stride_align::bindings

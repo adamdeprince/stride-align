@@ -452,6 +452,93 @@ inline bool view_all_byte_compat(
   return true;
 }
 
+// Largest pattern length the multi-word SIMD batch kernel covers.
+inline constexpr std::size_t kLevMaxSimdPatternLen = 256U;
+
+// Raw SIMD batch entry: caller has byte-viewed the query and all
+// targets and confirmed q_len in (0, 256]. Writes distances into
+// `out[0..count)`. No Python interaction (no fallback for wider
+// inputs — caller validates).
+template <typename Ops>
+inline void levenshtein_scores_simd_raw(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    std::size_t cutoff,
+    Score* out) {
+  if (count == 0U) {
+    return;
+  }
+
+  constexpr std::size_t lanes = Ops::lanes;
+  std::array<const std::uint8_t*, lanes> batch_ptrs{};
+  std::array<std::size_t, lanes> batch_lens{};
+  const bool has_cutoff = cutoff != ::stride_align::levenshtein::kNoCutoff;
+
+  const std::span<const std::uint8_t> pattern_span(q_ptr, q_len);
+  if (q_len <= 64U) {
+    const auto peq = build_peq(pattern_span);
+    for (std::size_t b = 0; b < count; b += lanes) {
+      const std::size_t batch_count = std::min(lanes, count - b);
+      for (std::size_t l = 0; l < batch_count; ++l) {
+        batch_ptrs[l] = t_ptrs[b + l];
+        batch_lens[l] = t_lens[b + l];
+      }
+      for (std::size_t l = batch_count; l < lanes; ++l) {
+        batch_ptrs[l] = nullptr;
+        batch_lens[l] = 0;
+      }
+      if (has_cutoff) {
+        myers_batch_single_word<Ops, true>(
+            peq.data(), batch_ptrs.data(), batch_lens.data(),
+            batch_count, q_len, out + b, cutoff);
+      } else {
+        myers_batch_single_word<Ops, false>(
+            peq.data(), batch_ptrs.data(), batch_lens.data(),
+            batch_count, q_len, out + b);
+      }
+    }
+    return;
+  }
+
+  const std::size_t W = (q_len + 63U) / 64U;
+  const std::size_t last_bits = q_len - (W - 1U) * 64U;
+  const auto peq = build_peq_multi(pattern_span, W);
+
+  auto run_batch = [&](auto W_const) {
+    constexpr std::size_t W_compile = decltype(W_const)::value;
+    for (std::size_t b = 0; b < count; b += lanes) {
+      const std::size_t batch_count = std::min(lanes, count - b);
+      for (std::size_t l = 0; l < batch_count; ++l) {
+        batch_ptrs[l] = t_ptrs[b + l];
+        batch_lens[l] = t_lens[b + l];
+      }
+      for (std::size_t l = batch_count; l < lanes; ++l) {
+        batch_ptrs[l] = nullptr;
+        batch_lens[l] = 0;
+      }
+      if (has_cutoff) {
+        myers_batch_multi_word<Ops, W_compile, true>(
+            peq.data(), batch_ptrs.data(), batch_lens.data(),
+            batch_count, q_len, last_bits, out + b, cutoff);
+      } else {
+        myers_batch_multi_word<Ops, W_compile, false>(
+            peq.data(), batch_ptrs.data(), batch_lens.data(),
+            batch_count, q_len, last_bits, out + b);
+      }
+    }
+  };
+
+  if (W == 2U) {
+    run_batch(std::integral_constant<std::size_t, 2U>{});
+  } else if (W == 3U) {
+    run_batch(std::integral_constant<std::size_t, 3U>{});
+  } else /* W == 4 */ {
+    run_batch(std::integral_constant<std::size_t, 4U>{});
+  }
+}
+
 template <typename Ops>
 inline std::vector<Score> levenshtein_scores_simd(
     nb::handle query,
@@ -466,15 +553,13 @@ inline std::vector<Score> levenshtein_scores_simd(
   const auto count = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
   PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
 
-  // Largest pattern length the multi-word SIMD batch kernel covers.
-  // Beyond this we fall through to the scalar Hyyrö multi-word dispatch
-  // (still bit-parallel, just no SIMD across targets).
-  constexpr std::size_t kMaxSimdPatternLen = 256U;
+  // Alias of the raw entry's constant for backward compat with anyone
+  // referencing this name in this header.
+  constexpr std::size_t kMaxSimdPatternLen = kLevMaxSimdPatternLen;
 
   // Fast path: query is bytes or a 1-byte unicode string, each target
-  // is independently bytes or 1-byte unicode (mixed is fine; their byte
-  // representations are identical), and pattern length is in (0,
-  // kMaxSimdPatternLen]. We read CPython buffers directly with no
+  // is independently bytes or 1-byte unicode, and pattern length is in
+  // (0, kMaxSimdPatternLen]. We read CPython buffers directly with no
   // per-target copy or allocation. The PyObjects stay alive through
   // `owner` for the duration of this function.
   const ByteCompatKind q_kind = classify(query.ptr());
@@ -486,95 +571,18 @@ inline std::vector<Score> levenshtein_scores_simd(
       std::vector<const std::uint8_t*> ptrs;
       std::vector<std::size_t> lens;
       if (view_all_byte_compat(items, count, ptrs, lens)) {
-        constexpr std::size_t lanes = Ops::lanes;
         std::vector<Score> out(count);
-        std::array<const std::uint8_t*, lanes> batch_ptrs{};
-        std::array<std::size_t, lanes> batch_lens{};
-        const bool has_cutoff =
-            cutoff != ::stride_align::levenshtein::kNoCutoff;
-
-        // The SIMD batch loop below touches only raw uint8_t* buffers
-        // (kept alive by `owner`) and our own scratch arrays — no
-        // Python ABI calls. Release the GIL for the duration if the
-        // workload is large enough that the save/restore round-trip is
-        // a small fraction of total kernel time. For tiny batches we
-        // keep the GIL to avoid adding overhead to fast paths.
         const ConditionalGilRelease gil_release(should_release_gil<Ops>(count, q_len));
-
-        // Pick the right kernel based on pattern length. Single-word
-        // covers (0, 64]; multi-word handles (64, 256] in 64-char
-        // blocks (W = 2/3/4).
-        const std::span<const std::uint8_t> pattern_span(q_ptr, q_len);
-        if (q_len <= 64U) {
-          const auto peq = build_peq(pattern_span);
-          for (std::size_t b = 0; b < count; b += lanes) {
-            const std::size_t batch_count = std::min(lanes, count - b);
-            for (std::size_t l = 0; l < batch_count; ++l) {
-              batch_ptrs[l] = ptrs[b + l];
-              batch_lens[l] = lens[b + l];
-            }
-            for (std::size_t l = batch_count; l < lanes; ++l) {
-              batch_ptrs[l] = nullptr;
-              batch_lens[l] = 0;
-            }
-            if (has_cutoff) {
-              myers_batch_single_word<Ops, true>(
-                  peq.data(), batch_ptrs.data(), batch_lens.data(),
-                  batch_count, q_len, out.data() + b, cutoff);
-            } else {
-              myers_batch_single_word<Ops, false>(
-                  peq.data(), batch_ptrs.data(), batch_lens.data(),
-                  batch_count, q_len, out.data() + b);
-            }
-          }
-        } else {
-          // Multi-word path. We don't templatize over the exact W; pick
-          // the upper bucket so each call stays in a constant-W kernel.
-          const std::size_t W = (q_len + 63U) / 64U;
-          const std::size_t last_bits = q_len - (W - 1U) * 64U;
-          const auto peq = build_peq_multi(pattern_span, W);
-
-          auto run_batch = [&](auto W_const) {
-            constexpr std::size_t W_compile = decltype(W_const)::value;
-            for (std::size_t b = 0; b < count; b += lanes) {
-              const std::size_t batch_count = std::min(lanes, count - b);
-              for (std::size_t l = 0; l < batch_count; ++l) {
-                batch_ptrs[l] = ptrs[b + l];
-                batch_lens[l] = lens[b + l];
-              }
-              for (std::size_t l = batch_count; l < lanes; ++l) {
-                batch_ptrs[l] = nullptr;
-                batch_lens[l] = 0;
-              }
-              if (has_cutoff) {
-                myers_batch_multi_word<Ops, W_compile, true>(
-                    peq.data(), batch_ptrs.data(), batch_lens.data(),
-                    batch_count, q_len, last_bits, out.data() + b, cutoff);
-              } else {
-                myers_batch_multi_word<Ops, W_compile, false>(
-                    peq.data(), batch_ptrs.data(), batch_lens.data(),
-                    batch_count, q_len, last_bits, out.data() + b);
-              }
-            }
-          };
-
-          if (W == 2U) {
-            run_batch(std::integral_constant<std::size_t, 2U>{});
-          } else if (W == 3U) {
-            run_batch(std::integral_constant<std::size_t, 3U>{});
-          } else /* W == 4 */ {
-            run_batch(std::integral_constant<std::size_t, 4U>{});
-          }
-        }
+        levenshtein_scores_simd_raw<Ops>(
+            q_ptr, q_len, ptrs.data(), lens.data(), count, cutoff, out.data());
         return out;
       }
     }
   }
 
-  // Slow path: anything that doesn't fit the byte-compatible-kind +
-  // pattern <= 64 fast path falls back to the scalar dispatch, which
-  // covers wider unicode storage, sequence-of-object inputs, and long
-  // patterns via Hyyrö's multi-word Myers.
+  // Slow path: anything that doesn't fit the byte-compatible fast path
+  // falls back to scalar dispatch — wider unicode, sequence-of-object
+  // inputs, long patterns via Hyyrö's multi-word Myers.
   std::vector<Score> out;
   out.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {

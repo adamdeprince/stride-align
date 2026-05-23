@@ -160,6 +160,41 @@ inline void osa_batch_single_word(
   }
 }
 
+// Raw SIMD batch: caller has byte-viewed query and all targets and
+// confirmed q_len in (0, 64] (single-word OSA path). Writes OSA
+// distances into `out[0..count)`. No Python interaction.
+template <typename Ops>
+inline void osa_scores_simd_raw(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    Score* out) {
+  if (count == 0U) {
+    return;
+  }
+  const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
+
+  constexpr std::size_t lanes = Ops::lanes;
+  std::array<const std::uint8_t*, lanes> batch_ptrs{};
+  std::array<std::size_t, lanes> batch_lens{};
+
+  for (std::size_t b = 0; b < count; b += lanes) {
+    const std::size_t batch_count = std::min(lanes, count - b);
+    for (std::size_t l = 0; l < batch_count; ++l) {
+      batch_ptrs[l] = t_ptrs[b + l];
+      batch_lens[l] = t_lens[b + l];
+    }
+    for (std::size_t l = batch_count; l < lanes; ++l) {
+      batch_ptrs[l] = nullptr;
+      batch_lens[l] = 0;
+    }
+    osa_batch_single_word<Ops>(
+        peq.data(), batch_ptrs.data(), batch_lens.data(),
+        batch_count, q_len, out + b);
+  }
+}
+
 template <typename Ops>
 inline std::vector<Score> osa_scores_simd(
     nb::handle query,
@@ -182,35 +217,11 @@ inline std::vector<Score> osa_scores_simd(
       std::vector<const std::uint8_t*> ptrs;
       std::vector<std::size_t> lens;
       if (view_all_byte_compat(items, count, ptrs, lens)) {
-        const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
-
-        constexpr std::size_t lanes = Ops::lanes;
         std::vector<Score> out(count);
-        std::array<const std::uint8_t*, lanes> batch_ptrs{};
-        std::array<std::size_t, lanes> batch_lens{};
-
-        // Same conditional-release policy as levenshtein_scores_simd:
-        // release the GIL once we've snapshotted the Python objects
-        // and are about to enter the pure-SIMD loop, but only if the
-        // batch is large enough that the lock round-trip stays under
-        // 2% of total kernel time.
         const ::stride_align::levenshtein_simd::ConditionalGilRelease gil_release(
             ::stride_align::levenshtein_simd::should_release_gil<Ops>(count, q_len));
-
-        for (std::size_t b = 0; b < count; b += lanes) {
-          const std::size_t batch_count = std::min(lanes, count - b);
-          for (std::size_t l = 0; l < batch_count; ++l) {
-            batch_ptrs[l] = ptrs[b + l];
-            batch_lens[l] = lens[b + l];
-          }
-          for (std::size_t l = batch_count; l < lanes; ++l) {
-            batch_ptrs[l] = nullptr;
-            batch_lens[l] = 0;
-          }
-          osa_batch_single_word<Ops>(
-              peq.data(), batch_ptrs.data(), batch_lens.data(),
-              batch_count, q_len, out.data() + b);
-        }
+        osa_scores_simd_raw<Ops>(
+            q_ptr, q_len, ptrs.data(), lens.data(), count, out.data());
         return out;
       }
     }

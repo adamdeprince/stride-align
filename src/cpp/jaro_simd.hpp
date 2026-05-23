@@ -518,10 +518,94 @@ inline bool view_all_byte_compat_capped(
   return true;
 }
 
-// SIMD batch entrypoint. Returns an empty vector when constraints are
-// not met (query not byte-compatible, query length > 256, any target
-// not byte-compatible, or any target length > 256); the caller then
-// falls through to per-target scalar dispatch.
+// Raw SIMD batch: caller has already byte-viewed the query and all
+// targets and confirmed lengths fit (<= kJaroMaxSimdLen on both
+// sides). Writes Jaro similarity into `out[0..count)`. No Python
+// interaction. Used by both the Python-facing wrapper below and the
+// cdist kernel.
+template <typename Ops>
+inline void jaro_similarities_simd_raw(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    std::size_t max_m,
+    double* out) {
+  if (count == 0U) {
+    return;
+  }
+
+  constexpr std::size_t K = Ops::lanes;
+  std::array<const std::uint8_t*, K> batch_ptrs{};
+  std::array<std::size_t, K> batch_lens{};
+
+  auto fill_batch = [&](std::size_t base, std::size_t group) {
+    for (std::size_t l = 0; l < group; ++l) {
+      batch_ptrs[l] = t_ptrs[base + l];
+      batch_lens[l] = t_lens[base + l];
+    }
+    for (std::size_t l = group; l < K; ++l) {
+      batch_ptrs[l] = nullptr;
+      batch_lens[l] = 0U;
+    }
+  };
+
+  if (q_len <= 64U && max_m <= 64U) {
+    const ByteAlphabetPeq peq = build_peq_byte(q_ptr, q_len);
+    for (std::size_t base = 0; base < count; base += K) {
+      const std::size_t group = std::min(K, count - base);
+      fill_batch(base, group);
+      jaro_simd_inner<Ops>(
+          peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
+          group, out + base);
+    }
+    return;
+  }
+
+  // Multi-word. W_query is always >= 2 in this branch; for q_len <= 64
+  // with m > 64 we still pad to W_query=2 (block 1 PEQ stays zero) so
+  // the leftmost-block scan finds matches in block 0.
+  const std::size_t W_query =
+      q_len > 192U ? 4U : q_len > 128U ? 3U : q_len > 64U ? 2U : 2U;
+  const std::size_t W_target =
+      max_m > 192U ? 4U : max_m > 128U ? 3U : max_m > 64U ? 2U : 1U;
+
+  auto run = [&](auto WQ_const, auto WT_const) {
+    constexpr std::size_t WQ = decltype(WQ_const)::value;
+    constexpr std::size_t WT = decltype(WT_const)::value;
+    const auto peq = build_peq_byte_multi<WQ>(q_ptr, q_len);
+    for (std::size_t base = 0; base < count; base += K) {
+      const std::size_t group = std::min(K, count - base);
+      fill_batch(base, group);
+      jaro_simd_inner_multi_word_query<Ops, WQ, WT>(
+          peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
+          group, out + base);
+    }
+  };
+
+#define STRIDE_ALIGN_JARO_DISPATCH(WQ_VAL, WT_VAL)                       \
+  if (W_query == WQ_VAL && W_target == WT_VAL) {                         \
+    run(std::integral_constant<std::size_t, WQ_VAL>{},                   \
+        std::integral_constant<std::size_t, WT_VAL>{});                  \
+    return;                                                              \
+  }
+  STRIDE_ALIGN_JARO_DISPATCH(2, 1)
+  STRIDE_ALIGN_JARO_DISPATCH(2, 2)
+  STRIDE_ALIGN_JARO_DISPATCH(2, 3)
+  STRIDE_ALIGN_JARO_DISPATCH(2, 4)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 1)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 2)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 3)
+  STRIDE_ALIGN_JARO_DISPATCH(3, 4)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 1)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 2)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 3)
+  STRIDE_ALIGN_JARO_DISPATCH(4, 4)
+#undef STRIDE_ALIGN_JARO_DISPATCH
+}
+
+// Python-facing wrapper. Returns an empty vector to signal scalar
+// fallback if the inputs don't fit the SIMD constraints.
 template <typename Ops>
 inline std::vector<double> jaro_similarities_simd(
     nb::handle query, nb::handle targets) {
@@ -540,7 +624,7 @@ inline std::vector<double> jaro_similarities_simd(
 
   const bv::ByteCompatKind q_kind = bv::classify(query.ptr());
   if (q_kind == bv::ByteCompatKind::None) {
-    return out;  // empty -> signal fallback
+    return out;
   }
   const std::uint8_t* q_ptr = nullptr;
   std::size_t q_len = 0;
@@ -557,86 +641,8 @@ inline std::vector<double> jaro_similarities_simd(
   }
 
   out.resize(count);
-  if (count == 0U) {
-    return out;
-  }
-
-  constexpr std::size_t K = Ops::lanes;
-  std::array<const std::uint8_t*, K> batch_ptrs{};
-  std::array<std::size_t, K> batch_lens{};
-
-  auto fill_batch = [&](std::size_t base, std::size_t group) {
-    for (std::size_t l = 0; l < group; ++l) {
-      batch_ptrs[l] = ptrs[base + l];
-      batch_lens[l] = lens[base + l];
-    }
-    for (std::size_t l = group; l < K; ++l) {
-      batch_ptrs[l] = nullptr;
-      batch_lens[l] = 0U;
-    }
-  };
-
-  if (q_len <= 64U && max_m <= 64U) {
-    // Single-word fast path.
-    const ByteAlphabetPeq peq = build_peq_byte(q_ptr, q_len);
-    for (std::size_t base = 0; base < count; base += K) {
-      const std::size_t group = std::min(K, count - base);
-      fill_batch(base, group);
-      jaro_simd_inner<Ops>(
-          peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
-          group, out.data() + base);
-    }
-    return out;
-  }
-
-  // Multi-word path. Pick W_query and W_target based on actual lengths.
-  // W_query stays in [2, 4]; for q_len <= 64 with m > 64 we still pad
-  // the query to W_query=2 (block 1 is all-zero PEQ) so the inner
-  // loop's leftmost-block scan finds matches in block 0.
-  const std::size_t W_query =
-      q_len > 192U ? 4U : q_len > 128U ? 3U : q_len > 64U ? 2U : 2U;
-  const std::size_t W_target =
-      max_m > 192U ? 4U : max_m > 128U ? 3U : max_m > 64U ? 2U : 1U;
-
-  auto run = [&](auto WQ_const, auto WT_const) {
-    constexpr std::size_t WQ = decltype(WQ_const)::value;
-    constexpr std::size_t WT = decltype(WT_const)::value;
-    const auto peq = build_peq_byte_multi<WQ>(q_ptr, q_len);
-    for (std::size_t base = 0; base < count; base += K) {
-      const std::size_t group = std::min(K, count - base);
-      fill_batch(base, group);
-      jaro_simd_inner_multi_word_query<Ops, WQ, WT>(
-          peq, q_ptr, q_len, batch_ptrs.data(), batch_lens.data(),
-          group, out.data() + base);
-    }
-  };
-
-  // Manual dispatch over the 4 * 4 = 16 (WQ, WT) combos. The compiler
-  // only instantiates the cases we actually call here.
-#define STRIDE_ALIGN_JARO_DISPATCH(WQ_VAL, WT_VAL)                       \
-  if (W_query == WQ_VAL && W_target == WT_VAL) {                         \
-    run(std::integral_constant<std::size_t, WQ_VAL>{},                   \
-        std::integral_constant<std::size_t, WT_VAL>{});                  \
-    return out;                                                          \
-  }
-  STRIDE_ALIGN_JARO_DISPATCH(2, 1)
-  STRIDE_ALIGN_JARO_DISPATCH(2, 2)
-  STRIDE_ALIGN_JARO_DISPATCH(2, 3)
-  STRIDE_ALIGN_JARO_DISPATCH(2, 4)
-  STRIDE_ALIGN_JARO_DISPATCH(3, 1)
-  STRIDE_ALIGN_JARO_DISPATCH(3, 2)
-  STRIDE_ALIGN_JARO_DISPATCH(3, 3)
-  STRIDE_ALIGN_JARO_DISPATCH(3, 4)
-  STRIDE_ALIGN_JARO_DISPATCH(4, 1)
-  STRIDE_ALIGN_JARO_DISPATCH(4, 2)
-  STRIDE_ALIGN_JARO_DISPATCH(4, 3)
-  STRIDE_ALIGN_JARO_DISPATCH(4, 4)
-#undef STRIDE_ALIGN_JARO_DISPATCH
-
-  // Unreachable in practice — the if-ladder above covers every valid
-  // (W_query, W_target) pair. Return empty to signal fallback if we
-  // somehow drop through.
-  out.clear();
+  jaro_similarities_simd_raw<Ops>(
+      q_ptr, q_len, ptrs.data(), lens.data(), count, max_m, out.data());
   return out;
 }
 

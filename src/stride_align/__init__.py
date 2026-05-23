@@ -1741,6 +1741,89 @@ def extract_best(
     return _first_or_none(extract(query, targets, scorer=scorer, k=1))
 
 
+# cdist: all-pairs distance / similarity matrix. Everything down to
+# the per-row work happens inside C++ — the only Python boundary
+# crossings are the initial call and the optional tqdm progress
+# callback. Symmetric inputs (queries is targets) compute only the
+# upper triangle; the rest is mirrored.
+#
+# The scorer can be:
+#   * A ``Scorer`` enum value (e.g. ``Scorer.LEVENSHTEIN``).
+#   * Any of the top-level scoring functions in this module
+#     (e.g. ``stride_align.levenshtein_scores``,
+#     ``stride_align.jaro_similarities``). The dispatch happens in
+#     C++ via a PyObject* -> Scorer table populated at import time.
+
+
+def cdist(
+    queries: object,
+    targets: object,
+    *,
+    scorer: "Scorer | object",
+    tqdm: object = None,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> np.ndarray:
+    """All-pairs distance / similarity matrix.
+
+    ``queries`` and ``targets`` are sequences of strings/bytes. The
+    return is a 2-D ``ndarray`` of shape ``(len(queries), len(targets))``
+    with ``int64`` cells for distance scorers and ``float64`` for
+    similarity scorers.
+
+    ``scorer`` accepts a ``Scorer`` enum value or any of the top-level
+    scoring functions in this module (``stride_align.levenshtein_scores``
+    etc.) — the dispatch table is registered at import time.
+
+    ``tqdm`` is an optional callable that constructs a ``tqdm``-style
+    progress bar. cdist calls ``tqdm(total=N)`` with an estimated work
+    total (in length-product units), then ``bar.update(n)`` after each
+    query row with ``n = sum_j q_len * t_len`` for that row. For
+    symmetric inputs (``queries is targets``), rows shrink as ``i``
+    grows; the cost-weighted updates make the bar advance smoothly in
+    wall-clock time.
+
+    ``prefix_weight`` / ``prefix_threshold`` / ``prefix_cap`` are
+    Jaro-Winkler hyperparameters used only when the scorer is
+    Jaro-Winkler.
+    """
+    return _LEVENSHTEIN_BACKEND.cdist(
+        queries, targets,
+        scorer=scorer,
+        tqdm=tqdm,
+        prefix_weight=prefix_weight,
+        prefix_threshold=prefix_threshold,
+        prefix_cap=prefix_cap,
+    )
+
+
+# Register each top-level scoring function with the C++ scorer table
+# so users can pass `cdist(..., scorer=stride_align.levenshtein_scores)`
+# without going through the Scorer enum. The C++ side already
+# registered its own bound functions in the same table; this loop
+# adds the Python-layer wrappers as aliases.
+def _register_top_level_scorers() -> None:
+    pairs = [
+        (levenshtein_scores, Scorer.LEVENSHTEIN),
+        (levenshtein_normalized_scores, Scorer.LEVENSHTEIN_NORMALIZED),
+        (damerau_levenshtein_scores, Scorer.DAMERAU_LEVENSHTEIN),
+        (damerau_levenshtein_normalized_scores, Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED),
+        (hamming_scores, Scorer.HAMMING),
+        (hamming_normalized_scores, Scorer.HAMMING_NORMALIZED),
+        (jaro_similarities, Scorer.JARO),
+        (jaro_winkler_similarities, Scorer.JARO_WINKLER),
+    ]
+    register = getattr(_LEVENSHTEIN_BACKEND, "_register_scorer", None)
+    if register is None:
+        return
+    for fn, s in pairs:
+        register(fn, int(s))
+
+
+_register_top_level_scorers()
+
+
 __all__ = [
     "AlignmentPath",
     "AlignmentResult",
@@ -1750,6 +1833,7 @@ __all__ = [
     "Scores",
     "available_backends",
     "backend_is_available",
+    "cdist",
     "damerau_levenshtein_best",
     "damerau_levenshtein_normalized_best",
     "damerau_levenshtein_normalized_score",

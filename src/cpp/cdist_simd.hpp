@@ -1,0 +1,509 @@
+#pragma once
+
+// All-pairs SIMD batch ("cdist"). Computes an N x M distance- or
+// similarity-matrix for every (query[i], target[j]) pair via the
+// existing *_simd_raw entry points, with no per-row Python ABI cost.
+//
+// Single Python boundary crossing for the whole call (plus the
+// optional tqdm progress callback): queries and targets are
+// byte-viewed once up front, then the per-query loop calls the raw
+// SIMD batch for each row.
+//
+// Symmetric optimization: when `queries is targets` and the metric is
+// commutative (which all the supported scorers are), only the
+// strictly upper triangle is computed; the lower triangle is mirrored
+// and the diagonal is filled with the identity value (0 for distance,
+// 1.0 for similarity / normalized).
+//
+// Progress: `tqdm_factory` is a Python callable returning a
+// `tqdm`-like object. cdist calls it with `total=<estimated total
+// work units>`, then calls `update(n)` after each query row with
+// `n = work units for that row`. The cost model is
+// `cost(q, t) = q_len * t_len` so the bar advances in time-proportional
+// units even when the symmetric upper triangle has decreasing row
+// sizes — the bar moves smoothly in wall-clock time.
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
+#include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+
+#include "byte_view.hpp"
+#include "hamming_simd.hpp"
+#include "jaro_simd.hpp"
+#include "levenshtein_simd.hpp"
+#include "osa_simd.hpp"
+#include "stride_align/alignment.hpp"
+#include "stride_align/hamming.hpp"
+#include "stride_align/jaro.hpp"
+#include "stride_align/levenshtein.hpp"
+#include "topk.hpp"  // Scorer enum
+
+namespace stride_align::cdist_simd {
+
+namespace nb = nanobind;
+
+using Scorer = ::stride_align::topk::Scorer;
+
+inline bool scorer_returns_double(Scorer s) noexcept {
+  switch (s) {
+    case Scorer::Levenshtein:
+    case Scorer::DamerauLevenshtein:
+    case Scorer::Hamming:
+      return false;
+    case Scorer::LevenshteinNormalized:
+    case Scorer::DamerauLevenshteinNormalized:
+    case Scorer::HammingNormalized:
+    case Scorer::Jaro:
+    case Scorer::JaroWinkler:
+      return true;
+  }
+  return true;
+}
+
+// 0 / 1.0 identity for the diagonal of a symmetric matrix when
+// queries == targets and the metric admits a fixed self-similarity.
+inline double diagonal_double(Scorer s) noexcept {
+  switch (s) {
+    case Scorer::LevenshteinNormalized:
+    case Scorer::DamerauLevenshteinNormalized:
+    case Scorer::HammingNormalized:
+    case Scorer::Jaro:
+    case Scorer::JaroWinkler:
+      return 1.0;
+    default:
+      return 0.0;
+  }
+}
+
+inline std::int64_t diagonal_int(Scorer /*s*/) noexcept {
+  // All int-valued scorers are distances, so self-distance is 0.
+  return 0;
+}
+
+// Estimate the per-pair work as q_len * t_len (in tokens).  Good
+// enough for tqdm pacing: the constant factor is the same per scorer
+// in a given call, so the bar advances proportionally to wall time.
+inline std::uint64_t pair_cost(std::size_t q_len, std::size_t t_len) noexcept {
+  // Use max(1, ...) so an empty pair still counts as one unit and
+  // tqdm advances even on empty inputs.
+  return static_cast<std::uint64_t>(std::max<std::size_t>(1U, q_len) *
+                                    std::max<std::size_t>(1U, t_len));
+}
+
+// Allocate a 2-D NumPy matrix (row-major, contiguous) of the given
+// shape and dtype. Returns the ndarray and stores a writable raw
+// pointer in `data_out`.
+// 2-D numpy matrix factories. We return a fully-constructed
+// `nb::ndarray<numpy, T, ndim<2>>`; the caller's binding return-type
+// machinery handles the C++ -> Python conversion at the edge.
+using ScoreMatrix = nb::ndarray<nb::numpy, std::int64_t, nb::ndim<2>>;
+using NormalizedMatrix = nb::ndarray<nb::numpy, double, nb::ndim<2>>;
+
+inline ScoreMatrix make_int_matrix(std::size_t rows, std::size_t cols, std::int64_t** data_out) {
+  static_assert(sizeof(Score) == sizeof(std::int64_t),
+                "Score must be 64-bit to alias np.int64 without copying");
+  auto* heap = new std::vector<std::int64_t>(rows * cols, 0);
+  nb::capsule owner(heap, [](void* p) noexcept {
+    delete static_cast<std::vector<std::int64_t>*>(p);
+  });
+  *data_out = heap->data();
+  const std::size_t shape[2] = {rows, cols};
+  return ScoreMatrix(heap->data(), 2, shape, owner);
+}
+
+inline NormalizedMatrix make_double_matrix(std::size_t rows, std::size_t cols, double** data_out) {
+  auto* heap = new std::vector<double>(rows * cols, 0.0);
+  nb::capsule owner(heap, [](void* p) noexcept {
+    delete static_cast<std::vector<double>*>(p);
+  });
+  *data_out = heap->data();
+  const std::size_t shape[2] = {rows, cols};
+  return NormalizedMatrix(heap->data(), 2, shape, owner);
+}
+
+// Normalize an in-place row of int distances into doubles, given a
+// shared query length, the per-target lengths, and the scorer's
+// normalization recipe.
+inline void normalize_lev_row(
+    const std::int64_t* raw, double* out,
+    std::size_t q_len, const std::size_t* t_lens, std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) {
+    out[i] = ::stride_align::levenshtein::normalize(
+        static_cast<std::size_t>(raw[i]), q_len, t_lens[i]);
+  }
+}
+
+inline void normalize_hamming_row(
+    const std::int64_t* raw, double* out,
+    std::size_t q_len, const std::size_t* /*t_lens*/, std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) {
+    out[i] = ::stride_align::hamming::normalize(
+        static_cast<std::size_t>(raw[i]), q_len);
+  }
+}
+
+// View all elements of `items` as byte-compatible. Records ptrs and
+// lens; returns false on any non-byte-compatible element (caller then
+// reports an error or falls back to scalar dispatch).
+inline bool view_all_byte_compat_full(
+    PyObject* const* items, std::size_t count,
+    std::vector<const std::uint8_t*>& ptrs,
+    std::vector<std::size_t>& lens) {
+  namespace bv = ::stride_align::byte_view;
+  ptrs.resize(count);
+  lens.resize(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const bv::ByteCompatKind kind = bv::classify(items[i]);
+    if (kind == bv::ByteCompatKind::None) {
+      return false;
+    }
+    bv::view(items[i], kind, ptrs[i], lens[i]);
+  }
+  return true;
+}
+
+// Compute one row's worth of raw scores into `row_out` (Score = int64
+// for distance scorers; double for similarity scorers). Uses the
+// per-scorer *_simd_raw entry points templated on Ops.
+template <typename Ops>
+inline void compute_row_int(
+    Scorer scorer,
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    std::size_t max_m,
+    std::int64_t* row_out) {
+  switch (scorer) {
+    case Scorer::Levenshtein:
+      ::stride_align::levenshtein_simd::levenshtein_scores_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count,
+          ::stride_align::levenshtein::kNoCutoff,
+          reinterpret_cast<Score*>(row_out));
+      return;
+    case Scorer::DamerauLevenshtein:
+      ::stride_align::osa_simd::osa_scores_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count,
+          reinterpret_cast<Score*>(row_out));
+      return;
+    case Scorer::Hamming:
+      ::stride_align::hamming_simd::hamming_scores_simd_raw(
+          q_ptr, q_len, t_ptrs, t_lens, count,
+          reinterpret_cast<Score*>(row_out));
+      return;
+    default:
+      PyErr_Format(PyExc_RuntimeError,
+                   "cdist: unexpected int-valued scorer (%d)",
+                   static_cast<int>(scorer));
+      throw nb::python_error();
+  }
+  (void)max_m;
+}
+
+template <typename Ops>
+inline void compute_row_double(
+    Scorer scorer,
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    std::size_t max_m,
+    double* row_out,
+    double jw_prefix_weight,
+    double jw_prefix_threshold,
+    std::size_t jw_prefix_cap) {
+  switch (scorer) {
+    case Scorer::LevenshteinNormalized: {
+      std::vector<Score> raw(count);
+      ::stride_align::levenshtein_simd::levenshtein_scores_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count,
+          ::stride_align::levenshtein::kNoCutoff, raw.data());
+      normalize_lev_row(reinterpret_cast<const std::int64_t*>(raw.data()),
+                        row_out, q_len, t_lens, count);
+      return;
+    }
+    case Scorer::DamerauLevenshteinNormalized: {
+      std::vector<Score> raw(count);
+      ::stride_align::osa_simd::osa_scores_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      normalize_lev_row(reinterpret_cast<const std::int64_t*>(raw.data()),
+                        row_out, q_len, t_lens, count);
+      return;
+    }
+    case Scorer::HammingNormalized: {
+      std::vector<Score> raw(count);
+      ::stride_align::hamming_simd::hamming_scores_simd_raw(
+          q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      normalize_hamming_row(reinterpret_cast<const std::int64_t*>(raw.data()),
+                            row_out, q_len, t_lens, count);
+      return;
+    }
+    case Scorer::Jaro:
+      ::stride_align::jaro_simd::jaro_similarities_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count, max_m, row_out);
+      return;
+    case Scorer::JaroWinkler: {
+      ::stride_align::jaro_simd::jaro_similarities_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count, max_m, row_out);
+      // Add Winkler prefix bonus per pair, in place.
+      for (std::size_t i = 0; i < count; ++i) {
+        if (row_out[i] < jw_prefix_threshold) {
+          continue;
+        }
+        const std::size_t limit = std::min({q_len, t_lens[i], jw_prefix_cap});
+        std::size_t L = 0;
+        while (L < limit && q_ptr[L] == t_ptrs[i][L]) {
+          ++L;
+        }
+        row_out[i] += static_cast<double>(L) * jw_prefix_weight *
+                      (1.0 - row_out[i]);
+      }
+      return;
+    }
+    default:
+      PyErr_Format(PyExc_RuntimeError,
+                   "cdist: unexpected double-valued scorer (%d)",
+                   static_cast<int>(scorer));
+      throw nb::python_error();
+  }
+}
+
+// Per-scorer cap on a single side's length. Mirrors each *_simd_raw's
+// preconditions: Hamming has no length cap (validated per-pair),
+// Lev/OSA cap at 256 on query, Jaro caps at 256 on both sides. We
+// take the most restrictive of these (256) as the universal cap; if
+// any input exceeds it, the binding raises NotImplementedError so the
+// user knows to slice and recombine themselves.
+inline constexpr std::size_t kCdistMaxLen = 256U;
+
+// Hamming has an exact equal-length requirement enforced inside the
+// raw entry; for all the others, exceeding the cap is a configuration
+// error rather than a runtime mismatch.
+
+// Main cdist implementation. Templated on Ops (the SIMD bundle for
+// the calling backend). Returns the result matrix as an nb::object
+// holding either an int64 or float64 numpy ndarray depending on the
+// scorer.
+template <typename Ops>
+inline nb::object cdist_impl(
+    nb::handle queries_handle,
+    nb::handle targets_handle,
+    int scorer_int,
+    nb::object tqdm_factory,
+    double jw_prefix_weight,
+    double jw_prefix_threshold,
+    std::size_t jw_prefix_cap) {
+  const Scorer scorer = static_cast<Scorer>(scorer_int);
+
+  // Materialize queries + targets via PySequence_Fast.
+  PyObject* fast_q = PySequence_Fast(
+      queries_handle.ptr(), "queries must be a sequence of sequences");
+  if (fast_q == nullptr) {
+    throw nb::python_error();
+  }
+  nb::object q_owner = nb::steal<nb::object>(fast_q);
+  const std::size_t N =
+      static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_q));
+  PyObject* const* q_items = PySequence_Fast_ITEMS(fast_q);
+
+  const bool symmetric = (queries_handle.ptr() == targets_handle.ptr());
+
+  PyObject* fast_t = nullptr;
+  PyObject* const* t_items = nullptr;
+  std::size_t M = 0;
+  nb::object t_owner;
+  if (symmetric) {
+    fast_t = fast_q;
+    t_items = q_items;
+    M = N;
+  } else {
+    fast_t = PySequence_Fast(
+        targets_handle.ptr(), "targets must be a sequence of sequences");
+    if (fast_t == nullptr) {
+      throw nb::python_error();
+    }
+    t_owner = nb::steal<nb::object>(fast_t);
+    M = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_t));
+    t_items = PySequence_Fast_ITEMS(fast_t);
+  }
+
+  // View all items byte-compatible. Mixed-kind cdist is not yet
+  // supported by the SIMD path; the caller can slice + recombine if
+  // needed.
+  std::vector<const std::uint8_t*> q_ptrs;
+  std::vector<std::size_t> q_lens;
+  if (!view_all_byte_compat_full(q_items, N, q_ptrs, q_lens)) {
+    PyErr_SetString(
+        PyExc_NotImplementedError,
+        "cdist currently requires all queries to be byte-compatible "
+        "(bytes / 1-byte unicode). Wider unicode is not yet supported.");
+    throw nb::python_error();
+  }
+  std::vector<const std::uint8_t*> t_ptrs;
+  std::vector<std::size_t> t_lens;
+  if (symmetric) {
+    t_ptrs = q_ptrs;
+    t_lens = q_lens;
+  } else if (!view_all_byte_compat_full(t_items, M, t_ptrs, t_lens)) {
+    PyErr_SetString(
+        PyExc_NotImplementedError,
+        "cdist currently requires all targets to be byte-compatible "
+        "(bytes / 1-byte unicode). Wider unicode is not yet supported.");
+    throw nb::python_error();
+  }
+
+  // Validate length caps.
+  const std::size_t cap = kCdistMaxLen;
+  for (std::size_t i = 0; i < N; ++i) {
+    if (q_lens[i] > cap) {
+      PyErr_Format(
+          PyExc_NotImplementedError,
+          "cdist: query %zu has length %zu, above the SIMD cap of %zu",
+          i, q_lens[i], cap);
+      throw nb::python_error();
+    }
+  }
+  if (!symmetric) {
+    for (std::size_t j = 0; j < M; ++j) {
+      if (t_lens[j] > cap) {
+        PyErr_Format(
+            PyExc_NotImplementedError,
+            "cdist: target %zu has length %zu, above the SIMD cap of %zu",
+            j, t_lens[j], cap);
+        throw nb::python_error();
+      }
+    }
+  }
+
+  const bool returns_double = scorer_returns_double(scorer);
+
+  // Allocate the heap-backed matrix exactly once; defer the ndarray
+  // wrapper until the return site. Default-constructing an
+  // nb::ndarray<...> trips an internal handle hash that throws
+  // std::bad_cast on some nanobind versions, so we avoid declaring an
+  // empty one.
+  std::int64_t* int_data = nullptr;
+  double* dbl_data = nullptr;
+  nb::capsule data_owner;
+  if (returns_double) {
+    auto* heap = new std::vector<double>(N * M, 0.0);
+    data_owner = nb::capsule(heap, [](void* p) noexcept {
+      delete static_cast<std::vector<double>*>(p);
+    });
+    dbl_data = heap->data();
+  } else {
+    auto* heap = new std::vector<std::int64_t>(N * M, 0);
+    data_owner = nb::capsule(heap, [](void* p) noexcept {
+      delete static_cast<std::vector<std::int64_t>*>(p);
+    });
+    int_data = heap->data();
+  }
+
+  // Optional tqdm progress: total cost in pair-cost units.
+  nb::object pbar;
+  std::uint64_t total_cost = 0;
+  if (!tqdm_factory.is_none()) {
+    if (symmetric) {
+      for (std::size_t i = 0; i < N; ++i) {
+        for (std::size_t j = i + 1U; j < M; ++j) {
+          total_cost += pair_cost(q_lens[i], t_lens[j]);
+        }
+      }
+    } else {
+      for (std::size_t i = 0; i < N; ++i) {
+        for (std::size_t j = 0; j < M; ++j) {
+          total_cost += pair_cost(q_lens[i], t_lens[j]);
+        }
+      }
+    }
+    pbar = tqdm_factory(nb::arg("total") = total_cost);
+  }
+
+  // Pre-fill the diagonal for the symmetric path; we'll skip
+  // computing it.
+  if (symmetric) {
+    if (returns_double) {
+      const double diag = diagonal_double(scorer);
+      for (std::size_t i = 0; i < N; ++i) {
+        dbl_data[i * M + i] = diag;
+      }
+    } else {
+      const std::int64_t diag = diagonal_int(scorer);
+      for (std::size_t i = 0; i < N; ++i) {
+        int_data[i * M + i] = diag;
+      }
+    }
+  }
+
+  for (std::size_t i = 0; i < N; ++i) {
+    const std::size_t j_start = symmetric ? i + 1U : 0U;
+    const std::size_t row_count = M - j_start;
+
+    if (row_count > 0U) {
+      // Compute max target length in this row (Jaro needs it for the
+      // multi-word dispatch decision).
+      std::size_t max_m = 0;
+      for (std::size_t k = 0; k < row_count; ++k) {
+        max_m = std::max(max_m, t_lens[j_start + k]);
+      }
+
+      const std::uint8_t* const* row_ptrs = t_ptrs.data() + j_start;
+      const std::size_t* row_lens_ptr = t_lens.data() + j_start;
+
+      if (returns_double) {
+        double* row_out = dbl_data + i * M + j_start;
+        compute_row_double<Ops>(
+            scorer, q_ptrs[i], q_lens[i], row_ptrs, row_lens_ptr,
+            row_count, max_m, row_out, jw_prefix_weight, jw_prefix_threshold,
+            jw_prefix_cap);
+        if (symmetric) {
+          // Mirror upper -> lower.
+          for (std::size_t k = 0; k < row_count; ++k) {
+            const std::size_t j = j_start + k;
+            dbl_data[j * M + i] = row_out[k];
+          }
+        }
+      } else {
+        std::int64_t* row_out = int_data + i * M + j_start;
+        compute_row_int<Ops>(
+            scorer, q_ptrs[i], q_lens[i], row_ptrs, row_lens_ptr,
+            row_count, max_m, row_out);
+        if (symmetric) {
+          for (std::size_t k = 0; k < row_count; ++k) {
+            const std::size_t j = j_start + k;
+            int_data[j * M + i] = row_out[k];
+          }
+        }
+      }
+    }
+
+    // tqdm update: cost of the work just done in this row.
+    if (pbar.is_valid() && !pbar.is_none()) {
+      std::uint64_t row_cost = 0;
+      for (std::size_t k = 0; k < row_count; ++k) {
+        row_cost += pair_cost(q_lens[i], t_lens[j_start + k]);
+      }
+      if (row_cost > 0U) {
+        pbar.attr("update")(row_cost);
+      }
+    }
+  }
+
+  if (pbar.is_valid() && !pbar.is_none()) {
+    pbar.attr("close")();
+  }
+
+  const std::size_t shape[2] = {N, M};
+  if (returns_double) {
+    NormalizedMatrix mat(dbl_data, 2, shape, data_owner);
+    return mat.cast();
+  }
+  ScoreMatrix mat(int_data, 2, shape, data_owner);
+  return mat.cast();
+}
+
+}  // namespace stride_align::cdist_simd

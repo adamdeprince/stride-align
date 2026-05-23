@@ -17,6 +17,7 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/loongarch_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
+#include "cdist_simd.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -2066,6 +2067,17 @@ struct Implementation {
     return ::stride_align::jaro_simd::jaro_winkler_similarities_simd<
         ::stride_align::levenshtein_simd::LsxOps>(
         query, targets, prefix_weight, prefix_threshold, prefix_cap);
+  }
+
+  static nb::object cdist(
+      nb::handle queries, nb::handle targets, int scorer,
+      nb::object tqdm_factory,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_simd::cdist_impl<
+        ::stride_align::levenshtein_simd::LsxOps>(
+        queries, targets, scorer, tqdm_factory,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_loongarch64_lsx;

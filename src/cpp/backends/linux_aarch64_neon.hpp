@@ -423,6 +423,17 @@ struct Implementation {
     return TargetImplementation::jaro_winkler_similarities(
         query, targets, prefix_weight, prefix_threshold, prefix_cap);
   }
+
+  static nb::object cdist(
+      nb::handle queries, nb::handle targets, int scorer,
+      nb::object tqdm_factory,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::cdist(
+        queries, targets, scorer, tqdm_factory,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
 };
 
 }  // namespace stride_align::backend_linux_aarch64_neon
