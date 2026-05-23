@@ -483,4 +483,109 @@ inline double normalize(std::size_t distance, std::size_t a_len, std::size_t b_l
   return 1.0 - ratio;
 }
 
+// =================================================================
+// True Damerau-Levenshtein distance — the unrestricted form. Same
+// edits as OSA (insertion, deletion, substitution, transposition of
+// adjacent characters) but a character can participate in more than
+// one edit. The standard example where OSA and true DL differ is
+// "CA" -> "ABC":
+//   OSA = 3 (no useful transposition; each edit fights for a single
+//            character)
+//   true DL = 2 (transpose C,A then insert B — though both edits
+//                touch position 0)
+//
+// The algorithm uses an (n+2) by (m+2) DP table plus an alphabet-
+// indexed "last row of each character" map. O(n*m) time, O(n*m + |Σ|)
+// space. No bit-parallel form is shipped here — Hyyrö 2003 has one
+// but it's significantly more complex than the OSA bit-parallel and
+// rarely the bottleneck in practice. SIMD batching falls back to
+// per-pair scalar dispatch.
+//
+// Rationale for keeping both: most callers asking for
+// "Damerau-Levenshtein" actually want OSA (faster, equivalent in
+// almost every realistic input), but a strict minority needs the
+// unrestricted variant.
+// =================================================================
+
+namespace detail {
+
+template <typename Token>
+inline std::size_t true_damerau_dp(
+    std::span<const Token> pattern,
+    std::span<const Token> text) {
+  const std::size_t n = pattern.size();
+  const std::size_t m = text.size();
+  if (n == 0U) return m;
+  if (m == 0U) return n;
+
+  const std::size_t inf = n + m;
+
+  // (n+2) by (m+2) DP table. Rows 0 and column 0 are sentinels
+  // populated with `inf` so the transposition lookup is never the
+  // minimum when there's no valid prior occurrence.
+  std::vector<std::vector<std::size_t>> h(
+      n + 2U, std::vector<std::size_t>(m + 2U, 0));
+  h[0][0] = inf;
+  for (std::size_t i = 0; i <= n; ++i) {
+    h[i + 1U][0] = inf;
+    h[i + 1U][1] = i;
+  }
+  for (std::size_t j = 0; j <= m; ++j) {
+    h[0][j + 1U] = inf;
+    h[1][j + 1U] = j;
+  }
+
+  // `da` maps each character to the last row in which it appeared
+  // (1-indexed; 0 means "not yet seen"). Using std::unordered_map so
+  // the algorithm works for arbitrary integral tokens, not just bytes.
+  std::unordered_map<Token, std::size_t> da;
+
+  for (std::size_t i = 1; i <= n; ++i) {
+    std::size_t db = 0;
+    for (std::size_t j = 1; j <= m; ++j) {
+      const Token tj = text[j - 1U];
+      const std::size_t k = [&] {
+        auto it = da.find(tj);
+        return it == da.end() ? std::size_t{0} : it->second;
+      }();
+      const std::size_t l = db;
+      std::size_t cost;
+      if (pattern[i - 1U] == tj) {
+        cost = 0;
+        db = j;
+      } else {
+        cost = 1;
+      }
+      const std::size_t sub = h[i][j] + cost;
+      const std::size_t ins = h[i + 1U][j] + 1U;
+      const std::size_t del = h[i][j + 1U] + 1U;
+      const std::size_t trans = h[k][l] +
+          (i > k ? (i - k - 1U) : 0U) + 1U +
+          (j > l ? (j - l - 1U) : 0U);
+      // Note: when k == 0 or l == 0, h[k][l] = inf (or h[k][...] = j
+      // which is large enough to dominate any other option).
+      h[i + 1U][j + 1U] =
+          std::min({sub, ins, del, trans});
+    }
+    da[pattern[i - 1U]] = i;
+  }
+  return h[n + 1U][m + 1U];
+}
+
+}  // namespace detail
+
+template <typename Token>
+inline std::size_t true_damerau_levenshtein_distance(
+    std::span<const Token> pattern,
+    std::span<const Token> text) {
+  static_assert(std::is_integral_v<Token> || std::is_unsigned_v<Token>);
+  return detail::true_damerau_dp<Token>(pattern, text);
+}
+
+inline std::size_t true_damerau_levenshtein_distance_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) {
+  return detail::true_damerau_dp<std::uint8_t>(pattern, text);
+}
+
 }  // namespace stride_align::levenshtein

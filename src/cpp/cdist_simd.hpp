@@ -129,6 +129,19 @@ inline void compute_row_int(
           q_ptr, q_len, t_ptrs, t_lens, count,
           reinterpret_cast<Score*>(row_out));
       return;
+    case Scorer::TrueDamerauLevenshtein: {
+      // No SIMD path yet — scalar DP per pair. Hyyrö 2003 has a
+      // bit-parallel form but it's significantly more complex than
+      // OSA; deferred.
+      Score* row = reinterpret_cast<Score*>(row_out);
+      for (std::size_t i = 0; i < count; ++i) {
+        row[i] = static_cast<Score>(
+            ::stride_align::levenshtein::true_damerau_levenshtein_distance_u8(
+                std::span<const std::uint8_t>(q_ptr, q_len),
+                std::span<const std::uint8_t>(t_ptrs[i], t_lens[i])));
+      }
+      return;
+    }
     default:
       PyErr_Format(PyExc_RuntimeError,
                    "cdist: unexpected int-valued scorer (%d)",
@@ -233,6 +246,21 @@ inline void compute_row_double(
       ::stride_align::indel_simd::indel_scores_simd_raw<Ops>(
           q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
       normalize_indel_row(
+          reinterpret_cast<const std::int64_t*>(raw.data()),
+          row_out, q_len, t_lens, count);
+      return;
+    }
+    case Scorer::TrueDamerauLevenshteinNormalized: {
+      // Scalar per-pair, then normalize the same way as Lev (divide
+      // by max(q_len, t_lens[i])).
+      std::vector<Score> raw(count);
+      for (std::size_t i = 0; i < count; ++i) {
+        raw[i] = static_cast<Score>(
+            ::stride_align::levenshtein::true_damerau_levenshtein_distance_u8(
+                std::span<const std::uint8_t>(q_ptr, q_len),
+                std::span<const std::uint8_t>(t_ptrs[i], t_lens[i])));
+      }
+      normalize_lev_row(
           reinterpret_cast<const std::int64_t*>(raw.data()),
           row_out, q_len, t_lens, count);
       return;

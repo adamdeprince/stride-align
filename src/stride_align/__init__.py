@@ -1381,6 +1381,66 @@ def indel_normalized_scores(query: object, targets: object) -> np.ndarray:
     return _LEVENSHTEIN_BACKEND.indel_normalized_scores(query, targets)
 
 
+# True Damerau-Levenshtein — unrestricted form. Each character may
+# participate in multiple edits, unlike the OSA variant we ship under
+# ``damerau_levenshtein_*`` (which restricts each character to at most
+# one). Almost always equal to OSA on real-world inputs; only differs
+# when overlapping transpositions are the cheapest path. No bit-parallel
+# kernel yet; scalar DP per pair.
+
+
+def true_damerau_levenshtein_score(query: object, target: object) -> int:
+    """True Damerau-Levenshtein edit distance (unrestricted).
+
+    Allows insertion, deletion, substitution, and transposition of
+    adjacent characters; characters may participate in multiple edits.
+    """
+    return int(_LEVENSHTEIN_BACKEND.true_damerau_levenshtein_score(query, target))
+
+
+def true_damerau_levenshtein_normalized_score(
+    query: object, target: object
+) -> float:
+    """True Damerau-Levenshtein similarity in [0, 1] (1 = identical).
+
+    Normalized as ``1 - distance / max(|query|, |target|)``, same shape
+    as Levenshtein.
+    """
+    return float(
+        _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_score(
+            query, target
+        )
+    )
+
+
+def true_damerau_levenshtein_scores(
+    query: object, targets: object
+) -> np.ndarray:
+    """True Damerau-Levenshtein distance from query to every target."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_scores(query, targets)
+
+
+def true_damerau_levenshtein_normalized_scores(
+    query: object, targets: object
+) -> np.ndarray:
+    """True Damerau-Levenshtein similarity per target."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_scores(
+        query, targets
+    )
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -1480,6 +1540,8 @@ class Scorer(enum.IntEnum):
     JARO_WINKLER = 7
     INDEL = 8
     INDEL_NORMALIZED = 9
+    TRUE_DAMERAU_LEVENSHTEIN = 10
+    TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED = 11
 
 
 def _coerce_targets(targets: object) -> object:
@@ -1579,6 +1641,28 @@ def indel_normalized_top_k(
 ) -> list[tuple[object, float, int]]:
     """Top-k targets by highest Indel similarity (descending)."""
     return _LEVENSHTEIN_BACKEND.indel_normalized_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def true_damerau_levenshtein_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, int, int]]:
+    """Top-k targets by lowest true Damerau-Levenshtein distance."""
+    return _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def true_damerau_levenshtein_normalized_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest true Damerau-Levenshtein similarity."""
+    return _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_top_k(
         query, _coerce_targets(targets), k
     )
 
@@ -1759,6 +1843,24 @@ def indel_normalized_best(
 ) -> tuple[object, float, int] | None:
     """Single target with the highest Indel similarity."""
     return _first_or_none(indel_normalized_top_k(query, targets, 1))
+
+
+def true_damerau_levenshtein_best(
+    query: object,
+    targets: object,
+) -> tuple[object, int, int] | None:
+    """Single target with the lowest true Damerau-Levenshtein distance."""
+    return _first_or_none(true_damerau_levenshtein_top_k(query, targets, 1))
+
+
+def true_damerau_levenshtein_normalized_best(
+    query: object,
+    targets: object,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest true Damerau-Levenshtein similarity."""
+    return _first_or_none(
+        true_damerau_levenshtein_normalized_top_k(query, targets, 1)
+    )
 
 
 def jaro_best(
@@ -2018,6 +2120,9 @@ def _register_top_level_scorers() -> None:
         (hamming_normalized_scores, Scorer.HAMMING_NORMALIZED),
         (indel_scores, Scorer.INDEL),
         (indel_normalized_scores, Scorer.INDEL_NORMALIZED),
+        (true_damerau_levenshtein_scores, Scorer.TRUE_DAMERAU_LEVENSHTEIN),
+        (true_damerau_levenshtein_normalized_scores,
+         Scorer.TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED),
         (jaro_similarities, Scorer.JARO),
         (jaro_winkler_similarities, Scorer.JARO_WINKLER),
     ]
@@ -2110,4 +2215,12 @@ __all__ = [
     "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
+    "true_damerau_levenshtein_best",
+    "true_damerau_levenshtein_normalized_best",
+    "true_damerau_levenshtein_normalized_score",
+    "true_damerau_levenshtein_normalized_scores",
+    "true_damerau_levenshtein_normalized_top_k",
+    "true_damerau_levenshtein_score",
+    "true_damerau_levenshtein_scores",
+    "true_damerau_levenshtein_top_k",
 ]

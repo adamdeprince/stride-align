@@ -42,6 +42,7 @@ inline bool scorer_returns_double(Scorer s) noexcept {
     case Scorer::DamerauLevenshtein:
     case Scorer::Hamming:
     case Scorer::Indel:
+    case Scorer::TrueDamerauLevenshtein:
       return false;
     case Scorer::LevenshteinNormalized:
     case Scorer::DamerauLevenshteinNormalized:
@@ -49,6 +50,7 @@ inline bool scorer_returns_double(Scorer s) noexcept {
     case Scorer::Jaro:
     case Scorer::JaroWinkler:
     case Scorer::IndelNormalized:
+    case Scorer::TrueDamerauLevenshteinNormalized:
       return true;
   }
   return true;
@@ -68,6 +70,7 @@ inline double diagonal_double(Scorer s) noexcept {
     case Scorer::Jaro:
     case Scorer::JaroWinkler:
     case Scorer::IndelNormalized:
+    case Scorer::TrueDamerauLevenshteinNormalized:
       return 1.0;
     default:
       return 0.0;
@@ -218,11 +221,13 @@ inline double max_normalized_similarity(
     std::size_t jw_prefix_cap) noexcept {
   switch (scorer) {
     case Scorer::LevenshteinNormalized:
-    case Scorer::DamerauLevenshteinNormalized: {
+    case Scorer::DamerauLevenshteinNormalized:
+    case Scorer::TrueDamerauLevenshteinNormalized: {
       // Distance d >= |q - t| (one edit per length difference).
       // Normalized sim = 1 - d / max(q, t)
       //               <= 1 - |q-t|/max  =  min/max.
-      // Transpositions in OSA don't help with length differences.
+      // Holds for OSA, true DL, and Levenshtein equally — none of
+      // them can do better than one edit per length difference.
       if (q_len == 0U && t_len == 0U) {
         return 1.0;
       }

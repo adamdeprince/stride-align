@@ -19,6 +19,7 @@
 #include "indel_dispatch.hpp"
 #include "jaro_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
+#include "true_damerau_dispatch.hpp"
 #include "stride_align/alignment.hpp"
 #include "stride_align/hamming.hpp"
 #include "stride_align/jaro.hpp"
@@ -2398,6 +2399,50 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("query"),
       nb::arg("targets"));
 
+  // --- True Damerau-Levenshtein ---------------------------------------
+  //
+  // Unrestricted DL: each character can participate in multiple edits
+  // (unlike OSA, which we ship under the `damerau_levenshtein_*` name).
+  // Scalar DP only — no bit-parallel form yet (Hyyrö 2003 exists but
+  // is significantly more complex than OSA's bit-parallel and rarely
+  // the bottleneck).
+
+  m.def(
+      "true_damerau_levenshtein_score",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::true_damerau::dispatch_score(query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "true_damerau_levenshtein_normalized_score",
+      [](nb::handle query, nb::handle target) {
+        return ::stride_align::true_damerau::dispatch_normalized_score(
+            query, target);
+      },
+      nb::arg("query"),
+      nb::arg("target"));
+
+  m.def(
+      "true_damerau_levenshtein_scores",
+      [](nb::handle query, nb::handle targets) {
+        return as_score_ndarray(
+            ::stride_align::true_damerau::dispatch_scores(query, targets));
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
+  m.def(
+      "true_damerau_levenshtein_normalized_scores",
+      [](nb::handle query, nb::handle targets) {
+        return as_normalized_ndarray(
+            ::stride_align::true_damerau::dispatch_normalized_scores(
+                query, targets));
+      },
+      nb::arg("query"),
+      nb::arg("targets"));
+
   // --- Jaro / Jaro-Winkler ---------------------------------------------
   //
   // Both are similarity in [0, 1] (higher = closer); there's no
@@ -2696,6 +2741,47 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("k") = std::size_t{5});
 
   m.def(
+      "true_damerau_levenshtein_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(),
+            "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        auto scores =
+            ::stride_align::true_damerau::dispatch_scores(query, targets);
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/false);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
+      "true_damerau_levenshtein_normalized_top_k",
+      [](nb::handle query, nb::handle targets, std::size_t k) {
+        PyObject* fast_targets = PySequence_Fast(
+            targets.ptr(),
+            "targets must be a sequence of target sequences");
+        if (fast_targets == nullptr) {
+          throw nb::python_error();
+        }
+        nb::object owner = nb::steal<nb::object>(fast_targets);
+        PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+        auto scores =
+            ::stride_align::true_damerau::dispatch_normalized_scores(
+                query, targets);
+        return ::stride_align::topk::make_top_k(
+            items, scores, k, /*higher_is_better=*/true);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::arg("k") = std::size_t{5});
+
+  m.def(
       "jaro_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
         PyObject* fast_targets = PySequence_Fast(
@@ -2972,6 +3058,19 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
+          case Scorer::TrueDamerauLevenshtein: {
+            auto scores =
+                ::stride_align::true_damerau::dispatch_scores(
+                    query, targets);
+            return ::stride_align::topk::make_top_k(
+                items, scores, k, false);
+          }
+          case Scorer::TrueDamerauLevenshteinNormalized: {
+            auto scores =
+                ::stride_align::true_damerau::dispatch_normalized_scores(
+                    query, targets);
+            return ::stride_align::topk::make_top_k(items, scores, k, true);
+          }
           case Scorer::Jaro: {
             std::vector<double> scores;
             if constexpr (requires {
@@ -3063,6 +3162,10 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   register_attr("hamming_normalized_scores", Scorer::HammingNormalized);
   register_attr("indel_scores", Scorer::Indel);
   register_attr("indel_normalized_scores", Scorer::IndelNormalized);
+  register_attr("true_damerau_levenshtein_scores",
+                Scorer::TrueDamerauLevenshtein);
+  register_attr("true_damerau_levenshtein_normalized_scores",
+                Scorer::TrueDamerauLevenshteinNormalized);
   register_attr("jaro_similarities", Scorer::Jaro);
   register_attr("jaro_winkler_similarities", Scorer::JaroWinkler);
 
