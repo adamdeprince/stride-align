@@ -190,6 +190,24 @@ def test_empty_inputs_returns_empty():
     assert out == []
 
 
+def test_returns_references_to_original_strings_not_copies():
+    """The returned tuples should hold references to the SAME Python
+    string objects from the input lists, not freshly constructed
+    copies. ``.join`` builds fresh string objects so CPython's literal
+    interning can't mask a regression here."""
+    qs = ["".join(["kit", "ten"]), "".join(["sit", "ting"])]
+    ts = ["".join(["kit", "ten"]), "".join(["bi", "ting"])]
+    for _, q, t in sa.cdist_top_k(
+        qs, ts, scorer=sa.Scorer.JARO, k=10,
+    ):
+        assert any(q is original for original in qs), (
+            "query yielded was a new object, not a reference to the input list"
+        )
+        assert any(t is original for original in ts), (
+            "target yielded was a new object, not a reference to the input list"
+        )
+
+
 def test_defensive_snapshot_against_concurrent_mutation():
     qs = [f"q{i}{'x' * 4}" for i in range(30)]
     ts = [f"t{i}{'x' * 4}" for i in range(30)]

@@ -266,3 +266,21 @@ def test_empty_inputs_yields_nothing():
         [], [], scorer=sa.Scorer.JARO, threshold=0.0
     ))
     assert out == []
+
+
+def test_yields_references_to_original_strings_not_copies():
+    """The (score, query, target) tuples should hold references to the
+    SAME Python string objects from the input lists, not freshly
+    constructed copies. Built strings via ``join`` to avoid CPython's
+    literal-interning fooling the identity check."""
+    qs = ["".join(["kit", "ten"]), "".join(["sit", "ting"])]
+    ts = ["".join(["kit", "ten"]), "".join(["bi", "ting"])]
+    for _, q, t in sa.cdist_above_threshold(
+        qs, ts, scorer=sa.Scorer.JARO, threshold=0.0,
+    ):
+        assert any(q is original for original in qs), (
+            "query yielded was a new object, not a reference to the input list"
+        )
+        assert any(t is original for original in ts), (
+            "target yielded was a new object, not a reference to the input list"
+        )
