@@ -133,21 +133,55 @@ inline void compute_row_double(
     double* row_out,
     double jw_prefix_weight,
     double jw_prefix_threshold,
-    std::size_t jw_prefix_cap) {
+    std::size_t jw_prefix_cap,
+    double normalized_cutoff = 0.0) {
+  // normalized_cutoff: if > 0, pairs with normalized similarity below this
+  // can be early-exited by the kernel. Currently honored by
+  // LevenshteinNormalized and DamerauLevenshteinNormalized; Hamming has
+  // no useful early-exit (every byte must be processed) and Jaro has
+  // multiple score terms whose early-exit is non-trivial.
   switch (scorer) {
     case Scorer::LevenshteinNormalized: {
       std::vector<Score> raw(count);
-      ::stride_align::levenshtein_simd::levenshtein_scores_simd_raw<Ops>(
-          q_ptr, q_len, t_ptrs, t_lens, count,
-          ::stride_align::levenshtein::kNoCutoff, raw.data());
+      if (normalized_cutoff > 0.0) {
+        std::vector<std::size_t> cutoffs(count);
+        for (std::size_t i = 0; i < count; ++i) {
+          cutoffs[i] = ::stride_align::cdist_runtime::
+              lev_distance_cutoff_for_normalized_threshold(
+                  normalized_cutoff, q_len, t_lens[i]);
+        }
+        ::stride_align::levenshtein_simd::
+            levenshtein_scores_simd_raw_per_pair<Ops>(
+                q_ptr, q_len, t_ptrs, t_lens, count,
+                cutoffs.data(), raw.data());
+      } else {
+        ::stride_align::levenshtein_simd::levenshtein_scores_simd_raw<Ops>(
+            q_ptr, q_len, t_ptrs, t_lens, count,
+            ::stride_align::levenshtein::kNoCutoff, raw.data());
+      }
       normalize_lev_row(reinterpret_cast<const std::int64_t*>(raw.data()),
                         row_out, q_len, t_lens, count);
       return;
     }
     case Scorer::DamerauLevenshteinNormalized: {
       std::vector<Score> raw(count);
-      ::stride_align::osa_simd::osa_scores_simd_raw<Ops>(
-          q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      if (normalized_cutoff > 0.0 && q_len > 0U && q_len <= 64U) {
+        // OSA SIMD only supports single-word (q_len <= 64); the
+        // _raw entry already gates on this. The cutoff variant only
+        // helps when the SIMD kernel runs.
+        std::vector<std::size_t> cutoffs(count);
+        for (std::size_t i = 0; i < count; ++i) {
+          cutoffs[i] = ::stride_align::cdist_runtime::
+              lev_distance_cutoff_for_normalized_threshold(
+                  normalized_cutoff, q_len, t_lens[i]);
+        }
+        ::stride_align::osa_simd::osa_scores_simd_raw_per_pair<Ops>(
+            q_ptr, q_len, t_ptrs, t_lens, count,
+            cutoffs.data(), raw.data());
+      } else {
+        ::stride_align::osa_simd::osa_scores_simd_raw<Ops>(
+            q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      }
       normalize_lev_row(reinterpret_cast<const std::int64_t*>(raw.data()),
                         row_out, q_len, t_lens, count);
       return;

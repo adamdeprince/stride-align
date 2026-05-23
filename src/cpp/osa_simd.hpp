@@ -72,14 +72,21 @@ inline std::array<std::uint64_t, 256> build_peq(std::span<const std::uint8_t> pa
 // SIMD batch single-word OSA. Mirrors myers_batch_single_word in
 // levenshtein_simd.hpp; the inner loop has an extra `trans` term
 // folded into d0 and one extra carried register (pm_old, d0_prev).
-template <typename Ops>
+// `cutoffs` is a per-lane array of length `batch_count` when
+// `HasCutoff=true`, otherwise unused. OSA's per-column score delta is in
+// {-1, 0, +1} just like Myers' Levenshtein (the transposition mask
+// folds into d0 before delta extraction), so the same
+// `score > cutoff + remaining_chars` bail criterion applies. Bailed
+// lanes are clamped to their per-pair `cutoffs[l] + 1` sentinel.
+template <typename Ops, bool HasCutoff = false>
 inline void osa_batch_single_word(
     const std::uint64_t* peq,
     const std::uint8_t* const* targets,
     const std::size_t* target_lengths,
     std::size_t batch_count,
     std::size_t m,
-    Score* out) {
+    Score* out,
+    const std::size_t* cutoffs = nullptr) {
   using Vec = typename Ops::Vec;
   constexpr std::size_t lanes = Ops::lanes;
 
@@ -102,6 +109,28 @@ inline void osa_batch_single_word(
   alignas(64) std::uint64_t indices[lanes];
   alignas(64) std::uint64_t active[lanes];
 
+  Vec done = Ops::zero();
+  Vec threshold = Ops::zero();
+  Vec batch_mask = Ops::zero();
+  if constexpr (HasCutoff) {
+    alignas(64) std::uint64_t init_threshold[lanes];
+    alignas(64) std::uint64_t mask_data[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      if (l < batch_count) {
+        const std::size_t lane_cutoff = cutoffs[l];
+        init_threshold[l] = (target_lengths[l] > 0)
+            ? lane_cutoff + target_lengths[l] - 1U
+            : lane_cutoff;
+        mask_data[l] = ~std::uint64_t{0};
+      } else {
+        init_threshold[l] = 0;
+        mask_data[l] = 0;
+      }
+    }
+    threshold = Ops::load_aligned(init_threshold);
+    batch_mask = Ops::load_aligned(mask_data);
+  }
+
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
       if (l < batch_count && k < target_lengths[l]) {
@@ -114,6 +143,10 @@ inline void osa_batch_single_word(
     }
     const Vec pm = Ops::gather64(peq, indices);
     const Vec active_v = Ops::load_aligned(active);
+    Vec eff_active = active_v;
+    if constexpr (HasCutoff) {
+      eff_active = Ops::andnot_(done, active_v);
+    }
 
     // Transposition mask (Hyyrö 2002):
     //   trans = (((~d0_prev) & pm) << 1) & pm_old
@@ -137,7 +170,7 @@ inline void osa_batch_single_word(
     const Vec hn_eq_zero = Ops::cmpeq(hn_bit, zero_v);
     const Vec hp_set = Ops::andnot_(hp_eq_zero, one_v);
     const Vec hn_set = Ops::andnot_(hn_eq_zero, one_v);
-    const Vec delta = Ops::and_(Ops::sub(hp_set, hn_set), active_v);
+    const Vec delta = Ops::and_(Ops::sub(hp_set, hn_set), eff_active);
     score = Ops::add(score, delta);
 
     const Vec hp_shift = Ops::or_(Ops::shl1(hp), one_v);
@@ -151,9 +184,31 @@ inline void osa_batch_single_word(
     // downstream state corruption doesn't affect their output.
     pm_old = pm;
     d0_prev = d0;
+
+    if constexpr (HasCutoff) {
+      const Vec exceeded = Ops::and_(Ops::gt_u64(score, threshold), active_v);
+      done = Ops::or_(done, exceeded);
+      threshold = Ops::sub(threshold, one_v);
+
+      const Vec settled = Ops::or_(Ops::not_(active_v), done);
+      const Vec live = Ops::andnot_(settled, batch_mask);
+      if (Ops::is_zero(live)) {
+        break;
+      }
+    }
   }
 
   alignas(64) std::uint64_t scores[lanes];
+  if constexpr (HasCutoff) {
+    alignas(64) std::uint64_t cutoff_plus_1_data[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      cutoff_plus_1_data[l] = (l < batch_count) ? cutoffs[l] + 1U : 0;
+    }
+    const Vec cutoff_plus_1 = Ops::load_aligned(cutoff_plus_1_data);
+    score = Ops::or_(
+        Ops::and_(done, cutoff_plus_1),
+        Ops::andnot_(done, score));
+  }
   Ops::store_aligned(scores, score);
   for (std::size_t l = 0; l < batch_count; ++l) {
     out[l] = static_cast<Score>(scores[l]);
@@ -163,12 +218,19 @@ inline void osa_batch_single_word(
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64] (single-word OSA path). Writes OSA
 // distances into `out[0..count)`. No Python interaction.
+//
+// `cutoffs_per_pair` may be:
+//   * nullptr: no cutoff applied, kernel runs to completion.
+//   * a length-`count` array: per-pair distance cutoffs. Pairs whose
+//     distance provably exceeds their cutoff return the sentinel
+//     `cutoffs_per_pair[i] + 1`.
 template <typename Ops>
-inline void osa_scores_simd_raw(
+inline void osa_scores_simd_raw_per_pair(
     const std::uint8_t* q_ptr, std::size_t q_len,
     const std::uint8_t* const* t_ptrs,
     const std::size_t* t_lens,
     std::size_t count,
+    const std::size_t* cutoffs_per_pair,
     Score* out) {
   if (count == 0U) {
     return;
@@ -178,6 +240,8 @@ inline void osa_scores_simd_raw(
   constexpr std::size_t lanes = Ops::lanes;
   std::array<const std::uint8_t*, lanes> batch_ptrs{};
   std::array<std::size_t, lanes> batch_lens{};
+  std::array<std::size_t, lanes> batch_cutoffs{};
+  const bool has_cutoff = cutoffs_per_pair != nullptr;
 
   for (std::size_t b = 0; b < count; b += lanes) {
     const std::size_t batch_count = std::min(lanes, count - b);
@@ -189,10 +253,31 @@ inline void osa_scores_simd_raw(
       batch_ptrs[l] = nullptr;
       batch_lens[l] = 0;
     }
-    osa_batch_single_word<Ops>(
-        peq.data(), batch_ptrs.data(), batch_lens.data(),
-        batch_count, q_len, out + b);
+    if (has_cutoff) {
+      for (std::size_t l = 0; l < batch_count; ++l) {
+        batch_cutoffs[l] = cutoffs_per_pair[b + l];
+      }
+      osa_batch_single_word<Ops, true>(
+          peq.data(), batch_ptrs.data(), batch_lens.data(),
+          batch_count, q_len, out + b, batch_cutoffs.data());
+    } else {
+      osa_batch_single_word<Ops, false>(
+          peq.data(), batch_ptrs.data(), batch_lens.data(),
+          batch_count, q_len, out + b);
+    }
   }
+}
+
+// Backward-compat entry that takes no cutoff.
+template <typename Ops>
+inline void osa_scores_simd_raw(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    Score* out) {
+  osa_scores_simd_raw_per_pair<Ops>(
+      q_ptr, q_len, t_ptrs, t_lens, count, nullptr, out);
 }
 
 template <typename Ops>

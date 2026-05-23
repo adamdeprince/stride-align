@@ -16,6 +16,7 @@
 // cdist_threshold.hpp, and cdist_topk.hpp.
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -264,6 +265,38 @@ inline double max_normalized_similarity(
       // never prune.
       return 1.0;
   }
+}
+
+// Convert a normalized-similarity threshold T in [0, 1] to the integer
+// Levenshtein / OSA distance cutoff such that:
+//   * Any pair with sim >= T has distance <= cutoff (the kernel must not
+//     bail and miss a valid result).
+//   * The kernel's bail sentinel `cutoff + 1` maps to a normalized
+//     similarity strictly less than T (so the downstream filter rejects
+//     bailed pairs correctly).
+//
+// The +1e-9 nudge guards against FP-floor returning X - 1 when
+// (1 - T) * max_len is mathematically exactly the integer X but lands
+// as X - epsilon in floating point (e.g. T = 0.6, max_len = 10).
+//
+// Returns max_len when T <= 0 (no effective bail) and 0 when T >= 1
+// (only exact matches survive). Both extremes are safe per-pair cutoffs;
+// callers don't need to special-case them.
+inline std::size_t lev_distance_cutoff_for_normalized_threshold(
+    double threshold, std::size_t q_len, std::size_t t_len) noexcept {
+  const std::size_t max_len = std::max(q_len, t_len);
+  if (max_len == 0U) {
+    return 0U;
+  }
+  if (threshold <= 0.0) {
+    return max_len;
+  }
+  if (threshold >= 1.0) {
+    return 0U;
+  }
+  const double dmax =
+      (1.0 - threshold) * static_cast<double>(max_len);
+  return static_cast<std::size_t>(std::floor(dmax + 1e-9));
 }
 
 // Total tqdm work in length-product units. Symmetric mode counts

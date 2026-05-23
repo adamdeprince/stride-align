@@ -340,11 +340,17 @@ inline nb::object cdist_top_k_impl(
       return;
     }
 
+    // Pass the row-start prune threshold so Lev/OSA kernels can push
+    // it as a per-pair distance cutoff and bail pairs whose distance
+    // can't reach it. The bound is monotonic across rows but stable
+    // within this row (snapshot semantics) so the kernel always sees
+    // a consistent cutoff for its lanes.
     ::stride_align::cdist_simd::compute_row_double<Ops>(
         scorer, q_ptrs[q_idx], q_lens[q_idx],
         cand_ptrs.data(), cand_lens.data(),
         cand_ptrs.size(), max_m, row.data(),
-        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap,
+        prune_threshold > 0.0 ? prune_threshold : 0.0);
 
     for (std::size_t k = 0; k < cand_ptrs.size(); ++k) {
       const double score = row[k];

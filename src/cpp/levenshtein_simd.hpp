@@ -34,6 +34,11 @@ namespace nb = nanobind;
 // freezes once its score exceeds `cutoff + (target_length - k - 1)` (the
 // minimum possible final distance from this state), and on return its
 // score is clamped to `cutoff + 1` (the sentinel rapidfuzz uses).
+// `cutoffs` is a per-lane array of length `batch_count` (one cutoff per
+// pair). Each lane bails when its own score exceeds its own cutoff plus
+// its remaining-chars allowance, and bailed scores are clamped to
+// `cutoffs[l] + 1` (per-lane sentinel). Pass nullptr together with
+// `HasCutoff=false` to skip the bail path entirely.
 template <typename Ops, bool HasCutoff = false>
 inline void myers_batch_single_word(
     const std::uint64_t* peq,
@@ -42,7 +47,7 @@ inline void myers_batch_single_word(
     std::size_t batch_count,
     std::size_t m,
     Score* out,
-    std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    const std::size_t* cutoffs = nullptr) {
   using Vec = typename Ops::Vec;
   constexpr std::size_t lanes = Ops::lanes;
 
@@ -67,7 +72,7 @@ inline void myers_batch_single_word(
   alignas(64) std::uint64_t active[lanes];
 
   // Cutoff bookkeeping. `done` is sticky-per-lane (set once score crosses
-  // the bail threshold). `threshold` carries `cutoff + remaining_chars`
+  // the bail threshold). `threshold` carries `cutoffs[l] + remaining_chars`
   // for each lane; remaining_chars decrements by one per column. Lanes
   // past their target end stop receiving deltas via the active mask, so
   // their threshold value is irrelevant after that point. `batch_mask`
@@ -80,12 +85,16 @@ inline void myers_batch_single_word(
     alignas(64) std::uint64_t init_threshold[lanes];
     alignas(64) std::uint64_t mask_data[lanes];
     for (std::size_t l = 0; l < lanes; ++l) {
-      if (l < batch_count && target_lengths[l] > 0) {
-        init_threshold[l] = cutoff + target_lengths[l] - 1U;
+      if (l < batch_count) {
+        const std::size_t lane_cutoff = cutoffs[l];
+        init_threshold[l] = (target_lengths[l] > 0)
+            ? lane_cutoff + target_lengths[l] - 1U
+            : lane_cutoff;
+        mask_data[l] = ~std::uint64_t{0};
       } else {
-        init_threshold[l] = cutoff;
+        init_threshold[l] = 0;
+        mask_data[l] = 0;
       }
-      mask_data[l] = (l < batch_count) ? ~std::uint64_t{0} : 0;
     }
     threshold = Ops::load_aligned(init_threshold);
     batch_mask = Ops::load_aligned(mask_data);
@@ -158,9 +167,13 @@ inline void myers_batch_single_word(
 
   alignas(64) std::uint64_t scores[lanes];
   if constexpr (HasCutoff) {
-    // Clamp bail-time scores to cutoff + 1 so callers see a stable
-    // sentinel regardless of how badly the lane diverged.
-    const Vec cutoff_plus_1 = Ops::set1(cutoff + 1U);
+    // Clamp bail-time scores to cutoffs[l] + 1 so callers see a stable
+    // per-lane sentinel regardless of how badly the lane diverged.
+    alignas(64) std::uint64_t cutoff_plus_1_data[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      cutoff_plus_1_data[l] = (l < batch_count) ? cutoffs[l] + 1U : 0;
+    }
+    const Vec cutoff_plus_1 = Ops::load_aligned(cutoff_plus_1_data);
     score = Ops::or_(
         Ops::and_(done, cutoff_plus_1),
         Ops::andnot_(done, score));
@@ -226,6 +239,9 @@ inline std::vector<std::uint64_t> build_peq_multi(
 // chain across blocks per lane, in parallel across `lanes` targets. The
 // wide add (xv + vp[b] + add_carry) is implemented in SIMD via two
 // chained 64-bit adds with overflow detection (`gt_u64`).
+// `cutoffs` is a per-lane array of length `batch_count` (one cutoff per
+// pair). Same semantics as the single-word kernel: each lane bails on
+// its own threshold and clamps to its own `cutoffs[l] + 1` sentinel.
 template <typename Ops, std::size_t W, bool HasCutoff = false>
 inline void myers_batch_multi_word(
     const std::uint64_t* peq,
@@ -235,7 +251,7 @@ inline void myers_batch_multi_word(
     std::size_t m,
     std::size_t last_bits,
     Score* out,
-    std::size_t cutoff = ::stride_align::levenshtein::kNoCutoff) {
+    const std::size_t* cutoffs = nullptr) {
   using Vec = typename Ops::Vec;
   constexpr std::size_t lanes = Ops::lanes;
   static_assert(W >= 2U, "myers_batch_multi_word is only for W >= 2; use single-word kernel for W == 1");
@@ -271,10 +287,16 @@ inline void myers_batch_multi_word(
     alignas(64) std::uint64_t init_threshold[lanes];
     alignas(64) std::uint64_t mask_data[lanes];
     for (std::size_t l = 0; l < lanes; ++l) {
-      init_threshold[l] = (l < batch_count && target_lengths[l] > 0)
-          ? cutoff + target_lengths[l] - 1U
-          : cutoff;
-      mask_data[l] = (l < batch_count) ? ~std::uint64_t{0} : 0;
+      if (l < batch_count) {
+        const std::size_t lane_cutoff = cutoffs[l];
+        init_threshold[l] = (target_lengths[l] > 0)
+            ? lane_cutoff + target_lengths[l] - 1U
+            : lane_cutoff;
+        mask_data[l] = ~std::uint64_t{0};
+      } else {
+        init_threshold[l] = 0;
+        mask_data[l] = 0;
+      }
     }
     threshold = Ops::load_aligned(init_threshold);
     batch_mask = Ops::load_aligned(mask_data);
@@ -366,7 +388,11 @@ inline void myers_batch_multi_word(
 
   alignas(64) std::uint64_t scores[lanes];
   if constexpr (HasCutoff) {
-    const Vec cutoff_plus_1 = Ops::set1(cutoff + 1U);
+    alignas(64) std::uint64_t cutoff_plus_1_data[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      cutoff_plus_1_data[l] = (l < batch_count) ? cutoffs[l] + 1U : 0;
+    }
+    const Vec cutoff_plus_1 = Ops::load_aligned(cutoff_plus_1_data);
     score = Ops::or_(
         Ops::and_(done, cutoff_plus_1),
         Ops::andnot_(done, score));
@@ -459,13 +485,19 @@ inline constexpr std::size_t kLevMaxSimdPatternLen = 256U;
 // targets and confirmed q_len in (0, 256]. Writes distances into
 // `out[0..count)`. No Python interaction (no fallback for wider
 // inputs — caller validates).
+//
+// `cutoffs_per_pair` may be:
+//   * nullptr: no cutoff applied, kernel runs to completion.
+//   * a length-`count` array: each pair gets its own cutoff. Pairs
+//     whose distance provably exceeds their cutoff get the per-pair
+//     sentinel `cutoffs_per_pair[i] + 1` instead of the true distance.
 template <typename Ops>
-inline void levenshtein_scores_simd_raw(
+inline void levenshtein_scores_simd_raw_per_pair(
     const std::uint8_t* q_ptr, std::size_t q_len,
     const std::uint8_t* const* t_ptrs,
     const std::size_t* t_lens,
     std::size_t count,
-    std::size_t cutoff,
+    const std::size_t* cutoffs_per_pair,
     Score* out) {
   if (count == 0U) {
     return;
@@ -474,7 +506,8 @@ inline void levenshtein_scores_simd_raw(
   constexpr std::size_t lanes = Ops::lanes;
   std::array<const std::uint8_t*, lanes> batch_ptrs{};
   std::array<std::size_t, lanes> batch_lens{};
-  const bool has_cutoff = cutoff != ::stride_align::levenshtein::kNoCutoff;
+  std::array<std::size_t, lanes> batch_cutoffs{};
+  const bool has_cutoff = cutoffs_per_pair != nullptr;
 
   const std::span<const std::uint8_t> pattern_span(q_ptr, q_len);
   if (q_len <= 64U) {
@@ -490,9 +523,12 @@ inline void levenshtein_scores_simd_raw(
         batch_lens[l] = 0;
       }
       if (has_cutoff) {
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_cutoffs[l] = cutoffs_per_pair[b + l];
+        }
         myers_batch_single_word<Ops, true>(
             peq.data(), batch_ptrs.data(), batch_lens.data(),
-            batch_count, q_len, out + b, cutoff);
+            batch_count, q_len, out + b, batch_cutoffs.data());
       } else {
         myers_batch_single_word<Ops, false>(
             peq.data(), batch_ptrs.data(), batch_lens.data(),
@@ -519,9 +555,12 @@ inline void levenshtein_scores_simd_raw(
         batch_lens[l] = 0;
       }
       if (has_cutoff) {
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_cutoffs[l] = cutoffs_per_pair[b + l];
+        }
         myers_batch_multi_word<Ops, W_compile, true>(
             peq.data(), batch_ptrs.data(), batch_lens.data(),
-            batch_count, q_len, last_bits, out + b, cutoff);
+            batch_count, q_len, last_bits, out + b, batch_cutoffs.data());
       } else {
         myers_batch_multi_word<Ops, W_compile, false>(
             peq.data(), batch_ptrs.data(), batch_lens.data(),
@@ -537,6 +576,28 @@ inline void levenshtein_scores_simd_raw(
   } else /* W == 4 */ {
     run_batch(std::integral_constant<std::size_t, 4U>{});
   }
+}
+
+// Scalar-cutoff entry kept for backward compat with single-cutoff
+// callers (per-pair Levenshtein, 1-to-N batch through the scorers
+// module). Forwards to the per-pair entry with a uniform cutoff
+// array built on the stack.
+template <typename Ops>
+inline void levenshtein_scores_simd_raw(
+    const std::uint8_t* q_ptr, std::size_t q_len,
+    const std::uint8_t* const* t_ptrs,
+    const std::size_t* t_lens,
+    std::size_t count,
+    std::size_t cutoff,
+    Score* out) {
+  if (cutoff == ::stride_align::levenshtein::kNoCutoff) {
+    levenshtein_scores_simd_raw_per_pair<Ops>(
+        q_ptr, q_len, t_ptrs, t_lens, count, nullptr, out);
+    return;
+  }
+  std::vector<std::size_t> uniform(count, cutoff);
+  levenshtein_scores_simd_raw_per_pair<Ops>(
+      q_ptr, q_len, t_ptrs, t_lens, count, uniform.data(), out);
 }
 
 template <typename Ops>

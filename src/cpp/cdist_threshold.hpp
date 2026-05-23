@@ -556,18 +556,21 @@ inline nb::object cdist_threshold_impl(
   State* s = state.get();
   RowCompute compute;
   compute.run = [s, scorer, jw_prefix_weight, jw_prefix_threshold,
-                 jw_prefix_cap](
+                 jw_prefix_cap, threshold](
                     std::size_t i,
                     const std::uint8_t* const* cand_ptrs,
                     const std::size_t* cand_lens,
                     std::size_t count,
                     std::size_t max_m, double* out) {
+    // Pass the active threshold so Lev/OSA kernels can push the
+    // per-pair distance cutoff in and bail rows that can't reach it.
     ::stride_align::cdist_simd::compute_row_double<Ops>(
         scorer,
         s->q_ptrs[i], s->q_lens[i],
         cand_ptrs, cand_lens,
         count, max_m, out,
-        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap,
+        threshold);
   };
 
   // Spawn workers (with GIL held — std::thread launches don't need

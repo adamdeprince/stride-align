@@ -147,6 +147,96 @@ def test_top_k_global_bound_does_not_lose_results_under_contention():
         assert actual_scores == pytest.approx(expected_top)
 
 
+@pytest.mark.parametrize(
+    "scorer",
+    [sa.Scorer.LEVENSHTEIN_NORMALIZED, sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED],
+)
+@pytest.mark.parametrize("threshold", [0.0, 0.3, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0])
+def test_kernel_cutoff_pushdown_does_not_change_above_threshold_results(
+    scorer, threshold
+):
+    """Pushing the threshold into the SIMD kernel as a per-pair distance
+    cutoff lets bailed lanes return cutoff+1 instead of the true
+    distance — but only when the true distance exceeds the cutoff
+    (i.e. when sim < threshold). The downstream `sim >= threshold`
+    filter still has to produce the same accept/reject set as the
+    no-cutoff baseline. Verify by comparison against the full cdist
+    matrix."""
+    rng = random.Random(hash((scorer.value, threshold)) & 0xFFFF)
+    qs = _varied_lengths(rng, 25, 2, 50)
+    ts = _varied_lengths(rng, 30, 2, 50)
+
+    full = sa.cdist(qs, ts, scorer=scorer)
+    expected = {
+        (round(full[i, j], 9), i, j)
+        for i in range(len(qs))
+        for j in range(len(ts))
+        if full[i, j] >= threshold
+    }
+
+    actual = set()
+    for score, q, t in sa.cdist_above_threshold(
+        qs, ts, scorer=scorer, threshold=threshold, cpu_count=2,
+    ):
+        actual.add((round(score, 9), qs.index(q), ts.index(t)))
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "scorer",
+    [sa.Scorer.LEVENSHTEIN_NORMALIZED, sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED],
+)
+@pytest.mark.parametrize("k", [1, 5, 25])
+def test_kernel_cutoff_pushdown_does_not_change_top_k_results(scorer, k):
+    """Same idea for cdist_top_k: the dynamic global heap-min bound
+    gets pushed into Lev/OSA kernels as a per-pair cutoff. The top-k
+    set must equal the unbounded reference."""
+    rng = random.Random(hash((scorer.value, k)) & 0xFFFF)
+    qs = _varied_lengths(rng, 30, 2, 50)
+    ts = _varied_lengths(rng, 35, 2, 50)
+
+    full = sa.cdist(qs, ts, scorer=scorer).flatten()
+    expected_top = sorted(full, reverse=True)[: min(k, full.size)]
+
+    out = sa.cdist_top_k(qs, ts, scorer=scorer, k=k, cpu_count=2)
+    actual_scores = sorted((s for s, _, _ in out), reverse=True)
+    assert actual_scores == pytest.approx(expected_top)
+
+
+@pytest.mark.parametrize(
+    "scorer",
+    [sa.Scorer.LEVENSHTEIN_NORMALIZED, sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED],
+)
+def test_kernel_cutoff_pushdown_fp_boundary_thresholds(scorer):
+    """Thresholds that put (1-T)*max(q,t) at an integer boundary are the
+    floating-point danger zone for the cutoff helper. Force those
+    edge cases by picking thresholds where (1-T)*max is exactly
+    integral for likely max values."""
+    qs = ["a" * n for n in [5, 10, 20, 25, 30]]
+    ts = ["b" * n for n in [5, 10, 20, 25, 30]]
+
+    # 0.6 * 10 = 6.0, 0.6 * 20 = 12.0, etc. — integer boundaries that
+    # FP arithmetic may render as 5.9999... or 6.0000....
+    for threshold in [0.4, 0.5, 0.6, 0.75, 0.8]:
+        full = sa.cdist(qs, ts, scorer=scorer)
+        expected = {
+            (round(full[i, j], 9), i, j)
+            for i in range(len(qs))
+            for j in range(len(ts))
+            if full[i, j] >= threshold
+        }
+        actual = set()
+        for score, q, t in sa.cdist_above_threshold(
+            qs, ts, scorer=scorer, threshold=threshold,
+        ):
+            actual.add((round(score, 9), qs.index(q), ts.index(t)))
+        assert actual == expected, (
+            f"FP-boundary regression for scorer={scorer.name} threshold={threshold}: "
+            f"missing={expected - actual} extra={actual - expected}"
+        )
+
+
 def test_above_threshold_threshold_one_yields_only_exact_normalized_matches():
     # threshold=1.0 means "only pairs that can hit max_normalized
     # similarity 1.0" — for Lev/JW that requires equal length. The
