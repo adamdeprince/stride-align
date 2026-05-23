@@ -56,6 +56,8 @@ enum class Scorer : int {
   HammingNormalized = 5,
   Jaro = 6,
   JaroWinkler = 7,
+  Indel = 8,
+  IndelNormalized = 9,
 };
 
 // Build a Python list of at most `k` (item, score, index) tuples from

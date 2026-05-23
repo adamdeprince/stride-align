@@ -23,6 +23,7 @@
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
+#include "indel_simd.hpp"
 #include "osa_simd.hpp"
 
 namespace stride_align::backend_linux_loongarch64_lasx {
@@ -2214,6 +2215,18 @@ struct Implementation {
   static std::vector<double> damerau_levenshtein_normalized_scores(
       nb::handle query, nb::handle targets) {
     return ::stride_align::osa_simd::osa_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::LasxOps>(query, targets);
+  }
+
+  static std::vector<Score> indel_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::indel_simd::indel_scores_simd<
+        ::stride_align::levenshtein_simd::LasxOps>(query, targets);
+  }
+
+  static std::vector<double> indel_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::indel_simd::indel_normalized_scores_simd<
         ::stride_align::levenshtein_simd::LasxOps>(query, targets);
   }
 

@@ -18,6 +18,7 @@
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
+#include "indel_simd.hpp"
 #include "osa_simd.hpp"
 
 namespace stride_align::arm_neon128_backend {
@@ -1392,6 +1393,18 @@ struct TargetImplementation {
       nb::handle query,
       nb::handle targets) {
     return ::stride_align::osa_simd::osa_normalized_scores_simd<
+        ::stride_align::levenshtein_simd::NeonOps>(query, targets);
+  }
+
+  static std::vector<Score> indel_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::indel_simd::indel_scores_simd<
+        ::stride_align::levenshtein_simd::NeonOps>(query, targets);
+  }
+
+  static std::vector<double> indel_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    return ::stride_align::indel_simd::indel_normalized_scores_simd<
         ::stride_align::levenshtein_simd::NeonOps>(query, targets);
   }
 

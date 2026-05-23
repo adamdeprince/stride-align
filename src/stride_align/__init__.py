@@ -1334,6 +1334,53 @@ def hamming_normalized_scores(query: object, targets: object) -> np.ndarray:
     return _LEVENSHTEIN_BACKEND.hamming_normalized_scores(query, targets)
 
 
+# Indel distance — Levenshtein restricted to insertions/deletions, no
+# substitutions. Equivalent to |a| + |b| - 2 * LCS(a, b). Useful when
+# substitution cost should be modeled as two edits (delete + insert)
+# rather than one. Normalized form divides by (|a| + |b|) so the
+# similarity is always in [0, 1].
+
+
+def indel_score(query: object, target: object) -> int:
+    """Indel distance (insertions + deletions only, no substitutions).
+
+    Equals ``|query| + |target| - 2 * LCS(query, target)``. Lower is more
+    similar; 0 means identical.
+    """
+    return int(_LEVENSHTEIN_BACKEND.indel_score(query, target))
+
+
+def indel_normalized_score(query: object, target: object) -> float:
+    """Indel similarity in [0, 1] (1 = identical).
+
+    ``1 - indel_score / (|query| + |target|)``. Bounded above by
+    ``2 * min(|q|, |t|) / (|q| + |t|)`` for any pair.
+    """
+    return float(_LEVENSHTEIN_BACKEND.indel_normalized_score(query, target))
+
+
+def indel_scores(query: object, targets: object) -> np.ndarray:
+    """Indel distance from query to every target, returned as ndarray[int64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.indel_scores(query, targets)
+
+
+def indel_normalized_scores(query: object, targets: object) -> np.ndarray:
+    """Indel similarity per target, returned as ndarray[float64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.indel_normalized_scores(query, targets)
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -1431,6 +1478,8 @@ class Scorer(enum.IntEnum):
     HAMMING_NORMALIZED = 5
     JARO = 6
     JARO_WINKLER = 7
+    INDEL = 8
+    INDEL_NORMALIZED = 9
 
 
 def _coerce_targets(targets: object) -> object:
@@ -1510,6 +1559,26 @@ def hamming_normalized_top_k(
 ) -> list[tuple[object, float, int]]:
     """Top-k targets by highest Hamming similarity (descending)."""
     return _LEVENSHTEIN_BACKEND.hamming_normalized_top_k(
+        query, _coerce_targets(targets), k
+    )
+
+
+def indel_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, int, int]]:
+    """Top-k targets by lowest Indel distance (insertions + deletions only)."""
+    return _LEVENSHTEIN_BACKEND.indel_top_k(query, _coerce_targets(targets), k)
+
+
+def indel_normalized_top_k(
+    query: object,
+    targets: object,
+    k: int = 5,
+) -> list[tuple[object, float, int]]:
+    """Top-k targets by highest Indel similarity (descending)."""
+    return _LEVENSHTEIN_BACKEND.indel_normalized_top_k(
         query, _coerce_targets(targets), k
     )
 
@@ -1674,6 +1743,22 @@ def hamming_normalized_best(
 ) -> tuple[object, float, int] | None:
     """Single target with the highest Hamming similarity."""
     return _first_or_none(hamming_normalized_top_k(query, targets, 1))
+
+
+def indel_best(
+    query: object,
+    targets: object,
+) -> tuple[object, int, int] | None:
+    """Single target with the lowest Indel distance."""
+    return _first_or_none(indel_top_k(query, targets, 1))
+
+
+def indel_normalized_best(
+    query: object,
+    targets: object,
+) -> tuple[object, float, int] | None:
+    """Single target with the highest Indel similarity."""
+    return _first_or_none(indel_normalized_top_k(query, targets, 1))
 
 
 def jaro_best(
@@ -1931,6 +2016,8 @@ def _register_top_level_scorers() -> None:
         (damerau_levenshtein_normalized_scores, Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED),
         (hamming_scores, Scorer.HAMMING),
         (hamming_normalized_scores, Scorer.HAMMING_NORMALIZED),
+        (indel_scores, Scorer.INDEL),
+        (indel_normalized_scores, Scorer.INDEL_NORMALIZED),
         (jaro_similarities, Scorer.JARO),
         (jaro_winkler_similarities, Scorer.JARO_WINKLER),
     ]
@@ -1975,6 +2062,14 @@ __all__ = [
     "hamming_score",
     "hamming_scores",
     "hamming_top_k",
+    "indel_best",
+    "indel_normalized_best",
+    "indel_normalized_score",
+    "indel_normalized_scores",
+    "indel_normalized_top_k",
+    "indel_score",
+    "indel_scores",
+    "indel_top_k",
     "jaro_best",
     "jaro_similarities",
     "jaro_similarity",

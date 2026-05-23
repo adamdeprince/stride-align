@@ -407,6 +407,18 @@ struct Implementation {
     return TargetImplementation::damerau_levenshtein_normalized_scores(query, targets);
   }
 
+  static std::vector<Score> indel_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::indel_scores(query, targets);
+  }
+
+  static std::vector<double> indel_normalized_scores(
+      nb::handle query, nb::handle targets) {
+    ensure_supported();
+    return TargetImplementation::indel_normalized_scores(query, targets);
+  }
+
   static std::vector<double> jaro_similarities(
       nb::handle query, nb::handle targets) {
     ensure_supported();

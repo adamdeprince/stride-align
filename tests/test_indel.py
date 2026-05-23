@@ -1,0 +1,175 @@
+"""Tests for Indel distance — Levenshtein restricted to insertions and
+deletions only (no substitutions).
+
+Correctness uses rapidfuzz as the oracle. The math identity
+``indel = |a| + |b| - 2 * LCS(a, b)`` gives us a second cross-check.
+"""
+
+from __future__ import annotations
+
+import random
+import string
+
+import pytest
+
+import stride_align as sa
+
+
+rapidfuzz = pytest.importorskip("rapidfuzz")
+from rapidfuzz.distance import Indel as _RFIndel  # noqa: E402
+
+
+def _rand(rng, n):
+    return "".join(rng.choice(string.ascii_lowercase) for _ in range(n))
+
+
+def test_classic_examples():
+    # kitten -> sitting requires 1 sub + 1 sub + 1 ins under Levenshtein
+    # (3 edits). Under Indel each sub costs 2 (delete + insert), so
+    # kitten -> sitting = 2 dels + 2 ins + 1 ins = 5.
+    assert sa.indel_score("kitten", "sitting") == 5
+    assert sa.indel_score("", "") == 0
+    assert sa.indel_score("abc", "") == 3
+    assert sa.indel_score("", "abc") == 3
+    assert sa.indel_score("abc", "abc") == 0
+    # No substitution: "abc" -> "abd" is del 'c' + ins 'd' = 2.
+    assert sa.indel_score("abc", "abd") == 2
+
+
+def test_normalized_examples():
+    # Identical -> 1.0.
+    assert sa.indel_normalized_score("foo", "foo") == 1.0
+    # Disjoint -> 1 - (a+b)/(a+b) = 0.
+    assert sa.indel_normalized_score("aaa", "bbb") == 0.0
+    # 1 - 2/(3+3) = 0.666...
+    assert sa.indel_normalized_score("abc", "abd") == pytest.approx(2.0 / 3.0)
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_matches_rapidfuzz_oracle(seed):
+    rng = random.Random(seed)
+    for _ in range(200):
+        a = _rand(rng, rng.randint(0, 60))
+        b = _rand(rng, rng.randint(0, 60))
+        expected = _RFIndel.distance(a, b)
+        got = sa.indel_score(a, b)
+        assert got == expected, (
+            f"indel({a!r}, {b!r}) = {got}, expected {expected}"
+        )
+
+
+def test_long_query_falls_back_to_scalar():
+    # Bit-parallel SIMD only handles m <= 64; the scalar DP must
+    # produce the same result for longer patterns.
+    rng = random.Random(0xABCD)
+    a = _rand(rng, 100)
+    b = _rand(rng, 80)
+    expected = _RFIndel.distance(a, b)
+    assert sa.indel_score(a, b) == expected
+
+
+def test_scores_batch():
+    a = "kitten"
+    targets = ["sitting", "kit", "mitten", ""]
+    got = list(sa.indel_scores(a, targets))
+    expected = [_RFIndel.distance(a, t) for t in targets]
+    assert got == expected
+
+
+def test_normalized_scores_batch():
+    a = "abc"
+    targets = ["abc", "abd", "xyz", "abcd"]
+    got = list(sa.indel_normalized_scores(a, targets))
+    for g, t in zip(got, targets):
+        assert g == pytest.approx(_RFIndel.normalized_similarity(a, t))
+
+
+def test_top_k_returns_lowest_distances():
+    q = "kitten"
+    ts = ["sitting", "kit", "mitten", "kitten", "foo"]
+    out = sa.indel_top_k(q, ts, k=3)
+    scores = sorted(s for _, s, _ in out)
+    # 0 (kitten), 2 (mitten), 3 (kit)
+    assert scores == [0, 2, 3]
+
+
+def test_normalized_top_k_returns_highest_similarities():
+    q = "kitten"
+    ts = ["sitting", "kit", "mitten", "kitten", "foo"]
+    out = sa.indel_normalized_top_k(q, ts, k=2)
+    scores = sorted((s for _, s, _ in out), reverse=True)
+    assert scores[0] == 1.0  # kitten itself
+
+
+def test_best_returns_lowest_distance():
+    q = "kitten"
+    ts = ["sitting", "kit", "mitten", "foo"]
+    obj, score, idx = sa.indel_best(q, ts)
+    assert obj == "mitten"
+    assert score == 2
+    assert idx == 2
+
+
+def test_empty_inputs():
+    assert sa.indel_score("", "") == 0
+    assert sa.indel_normalized_score("", "") == 1.0
+    assert list(sa.indel_scores("abc", [])) == []
+    assert sa.indel_top_k("abc", [], k=5) == []
+
+
+def test_cdist_matrix():
+    qs = ["ab", "cd"]
+    ts = ["ab", "cd", "ef"]
+    out = sa.cdist(qs, ts, scorer=sa.Scorer.INDEL)
+    assert out.shape == (2, 3)
+    assert out[0, 0] == 0
+    assert out[1, 1] == 0
+    assert out[0, 1] == 4  # delete ab, insert cd
+    assert out[0, 2] == 4
+
+
+def test_cdist_normalized_matrix():
+    qs = ["ab", "cd"]
+    ts = ["ab", "cd", "ef"]
+    out = sa.cdist(qs, ts, scorer=sa.Scorer.INDEL_NORMALIZED)
+    assert out[0, 0] == 1.0
+    assert out[1, 1] == 1.0
+    assert out[0, 1] == 0.0
+    assert out[0, 2] == 0.0
+
+
+def test_extract_by_enum():
+    out = sa.extract(
+        "kitten",
+        ["sitting", "kit", "mitten"],
+        scorer=sa.Scorer.INDEL_NORMALIZED,
+        k=2,
+    )
+    scores = sorted((s for _, s, _ in out), reverse=True)
+    assert scores[0] == pytest.approx(_RFIndel.normalized_similarity(
+        "kitten", "mitten"))
+
+
+def test_lcs_identity():
+    """indel(a, b) + 2 * LCS(a, b) == |a| + |b| — verify via a scalar
+    LCS computed independently."""
+    def lcs_len(a, b):
+        m, n = len(a), len(b)
+        prev = [0] * (n + 1)
+        for i in range(1, m + 1):
+            curr = [0] * (n + 1)
+            for j in range(1, n + 1):
+                if a[i - 1] == b[j - 1]:
+                    curr[j] = prev[j - 1] + 1
+                else:
+                    curr[j] = max(prev[j], curr[j - 1])
+            prev = curr
+        return prev[n]
+
+    rng = random.Random(7)
+    for _ in range(50):
+        a = _rand(rng, rng.randint(0, 30))
+        b = _rand(rng, rng.randint(0, 30))
+        d = sa.indel_score(a, b)
+        l = lcs_len(a, b)
+        assert d + 2 * l == len(a) + len(b)

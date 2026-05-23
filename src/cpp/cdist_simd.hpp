@@ -39,11 +39,13 @@
 #include "byte_view.hpp"
 #include "cdist_runtime.hpp"
 #include "hamming_simd.hpp"
+#include "indel_simd.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "osa_simd.hpp"
 #include "stride_align/alignment.hpp"
 #include "stride_align/hamming.hpp"
+#include "stride_align/indel.hpp"
 #include "stride_align/jaro.hpp"
 #include "stride_align/levenshtein.hpp"
 #include "topk.hpp"  // Scorer enum
@@ -84,6 +86,15 @@ inline void normalize_hamming_row(
   }
 }
 
+inline void normalize_indel_row(
+    const std::int64_t* raw, double* out,
+    std::size_t q_len, const std::size_t* t_lens, std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) {
+    out[i] = ::stride_align::indel::normalize(
+        static_cast<std::size_t>(raw[i]), q_len, t_lens[i]);
+  }
+}
+
 // Compute one row's worth of raw scores into `row_out` (Score = int64
 // for distance scorers; double for similarity scorers). Uses the
 // per-scorer *_simd_raw entry points templated on Ops.
@@ -110,6 +121,11 @@ inline void compute_row_int(
       return;
     case Scorer::Hamming:
       ::stride_align::hamming_simd::hamming_scores_simd_raw(
+          q_ptr, q_len, t_ptrs, t_lens, count,
+          reinterpret_cast<Score*>(row_out));
+      return;
+    case Scorer::Indel:
+      ::stride_align::indel_simd::indel_scores_simd_raw<Ops>(
           q_ptr, q_len, t_ptrs, t_lens, count,
           reinterpret_cast<Score*>(row_out));
       return;
@@ -210,6 +226,15 @@ inline void compute_row_double(
       }
       normalize_hamming_row(reinterpret_cast<const std::int64_t*>(raw.data()),
                             row_out, q_len, t_lens, count);
+      return;
+    }
+    case Scorer::IndelNormalized: {
+      std::vector<Score> raw(count);
+      ::stride_align::indel_simd::indel_scores_simd_raw<Ops>(
+          q_ptr, q_len, t_ptrs, t_lens, count, raw.data());
+      normalize_indel_row(
+          reinterpret_cast<const std::int64_t*>(raw.data()),
+          row_out, q_len, t_lens, count);
       return;
     }
     case Scorer::Jaro:

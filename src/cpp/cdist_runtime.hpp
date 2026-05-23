@@ -41,12 +41,14 @@ inline bool scorer_returns_double(Scorer s) noexcept {
     case Scorer::Levenshtein:
     case Scorer::DamerauLevenshtein:
     case Scorer::Hamming:
+    case Scorer::Indel:
       return false;
     case Scorer::LevenshteinNormalized:
     case Scorer::DamerauLevenshteinNormalized:
     case Scorer::HammingNormalized:
     case Scorer::Jaro:
     case Scorer::JaroWinkler:
+    case Scorer::IndelNormalized:
       return true;
   }
   return true;
@@ -65,6 +67,7 @@ inline double diagonal_double(Scorer s) noexcept {
     case Scorer::HammingNormalized:
     case Scorer::Jaro:
     case Scorer::JaroWinkler:
+    case Scorer::IndelNormalized:
       return 1.0;
     default:
       return 0.0;
@@ -259,6 +262,17 @@ inline double max_normalized_similarity(
       return max_jaro
              + static_cast<double>(L_max) * jw_prefix_weight
                    * (1.0 - max_jaro);
+    }
+    case Scorer::IndelNormalized: {
+      // Indel = q + t - 2*LCS, sim = 1 - indel/(q+t) = 2*LCS/(q+t).
+      // Max LCS = min(q, t), so max sim = 2*min(q,t)/(q+t).
+      if (q_len == 0U && t_len == 0U) {
+        return 1.0;
+      }
+      const std::size_t total = q_len + t_len;
+      const std::size_t mn = std::min(q_len, t_len);
+      return 2.0 * static_cast<double>(mn) /
+             static_cast<double>(total);
     }
     default:
       // Distance scorers and unknown values: no useful bound, so
