@@ -17,6 +17,7 @@
 #include "backends/profile_traceback.hpp"
 #include "backends/x86_fixed_kernel.hpp"
 #include "cdist_simd.hpp"
+#include "cdist_threshold.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -822,6 +823,17 @@ struct TargetImplementation {
         queries, targets, scorer, tqdm_factory, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
+
+  static nb::object cdist_above_threshold(
+      nb::handle queries, nb::handle targets, int scorer,
+      double threshold, nb::object tqdm_factory, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_threshold::cdist_threshold_impl<
+        ::stride_align::levenshtein_simd::Avx512Ops>(
+        queries, targets, scorer, threshold, tqdm_factory, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -1254,6 +1266,17 @@ struct Implementation {
     ensure_supported();
     return TargetImplementation::cdist(
         queries, targets, scorer, tqdm_factory, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE nb::object cdist_above_threshold(
+      nb::handle queries, nb::handle targets, int scorer,
+      double threshold, nb::object tqdm_factory, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::cdist_above_threshold(
+        queries, targets, scorer, threshold, tqdm_factory, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 

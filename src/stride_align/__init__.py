@@ -63,7 +63,7 @@ def _import_module_suppressing_duplicate_type_warnings(module_name: str) -> Modu
             message=(
                 r"nanobind: type "
                 r"'(Alignment(Result|Path)|_PreparedAffineCigar|_PreparedScoreBatch|"
-                r"_PreparedAffineScoreBatch)' was already registered!"
+                r"_PreparedAffineScoreBatch|_ThresholdIterator)' was already registered!"
             ),
             category=RuntimeWarning,
         )
@@ -1813,6 +1813,58 @@ def cdist(
     )
 
 
+def cdist_above_threshold(
+    queries: object,
+    targets: object,
+    *,
+    scorer: "Scorer | object",
+    threshold: float,
+    tqdm: object = None,
+    cpu_count: int = 0,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+):
+    """Streaming filtered cdist: yields ``(score, query, target)`` for
+    every pair whose normalized similarity is at least ``threshold``.
+
+    Memory is O(``len(queries) + len(targets)``) regardless of how many
+    pairs match — workers feed a bounded queue and the caller drains it
+    lazily. The returned object is a Python iterator; iterate it with a
+    for-loop, take a slice via ``itertools.islice``, or convert to a
+    list (eager, beware of memory if matches are dense).
+
+    Requires a normalized-similarity scorer (one whose values lie in
+    ``[0, 1]``): ``Scorer.LEVENSHTEIN_NORMALIZED``,
+    ``Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED``,
+    ``Scorer.HAMMING_NORMALIZED``, ``Scorer.JARO``, or
+    ``Scorer.JARO_WINKLER`` (or the equivalent module-level scoring
+    function).
+
+    Like ``cdist``: takes a tuple-snapshot of the inputs at entry,
+    spawns ``cpu_count`` workers (0 = ``os.cpu_count()``), releases the
+    GIL for the compute, and dispatches optional tqdm updates from the
+    main thread. Symmetric inputs (``queries is targets``) yield each
+    matching pair in both orderings.
+
+    Abandoning the iterator mid-loop (``break``) is safe — its
+    destructor signals the workers to stop and joins them.
+    """
+    resolved_cpu_count = cpu_count
+    if resolved_cpu_count <= 0:
+        resolved_cpu_count = os.cpu_count() or 1
+    return _LEVENSHTEIN_BACKEND.cdist_above_threshold(
+        queries, targets,
+        scorer=scorer,
+        threshold=float(threshold),
+        tqdm=tqdm,
+        cpu_count=int(resolved_cpu_count),
+        prefix_weight=prefix_weight,
+        prefix_threshold=prefix_threshold,
+        prefix_cap=prefix_cap,
+    )
+
+
 # Register each top-level scoring function with the C++ scorer table
 # so users can pass `cdist(..., scorer=stride_align.levenshtein_scores)`
 # without going through the Scorer enum. The C++ side already
@@ -1849,6 +1901,7 @@ __all__ = [
     "available_backends",
     "backend_is_available",
     "cdist",
+    "cdist_above_threshold",
     "damerau_levenshtein_best",
     "damerau_levenshtein_normalized_best",
     "damerau_levenshtein_normalized_score",

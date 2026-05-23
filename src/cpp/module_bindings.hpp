@@ -13,6 +13,7 @@
 
 #include "affine.hpp"
 #include "backends/profile_traceback.hpp"
+#include "cdist_threshold.hpp"
 #include "hamming_dispatch.hpp"
 #include "jaro_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
@@ -2982,6 +2983,84 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("targets"),
       nb::kw_only(),
       nb::arg("scorer"),
+      nb::arg("tqdm") = nb::none(),
+      nb::arg("cpu_count") = std::size_t{1},
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
+
+  // ----------------------------------------------------------------
+  // cdist_above_threshold: streaming, filtered cdist.
+  //
+  // Returns an iterator that yields (score, query, target) tuples
+  // for every pair whose normalized similarity is at least the
+  // caller's threshold. Memory stays O(N + M) regardless of the
+  // match count — workers feed a bounded queue, the main thread
+  // drains it lazily via __next__.
+  // ----------------------------------------------------------------
+
+  nb::class_<::stride_align::cdist_threshold::ThresholdIterator>(
+      m, "_ThresholdIterator")
+      .def(
+          "__iter__",
+          [](nb::handle self) {
+            return nb::borrow<nb::object>(self);
+          })
+      .def(
+          "__next__",
+          [](::stride_align::cdist_threshold::ThresholdIterator& self) {
+            return self.next();
+          });
+
+  m.def(
+      "cdist_above_threshold",
+      [](nb::object queries,
+         nb::object targets,
+         nb::object scorer_obj,
+         double threshold,
+         nb::object tqdm_factory,
+         std::size_t cpu_count,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        int scorer_id;
+        if (PyLong_Check(scorer_obj.ptr())) {
+          scorer_id = nb::cast<int>(scorer_obj);
+        } else {
+          auto it = scorer_map.find(scorer_obj.ptr());
+          if (it == scorer_map.end()) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "cdist_above_threshold scorer must be a normalized "
+                "Scorer enum value or a known stride_align scoring "
+                "function (e.g. stride_align.jaro_similarities).");
+            throw nb::python_error();
+          }
+          scorer_id = it->second;
+        }
+
+        if constexpr (requires {
+                        Implementation::cdist_above_threshold(
+                            queries, targets, scorer_id, threshold,
+                            tqdm_factory, cpu_count, prefix_weight,
+                            prefix_threshold, prefix_cap);
+                      }) {
+          return Implementation::cdist_above_threshold(
+              queries, targets, scorer_id, threshold, tqdm_factory,
+              cpu_count, prefix_weight, prefix_threshold, prefix_cap);
+        } else {
+          PyErr_SetString(
+              PyExc_NotImplementedError,
+              "cdist_above_threshold is not implemented for this backend; "
+              "use a SIMD-capable backend (any non-generic).");
+          throw nb::python_error();
+        }
+      },
+      nb::arg("queries"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("scorer"),
+      nb::arg("threshold"),
       nb::arg("tqdm") = nb::none(),
       nb::arg("cpu_count") = std::size_t{1},
       nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,

@@ -488,6 +488,17 @@ struct Implementation {
         queries, targets, scorer, tqdm_factory, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
+
+  static nb::object cdist_above_threshold(
+      nb::handle queries, nb::handle targets, int scorer,
+      double threshold, nb::object tqdm_factory, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::cdist_above_threshold(
+        queries, targets, scorer, threshold, tqdm_factory, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
 };
 
 }  // namespace stride_align::backend_macos_arm64_neon

@@ -18,6 +18,7 @@
 #include "backends/loongarch_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
 #include "cdist_simd.hpp"
+#include "cdist_threshold.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -2077,6 +2078,17 @@ struct Implementation {
     return ::stride_align::cdist_simd::cdist_impl<
         ::stride_align::levenshtein_simd::LsxOps>(
         queries, targets, scorer, tqdm_factory, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
+  static nb::object cdist_above_threshold(
+      nb::handle queries, nb::handle targets, int scorer,
+      double threshold, nb::object tqdm_factory, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_threshold::cdist_threshold_impl<
+        ::stride_align::levenshtein_simd::LsxOps>(
+        queries, targets, scorer, threshold, tqdm_factory, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
