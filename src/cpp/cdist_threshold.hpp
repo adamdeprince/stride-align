@@ -258,7 +258,22 @@ class ThresholdIterator {
       }
       if (!got) {
         // Workers done + queue empty: end of stream.
-        throw nb::stop_iteration();
+        //
+        // Avoid both `throw nb::stop_iteration()` AND
+        // `throw nb::python_error()`: on macOS the per-module
+        // visibility settings of the backend `.so` defeat the
+        // cross-DSO RTTI lookup that nanobind's catch handlers
+        // depend on, and the exception ends up routed through the
+        // generic `std::exception` translator → bare RuntimeError.
+        //
+        // Setting the Python error and returning a NULL PyObject
+        // bypasses C++ exception machinery entirely. The
+        // vectorcall wrapper sees PyErr is set and propagates it
+        // to the caller — Python recognizes the StopIteration and
+        // ends the for-loop cleanly. Works identically on Linux
+        // and macOS.
+        PyErr_SetNone(PyExc_StopIteration);
+        return nb::steal<nb::object>(nullptr);
       }
       if (ev.kind == Event::Kind::RowDone) {
         if (state_->have_tqdm && ev.cost > 0U) {
