@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -234,9 +235,36 @@ inline nb::object cdist_top_k_impl(
   std::condition_variable done_cv;
   std::deque<std::uint64_t> done_queue;
 
+  // Shared lower bound on the eventual merged-heap k-th score.
+  // Every worker reads it as the prune threshold for each row, and
+  // publishes its own heap's min back to it (CAS loop, since
+  // std::atomic<double> doesn't expose fetch_max). The bound is
+  // monotonically non-decreasing, so the pruning gets stricter as
+  // work proceeds. Correctness: each thread's heap min is a lower
+  // bound on the final k-th best (the merged top-k contains at
+  // least k items each >= that thread's min), so the global atomic
+  // is safe to prune against from any thread.
+  std::atomic<double> global_min_bound{
+      -std::numeric_limits<double>::infinity()};
+
+  auto publish_heap_min =
+      [&global_min_bound](double own_min) noexcept {
+    double cur = global_min_bound.load(std::memory_order_relaxed);
+    while (own_min > cur) {
+      if (global_min_bound.compare_exchange_weak(
+              cur, own_min, std::memory_order_relaxed)) {
+        return;
+      }
+      // cur was updated by compare_exchange_weak to the latest value.
+    }
+  };
+
   auto process_row = [&](std::size_t i,
                          std::vector<HeapItem>& heap,
                          std::vector<double>& row,
+                         std::vector<const std::uint8_t*>& cand_ptrs,
+                         std::vector<std::size_t>& cand_lens,
+                         std::vector<std::size_t>& cand_orig_j,
                          std::uint64_t& row_cost_out) {
     const std::size_t j_start = symmetric ? i + 1U : 0U;
     const std::size_t row_count = M - j_start;
@@ -244,29 +272,56 @@ inline nb::object cdist_top_k_impl(
     if (row_count == 0U) {
       return;
     }
+
+    // Snapshot the pruning threshold ONCE per row: max of our own
+    // heap min (if full) and the global lower bound. -inf if our
+    // heap isn't full yet, because then any pair could still make
+    // it in.
+    double prune_threshold =
+        global_min_bound.load(std::memory_order_relaxed);
+    if (heap.size() >= top_k && top_k > 0U) {
+      prune_threshold = std::max(prune_threshold, heap.front().score);
+    }
+
+    cand_ptrs.clear();
+    cand_lens.clear();
+    cand_orig_j.clear();
     std::size_t max_m = 0;
     for (std::size_t k = 0; k < row_count; ++k) {
-      max_m = std::max(max_m, t_lens[j_start + k]);
-    }
-    ::stride_align::cdist_simd::compute_row_double<Ops>(
-        scorer, q_ptrs[i], q_lens[i],
-        t_ptrs + j_start, t_lens + j_start,
-        row_count, max_m, row.data(),
-        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
-
-    for (std::size_t k = 0; k < row_count; ++k) {
-      const double score = row[k];
       const std::size_t j = j_start + k;
       row_cost_out += ::stride_align::cdist_runtime::pair_cost(
           q_lens[i], t_lens[j]);
+      const double max_sim =
+          ::stride_align::cdist_runtime::max_normalized_similarity(
+              scorer, q_lens[i], t_lens[j],
+              jw_prefix_weight, jw_prefix_cap);
+      if (max_sim <= prune_threshold) {
+        continue;
+      }
+      cand_ptrs.push_back(t_ptrs[j]);
+      cand_lens.push_back(t_lens[j]);
+      cand_orig_j.push_back(j);
+      max_m = std::max(max_m, t_lens[j]);
+    }
 
-      // reject_duplicates only triggers when the metric thinks the
-      // strings are identical (score 1.0). At any other score we
-      // skip the byte-compare entirely.
+    if (cand_ptrs.empty()) {
+      return;
+    }
+
+    ::stride_align::cdist_simd::compute_row_double<Ops>(
+        scorer, q_ptrs[i], q_lens[i],
+        cand_ptrs.data(), cand_lens.data(),
+        cand_ptrs.size(), max_m, row.data(),
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+
+    for (std::size_t k = 0; k < cand_ptrs.size(); ++k) {
+      const double score = row[k];
+      const std::size_t j = cand_orig_j[k];
+
       if (reject_duplicates && score == 1.0) {
         if (q_lens[i] == t_lens[j] && q_lens[i] > 0U &&
             std::memcmp(q_ptrs[i], t_ptrs[j], q_lens[i]) == 0) {
-          continue;  // forward pair is a content-duplicate
+          continue;
         }
       }
 
@@ -274,14 +329,17 @@ inline nb::object cdist_top_k_impl(
                  HeapItem{score, static_cast<std::uint32_t>(i),
                           static_cast<std::uint32_t>(j)});
       if (symmetric) {
-        // The mirror pair (j, i) — same byte contents in symmetric
-        // mode (queries IS targets), so the duplicate check above
-        // also covers the mirror. If we got here, the mirror is
-        // safe to push.
         push_top_k(heap, top_k,
                    HeapItem{score, static_cast<std::uint32_t>(j),
                             static_cast<std::uint32_t>(i)});
       }
+    }
+
+    // Publish our new heap min to the global bound (CAS loop). Only
+    // worth doing if our heap is now full; otherwise the bound stays
+    // -inf as far as we're concerned.
+    if (heap.size() >= top_k && top_k > 0U) {
+      publish_heap_min(heap.front().score);
     }
   };
 
@@ -295,13 +353,20 @@ inline nb::object cdist_top_k_impl(
         thread_id_counter.fetch_add(1U, std::memory_order_relaxed);
     auto& heap = per_thread_heaps[tid];
     std::vector<double> row(M, 0.0);
+    std::vector<const std::uint8_t*> cand_ptrs;
+    std::vector<std::size_t> cand_lens;
+    std::vector<std::size_t> cand_orig_j;
+    cand_ptrs.reserve(M);
+    cand_lens.reserve(M);
+    cand_orig_j.reserve(M);
+
     while (true) {
       const std::size_t i = next_row.fetch_add(1U, std::memory_order_relaxed);
       if (i >= N) {
         return;
       }
       std::uint64_t row_cost = 0;
-      process_row(i, heap, row, row_cost);
+      process_row(i, heap, row, cand_ptrs, cand_lens, cand_orig_j, row_cost);
       if (have_tqdm) {
         std::lock_guard<std::mutex> lk(done_mtx);
         done_queue.push_back(row_cost);

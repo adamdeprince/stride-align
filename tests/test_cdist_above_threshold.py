@@ -209,16 +209,19 @@ def test_gil_released_during_compute():
         while not counter["stop"]:
             counter["ticks"] += 1
 
-    qs = ["a" * 20 for _ in range(200)]
-    ts = ["b" * 20 for _ in range(200)]
+    # Equal-length strings bypass the length-pruning prefilter, so
+    # all the SIMD compute runs. A very high threshold means almost
+    # nothing crosses it, so we don't drown in queue + tuple-build
+    # traffic — only SIMD time is measured. That's the path we care
+    # about for GIL release.
+    qs = ["a" * 20 for _ in range(400)]
+    ts = ["b" * 20 for _ in range(400)]
 
     bg = threading.Thread(target=background_tick, daemon=True)
     bg.start()
     before = counter["ticks"]
-    # Drain the iterator; threshold=2 yields nothing but does all the
-    # compute work.
     list(sa.cdist_above_threshold(
-        qs, ts, scorer=sa.Scorer.JARO, threshold=1.0, cpu_count=4,
+        qs, ts, scorer=sa.Scorer.JARO, threshold=0.99, cpu_count=4,
     ))
     after = counter["ticks"]
     counter["stop"] = True

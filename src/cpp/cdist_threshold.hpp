@@ -142,9 +142,14 @@ struct RowCompute {
   // Compute scores for query i against targets[j_start..j_start+count)
   // into `out[0..count)`. Pure compute, no Python touch (caller has
   // released the GIL).
+  // Compute scores for the candidate targets (their byte pointers
+  // and lengths) for a given query index. The candidate set may be a
+  // dense slice of the targets (when no pruning kicks in) or a
+  // scattered subset built from a length-difference prune.
   std::function<void(
       std::size_t i,
-      std::size_t j_start,
+      const std::uint8_t* const* cand_ptrs,
+      const std::size_t* cand_lens,
       std::size_t count,
       std::size_t max_m,
       double* out)>
@@ -169,6 +174,10 @@ struct State {
   std::size_t M = 0;
   bool symmetric = false;
   double threshold = 0.0;
+  // For length-difference pruning.
+  Scorer scorer{Scorer::Jaro};
+  double jw_prefix_weight = 0.1;
+  std::size_t jw_prefix_cap = 4;
 
   // Worker dispatch.
   std::atomic<std::size_t> next_row{0};
@@ -290,6 +299,15 @@ inline void spawn_workers(
   for (std::size_t t = 0; t < num_threads; ++t) {
     state->workers.emplace_back([state, compute, symmetric, threshold, N, M]() {
       std::vector<double> row(M, 0.0);
+      // Per-worker scratch for the candidate sub-list after length-
+      // difference pruning. Reused across rows so we amortize the
+      // initial allocation.
+      std::vector<const std::uint8_t*> cand_ptrs;
+      std::vector<std::size_t> cand_lens;
+      std::vector<std::size_t> cand_orig_j;
+      cand_ptrs.reserve(M);
+      cand_lens.reserve(M);
+      cand_orig_j.reserve(M);
 
       while (true) {
         if (state->stop_requested.load(std::memory_order_acquire)) {
@@ -305,38 +323,62 @@ inline void spawn_workers(
         const std::size_t row_count = M - j_start;
         std::uint64_t cost = 0;
         if (row_count > 0U) {
+          // Length-difference pruning: build the candidate sub-list
+          // of targets whose max possible normalized similarity is
+          // at least `threshold`. The cost contribution to tqdm
+          // covers every target in the row (pruned or not) so the
+          // bar tracks the work the user asked us to consider, not
+          // the work we ended up actually doing.
+          cand_ptrs.clear();
+          cand_lens.clear();
+          cand_orig_j.clear();
           std::size_t max_m = 0;
           for (std::size_t k = 0; k < row_count; ++k) {
-            max_m = std::max(max_m, state->t_lens[j_start + k]);
+            const std::size_t j = j_start + k;
+            cost += pair_cost(state->q_lens[i], state->t_lens[j]);
+            const double max_sim =
+                ::stride_align::cdist_runtime::max_normalized_similarity(
+                    state->scorer, state->q_lens[i], state->t_lens[j],
+                    state->jw_prefix_weight, state->jw_prefix_cap);
+            if (max_sim < threshold) {
+              continue;
+            }
+            cand_ptrs.push_back(state->t_ptrs[j]);
+            cand_lens.push_back(state->t_lens[j]);
+            cand_orig_j.push_back(j);
+            max_m = std::max(max_m, state->t_lens[j]);
           }
-          compute.run(i, j_start, row_count, max_m, row.data());
 
-          // Scan + push matches.
-          for (std::size_t k = 0; k < row_count; ++k) {
-            if (row[k] >= threshold) {
-              const std::size_t j = j_start + k;
-              Event ev;
-              ev.kind = Event::Kind::Result;
-              ev.score = row[k];
-              ev.q_idx = i;
-              ev.t_idx = j;
-              if (!state->queue->push(ev)) {
-                goto worker_exit;  // queue closed: iterator abandoned
-              }
-              if (symmetric) {
-                // For symmetric inputs, yield the mirror too so
-                // consumers don't have to remember to add it.
-                Event mirror;
-                mirror.kind = Event::Kind::Result;
-                mirror.score = row[k];
-                mirror.q_idx = j;
-                mirror.t_idx = i;
-                if (!state->queue->push(mirror)) {
-                  goto worker_exit;
+          if (!cand_ptrs.empty()) {
+            compute.run(
+                i, cand_ptrs.data(), cand_lens.data(),
+                cand_ptrs.size(), max_m, row.data());
+
+            // Scan + push matches. The candidate vector's k-th entry
+            // corresponds to original target index cand_orig_j[k].
+            for (std::size_t k = 0; k < cand_ptrs.size(); ++k) {
+              if (row[k] >= threshold) {
+                const std::size_t j = cand_orig_j[k];
+                Event ev;
+                ev.kind = Event::Kind::Result;
+                ev.score = row[k];
+                ev.q_idx = i;
+                ev.t_idx = j;
+                if (!state->queue->push(ev)) {
+                  goto worker_exit;  // queue closed: iterator abandoned
+                }
+                if (symmetric) {
+                  Event mirror;
+                  mirror.kind = Event::Kind::Result;
+                  mirror.score = row[k];
+                  mirror.q_idx = j;
+                  mirror.t_idx = i;
+                  if (!state->queue->push(mirror)) {
+                    goto worker_exit;
+                  }
                 }
               }
             }
-            cost += pair_cost(state->q_lens[i], state->t_lens[j_start + k]);
           }
         }
         if (state->have_tqdm) {
@@ -499,19 +541,31 @@ inline nb::object cdist_threshold_impl(
   constexpr std::size_t kQueueCapacity = 1024U;
   state->queue = std::make_unique<EventQueue>(kQueueCapacity);
 
+  // Stash the per-scorer prune inputs on the state so the worker
+  // (which is type-erased — doesn't see Ops) can call
+  // max_normalized_similarity directly.
+  state->scorer = scorer;
+  state->jw_prefix_weight = jw_prefix_weight;
+  state->jw_prefix_cap = jw_prefix_cap;
+
   // Bind the per-backend row kernel into a type-erased callback so
-  // the iterator class doesn't need to know about Ops.
+  // the iterator class doesn't need to know about Ops. The callback
+  // now takes the candidate target arrays directly (already gathered
+  // by the worker's length-prune step); for the no-pruning case the
+  // worker passes a contiguous slice of the original target arrays.
   State* s = state.get();
   RowCompute compute;
   compute.run = [s, scorer, jw_prefix_weight, jw_prefix_threshold,
                  jw_prefix_cap](
-                    std::size_t i, std::size_t j_start, std::size_t count,
+                    std::size_t i,
+                    const std::uint8_t* const* cand_ptrs,
+                    const std::size_t* cand_lens,
+                    std::size_t count,
                     std::size_t max_m, double* out) {
     ::stride_align::cdist_simd::compute_row_double<Ops>(
         scorer,
         s->q_ptrs[i], s->q_lens[i],
-        s->t_ptrs.data() + j_start,
-        s->t_lens.data() + j_start,
+        cand_ptrs, cand_lens,
         count, max_m, out,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   };

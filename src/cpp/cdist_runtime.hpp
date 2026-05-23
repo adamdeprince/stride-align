@@ -198,6 +198,74 @@ inline void validate_hamming_lengths(
   }
 }
 
+// Closed-form upper bound on the normalized similarity a scorer can
+// possibly produce for two strings of the given lengths. Used by
+// length-difference pruning in cdist_above_threshold and
+// cdist_top_k: any pair where this bound is below the active
+// threshold can't reach it and we skip the SIMD work entirely.
+//
+// All bounds are tight (achievable when q == t for any length) and
+// safe (never exceed the value the actual kernel could return),
+// which keeps pruning correct.
+inline double max_normalized_similarity(
+    Scorer scorer,
+    std::size_t q_len, std::size_t t_len,
+    double jw_prefix_weight,
+    std::size_t jw_prefix_cap) noexcept {
+  switch (scorer) {
+    case Scorer::LevenshteinNormalized:
+    case Scorer::DamerauLevenshteinNormalized: {
+      // Distance d >= |q - t| (one edit per length difference).
+      // Normalized sim = 1 - d / max(q, t)
+      //               <= 1 - |q-t|/max  =  min/max.
+      // Transpositions in OSA don't help with length differences.
+      if (q_len == 0U && t_len == 0U) {
+        return 1.0;
+      }
+      const std::size_t mx = std::max(q_len, t_len);
+      const std::size_t mn = std::min(q_len, t_len);
+      return static_cast<double>(mn) / static_cast<double>(mx);
+    }
+    case Scorer::HammingNormalized:
+      // Equal-length contract is validated upstream; pruning is
+      // never useful here (every survived pair has equal length and
+      // could reach 1.0).
+      return q_len == t_len ? 1.0 : 0.0;
+    case Scorer::Jaro: {
+      // m_count <= min(q, t); max Jaro = (min/q + min/t + 1) / 3
+      // = (2 + min(q,t)/max(q,t)) / 3 for any nonzero pair.
+      if (q_len == 0U && t_len == 0U) {
+        return 1.0;
+      }
+      if (q_len == 0U || t_len == 0U) {
+        return 0.0;
+      }
+      const std::size_t mx = std::max(q_len, t_len);
+      const std::size_t mn = std::min(q_len, t_len);
+      return (2.0 + static_cast<double>(mn) / static_cast<double>(mx))
+             / 3.0;
+    }
+    case Scorer::JaroWinkler: {
+      // JW = jaro + L * pw * (1 - jaro). Both terms are monotone in
+      // jaro, so the upper bound substitutes max_jaro and the maximum
+      // possible L. We assume the prefix bonus is applied (i.e. that
+      // jaro might cross the threshold for this pair); when jaro is
+      // below the threshold the bound is loose but still valid.
+      const double max_jaro = max_normalized_similarity(
+          Scorer::Jaro, q_len, t_len, 0.0, 0U);
+      const std::size_t L_max =
+          std::min(jw_prefix_cap, std::min(q_len, t_len));
+      return max_jaro
+             + static_cast<double>(L_max) * jw_prefix_weight
+                   * (1.0 - max_jaro);
+    }
+    default:
+      // Distance scorers and unknown values: no useful bound, so
+      // never prune.
+      return 1.0;
+  }
+}
+
 // Total tqdm work in length-product units. Symmetric mode counts
 // only the strict upper triangle to match the actual compute.
 inline std::uint64_t total_cost(
