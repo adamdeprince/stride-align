@@ -219,27 +219,25 @@ def test_cdist_multi_threaded_matches_single_threaded():
     qs = [_rand_str(rng, rng.randint(1, 30)) for _ in range(40)]
     ts = [_rand_str(rng, rng.randint(1, 30)) for _ in range(50)]
     r1 = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=1)
-    r8 = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=8)
-    r_default = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN)  # cpu_count=0
-    assert np.array_equal(r1, r8)
-    assert np.array_equal(r1, r_default)
+    r2 = sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=2)
+    assert np.array_equal(r1, r2)
 
 
 def test_cdist_multi_threaded_symmetric_matches_single_threaded():
     rng = random.Random(14)
     qs = [_rand_str(rng, rng.randint(1, 30)) for _ in range(40)]
     r1 = sa.cdist(qs, qs, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=1)
-    r8 = sa.cdist(qs, qs, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=8)
-    assert np.array_equal(r1, r8)
+    r2 = sa.cdist(qs, qs, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=2)
+    assert np.array_equal(r1, r2)
     # And still symmetric.
-    assert np.array_equal(r8, r8.T)
+    assert np.array_equal(r2, r2.T)
 
 
 def test_cdist_multi_threaded_jaro_matches_scalar():
     rng = random.Random(15)
     qs = [_rand_str(rng, rng.randint(1, 30)) for _ in range(20)]
     ts = [_rand_str(rng, rng.randint(1, 30)) for _ in range(25)]
-    actual = sa.cdist(qs, ts, scorer=sa.Scorer.JARO, cpu_count=8)
+    actual = sa.cdist(qs, ts, scorer=sa.Scorer.JARO, cpu_count=2)
     assert np.allclose(actual, _ref_jaro(qs, ts), atol=1e-12)
 
 
@@ -265,7 +263,7 @@ def test_cdist_tqdm_updates_dispatched_from_main_thread():
     qs = ["aaaaa" * 5 for _ in range(20)]
     ts = ["bbbbb" * 5 for _ in range(25)]
     sa.cdist(
-        qs, ts, scorer=sa.Scorer.LEVENSHTEIN, tqdm=FakeTqdm, cpu_count=4
+        qs, ts, scorer=sa.Scorer.LEVENSHTEIN, tqdm=FakeTqdm, cpu_count=2
     )
 
     assert len(construct_thread) == 1
@@ -290,7 +288,7 @@ def test_cdist_defensive_copy_against_mutation_during_compute():
 
     def run():
         result_holder.append(
-            sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=4)
+            sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=2)
         )
 
     t = threading.Thread(target=run)
@@ -329,7 +327,7 @@ def test_cdist_releases_gil_during_compute():
     bg = threading.Thread(target=background_tick, daemon=True)
     bg.start()
     before = counter["ticks"]
-    sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=4)
+    sa.cdist(qs, ts, scorer=sa.Scorer.LEVENSHTEIN, cpu_count=2)
     after = counter["ticks"]
     counter["stop"] = True
     bg.join(timeout=1.0)

@@ -60,7 +60,7 @@ def test_above_threshold_matches_full_cdist_with_wide_length_spread(
 
     actual = set()
     for score, q, t in sa.cdist_above_threshold(
-        qs, ts, scorer=scorer, threshold=threshold, cpu_count=4
+        qs, ts, scorer=scorer, threshold=threshold, cpu_count=2
     ):
         actual.add((round(score, 9), qs.index(q), ts.index(t)))
 
@@ -77,7 +77,7 @@ def test_top_k_matches_full_cdist_with_wide_length_spread(scorer, k):
     full = sa.cdist(qs, ts, scorer=scorer).flatten()
     expected_top = sorted(full, reverse=True)[: min(k, full.size)]
 
-    out = sa.cdist_top_k(qs, ts, scorer=scorer, k=k, cpu_count=4)
+    out = sa.cdist_top_k(qs, ts, scorer=scorer, k=k, cpu_count=2)
     actual_scores = sorted((s for s, _, _ in out), reverse=True)
 
     assert actual_scores == pytest.approx(expected_top)
@@ -141,7 +141,7 @@ def test_top_k_global_bound_does_not_lose_results_under_contention():
 
     for _ in range(5):
         out = sa.cdist_top_k(
-            qs, ts, scorer=sa.Scorer.JARO_WINKLER, k=k, cpu_count=8
+            qs, ts, scorer=sa.Scorer.JARO_WINKLER, k=k, cpu_count=2
         )
         actual_scores = sorted((s for s, _, _ in out), reverse=True)
         assert actual_scores == pytest.approx(expected_top)

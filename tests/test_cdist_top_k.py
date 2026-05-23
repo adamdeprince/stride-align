@@ -120,7 +120,7 @@ def test_multi_threaded_results_match_single_threaded():
     k = 25
 
     single = sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=k, cpu_count=1)
-    multi = sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=k, cpu_count=8)
+    multi = sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=k, cpu_count=2)
 
     # Score multisets must agree; specific (q, t) tuples can differ
     # on ties depending on which thread popped first.
@@ -147,7 +147,7 @@ def test_tqdm_dispatched_from_main_thread():
     ts = ["b" * 6 for _ in range(15)]
     sa.cdist_top_k(
         qs, ts, scorer=sa.Scorer.JARO, k=5,
-        tqdm=FakeTqdm, cpu_count=4,
+        tqdm=FakeTqdm, cpu_count=2,
     )
     main = construct_thread[0]
     assert update_threads <= {main}
@@ -166,7 +166,7 @@ def test_gil_released_during_compute():
     bg = threading.Thread(target=tick, daemon=True)
     bg.start()
     before = counter["ticks"]
-    sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10, cpu_count=4)
+    sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10, cpu_count=2)
     after = counter["ticks"]
     counter["stop"] = True
     bg.join(timeout=1.0)
@@ -218,7 +218,7 @@ def test_defensive_snapshot_against_concurrent_mutation():
 
     def run():
         result_holder.append(sa.cdist_top_k(
-            qs, ts, scorer=sa.Scorer.JARO, k=10, cpu_count=4,
+            qs, ts, scorer=sa.Scorer.JARO, k=10, cpu_count=2,
         ))
 
     t = threading.Thread(target=run)

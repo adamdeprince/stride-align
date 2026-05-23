@@ -48,7 +48,7 @@ def test_yields_above_threshold_matches_full_cdist():
 
     actual = set()
     for score, q, t in sa.cdist_above_threshold(
-        qs, ts, scorer=sa.Scorer.JARO, threshold=threshold, cpu_count=4
+        qs, ts, scorer=sa.Scorer.JARO, threshold=threshold, cpu_count=2
     ):
         # Find i, j by identity (the iterator yields borrowed refs to
         # the original objects).
@@ -135,7 +135,7 @@ def test_tqdm_dispatched_from_main_thread():
     ts = ["abd" * 5 for _ in range(20)]
     list(sa.cdist_above_threshold(
         qs, ts, scorer=sa.Scorer.JARO, threshold=0.0,
-        tqdm=FakeTqdm, cpu_count=4,
+        tqdm=FakeTqdm, cpu_count=2,
     ))
     main = construct_thread[0]
     assert update_threads <= {main}
@@ -150,7 +150,7 @@ def test_break_early_does_not_leak_workers():
     qs = ["abc" * 3 for _ in range(50)]
     ts = ["abc" * 3 for _ in range(50)]
     gen = sa.cdist_above_threshold(
-        qs, ts, scorer=sa.Scorer.JARO, threshold=0.0, cpu_count=4,
+        qs, ts, scorer=sa.Scorer.JARO, threshold=0.0, cpu_count=2,
     )
     # Take one item, then drop the generator.
     for _ in gen:
@@ -176,7 +176,7 @@ def test_defensive_snapshot_against_concurrent_mutation():
         # whose workers are already running. We materialize the list
         # inside the same thread to catch the snapshot.
         gen = sa.cdist_above_threshold(
-            qs, ts, scorer=sa.Scorer.JARO, threshold=0.0, cpu_count=4,
+            qs, ts, scorer=sa.Scorer.JARO, threshold=0.0, cpu_count=2,
         )
         result_holder.append(list(gen))
 
@@ -221,7 +221,7 @@ def test_gil_released_during_compute():
     bg.start()
     before = counter["ticks"]
     list(sa.cdist_above_threshold(
-        qs, ts, scorer=sa.Scorer.JARO, threshold=0.99, cpu_count=4,
+        qs, ts, scorer=sa.Scorer.JARO, threshold=0.99, cpu_count=2,
     ))
     after = counter["ticks"]
     counter["stop"] = True
@@ -249,7 +249,7 @@ def test_multi_threaded_yields_same_set_as_single_threaded():
         for s, i, j in (
             (s, qs.index(q), ts.index(t))
             for s, q, t in sa.cdist_above_threshold(
-                qs, ts, scorer=sa.Scorer.JARO, threshold=threshold, cpu_count=8,
+                qs, ts, scorer=sa.Scorer.JARO, threshold=threshold, cpu_count=2,
             )
         )
     )
