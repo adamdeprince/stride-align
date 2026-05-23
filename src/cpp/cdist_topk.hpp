@@ -34,6 +34,7 @@
 #include <deque>
 #include <limits>
 #include <mutex>
+#include <numeric>
 #include <thread>
 #include <vector>
 
@@ -220,6 +221,35 @@ inline nb::object cdist_top_k_impl(
   }
   const bool have_tqdm = pbar.is_valid() && !pbar.is_none();
 
+  // Process queries in descending-length order so the global heap-min
+  // bound rises faster. Rationale: the eventual top-k pairs tend to
+  // be close-length matches; processing the longest queries first
+  // surfaces those high-scoring pairs early, raising the shared
+  // prune threshold before the short-query rows run. Short-query
+  // rows then prune more aggressively against tall targets.
+  //
+  // q_perm[i_iter] gives the original query index for iteration step
+  // i_iter. HeapItem still stores ORIGINAL indices, so emission and
+  // the symmetric mirror are unaffected. In symmetric mode the
+  // target permutation aliases the query permutation; in the
+  // asymmetric case targets stay in input order (sorting targets
+  // doesn't affect the bound, only query order does).
+  std::vector<std::size_t> q_perm(N);
+  std::iota(q_perm.begin(), q_perm.end(), 0U);
+  std::stable_sort(q_perm.begin(), q_perm.end(),
+                   [q_lens_ptr = q_lens.data()](std::size_t a, std::size_t b) {
+                     return q_lens_ptr[a] > q_lens_ptr[b];
+                   });
+  std::vector<std::size_t> t_perm_storage;
+  const std::size_t* t_perm;
+  if (symmetric) {
+    t_perm = q_perm.data();
+  } else {
+    t_perm_storage.resize(M);
+    std::iota(t_perm_storage.begin(), t_perm_storage.end(), 0U);
+    t_perm = t_perm_storage.data();
+  }
+
   // === Phase 2: parallel compute (GIL released) ==================
   const std::size_t num_threads =
       std::max<std::size_t>(1U, std::min(cpu_count, std::max<std::size_t>(1U, N)));
@@ -259,14 +289,15 @@ inline nb::object cdist_top_k_impl(
     }
   };
 
-  auto process_row = [&](std::size_t i,
+  auto process_row = [&](std::size_t i_iter,
                          std::vector<HeapItem>& heap,
                          std::vector<double>& row,
                          std::vector<const std::uint8_t*>& cand_ptrs,
                          std::vector<std::size_t>& cand_lens,
                          std::vector<std::size_t>& cand_orig_j,
                          std::uint64_t& row_cost_out) {
-    const std::size_t j_start = symmetric ? i + 1U : 0U;
+    const std::size_t q_idx = q_perm[i_iter];
+    const std::size_t j_start = symmetric ? i_iter + 1U : 0U;
     const std::size_t row_count = M - j_start;
     row_cost_out = 0;
     if (row_count == 0U) {
@@ -288,20 +319,21 @@ inline nb::object cdist_top_k_impl(
     cand_orig_j.clear();
     std::size_t max_m = 0;
     for (std::size_t k = 0; k < row_count; ++k) {
-      const std::size_t j = j_start + k;
+      const std::size_t j_iter = j_start + k;
+      const std::size_t t_idx = t_perm[j_iter];
       row_cost_out += ::stride_align::cdist_runtime::pair_cost(
-          q_lens[i], t_lens[j]);
+          q_lens[q_idx], t_lens[t_idx]);
       const double max_sim =
           ::stride_align::cdist_runtime::max_normalized_similarity(
-              scorer, q_lens[i], t_lens[j],
+              scorer, q_lens[q_idx], t_lens[t_idx],
               jw_prefix_weight, jw_prefix_cap);
       if (max_sim <= prune_threshold) {
         continue;
       }
-      cand_ptrs.push_back(t_ptrs[j]);
-      cand_lens.push_back(t_lens[j]);
-      cand_orig_j.push_back(j);
-      max_m = std::max(max_m, t_lens[j]);
+      cand_ptrs.push_back(t_ptrs[t_idx]);
+      cand_lens.push_back(t_lens[t_idx]);
+      cand_orig_j.push_back(t_idx);
+      max_m = std::max(max_m, t_lens[t_idx]);
     }
 
     if (cand_ptrs.empty()) {
@@ -309,7 +341,7 @@ inline nb::object cdist_top_k_impl(
     }
 
     ::stride_align::cdist_simd::compute_row_double<Ops>(
-        scorer, q_ptrs[i], q_lens[i],
+        scorer, q_ptrs[q_idx], q_lens[q_idx],
         cand_ptrs.data(), cand_lens.data(),
         cand_ptrs.size(), max_m, row.data(),
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
@@ -319,19 +351,19 @@ inline nb::object cdist_top_k_impl(
       const std::size_t j = cand_orig_j[k];
 
       if (reject_duplicates && score == 1.0) {
-        if (q_lens[i] == t_lens[j] && q_lens[i] > 0U &&
-            std::memcmp(q_ptrs[i], t_ptrs[j], q_lens[i]) == 0) {
+        if (q_lens[q_idx] == t_lens[j] && q_lens[q_idx] > 0U &&
+            std::memcmp(q_ptrs[q_idx], t_ptrs[j], q_lens[q_idx]) == 0) {
           continue;
         }
       }
 
       push_top_k(heap, top_k,
-                 HeapItem{score, static_cast<std::uint32_t>(i),
+                 HeapItem{score, static_cast<std::uint32_t>(q_idx),
                           static_cast<std::uint32_t>(j)});
       if (symmetric) {
         push_top_k(heap, top_k,
                    HeapItem{score, static_cast<std::uint32_t>(j),
-                            static_cast<std::uint32_t>(i)});
+                            static_cast<std::uint32_t>(q_idx)});
       }
     }
 
@@ -361,12 +393,14 @@ inline nb::object cdist_top_k_impl(
     cand_orig_j.reserve(M);
 
     while (true) {
-      const std::size_t i = next_row.fetch_add(1U, std::memory_order_relaxed);
-      if (i >= N) {
+      const std::size_t i_iter =
+          next_row.fetch_add(1U, std::memory_order_relaxed);
+      if (i_iter >= N) {
         return;
       }
       std::uint64_t row_cost = 0;
-      process_row(i, heap, row, cand_ptrs, cand_lens, cand_orig_j, row_cost);
+      process_row(i_iter, heap, row, cand_ptrs, cand_lens, cand_orig_j,
+                  row_cost);
       if (have_tqdm) {
         std::lock_guard<std::mutex> lk(done_mtx);
         done_queue.push_back(row_cost);
