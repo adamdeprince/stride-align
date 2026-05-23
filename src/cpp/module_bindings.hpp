@@ -14,6 +14,7 @@
 #include "affine.hpp"
 #include "backends/profile_traceback.hpp"
 #include "cdist_threshold.hpp"
+#include "cdist_topk.hpp"
 #include "hamming_dispatch.hpp"
 #include "jaro_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
@@ -3063,6 +3064,68 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("threshold"),
       nb::arg("tqdm") = nb::none(),
       nb::arg("cpu_count") = std::size_t{1},
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
+
+  // ----------------------------------------------------------------
+  // cdist_top_k: heap-based variant of the streaming filtered cdist.
+  // Returns an unsorted list of the k highest-scoring pairs.
+  // ----------------------------------------------------------------
+
+  m.def(
+      "cdist_top_k",
+      [](nb::object queries,
+         nb::object targets,
+         nb::object scorer_obj,
+         std::size_t k,
+         nb::object tqdm_factory,
+         std::size_t cpu_count,
+         bool reject_duplicates,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        int scorer_id;
+        if (PyLong_Check(scorer_obj.ptr())) {
+          scorer_id = nb::cast<int>(scorer_obj);
+        } else {
+          auto it = scorer_map.find(scorer_obj.ptr());
+          if (it == scorer_map.end()) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "cdist_top_k scorer must be a normalized Scorer enum "
+                "value or a known stride_align scoring function.");
+            throw nb::python_error();
+          }
+          scorer_id = it->second;
+        }
+
+        if constexpr (requires {
+                        Implementation::cdist_top_k(
+                            queries, targets, scorer_id, k, tqdm_factory,
+                            cpu_count, reject_duplicates, prefix_weight,
+                            prefix_threshold, prefix_cap);
+                      }) {
+          return Implementation::cdist_top_k(
+              queries, targets, scorer_id, k, tqdm_factory, cpu_count,
+              reject_duplicates, prefix_weight, prefix_threshold,
+              prefix_cap);
+        } else {
+          PyErr_SetString(
+              PyExc_NotImplementedError,
+              "cdist_top_k is not implemented for this backend; "
+              "use a SIMD-capable backend (any non-generic).");
+          throw nb::python_error();
+        }
+      },
+      nb::arg("queries"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("scorer"),
+      nb::arg("k"),
+      nb::arg("tqdm") = nb::none(),
+      nb::arg("cpu_count") = std::size_t{1},
+      nb::arg("reject_duplicates") = false,
       nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
       nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
       nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);

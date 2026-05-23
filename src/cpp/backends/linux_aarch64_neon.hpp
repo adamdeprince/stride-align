@@ -445,6 +445,19 @@ struct Implementation {
         queries, targets, scorer, threshold, tqdm_factory, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
+
+  static nb::object cdist_top_k(
+      nb::handle queries, nb::handle targets, int scorer,
+      std::size_t k, nb::object tqdm_factory, std::size_t cpu_count,
+      bool reject_duplicates,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    ensure_supported();
+    return TargetImplementation::cdist_top_k(
+        queries, targets, scorer, k, tqdm_factory, cpu_count,
+        reject_duplicates,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
 };
 
 }  // namespace stride_align::backend_linux_aarch64_neon

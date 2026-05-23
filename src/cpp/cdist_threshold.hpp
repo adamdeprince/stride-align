@@ -39,6 +39,7 @@
 #include <nanobind/nanobind.h>
 
 #include "byte_view.hpp"
+#include "cdist_runtime.hpp"
 #include "cdist_simd.hpp"
 #include "stride_align/jaro.hpp"
 #include "topk.hpp"
@@ -48,18 +49,9 @@ namespace stride_align::cdist_threshold {
 namespace nb = nanobind;
 using Scorer = ::stride_align::topk::Scorer;
 
-inline bool scorer_is_normalized(Scorer s) noexcept {
-  switch (s) {
-    case Scorer::LevenshteinNormalized:
-    case Scorer::DamerauLevenshteinNormalized:
-    case Scorer::HammingNormalized:
-    case Scorer::Jaro:
-    case Scorer::JaroWinkler:
-      return true;
-    default:
-      return false;
-  }
-}
+// Re-export through the threshold namespace so existing callers don't
+// have to rewrite — definition lives in cdist_runtime.
+using ::stride_align::cdist_runtime::scorer_is_normalized;
 
 // A single event in the worker→main queue. Either a matched pair or
 // a row-completion marker that carries the cost for tqdm.
@@ -193,11 +185,9 @@ struct State {
   bool have_tqdm = false;
 };
 
-// Cost model: same length-product proxy used by cdist for pacing.
-inline std::uint64_t pair_cost(std::size_t q_len, std::size_t t_len) noexcept {
-  return static_cast<std::uint64_t>(
-      std::max<std::size_t>(1U, q_len) * std::max<std::size_t>(1U, t_len));
-}
+// Cost model: same length-product proxy used by cdist for pacing
+// (lives in cdist_runtime.hpp).
+using ::stride_align::cdist_runtime::pair_cost;
 
 // Python-facing iterator. nb::class_-registered; __iter__ returns
 // self, __next__ pops the next Result event (skipping any RowDone
@@ -368,36 +358,9 @@ inline void spawn_workers(
   }
 }
 
-// Helper: snapshot a Python sequence into our state (tuple-copy +
-// byte-view all items, record their PyObject*s so __next__ can yield
-// borrowed refs). Mirrors cdist_simd's snapshot.
-inline bool snapshot(
-    PyObject* sequence,
-    nb::object& tuple_owner,
-    std::vector<PyObject*>& objs,
-    std::vector<const std::uint8_t*>& ptrs,
-    std::vector<std::size_t>& lens) {
-  namespace bv = ::stride_align::byte_view;
-  PyObject* tup = PySequence_Tuple(sequence);
-  if (tup == nullptr) {
-    return false;
-  }
-  tuple_owner = nb::steal<nb::object>(tup);
-  const auto count = static_cast<std::size_t>(PyTuple_GET_SIZE(tup));
-  objs.resize(count);
-  ptrs.resize(count);
-  lens.resize(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    PyObject* item = PyTuple_GET_ITEM(tup, i);
-    objs[i] = item;
-    const bv::ByteCompatKind kind = bv::classify(item);
-    if (kind == bv::ByteCompatKind::None) {
-      return false;
-    }
-    bv::view(item, kind, ptrs[i], lens[i]);
-  }
-  return true;
-}
+// Snapshot helper lives in cdist_runtime.hpp; re-exported here so
+// the existing namespace-qualified call sites keep working.
+using ::stride_align::cdist_runtime::snapshot;
 
 template <typename Ops>
 inline nb::object cdist_threshold_impl(
@@ -459,7 +422,7 @@ inline nb::object cdist_threshold_impl(
   }
 
   // Length caps (same as cdist).
-  constexpr std::size_t cap = ::stride_align::cdist_simd::kCdistMaxLen;
+  constexpr std::size_t cap = ::stride_align::cdist_runtime::kCdistMaxLen;
   for (std::size_t i = 0; i < state->N; ++i) {
     if (state->q_lens[i] > cap) {
       PyErr_Format(

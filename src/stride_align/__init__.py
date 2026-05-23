@@ -1865,6 +1865,59 @@ def cdist_above_threshold(
     )
 
 
+def cdist_top_k(
+    queries: object,
+    targets: object,
+    *,
+    scorer: "Scorer | object",
+    k: int,
+    tqdm: object = None,
+    cpu_count: int = 0,
+    reject_duplicates: bool = False,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> list[tuple[float, object, object]]:
+    """Return the ``k`` highest-scoring ``(query, target)`` pairs as
+    an unsorted list of ``(score, query, target)`` tuples.
+
+    Variant of ``cdist_above_threshold`` that uses a heap instead of a
+    streaming queue. Each worker maintains a private top-k heap of
+    ``(score, q_index, t_index)`` records (no Python-object refcount
+    traffic during the hot loop); after all workers finish, the
+    per-thread heaps are merged into a final top-k heap, and only
+    then is each record materialized as a ``(score, query_string,
+    target_string)`` tuple.
+
+    The returned list is NOT sorted — heap order, not score order.
+    The caller pays for sorting only if needed.
+
+    Memory is O(``cpu_count`` * ``k`` + ``len(queries) + len(targets)``).
+
+    Requires a normalized-similarity scorer.
+
+    ``reject_duplicates`` (default False): when True and the computed
+    score is exactly 1.0, the underlying byte buffers are compared;
+    if they match, the pair is skipped (and so is its symmetric
+    mirror). Useful for fuzzy-match workflows that want to surface
+    near-duplicates while ignoring exact duplicates.
+    """
+    resolved_cpu_count = cpu_count
+    if resolved_cpu_count <= 0:
+        resolved_cpu_count = os.cpu_count() or 1
+    return _LEVENSHTEIN_BACKEND.cdist_top_k(
+        queries, targets,
+        scorer=scorer,
+        k=int(k),
+        tqdm=tqdm,
+        cpu_count=int(resolved_cpu_count),
+        reject_duplicates=bool(reject_duplicates),
+        prefix_weight=prefix_weight,
+        prefix_threshold=prefix_threshold,
+        prefix_cap=prefix_cap,
+    )
+
+
 # Register each top-level scoring function with the C++ scorer table
 # so users can pass `cdist(..., scorer=stride_align.levenshtein_scores)`
 # without going through the Scorer enum. The C++ side already
@@ -1902,6 +1955,7 @@ __all__ = [
     "backend_is_available",
     "cdist",
     "cdist_above_threshold",
+    "cdist_top_k",
     "damerau_levenshtein_best",
     "damerau_levenshtein_normalized_best",
     "damerau_levenshtein_normalized_score",
