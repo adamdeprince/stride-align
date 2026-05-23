@@ -36,18 +36,33 @@ inline constexpr PackedWord lane_mask_v =
         ? std::numeric_limits<PackedWord>::max()
         : ((PackedWord{1} << lane_bits_v<Lane>) - PackedWord{1});
 
+// `std::bit_cast` is only in libstdc++ 11+ (the C++20 *language* feature
+// `__builtin_bit_cast` ships earlier — gcc 10 has the builtin but not
+// the stdlib wrapper). Both forms produce identical code; routing
+// through this helper lets us build on gcc 10 toolchains while still
+// using the standard name when it's available.
+template <typename To, typename From>
+constexpr To stride_align_bit_cast(const From& from) noexcept {
+#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
+  return std::bit_cast<To>(from);
+#else
+  return __builtin_bit_cast(To, from);
+#endif
+}
+
 template <typename Lane>
 Lane unpack_lane(PackedWord packed, std::size_t lane) {
   using RawLane = std::make_unsigned_t<Lane>;
   const auto raw = static_cast<RawLane>(
       (packed >> (lane * lane_bits_v<Lane>)) & lane_mask_v<Lane>);
-  return std::bit_cast<Lane>(raw);
+  return stride_align_bit_cast<Lane>(raw);
 }
 
 template <typename Lane>
 PackedWord pack_lane(Lane value, std::size_t lane) {
   using RawLane = std::make_unsigned_t<Lane>;
-  const auto raw = static_cast<PackedWord>(std::bit_cast<RawLane>(value));
+  const auto raw =
+      static_cast<PackedWord>(stride_align_bit_cast<RawLane>(value));
   return (raw & lane_mask_v<Lane>) << (lane * lane_bits_v<Lane>);
 }
 
