@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux PowerPC64 VSX (Power8) Benchmark Notes - 2026-05-17 — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>Linux PowerPC64 VSX (Power8) Benchmark Notes - 2026-05-17</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="../index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p>These results are Power8 VSX-only and should not be mixed with the x86,
+Loongson, or macOS benchmark summaries. The source tree was built on a real
+POWER8 (architected) guest from the same <code>adam.initial</code> git branch as the x86
+baseline.</p>
+<p>Raw artifact:</p>
+<ul>
+<li><code>benchmarks/power8-vsx-2026-05-17.csv</code>: native <code>generic</code>, <code>swar</code>, and
+  <code>linux_powerpc64_vsx</code> rows for <code>english</code>/<code>chinese</code>, <code>linear</code>/<code>affine</code>,
+  widths 16 and 32, <code>1:1</code> and <code>1:many</code> shapes, with <code>--timing-split</code>.</li>
+</ul>
+<p>Generated with:</p>
+<pre><code class="language-bash">PYTHONPATH=src .venv/bin/python -m stride_align.benchmark \
+  --backends generic swar linux_powerpc64_vsx \
+  --variants sw-farrar-score sw-score nw-score sw-path-info nw-path-info sw-cigar nw-cigar \
+  --passes english chinese \
+  --shapes all \
+  --scoring-cases linear affine \
+  --widths 16 32 \
+  --iterations 15 \
+  --warmups 3 \
+  --timing-split \
+  --format csv &gt; benchmarks/power8-vsx-2026-05-17.csv
+</code></pre>
+<p>Build context:</p>
+<ul>
+<li>Host: real POWER8 silicon, PVR <code>004b 0201</code> (v2.1, "Murano"), 4.157 GHz clock,
+  512 MHz timebase. KVM-virtualized as a single-core <code>pSeries</code> guest. The
+  <code>/proc/cpuinfo</code> "emulated by qemu" string refers to the firmware/machine
+  model that KVM-on-Power uses for guests, not to user-mode CPU emulation.</li>
+<li>OS: Ubuntu 20.04 ppc64le.</li>
+<li>Toolchain: IBM Advance Toolchain 15.0 (GCC 11.4.1) under <code>/opt/at15.0/bin</code>,
+  Python 3.13.13 from a <code>miniforge</code> install, CMake 4.3.2 + Ninja from pip.</li>
+<li>Build: standard <code>scikit-build-core</code> flow with <code>CC=/opt/at15.0/bin/gcc
+  CXX=/opt/at15.0/bin/g++</code>, <code>-O3</code> default. 4 GiB swap added because compiling
+  the Farrar templates with <code>-O3</code> exceeds the 1 GiB RAM during instantiation.</li>
+</ul>
+<p>Parasail status:</p>
+<ul>
+<li>Not built. Upstream parasail does not ship ppc64le wheels and a source build
+  was not attempted in this pass. All ratios below are against <code>generic</code> on
+  the same machine.</li>
+</ul>
+<h2 id="power8-vsx-semantic-notes-that-drove-the-implementation">Power8 VSX semantic notes that drove the implementation</h2>
+<ul>
+<li>Lane numbering on Linux ppc64le is little-endian. The GCC altivec builtins
+  largely hide BE register semantics, but <code>vec_sld</code> still exposes the BE
+  Programming Interface Manual model: <code>vec_sld(zero, v, 14)</code> on the i16 lane
+  shape is <strong>not</strong> "shift left by 1 lane". Cross-lane shifts use <code>vec_perm</code>
+  with explicit LE-natural byte indices so the shift helpers match the
+  SSE/NEON/LSX semantics one-to-one.</li>
+<li>An early bug in <code>shift_left_perm</code>: the low half of the permutation was a
+  constant <code>16</code> instead of <code>16 + i</code>. This collapsed multi-byte inserted
+  values (e.g. <code>set1(low_score)</code>) to byte 0 of the splat, dropping the upper
+  bytes of the inserted scalar. Symptom: NW global lazy-F prefix carry
+  produced wrong scores at widths 16/32 (correct at width 8 because byte 0
+  was the whole value there). Fixed by using <code>16 + i</code> for the inserted
+  indices.</li>
+<li><code>vec_max</code> for <code>__vector signed long long</code> is a Power9 (ISA 3.0) instruction.
+  On Power8 the <code>SimdOps&lt;uint64_t, int64_t&gt;::max</code> is synthesized via
+  <code>vec_cmpgt + vec_sel</code> over the 2 lanes.</li>
+<li><code>vec_sel</code> requires the per-width <code>__vector __bool char/short/int/long long</code>
+  mask. The previous backend cast every comparison result to
+  <code>__vector unsigned char</code>, which only happens to work for 8-bit lanes and
+  was one source of the existing build break.</li>
+<li><code>vec_cmpgt</code> for <code>signed long long</code> requires ISA 2.07, which is Power8, so
+  the 64-bit width has real SIMD comparisons.</li>
+<li>Power8 has <code>vbpermq</code> (vector bit permute quadword). With control bytes
+  <code>[127, 119, ..., 15, 7]</code> it collapses a per-byte 0xFF/0x00 mask into a
+  16-bit LE-natural lane bitmap in one instruction. Profiling showed the
+  trace-mask step is only ~4% of the masked-traceback runtime on 1024x1024
+  English, so <code>SimdOps::trace_mask_eq/gt</code> uses a simple vector store + scalar
+  fan-out instead. The <code>vbpermq</code> route is documented inline for a future
+  micro-optimization pass.</li>
+<li><code>vec_xl(0, uint64_t*)</code> overload resolution picked the 32-bit-lane variant
+  under GCC 11.4. Explicit cast to <code>unsigned long long*</code> forces the right
+  one. Same story for <code>vec_vsx_st</code> against <code>int64_t*</code>.</li>
+</ul>
+<h2 id="routing-decisions-that-differ-from-x86_avx2-loongson">Routing decisions that differ from x86_avx2 / Loongson</h2>
+<ol>
+<li><strong>Linear SW path / path-info / cigar stay on <code>profile_traceback</code></strong>. The
+   shared <code>dispatch_linear_sw_score_first_masked_cigar_*</code> path was wired up
+   first (mirroring AVX2 and LSX) but measured 0.46-0.48x of the scalar
+   byte-table path on 1024x1024 English. Profiling pointed at the striped
+   trace table's poor cache locality on the traceback walk, not at the mask
+   extraction. Reverted to <code>profile_traceback</code> and kept the helper hooks
+   (<code>trace_mask_*</code>, <code>mask_or</code>, <code>store_masked_cells</code>) in <code>SimdOps</code> so any
+   future redesign can reuse them.</li>
+<li><strong>Affine SW / NW path / path-info also stay on <code>profile_traceback</code></strong>.
+   <code>dispatch_affine_striped_path_info</code> measured 0.57-0.60x for the same
+   reason. Affine <strong>CIGAR</strong> stays on the SIMD score kernel +
+   <code>profile_traceback::affine_cigar_with_score</code> because it skips the trace
+   table entirely; that route still beats <code>_generic</code> by ~2x on <code>sw-cigar</code>
+   and <code>nw-cigar</code> rows in this sweep.</li>
+<li><strong>Linear SW / NW score</strong>, <strong>batch (1:many) score</strong>, <strong>affine score
+   (compact byte)</strong>, and <strong>prepared score profiles</strong> all route through the
+   shared Farrar fixed kernel via the new <code>SimdOps</code>. These are the big wins.</li>
+</ol>
+<h2 id="overall-results">Overall results</h2>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean vs Generic</th>
+<th style="text-align: right;">Median vs Generic</th>
+<th style="text-align: right;">Best vs Generic</th>
+<th style="text-align: right;">Worst vs Generic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">3.65x</td>
+<td style="text-align: right;">4.13x</td>
+<td style="text-align: right;">16.82x</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+<tr>
+<td><code>swar</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">0.77x</td>
+<td style="text-align: right;">0.98x</td>
+<td style="text-align: right;">1.60x</td>
+<td style="text-align: right;">0.41x</td>
+</tr>
+</tbody>
+</table>
+<p>VSX wins or ties on every one of the 80 rows in this sweep (worst is 0.96x
+of generic — within noise). SWAR is a regression overall on Power8, mostly
+because generic auto-vectorizes well under AT15 GCC 11.4 on the score-only
+loops where SWAR's 64-bit packed lanes give it no extra throughput.</p>
+<h2 id="score-only-vs-pathcigar-breakdown">Score-only vs path/CIGAR breakdown</h2>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+<th style="text-align: right;">Worst</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Score-only (<code>sw-score</code>, <code>sw-farrar-score</code>, <code>nw-score</code>)</td>
+<td style="text-align: right;">48</td>
+<td style="text-align: right;">6.61x</td>
+<td style="text-align: right;">6.75x</td>
+<td style="text-align: right;">16.82x</td>
+<td style="text-align: right;">2.82x</td>
+</tr>
+<tr>
+<td>Path + CIGAR (<code>sw-path-info</code>, <code>nw-path-info</code>, <code>sw-cigar</code>, <code>nw-cigar</code>)</td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">1.50x</td>
+<td style="text-align: right;">1.14x</td>
+<td style="text-align: right;">4.20x</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+</tbody>
+</table>
+<p>The shape is the same as on Loongson and macOS: score-only is where VSX
+clears generic by 5-15x, and path/CIGAR is dominated by trace-table traffic
+where SIMD only helps the DP score component.</p>
+<h2 id="per-variant-for-linux_powerpc64_vsx">Per-variant for <code>linux_powerpc64_vsx</code></h2>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Best</th>
+<th style="text-align: right;">Worst</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sw-farrar-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">7.75x</td>
+<td style="text-align: right;">7.07x</td>
+<td style="text-align: right;">16.82x</td>
+<td style="text-align: right;">4.02x</td>
+</tr>
+<tr>
+<td><code>sw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">7.58x</td>
+<td style="text-align: right;">7.10x</td>
+<td style="text-align: right;">16.03x</td>
+<td style="text-align: right;">4.05x</td>
+</tr>
+<tr>
+<td><code>nw-score</code></td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">4.91x</td>
+<td style="text-align: right;">5.12x</td>
+<td style="text-align: right;">8.51x</td>
+<td style="text-align: right;">2.82x</td>
+</tr>
+<tr>
+<td><code>nw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.89x</td>
+<td style="text-align: right;">2.03x</td>
+<td style="text-align: right;">4.14x</td>
+<td style="text-align: right;">0.98x</td>
+</tr>
+<tr>
+<td><code>sw-cigar</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.88x</td>
+<td style="text-align: right;">2.00x</td>
+<td style="text-align: right;">4.20x</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+<tr>
+<td><code>sw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.23x</td>
+<td style="text-align: right;">1.21x</td>
+<td style="text-align: right;">1.58x</td>
+<td style="text-align: right;">1.01x</td>
+</tr>
+<tr>
+<td><code>nw-path-info</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1.17x</td>
+<td style="text-align: right;">1.14x</td>
+<td style="text-align: right;">1.52x</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+</tbody>
+</table>
+<p><code>sw-cigar</code> and <code>nw-cigar</code> affine rows are the big surprise. They route
+through the SIMD score kernel + <code>profile_traceback::affine_cigar_with_score</code>
+(score-first scalar reverse-build), which dodges the striped trace table
+entirely. The affine <code>sw-cigar</code> row maxes at 4.20x.</p>
+<h2 id="linear-vs-affine">Linear vs affine</h2>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Scoring</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>linear</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">3.49x</td>
+<td style="text-align: right;">4.72x</td>
+</tr>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>affine</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">3.82x</td>
+<td style="text-align: right;">4.13x</td>
+</tr>
+<tr>
+<td><code>swar</code></td>
+<td>linear</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">0.91x</td>
+<td style="text-align: right;">1.00x</td>
+</tr>
+<tr>
+<td><code>swar</code></td>
+<td>affine</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">0.65x</td>
+<td style="text-align: right;">0.46x</td>
+</tr>
+</tbody>
+</table>
+<p>Affine is slightly ahead on geomean because the score kernels are doing more
+arithmetic per cell and the SIMD throughput shows through.</p>
+<h2 id="english-vs-chinese">English vs Chinese</h2>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Pass</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>english</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">3.58x</td>
+<td style="text-align: right;">4.07x</td>
+</tr>
+<tr>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>chinese</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">3.73x</td>
+<td style="text-align: right;">4.25x</td>
+</tr>
+</tbody>
+</table>
+<p>Roughly even. Chinese targets a wider character set, but the Farrar score
+kernels are score-table-based, so token cardinality doesn't change the
+inner-loop cost much.</p>
+<h2 id="best-5-rows">Best 5 rows</h2>
+<table>
+<thead>
+<tr>
+<th>Pass</th>
+<th>Case</th>
+<th>Shape</th>
+<th>Variant</th>
+<th style="text-align: right;">Width</th>
+<th style="text-align: right;">Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td>sw-farrar-score</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16.82x</td>
+</tr>
+<tr>
+<td>chinese</td>
+<td>linear</td>
+<td>1:many</td>
+<td>sw-farrar-score</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16.04x</td>
+</tr>
+<tr>
+<td>chinese</td>
+<td>linear</td>
+<td>1:many</td>
+<td>sw-score</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">16.03x</td>
+</tr>
+<tr>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td>sw-farrar-score</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">15.92x</td>
+</tr>
+<tr>
+<td>english</td>
+<td>linear</td>
+<td>1:many</td>
+<td>sw-farrar-score</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">15.25x</td>
+</tr>
+</tbody>
+</table>
+<h2 id="worst-5-rows">Worst 5 rows</h2>
+<table>
+<thead>
+<tr>
+<th>Pass</th>
+<th>Case</th>
+<th>Shape</th>
+<th>Variant</th>
+<th style="text-align: right;">Width</th>
+<th style="text-align: right;">Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td>nw-path-info</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+<tr>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td>sw-cigar</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+<tr>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td>sw-cigar</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0.96x</td>
+</tr>
+<tr>
+<td>chinese</td>
+<td>linear</td>
+<td>1:1</td>
+<td>nw-path-info</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0.97x</td>
+</tr>
+<tr>
+<td>english</td>
+<td>linear</td>
+<td>1:1</td>
+<td>nw-cigar</td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">0.98x</td>
+</tr>
+</tbody>
+</table>
+<p>All worst rows are short <code>1:1</code> workloads at width 16/32 where SIMD setup and
+trace-table allocation dominate. No row falls below 0.96x of generic.</p>
+<h2 id="recommended-power8-next-steps">Recommended Power8 next steps</h2>
+<ol>
+<li>Try the <code>vbpermq</code> trace-mask fast path on real hardware to see whether the
+   masked SW/affine traceback becomes competitive once mask extraction is
+   one instruction. The other component of the gap is trace-table layout,
+   which <code>vbpermq</code> does not address.</li>
+<li>Consider a Power8-specific linear SW trace redesign that keeps the byte
+   trace table row-major (matching <code>profile_traceback</code>'s layout) but uses
+   VSX for the score DP only. This mirrors the affine CIGAR route that
+   already beats generic by 2-4x.</li>
+<li>Add a Power8 <code>local_affine_score_exact_segment128/256_raw</code> mirroring the
+   NEON <code>local_affine_score_exact_fill_i16_128/i32_256</code> helpers, if the
+   1024-character query shape becomes a target. Score-only is already
+   ~7-8x ahead of generic; the marginal win is small.</li>
+<li>Re-bench on a multi-core / non-virtualized Power8 host. This run was on
+   a single-core KVM guest; SMT throughput and shared L2/L3 behavior on a
+   physical 8-core / SMT8 chip are not represented here.</li>
+<li>Build parasail from source for ppc64le and re-run with a parasail column
+   to mirror the format used by the x86 and macOS sweeps.</li>
+<li>Investigate why SWAR loses to generic on Power8. AT15 GCC 11.4 appears
+   to auto-vectorize the generic score loops well enough that the 64-bit
+   packed SWAR lanes give no benefit, but this is worth confirming with
+   an asm dump rather than just timing.</li>
+</ol>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

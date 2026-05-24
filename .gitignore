@@ -209,3 +209,7 @@ __marimo__/
 *~
 demo/kjv.txt
 \#*\#
+# Local wheelhouse staging (not part of the source tree).
+wheelhouse/
+wheelhouse_*/
+dist/

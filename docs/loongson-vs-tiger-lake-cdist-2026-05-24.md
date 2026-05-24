@@ -1,5 +1,7 @@
 # Loongson 3A6000 (2.0 GHz laptop) vs Tiger Lake i7 (3.0 GHz, 11th gen) — cdist pruning
 
+**Languages:** [English](loongson-vs-tiger-lake-cdist-2026-05-24.md) · [简体中文](loongson-vs-tiger-lake-cdist-2026-05-24.zh-CN.md)
+
 A short report on the 2026-05-24 cross-arch run of
 `tools/bench_cdist_pruning.py`. **The 2.0 GHz Loongson 3A6000 in a
 laptop chassis beats a 3.0 GHz Tiger Lake i7 (Intel 11th gen) on
@@ -11,11 +13,11 @@ Both machines built with **GCC 15.2, `-O3`**, identical source tree,
 identical bench script. The comparison is as close to a clean
 architectural fight as I can stage in this lab.
 
-Reference for the Loongson core micro-architecture: Chips and
-Cheese's deep-dive on a 2.5 GHz 3A6000 sample
+Reference for the Loongson core micro-architecture: Chips and Cheese's
+deep-dive on a 2.5 GHz 3A6000 sample
 (https://chipsandcheese.com/p/loongson-3a6000-a-star-among-chinese-cpus).
-My 3A6000 is the **2.0 GHz** laptop variant — 20 % below the chip
-C&C tested.
+My 3A6000 is a **2.0 GHz** laptop variant — 20 % below the chip C&C
+tested.
 
 ## Headline: pruning regime (T=0.99)
 

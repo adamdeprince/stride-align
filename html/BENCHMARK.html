@@ -143,6 +143,186 @@ is faster than the named baseline for that row:</p>
 <td style="text-align: right;">0.915x</td>
 <td style="text-align: right;">16.797x</td>
 </tr>
+<tr>
+<td>Levenshtein (Intel x86)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>python-Levenshtein</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;"><strong>1.159x</strong></td>
+<td style="text-align: right;">1.151x</td>
+<td style="text-align: right;">1.039x</td>
+<td style="text-align: right;">1.353x</td>
+</tr>
+<tr>
+<td>Levenshtein (Intel x86)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">1.075x</td>
+<td style="text-align: right;">1.070x</td>
+<td style="text-align: right;">0.898x</td>
+<td style="text-align: right;">1.364x</td>
+</tr>
+<tr>
+<td>Levenshtein (Intel x86)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>editdistance</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">13.564x</td>
+<td style="text-align: right;">13.758x</td>
+<td style="text-align: right;">11.099x</td>
+<td style="text-align: right;">15.880x</td>
+</tr>
+<tr>
+<td>Lev (long, &gt;64 chars)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;"><strong>2.35x</strong></td>
+<td style="text-align: right;">2.55x</td>
+<td style="text-align: right;">1.45x</td>
+<td style="text-align: right;">2.88x</td>
+</tr>
+<tr>
+<td>Lev (1-vs-1, q&gt;=100)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;"><strong>1.36x</strong></td>
+<td style="text-align: right;">1.36x</td>
+<td style="text-align: right;">1.34x</td>
+<td style="text-align: right;">1.39x</td>
+</tr>
+<tr>
+<td>Lev (cutoff, q=50)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;"><strong>3.91x</strong></td>
+<td style="text-align: right;">2.41x</td>
+<td style="text-align: right;">2.41x</td>
+<td style="text-align: right;">6.03x</td>
+</tr>
+<tr>
+<td>Damerau-Lev (short tgts)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;"><strong>3.13x</strong></td>
+<td style="text-align: right;">3.03x</td>
+<td style="text-align: right;">2.38x</td>
+<td style="text-align: right;">4.22x</td>
+</tr>
+<tr>
+<td>Damerau-Lev (medium tgts)</td>
+<td><code>x86_avx512bwvl</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0.98x</td>
+<td style="text-align: right;">0.87x</td>
+<td style="text-align: right;">0.85x</td>
+<td style="text-align: right;">1.25x</td>
+</tr>
+<tr>
+<td>Lev (Mac M4 NEON, short tgts)</td>
+<td><code>macos_arm64_neon</code></td>
+<td>python-Levenshtein</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;"><strong>6.61x</strong></td>
+<td style="text-align: right;">6.42x</td>
+<td style="text-align: right;">5.49x</td>
+<td style="text-align: right;">8.54x</td>
+</tr>
+<tr>
+<td>Damerau-Lev (Mac M4 NEON, short tgts)</td>
+<td><code>macos_arm64_neon</code></td>
+<td>rapidfuzz OSA</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;"><strong>5.49x</strong></td>
+<td style="text-align: right;">5.43x</td>
+<td style="text-align: right;">4.35x</td>
+<td style="text-align: right;">7.45x</td>
+</tr>
+<tr>
+<td>Lev (Loongson LASX, mixed tgts)</td>
+<td><code>linux_loongarch64_lasx</code></td>
+<td>generic (no rapidfuzz wheel)</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;"><strong>2.17x</strong></td>
+<td style="text-align: right;">2.18x</td>
+<td style="text-align: right;">1.54x</td>
+<td style="text-align: right;">3.34x</td>
+</tr>
+<tr>
+<td>Damerau-Lev (Loongson LASX, mixed tgts)</td>
+<td><code>linux_loongarch64_lasx</code></td>
+<td>generic (no rapidfuzz wheel)</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;"><strong>1.43x</strong></td>
+<td style="text-align: right;">1.43x</td>
+<td style="text-align: right;">1.14x</td>
+<td style="text-align: right;">1.97x</td>
+</tr>
+<tr>
+<td>Lev (Graviton4, short tgts)</td>
+<td><code>linux_aarch64_neon</code>/<code>sve</code>/<code>sve2</code></td>
+<td>python-Levenshtein</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;"><strong>3.18x</strong></td>
+<td style="text-align: right;">3.06x</td>
+<td style="text-align: right;">2.67x</td>
+<td style="text-align: right;">4.05x</td>
+</tr>
+<tr>
+<td>Damerau-Lev (Graviton4, short tgts)</td>
+<td><code>linux_aarch64_neon</code>/<code>sve</code>/<code>sve2</code></td>
+<td>rapidfuzz OSA</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;"><strong>2.85x</strong></td>
+<td style="text-align: right;">2.83x</td>
+<td style="text-align: right;">2.27x</td>
+<td style="text-align: right;">3.89x</td>
+</tr>
+<tr>
+<td>Lev (Power8 VSX, mixed tgts)</td>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>generic (no rapidfuzz wheel)</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;"><strong>2.40x</strong></td>
+<td style="text-align: right;">2.51x</td>
+<td style="text-align: right;">1.56x</td>
+<td style="text-align: right;">3.03x</td>
+</tr>
+<tr>
+<td>Damerau-Lev (Power8 VSX, mixed tgts)</td>
+<td><code>linux_powerpc64_vsx</code></td>
+<td>generic (no rapidfuzz wheel)</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;"><strong>1.99x</strong></td>
+<td style="text-align: right;">2.22x</td>
+<td style="text-align: right;">1.46x</td>
+<td style="text-align: right;">2.57x</td>
+</tr>
+<tr>
+<td>Jaro batch (cross-arch, N=1000)</td>
+<td><code>x86_avx512bwvl</code> / <code>*_neon</code> / <code>*_lasx</code> / <code>*_vsx</code></td>
+<td>rapidfuzz</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;"><strong>5.1x</strong></td>
+<td style="text-align: right;">3.7x</td>
+<td style="text-align: right;">1.54x</td>
+<td style="text-align: right;">263x</td>
+</tr>
+<tr>
+<td>cdist pruning (cross-arch, T=0.99)</td>
+<td><code>x86_avx512bwvl</code> / <code>*_neon</code> / <code>*_lasx</code></td>
+<td>own T=0 baseline</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;"><strong>426x</strong></td>
+<td style="text-align: right;">512x</td>
+<td style="text-align: right;">145x</td>
+<td style="text-align: right;">1,408x</td>
+</tr>
 </tbody>
 </table>
 <h2 id="intel-x86-2026-05-18">Intel x86 - 2026-05-18</h2>
@@ -527,6 +707,1079 @@ at width 16 (<code>sw-cigar</code> and <code>sw-path-info</code>); AVX512BWVL's 
 <p><code>generic</code> is for correctness/baseline reference, not as a parasail competitor.
 It loses every score-only row badly; a handful of linear NW path/CIGAR rows
 are competitive but not consistently.</p>
+<h2 id="levenshtein-intel-x86-2026-05-19">Levenshtein (Intel x86) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/intel-levenshtein-2026-05-19.csv"><code>benchmarks/intel-levenshtein-2026-05-19.csv</code></a>.</p>
+<p>Build context: same host as Intel x86 above (11th Gen Core i7-1195G7,
+Python 3.13, <code>taskset -c 2</code>), running on the <code>x86_avx512bwvl</code> backend. The
+multi-target Myers kernel runs one target per SIMD lane (8x 64-bit lanes
+under AVX512) and reads bytes / 1-byte unicode strings zero-copy from
+CPython buffers. Patterns over 64 chars fall through to the scalar
+Hyyrö multi-word dispatch in <code>levenshtein_dispatch.hpp</code>.</p>
+<p>Command:</p>
+<pre><code class="language-bash">taskset -c 2 .venv/bin/python tools/benchmark_libs.py \
+  --input-file kjv_subset.txt --levenshtein \
+  --iterations 25 --warmups 3 &lt; lev_queries.txt &gt; intel-levenshtein-2026-05-19.csv
+</code></pre>
+<p>Corpus: first 1000 lines of <code>demo/kjv.txt</code>. Queries: 14 single words and
+short phrases (3-29 chars) covering the pattern lengths that hit the
+SIMD fast path.</p>
+<h3 id="overall">Overall</h3>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">Geomean</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">Worst</th>
+<th style="text-align: right;">Best</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stride_align</code> vs <code>python-Levenshtein</code></td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;"><strong>1.159x</strong></td>
+<td style="text-align: right;">1.151x</td>
+<td style="text-align: right;">1.039x</td>
+<td style="text-align: right;">1.353x</td>
+</tr>
+<tr>
+<td><code>stride_align</code> vs <code>rapidfuzz</code></td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">1.075x</td>
+<td style="text-align: right;">1.070x</td>
+<td style="text-align: right;">0.898x</td>
+<td style="text-align: right;">1.364x</td>
+</tr>
+<tr>
+<td><code>stride_align</code> vs <code>editdistance</code></td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">13.564x</td>
+<td style="text-align: right;">13.758x</td>
+<td style="text-align: right;">11.099x</td>
+<td style="text-align: right;">15.880x</td>
+</tr>
+</tbody>
+</table>
+<p>Per-call wall time at 1000 targets (median across 14 queries):</p>
+<table>
+<thead>
+<tr>
+<th>Library</th>
+<th style="text-align: right;">µs/call</th>
+<th style="text-align: right;">ns/target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stride_align</code> (<code>x86_avx512bwvl</code>)</td>
+<td style="text-align: right;"><strong>496</strong></td>
+<td style="text-align: right;"><strong>496</strong></td>
+</tr>
+<tr>
+<td><code>rapidfuzz</code></td>
+<td style="text-align: right;">540</td>
+<td style="text-align: right;">540</td>
+</tr>
+<tr>
+<td><code>python-Levenshtein</code></td>
+<td style="text-align: right;">567</td>
+<td style="text-align: right;">567</td>
+</tr>
+<tr>
+<td><code>editdistance</code></td>
+<td style="text-align: right;">6806</td>
+<td style="text-align: right;">6806</td>
+</tr>
+</tbody>
+</table>
+<h3 id="takeaways_1">Takeaways</h3>
+<p>The multi-target Myers kernel keeps stride-align ahead of every popular
+Python Levenshtein library on this corpus. python-Levenshtein loses by
+1.16x geomean across all 14 queries; rapidfuzz loses by 1.07x with one
+sub-parity row (0.898x on a 26-char query). editdistance is roughly
+13.5x slower, reflecting its pure-C scalar DP loop with no batching.</p>
+<p>The "vs rapidfuzz" worst row is the only sub-parity result of the
+sweep. rapidfuzz also uses bit-parallel Myers in its hot path, so the
+remaining headroom is mostly per-call overhead — list traversal, the
+Python ABI, the ndarray allocation — rather than the inner loop. The
+SIMD multi-target kernel pulls ahead on shorter queries where the
+per-target setup dominates.</p>
+<h2 id="levenshtein-extended-intel-x86-2026-05-19">Levenshtein extended (Intel x86) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/intel-levenshtein-v2-2026-05-19.csv"><code>benchmarks/intel-levenshtein-v2-2026-05-19.csv</code></a>.</p>
+<p>Three follow-up workloads that exercise the multi-word SIMD batch
+kernel (patterns 65-256 chars, in 64-char blocks W = 2/3/4), the
+zero-copy singular dispatch (no <code>prepare_alignment</code> vector copy when
+both inputs are bytes or 1-byte unicode), and the <code>score_cutoff</code>
+parameter with per-lane done masks and all-lanes early-exit. Same
+build host and pinning as the section above.</p>
+<h3 id="long-patterns-1-vs-200-no-cutoff">Long patterns (1-vs-200, no cutoff)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">python-Lev</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">vs Lev</th>
+<th style="text-align: right;">vs rf</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">95 µs</td>
+<td style="text-align: right;">110 µs</td>
+<td style="text-align: right;">95 µs</td>
+<td style="text-align: right;">1.16x</td>
+<td style="text-align: right;">1.00x</td>
+</tr>
+<tr>
+<td style="text-align: right;">65</td>
+<td style="text-align: right;">118 µs</td>
+<td style="text-align: right;">187 µs</td>
+<td style="text-align: right;">171 µs</td>
+<td style="text-align: right;"><strong>1.59x</strong></td>
+<td style="text-align: right;"><strong>1.45x</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">118 µs</td>
+<td style="text-align: right;">324 µs</td>
+<td style="text-align: right;">357 µs</td>
+<td style="text-align: right;"><strong>2.75x</strong></td>
+<td style="text-align: right;"><strong>3.03x</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">128</td>
+<td style="text-align: right;">118 µs</td>
+<td style="text-align: right;">320 µs</td>
+<td style="text-align: right;">300 µs</td>
+<td style="text-align: right;"><strong>2.71x</strong></td>
+<td style="text-align: right;"><strong>2.54x</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">180</td>
+<td style="text-align: right;">135 µs</td>
+<td style="text-align: right;">405 µs</td>
+<td style="text-align: right;">384 µs</td>
+<td style="text-align: right;"><strong>3.00x</strong></td>
+<td style="text-align: right;"><strong>2.85x</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">166 µs</td>
+<td style="text-align: right;">456 µs</td>
+<td style="text-align: right;">440 µs</td>
+<td style="text-align: right;"><strong>2.75x</strong></td>
+<td style="text-align: right;"><strong>2.65x</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Each lane in the AVX-512 kernel runs Hyyrö's wide-add carry chain over
+W blocks in parallel across 8 targets. The wide add uses two chained
+64-bit adds + <code>gt_u64</code> overflow detection (AVX-512 native unsigned
+<code>cmpgt</code>, AVX2 sign-bit-XOR + signed <code>cmpgt</code>, SSE4.1 sub-and-sign-bit
+emulation). q_len = 40 is the single-word kernel, which hits parity
+with rapidfuzz.</p>
+<h3 id="1-vs-1-singular-zero-copy-dispatch">1-vs-1 singular (zero-copy dispatch)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">python-Lev</th>
+<th style="text-align: right;">rapidfuzz</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0.20 µs</td>
+<td style="text-align: right;">0.25 µs</td>
+<td style="text-align: right;"><strong>0.17 µs</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">0.27 µs</td>
+<td style="text-align: right;">0.31 µs</td>
+<td style="text-align: right;"><strong>0.24 µs</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">60</td>
+<td style="text-align: right;">0.36 µs</td>
+<td style="text-align: right;">0.40 µs</td>
+<td style="text-align: right;"><strong>0.32 µs</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;"><strong>0.90 µs</strong></td>
+<td style="text-align: right;">1.30 µs</td>
+<td style="text-align: right;">1.21 µs</td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;"><strong>2.35 µs</strong></td>
+<td style="text-align: right;">3.24 µs</td>
+<td style="text-align: right;">3.14 µs</td>
+</tr>
+</tbody>
+</table>
+<p>When both inputs are bytes or 1-byte unicode the singular path skips
+the prepare_alignment vector copy and runs scalar Myers directly on
+the CPython buffer (<code>PyBytes_AsStringAndSize</code> / <code>PyUnicode_1BYTE_DATA</code>).
+We trail rapidfuzz by ~10% under 60 chars (Python ABI overhead, no
+algorithmic gap) and pull ~1.35x ahead from 100 chars onward, where
+the multi-word inner loop dominates.</p>
+<h3 id="score_cutoff-5000-targets-short-query">score_cutoff (5000 targets, short query)</h3>
+<p>stride_align vs rapidfuzz with matching cutoff:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">cutoff</th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;"><strong>277 µs</strong></td>
+<td style="text-align: right;">353 µs</td>
+<td style="text-align: right;">1.27x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;"><strong>301 µs</strong></td>
+<td style="text-align: right;">472 µs</td>
+<td style="text-align: right;">1.57x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;"><strong>342 µs</strong></td>
+<td style="text-align: right;">556 µs</td>
+<td style="text-align: right;">1.62x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;"><strong>190 µs</strong></td>
+<td style="text-align: right;">486 µs</td>
+<td style="text-align: right;">2.56x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;"><strong>328 µs</strong></td>
+<td style="text-align: right;">682 µs</td>
+<td style="text-align: right;">2.08x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;"><strong>410 µs</strong></td>
+<td style="text-align: right;">866 µs</td>
+<td style="text-align: right;">2.11x</td>
+</tr>
+<tr>
+<td style="text-align: right;">50</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;"><strong>49 µs</strong></td>
+<td style="text-align: right;">297 µs</td>
+<td style="text-align: right;"><strong>6.03x</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">50</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;"><strong>204 µs</strong></td>
+<td style="text-align: right;">491 µs</td>
+<td style="text-align: right;">2.41x</td>
+</tr>
+<tr>
+<td style="text-align: right;">50</td>
+<td style="text-align: right;">50</td>
+<td style="text-align: right;"><strong>410 µs</strong></td>
+<td style="text-align: right;">1119 µs</td>
+<td style="text-align: right;">2.73x</td>
+</tr>
+</tbody>
+</table>
+<p>Per-lane done masks freeze score updates once a lane crosses
+<code>cutoff + remaining_chars</code>, and the column loop breaks as soon as every
+batch lane is settled (target exhausted or bailed). The biggest win
+(<code>q_len=50</code>, <code>cutoff=12</code>, 6x) is where most targets exceed cutoff after
+a handful of columns and the whole batch can short-circuit.</p>
+<h3 id="where-rapidfuzz-still-wins">Where rapidfuzz still wins</h3>
+<p>Long patterns <em>with</em> tight cutoff (e.g. <code>q=100</code>, <code>cutoff=20</code> over
+50-250-char targets): rapidfuzz 110 µs vs stride_align 402 µs (0.27x).
+Our cutoff bail condition <code>score &gt; cutoff + remaining_chars</code> only
+fires near the end of the column loop because <code>remaining_chars</code> shrinks
+slowly. rapidfuzz uses <strong>banded Myers</strong> here, restricting the DP to a
+2K+1 diagonal band so the work drops to O(K·n) instead of O(m·n).
+Banded SIMD Myers is a separate kernel and isn't implemented in
+stride-align yet — see "Future work" below.</p>
+<h3 id="future-work">Future work</h3>
+<ul>
+<li><strong>Banded Myers</strong> for tight-cutoff long-pattern workloads (the one
+  remaining rapidfuzz win). Restrict per-lane state to ±K diagonals
+  from the main; sliding window across columns.</li>
+<li><strong>Pattern lengths &gt; 256</strong>: the multi-word SIMD kernel currently caps
+  at W=4. Extending to W=8 (pattern up to 512) is a recompile.</li>
+</ul>
+<h2 id="damerau-levenshtein-osa-intel-x86-2026-05-19">Damerau-Levenshtein / OSA (Intel x86) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/intel-damerau-levenshtein-2026-05-19.csv"><code>benchmarks/intel-damerau-levenshtein-2026-05-19.csv</code></a>.</p>
+<p>Build context: same host as the Levenshtein section (11th Gen Core
+i7-1195G7, Python 3.13, <code>taskset -c 2</code>). The algorithm is OSA-restricted
+(Optimal String Alignment) Damerau-Levenshtein: like Levenshtein but
+adjacent transpositions cost 1 instead of two substitutions, and each
+character can participate in at most one edit. Hyyrö's bit-parallel
+recurrence (the <code>TR = (((~D0_prev) &amp; PM) &lt;&lt; 1) &amp; PM_old</code> formulation
+that rapidfuzz also uses), wrapped in the same multi-target SIMD batch
+architecture as our Levenshtein kernel — one target per SIMD lane
+(2/4/8 lanes for SSE4.1/AVX2/AVX-512).</p>
+<h3 id="short-targets-1-vs-1000-3-15-char-corpus">Short targets (1-vs-1000, 3-15 char corpus)</h3>
+<p>This is the SIMD batch sweet spot: short alignments amortize the
+gather + state-shift cost across 8 lanes, and rapidfuzz's per-pair
+overhead dominates its loop.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;"><strong>41 µs</strong></td>
+<td style="text-align: right;">99 µs</td>
+<td style="text-align: right;">2.38x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;"><strong>42 µs</strong></td>
+<td style="text-align: right;">108 µs</td>
+<td style="text-align: right;">2.59x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;"><strong>42 µs</strong></td>
+<td style="text-align: right;">176 µs</td>
+<td style="text-align: right;"><strong>4.22x</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;"><strong>47 µs</strong></td>
+<td style="text-align: right;">163 µs</td>
+<td style="text-align: right;">3.47x</td>
+</tr>
+</tbody>
+</table>
+<h3 id="medium-targets-1-vs-200-30-250-char-corpus">Medium targets (1-vs-200, 30-250 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">117 µs</td>
+<td style="text-align: right;"><strong>100 µs</strong></td>
+<td style="text-align: right;">0.85x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">117 µs</td>
+<td style="text-align: right;"><strong>102 µs</strong></td>
+<td style="text-align: right;">0.87x</td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;"><strong>117 µs</strong></td>
+<td style="text-align: right;">147 µs</td>
+<td style="text-align: right;">1.25x</td>
+</tr>
+</tbody>
+</table>
+<p>For medium-target workloads we trail rapidfuzz by ~15% under 60 chars
+(their inner loop is slightly tighter — fewer SIMD ops per column),
+then pull ahead at q_len=64 where their bit-parallel fallback path
+kicks in.</p>
+<h3 id="1-vs-1-singular">1-vs-1 singular</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0.18 µs</td>
+<td style="text-align: right;">0.15 µs</td>
+<td style="text-align: right;">0.85x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">0.23 µs</td>
+<td style="text-align: right;">0.21 µs</td>
+<td style="text-align: right;">0.92x</td>
+</tr>
+<tr>
+<td style="text-align: right;">60</td>
+<td style="text-align: right;">0.35 µs</td>
+<td style="text-align: right;">0.32 µs</td>
+<td style="text-align: right;">0.90x</td>
+</tr>
+</tbody>
+</table>
+<p>Per-call Python ABI dominates; we're within 15% of rapidfuzz on every
+length.</p>
+<h3 id="api">API</h3>
+<pre><code class="language-python">import stride_align
+
+# Singular
+stride_align.damerau_levenshtein_score(query, target)            # int
+stride_align.damerau_levenshtein_normalized_score(query, target) # float in [0, 1]
+
+# Batch (returns numpy ndarray)
+stride_align.damerau_levenshtein_scores(query, targets)             # int64
+stride_align.damerau_levenshtein_normalized_scores(query, targets)  # float64
+</code></pre>
+<p>Backends specialized for the new SIMD batch kernel: <code>x86_sse41</code>,
+<code>x86_avx2</code>, <code>x86_avx512bwvl</code>, <code>x86_avx10_256</code>, <code>x86_avx10_512</code>, and
+(added 2026-05-19) <code>macos_arm64_neon</code> and <code>linux_aarch64_neon</code> via the
+shared <code>NeonOps</code> bundle. Other architectures (SVE / Loongson / Power)
+still fall through to the shared scalar bit-parallel dispatch and
+remain correct.</p>
+<h2 id="levenshtein-damerau-levenshtein-power8-vsx-2026-05-19">Levenshtein + Damerau-Levenshtein (Power8 VSX) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/power8-lev-osa-2026-05-19.txt"><code>benchmarks/power8-lev-osa-2026-05-19.txt</code></a>.</p>
+<p>Build context: Power8 KVM-virtualized core (4.157 GHz), Ubuntu 20.04,
+Python 3.13, AT15.0 GCC 11.4 at <code>/opt/at15.0/bin/g++</code> (the system GCC
+9.4 is too old for <code>cxx_std_23</code>), CMake 4.3.2. <code>VsxOps</code> is the new
+128-bit / 2-lane bundle (same shape as SSE / NEON / LSX) using
+<code>__vector unsigned long long</code> and Altivec intrinsics. Power8's ISA
+2.07 has native unsigned <code>vec_cmpgt</code> for 64-bit lanes so the kernel
+ports without emulation.</p>
+<p>No rapidfuzz / python-Levenshtein wheels exist for ppc64le on PyPI;
+comparison is against our generic backend (which runs tight bit-parallel
+Myers/OSA scalars).</p>
+<h3 id="levenshtein-1-vs-1000-short-3-15-char-corpus">Levenshtein 1-vs-1000 short (3-15 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">VSX</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">103 µs</td>
+<td style="text-align: right;"><strong>44 µs</strong></td>
+<td style="text-align: right;">2.37x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">109 µs</td>
+<td style="text-align: right;"><strong>44 µs</strong></td>
+<td style="text-align: right;">2.49x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">111 µs</td>
+<td style="text-align: right;"><strong>44 µs</strong></td>
+<td style="text-align: right;">2.54x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">125 µs</td>
+<td style="text-align: right;"><strong>44 µs</strong></td>
+<td style="text-align: right;"><strong>2.87x</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="levenshtein-1-vs-200-medium-30-250-char-corpus">Levenshtein 1-vs-200 medium (30-250 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">VSX</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">153 µs</td>
+<td style="text-align: right;">98 µs</td>
+<td style="text-align: right;">1.56x</td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">200 µs</td>
+<td style="text-align: right;">98 µs</td>
+<td style="text-align: right;">2.04x</td>
+</tr>
+<tr>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">468 µs</td>
+<td style="text-align: right;">172 µs</td>
+<td style="text-align: right;">2.72x</td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">675 µs</td>
+<td style="text-align: right;">223 µs</td>
+<td style="text-align: right;"><strong>3.03x</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Multi-word kernel takes over at q=100; the ratio grows because the
+W-block SIMD scales with q while generic scalar's overhead scales
+linearly with q too.</p>
+<h3 id="damerau-levenshtein-1-vs-1000-short">Damerau-Levenshtein 1-vs-1000 short</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">VSX</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">109 µs</td>
+<td style="text-align: right;"><strong>48 µs</strong></td>
+<td style="text-align: right;">2.25x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">108 µs</td>
+<td style="text-align: right;"><strong>48 µs</strong></td>
+<td style="text-align: right;">2.22x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">112 µs</td>
+<td style="text-align: right;"><strong>48 µs</strong></td>
+<td style="text-align: right;">2.30x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">124 µs</td>
+<td style="text-align: right;"><strong>48 µs</strong></td>
+<td style="text-align: right;"><strong>2.57x</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="damerau-levenshtein-1-vs-200-medium">Damerau-Levenshtein 1-vs-200 medium</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">VSX</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">159 µs</td>
+<td style="text-align: right;">109 µs</td>
+<td style="text-align: right;">1.46x</td>
+</tr>
+<tr>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">182 µs</td>
+<td style="text-align: right;">109 µs</td>
+<td style="text-align: right;">1.67x</td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">204 µs</td>
+<td style="text-align: right;">109 µs</td>
+<td style="text-align: right;"><strong>1.87x</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Unlike LSX (which trails generic on the 2-lane Damerau medium
+workload), Power8 VSX wins consistently here. Power8's faster
+<code>vec_extract</code> for the per-lane gather setup and the native unsigned
+<code>vec_cmpgt</code> keep the 2-lane SIMD competitive even on short-pattern
+inner loops.</p>
+<h2 id="levenshtein-damerau-levenshtein-graviton4-neonsvesve2-2026-05-19">Levenshtein + Damerau-Levenshtein (Graviton4 NEON/SVE/SVE2) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/graviton4-lev-osa-2026-05-19.csv"><code>benchmarks/graviton4-lev-osa-2026-05-19.csv</code></a>.</p>
+<p>Build context: AWS Graviton4 (Neoverse V2, 1 vCPU c8g.medium), Ubuntu
+24.04, Python 3.14, GCC 13.x. The Graviton4 host has only 1.8 GiB RAM
+and 1 vCPU, so the build required <code>CMAKE_BUILD_PARALLEL_LEVEL=1</code> and a
+4 GiB swapfile to keep cc1plus from OOM-killing on the template-heavy
+TUs.</p>
+<p>All three ARM backends (<code>linux_aarch64_neon</code>, <code>linux_aarch64_sve</code>,
+<code>linux_aarch64_sve2</code>) share the same SIMD path: the SVE backends are
+built with <code>-msve-vector-bits=128</code>, so they hold the same 2 lanes of
+64-bit as NEON. Both wire through <code>NeonOps</code> rather than a separate
+<code>SveOps</code> bundle — the bit-parallel Lev/OSA kernel uses no
+SVE-specific feature.</p>
+<h3 id="levenshtein-1-vs-1000-short-3-15-char-corpus_1">Levenshtein 1-vs-1000 short (3-15 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">python-Levenshtein</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">53 µs</td>
+<td style="text-align: right;">140 µs</td>
+<td style="text-align: right;">2.67x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">53 µs</td>
+<td style="text-align: right;">148 µs</td>
+<td style="text-align: right;">2.80x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">53 µs</td>
+<td style="text-align: right;">176 µs</td>
+<td style="text-align: right;">3.33x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">53 µs</td>
+<td style="text-align: right;">213 µs</td>
+<td style="text-align: right;"><strong>4.05x</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="levenshtein-1-vs-200-medium-30-250-char-corpus_1">Levenshtein 1-vs-200 medium (30-250 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">python-Levenshtein</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">150 µs</td>
+<td style="text-align: right;"><strong>119 µs</strong></td>
+<td style="text-align: right;">0.80x</td>
+</tr>
+<tr>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">150 µs</td>
+<td style="text-align: right;"><strong>121 µs</strong></td>
+<td style="text-align: right;">0.81x</td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">150 µs</td>
+<td style="text-align: right;"><strong>127 µs</strong></td>
+<td style="text-align: right;">0.85x</td>
+</tr>
+<tr>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;"><strong>163 µs</strong></td>
+<td style="text-align: right;">256 µs</td>
+<td style="text-align: right;">1.57x</td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;"><strong>224 µs</strong></td>
+<td style="text-align: right;">434 µs</td>
+<td style="text-align: right;">1.94x</td>
+</tr>
+</tbody>
+</table>
+<p>Single-word multi-target (q ≤ 64): we trail python-Levenshtein on
+medium-length targets because the per-target SIMD setup outpaces the
+2-lane parallelism gain. Multi-word kicks in at q=100; we then pull
+ahead 1.57-1.94x.</p>
+<h3 id="damerau-levenshtein-1-vs-1000-short_1">Damerau-Levenshtein 1-vs-1000 short</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">rapidfuzz OSA</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">57 µs</td>
+<td style="text-align: right;">129 µs</td>
+<td style="text-align: right;">2.27x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">57 µs</td>
+<td style="text-align: right;">142 µs</td>
+<td style="text-align: right;">2.50x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">57 µs</td>
+<td style="text-align: right;">179 µs</td>
+<td style="text-align: right;">3.15x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">57 µs</td>
+<td style="text-align: right;">221 µs</td>
+<td style="text-align: right;"><strong>3.89x</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="neon-vs-sve-vs-sve2">NEON vs SVE vs SVE2</h3>
+<p>All three ARM backends produce identical results and identical
+performance (53 µs for q=10 short, etc.). The auto-detect picks SVE2
+on Graviton4 since it ranks first in the priority list, but routing
+through <code>NeonOps</code> means swapping backends is observationally a no-op.</p>
+<h2 id="levenshtein-damerau-levenshtein-loongson-lasxlsx-2026-05-19">Levenshtein + Damerau-Levenshtein (Loongson LASX/LSX) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/loongson-lev-osa-2026-05-19.txt"><code>benchmarks/loongson-lev-osa-2026-05-19.txt</code></a>.</p>
+<p>Build context: Loongson 3A6000 (LoongArch64), Kylin V10 SP1, Python
+3.13, GCC 15.2.0 (<code>/opt/loongson-gcc-15.2.0</code>), CMake 4.3.2. No
+rapidfuzz / python-Levenshtein wheels exist for LoongArch on PyPI, so
+the comparison is against our generic scalar backend (which already
+runs the bit-parallel Myers / OSA kernels in tight C++).</p>
+<p><code>LsxOps</code> is 128-bit / 2 lanes (similar to SSE &amp; NEON);
+<code>LasxOps</code> is 256-bit / 4 lanes (similar to AVX2).</p>
+<h3 id="caveat-on-vandn">Caveat on <code>vandn</code></h3>
+<p>Initial port had LSX/LASX returning negative scores on simple inputs.
+Root cause: <code>__lsx_vandn_v(a, b)</code> returns <code>~a &amp; b</code> (Intel-style),
+contrary to what the LoongArch ISA reference's mnemonic name "VANDN"
+suggested. The fix was a single-line operand swap; correctness on the
+generic-reference test set is now 3200/3200 across q_lens 10/32/64/100.</p>
+<h3 id="levenshtein-1-vs-1000-short-3-15-char-corpus_2">Levenshtein 1-vs-1000 short (3-15 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">LSX</th>
+<th style="text-align: right;">LASX</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">103 µs</td>
+<td style="text-align: right;">67 µs (1.54x)</td>
+<td style="text-align: right;"><strong>49 µs (2.10x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">108 µs</td>
+<td style="text-align: right;">67 µs (1.61x)</td>
+<td style="text-align: right;"><strong>49 µs (2.18x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">126 µs</td>
+<td style="text-align: right;">67 µs (1.88x)</td>
+<td style="text-align: right;"><strong>49 µs (2.56x)</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="levenshtein-1-vs-200-medium-30-250-char-corpus_2">Levenshtein 1-vs-200 medium (30-250 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">LSX</th>
+<th style="text-align: right;">LASX</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">175 µs</td>
+<td style="text-align: right;">162 µs (1.08x)</td>
+<td style="text-align: right;"><strong>114 µs (1.54x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">185 µs</td>
+<td style="text-align: right;">162 µs (1.14x)</td>
+<td style="text-align: right;"><strong>114 µs (1.63x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">492 µs</td>
+<td style="text-align: right;">203 µs (2.43x)</td>
+<td style="text-align: right;"><strong>147 µs (3.34x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">777 µs</td>
+<td style="text-align: right;">351 µs (2.22x)</td>
+<td style="text-align: right;"><strong>260 µs (2.99x)</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The multi-word kernel (q_len &gt; 64, W=2/3) pulls ahead more
+dramatically than the single-word range because the SIMD batch
+amortizes the wide-add carry chain across 4 lanes (LASX) on the
+LoongArch's 3 GHz cores.</p>
+<h3 id="damerau-levenshtein-1-vs-1000-short_2">Damerau-Levenshtein 1-vs-1000 short</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">LSX</th>
+<th style="text-align: right;">LASX</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">97 µs</td>
+<td style="text-align: right;">91 µs (1.06x)</td>
+<td style="text-align: right;"><strong>62 µs (1.57x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">102 µs</td>
+<td style="text-align: right;">91 µs (1.12x)</td>
+<td style="text-align: right;"><strong>61 µs (1.66x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">121 µs</td>
+<td style="text-align: right;">91 µs (1.32x)</td>
+<td style="text-align: right;"><strong>61 µs (1.97x)</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="damerau-levenshtein-1-vs-200-medium_1">Damerau-Levenshtein 1-vs-200 medium</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">generic</th>
+<th style="text-align: right;">LSX</th>
+<th style="text-align: right;">LASX</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">176 µs</td>
+<td style="text-align: right;">249 µs (0.71x)</td>
+<td style="text-align: right;"><strong>155 µs (1.14x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">182 µs</td>
+<td style="text-align: right;">249 µs (0.73x)</td>
+<td style="text-align: right;"><strong>155 µs (1.17x)</strong></td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">189 µs</td>
+<td style="text-align: right;">249 µs (0.76x)</td>
+<td style="text-align: right;"><strong>155 µs (1.21x)</strong></td>
+</tr>
+</tbody>
+</table>
+<p>LSX trails the generic backend on the OSA medium workload: 2 lanes of
+SIMD overhead (extra gather / mask / state-shift cost) outpaces the
+parallelism gain when the per-target scalar bit-parallel Myers loop is
+already tight. LASX keeps 4-lane parallelism worthwhile. Backend
+auto-detect picks LASX where available, so this only matters on
+machines that lack LASX.</p>
+<h2 id="levenshtein-damerau-levenshtein-mac-m4-neon-2026-05-19">Levenshtein + Damerau-Levenshtein (Mac M4 NEON) - 2026-05-19</h2>
+<p>Raw artifact: <a href="benchmarks/macos-arm64-neon-lev-osa-2026-05-19.csv"><code>benchmarks/macos-arm64-neon-lev-osa-2026-05-19.csv</code></a>.</p>
+<p>Build context: Apple M4 (T6041), macOS 15.x, Python 3.13 in the
+project virtualenv. Uses the new <code>macos_arm64_neon</code> SIMD batch kernel
+(2 lanes × 64-bit, NEON intrinsics in <code>levenshtein_simd_ops.hpp</code>). The
+Mac is 2-lane (NEON 128-bit), so per-call SIMD speedup is smaller than
+on AVX-512 (8 lanes); the win comes from skipping Python ABI per-pair
+overhead on the batch path.</p>
+<h3 id="levenshtein-1-vs-1000-short-targets-3-15-char-corpus">Levenshtein, 1-vs-1000 short targets (3-15 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">python-Levenshtein</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;"><strong>17 µs</strong></td>
+<td style="text-align: right;">92 µs</td>
+<td style="text-align: right;">5.49x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;"><strong>17 µs</strong></td>
+<td style="text-align: right;">97 µs</td>
+<td style="text-align: right;">5.80x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;"><strong>17 µs</strong></td>
+<td style="text-align: right;">118 µs</td>
+<td style="text-align: right;">7.04x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;"><strong>17 µs</strong></td>
+<td style="text-align: right;">143 µs</td>
+<td style="text-align: right;"><strong>8.54x</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="levenshtein-1-vs-200-medium-targets-30-250-char-corpus">Levenshtein, 1-vs-200 medium targets (30-250 char corpus)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">python-Levenshtein</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">80 µs</td>
+<td style="text-align: right;">89 µs</td>
+<td style="text-align: right;">1.12x</td>
+</tr>
+<tr>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">80 µs</td>
+<td style="text-align: right;">94 µs</td>
+<td style="text-align: right;">1.18x</td>
+</tr>
+<tr>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">80 µs</td>
+<td style="text-align: right;">95 µs</td>
+<td style="text-align: right;">1.19x</td>
+</tr>
+<tr>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">94 µs</td>
+<td style="text-align: right;">152 µs</td>
+<td style="text-align: right;">1.61x</td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;"><strong>112 µs</strong></td>
+<td style="text-align: right;">260 µs</td>
+<td style="text-align: right;"><strong>2.33x</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The 100/200-char rows exercise the multi-word kernel (W=2/3); the
+ratio grows because python-Levenshtein's overhead scales with pattern
+length while our W-block SIMD scales with <code>q_len / (64 * lanes)</code>.</p>
+<h3 id="damerau-levenshtein-1-vs-1000-short_3">Damerau-Levenshtein, 1-vs-1000 short</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">stride_align</th>
+<th style="text-align: right;">rapidfuzz OSA</th>
+<th style="text-align: right;">ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;"><strong>20 µs</strong></td>
+<td style="text-align: right;">87 µs</td>
+<td style="text-align: right;">4.35x</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;"><strong>20 µs</strong></td>
+<td style="text-align: right;">95 µs</td>
+<td style="text-align: right;">4.81x</td>
+</tr>
+<tr>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;"><strong>20 µs</strong></td>
+<td style="text-align: right;">120 µs</td>
+<td style="text-align: right;">6.06x</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;"><strong>20 µs</strong></td>
+<td style="text-align: right;">148 µs</td>
+<td style="text-align: right;"><strong>7.45x</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-vs-1-singular_1">1-vs-1 singular</h3>
+<p>Parity territory — Python ABI dominates, no algorithmic gap.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;"><code>q_len</code></th>
+<th style="text-align: right;">Lev sa / Lev rf</th>
+<th style="text-align: right;">OSA sa / OSA rf</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0.13 / 0.13 µs</td>
+<td style="text-align: right;">0.13 / 0.13 µs</td>
+</tr>
+<tr>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">0.21 / 0.21 µs</td>
+<td style="text-align: right;"><strong>0.17</strong> / 0.21 µs</td>
+</tr>
+<tr>
+<td style="text-align: right;">60</td>
+<td style="text-align: right;"><strong>0.29</strong> / 0.33 µs</td>
+<td style="text-align: right;">0.29 / 0.29 µs</td>
+</tr>
+</tbody>
+</table>
 <h2 id="arm-graviton4-linux-aarch64-2026-05-18">ARM Graviton4 (Linux aarch64) - 2026-05-18</h2>
 <p>Raw artifacts:</p>
 <table>
@@ -743,7 +1996,7 @@ in commit <code>617d282</code>; the public NEON backend covers both.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="takeaways_1">Takeaways</h3>
+<h3 id="takeaways_2">Takeaways</h3>
 <p>The 2026-05-18 sweep is the first post-<code>5174571</code> SVE/SVE2 capture against
 parasail. SVE/SVE2 jumped from <code>0.450x</code> parasail geomean (pre-fix snapshot
 in the 2026-05-16 CSV) to <code>1.042x</code> / <code>1.081x</code> respectively — within rounding
@@ -925,7 +2178,7 @@ ratios between the two ARM sections.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="takeaways_2">Takeaways</h3>
+<h3 id="takeaways_3">Takeaways</h3>
 <p>NEON on Mac has crossed parasail parity. The 2026-05-18 sweep is <code>1.065x</code>
 parasail geomean across 80 rows (was <code>0.720x</code> on the 2026-05-14 focused
 sweep). The path/CIGAR group is now the strongest (<code>1.272x</code> geomean) — the
@@ -1182,7 +2435,7 @@ CIGAR builder rework):</p>
 </tr>
 </tbody>
 </table>
-<h3 id="takeaways_3">Takeaways</h3>
+<h3 id="takeaways_4">Takeaways</h3>
 <p>LASX is the clear Loongson win: 11.6x geomean over generic on score-only,
 7.5x over patched parasail on 1:1 direct score calls, and up to 29.7x on the
 best row. LSX trails LASX by roughly the expected 2x register-width factor.
@@ -1439,7 +2692,7 @@ against <code>generic</code> on the same machine. The 2026-05-18 sweep was pinne
 </tr>
 </tbody>
 </table>
-<h3 id="takeaways_4">Takeaways</h3>
+<h3 id="takeaways_5">Takeaways</h3>
 <p>Power8 VSX is a uniform win or tie. The <code>0.96x</code> worst case is a short 1:1
 linear path-info row at width 16 where SIMD setup dominates. The biggest wins
 (~16x) are <code>sw-farrar-score</code> and <code>sw-score</code> for both English and Chinese
@@ -1468,6 +2721,706 @@ useful as a correctness/reference backend only.</p>
 <li>Build parasail from source for ppc64le and add a parasail column to the next sweep — every other family in this file has at least one parasail point of reference.</li>
 <li>Investigate why SWAR loses to generic on Power8 via an asm dump of the generic score loop.</li>
 </ol>
+<h2 id="jaro-jaro-winkler-cross-arch-2026-05-23">Jaro + Jaro-Winkler (cross-arch) - 2026-05-23</h2>
+<p>First cross-arch sweep of the new Jaro / Jaro-Winkler SIMD batch
+kernels. One target per 64-bit SIMD lane; the query's per-byte PEQ is
+gathered per-lane on each iteration, and the per-lane window mask is
+built via the new <code>shl_var_u64</code> / <code>shr_var_u64</code> Ops primitives. After
+the SIMD inner loop, a scalar finishing pass per lane computes
+match/transposition counts from the bitmaps.</p>
+<p>Same workload everywhere: random lowercase strings, one query of the
+listed length, 1000 targets of the same length. Median of 3 runs of
+50 iterations each. Baseline is <code>rapidfuzz.distance.Jaro.similarity</code>
+called in a Python list comprehension — the natural "fuzzy match one
+query against many targets" pattern.</p>
+<p>Output is bit-equivalent to rapidfuzz across all listed backends:
+verified on 500 random batches × ~25 targets each (~12,500 pairs per
+backend); 0 mismatches at machine precision.</p>
+<h3 id="singular-simd-batch-one-query-1000-targets">Singular SIMD batch (one query, 1000 targets)</h3>
+<table>
+<thead>
+<tr>
+<th>Host / backend</th>
+<th style="text-align: right;">Query len</th>
+<th style="text-align: right;">stride-align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">Ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">40.7 us</td>
+<td style="text-align: right;">181.5 us</td>
+<td style="text-align: right;"><strong>4.46x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">105.1 us</td>
+<td style="text-align: right;">289.2 us</td>
+<td style="text-align: right;"><strong>2.75x</strong></td>
+</tr>
+<tr>
+<td>Graviton4 <code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">43 us</td>
+<td style="text-align: right;">269 us</td>
+<td style="text-align: right;"><strong>6.26x</strong></td>
+</tr>
+<tr>
+<td>Graviton4 <code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">100 us</td>
+<td style="text-align: right;">353 us</td>
+<td style="text-align: right;"><strong>3.53x</strong></td>
+</tr>
+<tr>
+<td>Apple M-series <code>macos_arm64_neon</code></td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">16 us</td>
+<td style="text-align: right;">151 us</td>
+<td style="text-align: right;"><strong>9.36x</strong></td>
+</tr>
+<tr>
+<td>Apple M-series <code>macos_arm64_neon</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">48 us</td>
+<td style="text-align: right;">183 us</td>
+<td style="text-align: right;"><strong>3.86x</strong></td>
+</tr>
+<tr>
+<td>Loongson <code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">87 us</td>
+<td style="text-align: right;">13,952 us</td>
+<td style="text-align: right;">161x</td>
+</tr>
+<tr>
+<td>Loongson <code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">187 us</td>
+<td style="text-align: right;">49,299 us</td>
+<td style="text-align: right;">263x</td>
+</tr>
+<tr>
+<td>Power8 <code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">194 us</td>
+<td style="text-align: right;">600 us</td>
+<td style="text-align: right;"><strong>3.09x</strong></td>
+</tr>
+<tr>
+<td>Power8 <code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">32</td>
+<td style="text-align: right;">467 us</td>
+<td style="text-align: right;">719 us</td>
+<td style="text-align: right;"><strong>1.54x</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The Loongson ratios are dramatic because rapidfuzz has no LSX/LASX
+SIMD path on LoongArch64 — it falls through to a scalar C kernel,
+while our LSX/LASX bit-parallel batch fans out 2/4 targets per vector
+iteration.</p>
+<h3 id="one-bug-surfaced-during-deployment">One bug surfaced during deployment</h3>
+<p>VSX (<code>*reinterpret_cast&lt;Vec*&gt;(ptr)</code> for <code>load_aligned</code>/<code>store_aligned</code>)
+ran into a strict-aliasing miscompile under GCC -O3: the scalar
+writes to per-iteration <code>LaneScratch</code> could be reordered past the
+same-block Vec read, silently dropping lane-1 match updates on every
+2-target group. The Levenshtein SIMD kernel uses the same primitives
+but a different scratch pattern, so it didn't trip. Fix: switch VSX
+to <code>vec_xl</code> / <code>vec_xst</code>, the proper VSX load/store intrinsics.
+Documented in commit <code>8ae4905</code>.</p>
+<h3 id="multi-word-query-batch-q_len-in-64-256-m_len-64">Multi-word query batch (q_len in (64, 256], m_len ≤ 64)</h3>
+<p>Same workload shape, query length stretched into the multi-word path
+(W = 2 for q in (64, 128], W = 3 for (128, 192], W = 4 for (192, 256]).
+Targets stay short; b_matched fits in a single word.</p>
+<table>
+<thead>
+<tr>
+<th>Host / backend</th>
+<th style="text-align: right;">q_len</th>
+<th style="text-align: right;">m_len</th>
+<th style="text-align: right;">N</th>
+<th style="text-align: right;">stride-align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">Ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">50</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">45 us</td>
+<td style="text-align: right;">227 us</td>
+<td style="text-align: right;"><strong>5.01x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">44 us</td>
+<td style="text-align: right;">255 us</td>
+<td style="text-align: right;"><strong>5.81x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">150</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">52 us</td>
+<td style="text-align: right;">299 us</td>
+<td style="text-align: right;"><strong>5.79x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">60 us</td>
+<td style="text-align: right;">328 us</td>
+<td style="text-align: right;"><strong>5.45x</strong></td>
+</tr>
+<tr>
+<td>Graviton4 <code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">53 us</td>
+<td style="text-align: right;">238 us</td>
+<td style="text-align: right;"><strong>4.52x</strong></td>
+</tr>
+<tr>
+<td>Apple M-series <code>macos_arm64_neon</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">25 us</td>
+<td style="text-align: right;">124 us</td>
+<td style="text-align: right;"><strong>4.96x</strong></td>
+</tr>
+<tr>
+<td>Loongson <code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">110 us</td>
+<td style="text-align: right;">39,461 us</td>
+<td style="text-align: right;">358x</td>
+</tr>
+<tr>
+<td>Power8 <code>linux_powerpc64_vsx</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">1,532 us</td>
+<td style="text-align: right;">581 us</td>
+<td style="text-align: right;">0.38x</td>
+</tr>
+</tbody>
+</table>
+<p>Power8 is the one regression. The 2-block (W=2) inner loop doubles
+the gather count per j vs the single-word path, and Power8's VSX
+gather is emulated as scalar <code>vec_extract</code>/<code>vec_insert</code> (no native
+ppc gather instruction at this lane count). The per-iteration
+overhead exceeds rapidfuzz's tight scalar loop at this size.
+Workaround: if q_len ≤ 64 the single-word path stays 3x ahead;
+above 64 on Power8 specifically, prefer the per-target scalar
+dispatch (which the singular-API path already uses for q &gt; 64).
+Future work: native pre-shuffle of the gather indices, or a Power-
+specific tuned gather using <code>vec_perm</code>.</p>
+<h3 id="multi-word-target-batch-q_len-256-m_len-in-64-256">Multi-word target batch (q_len ≤ 256, m_len in (64, 256])</h3>
+<p>The second multi-word axis: target length crossing the 64-bit
+register boundary, in addition to (or independent of) the query
+length. b_matched becomes <code>std::array&lt;Vec, W_target&gt;</code>; the inner
+loop only updates block <code>j / 64</code> so the per-iteration work is the
+same as single-word target.</p>
+<table>
+<thead>
+<tr>
+<th>Host / backend</th>
+<th style="text-align: right;">q</th>
+<th style="text-align: right;">m</th>
+<th style="text-align: right;">N</th>
+<th style="text-align: right;">stride-align</th>
+<th style="text-align: right;">rapidfuzz</th>
+<th style="text-align: right;">Ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">196 us</td>
+<td style="text-align: right;">789 us</td>
+<td style="text-align: right;"><strong>4.02x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">150</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">440 us</td>
+<td style="text-align: right;">1305 us</td>
+<td style="text-align: right;"><strong>2.97x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">60</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">171 us</td>
+<td style="text-align: right;">631 us</td>
+<td style="text-align: right;"><strong>3.70x</strong></td>
+</tr>
+<tr>
+<td>Tiger Lake <code>x86_avx512bwvl</code></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">343 us</td>
+<td style="text-align: right;">1230 us</td>
+<td style="text-align: right;"><strong>3.58x</strong></td>
+</tr>
+<tr>
+<td>Graviton4 <code>linux_aarch64_neon</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">246 us</td>
+<td style="text-align: right;">643 us</td>
+<td style="text-align: right;"><strong>2.62x</strong></td>
+</tr>
+<tr>
+<td>Apple M-series <code>macos_arm64_neon</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">100 us</td>
+<td style="text-align: right;">296 us</td>
+<td style="text-align: right;"><strong>2.95x</strong></td>
+</tr>
+<tr>
+<td>Loongson <code>linux_loongarch64_lasx</code></td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">509 us</td>
+<td style="text-align: right;">142,489 us</td>
+<td style="text-align: right;">279x</td>
+</tr>
+</tbody>
+</table>
+<p>The dispatch picks <code>(W_query, W_target)</code> from the actual lengths in
+the batch, so short-target inputs still get <code>W_target = 1</code> (no wasted
+work). 16 instantiations max per backend.</p>
+<h3 id="constraints-v030">Constraints (v0.3.0)</h3>
+<ul>
+<li>SIMD path covers query lengths up to 256 AND target lengths up to
+  256 (W = 1..4 blocks per side). Above 256 on either side it falls
+  through to per-target scalar dispatch (bit-parallel single-word
+  for ≤ 64 inputs and the scalar reference above).</li>
+<li>Byte-compatible inputs (bytes / 1-byte unicode). Wider unicode
+  falls through to scalar via the prepared-token path.</li>
+</ul>
+<h3 id="levenshtein-audit-no-changes-needed">Levenshtein audit (no changes needed)</h3>
+<p>Lev's SIMD batch already handles query lengths up to 256 via the
+same W = 1..4 multi-word pattern. Target length on Lev's side is
+just an iteration count over the inner DP loop — no per-target
+register-width constraint — so multi-word target is a non-issue for
+Lev. Above q_len = 256, Lev's scalar dispatch picks up via Hyyrö's
+multi-word Myers (no upper bound on q_len). Future work to extend
+the SIMD batch beyond W = 4 is small but the use case (queries &gt;
+256 chars in batches of 1000+) is rare.</p>
+<h2 id="cdist-pruning-cutoff-push-down-intel-x86-2026-05-24">cdist pruning + cutoff push-down (Intel x86) - 2026-05-24</h2>
+<p>Three optimizations stacked on top of <code>cdist_above_threshold</code> and
+<code>cdist_top_k</code>:</p>
+<ol>
+<li><strong>Length-difference pruning.</strong> Each pair <code>(q, t)</code> is gated by a
+   closed-form upper bound on the achievable normalized similarity
+   before any SIMD work runs. Bounds: <code>min/max</code> for Lev / OSA /
+   true-DL, <code>(2 + min/max)/3</code> for Jaro, <code>2*min/(q+t)</code> for Indel,
+   <code>1.0</code> if equal-length for Hamming.</li>
+<li><strong>Row-sort by query length, descending.</strong> <code>cdist_top_k</code>
+   processes the longest queries first so close-length high-scoring
+   pairs surface early and the shared <code>global_min_bound</code> atomic
+   reaches a useful value before the short-query rows run.</li>
+<li><strong>Per-pair cutoff push-down into the SIMD kernel.</strong> The Myers /
+   OSA / Hamming inner loops bail per lane when the score exceeds
+   the per-pair cutoff plus the remaining-chars allowance; bailed
+   lanes return the <code>cutoff + 1</code> sentinel. Lev/OSA use
+   <code>floor((1-T)*max(|q|, |t|) + 1e-9)</code>; Hamming uses
+   <code>floor((1-T)*|q|)</code>. Indel's bit-parallel Allison-Dix doesn't
+   track a running distance per column, and Jaro/JW have multi-term
+   scores without a clean per-column bail, so those two scorer
+   families benefit from length pruning only.</li>
+</ol>
+<p>All three are correctness-preserving — tests in
+<code>tests/test_cdist_length_pruning.py</code> pin the result set against the
+un-pruned full <code>cdist</code> matrix at multiple thresholds and the
+floating-point integer-boundary edges.</p>
+<h3 id="setup">Setup</h3>
+<p>Tiger Lake <code>x86_avx512bwvl</code>, N=400 queries × M=400 targets =
+160,000 pairs, random lowercase ASCII. Lengths 4–40 for Lev / OSA /
+Indel / Jaro / JW; lengths 100 (equal-length) for Hamming.
+<code>cpu_count=4</code>. Reproduce via <code>tools/bench_cdist_pruning.py --scorer
+&lt;name&gt;</code>.</p>
+<h3 id="cdist_above_threshold-throughput-pairssec"><code>cdist_above_threshold</code> throughput (pairs/sec)</h3>
+<table>
+<thead>
+<tr>
+<th>Scorer</th>
+<th style="text-align: right;">T=0</th>
+<th style="text-align: right;">T=0.3</th>
+<th style="text-align: right;">T=0.5</th>
+<th style="text-align: right;">T=0.7</th>
+<th style="text-align: right;">T=0.85</th>
+<th style="text-align: right;">T=0.95</th>
+<th style="text-align: right;">T=0.99</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">0.49M</td>
+<td style="text-align: right;">12.7M</td>
+<td style="text-align: right;">31.3M</td>
+<td style="text-align: right;">53.7M</td>
+<td style="text-align: right;">116M</td>
+<td style="text-align: right;">226M</td>
+<td style="text-align: right;"><strong>290M</strong></td>
+</tr>
+<tr>
+<td>DAMERAU_LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">0.50M</td>
+<td style="text-align: right;">13.0M</td>
+<td style="text-align: right;">35.5M</td>
+<td style="text-align: right;">70.2M</td>
+<td style="text-align: right;">147M</td>
+<td style="text-align: right;">190M</td>
+<td style="text-align: right;"><strong>297M</strong></td>
+</tr>
+<tr>
+<td>HAMMING_NORMALIZED (n=100)</td>
+<td style="text-align: right;">0.46M</td>
+<td style="text-align: right;">22.5M</td>
+<td style="text-align: right;">122M</td>
+<td style="text-align: right;">108M</td>
+<td style="text-align: right;">110M</td>
+<td style="text-align: right;">114M</td>
+<td style="text-align: right;"><strong>136M</strong></td>
+</tr>
+<tr>
+<td>INDEL_NORMALIZED</td>
+<td style="text-align: right;">0.47M</td>
+<td style="text-align: right;">11.3M</td>
+<td style="text-align: right;">24.7M</td>
+<td style="text-align: right;">39.0M</td>
+<td style="text-align: right;">66M</td>
+<td style="text-align: right;">143M</td>
+<td style="text-align: right;"><strong>286M</strong></td>
+</tr>
+<tr>
+<td>JARO</td>
+<td style="text-align: right;">0.53M</td>
+<td style="text-align: right;">0.5M</td>
+<td style="text-align: right;">2.2M</td>
+<td style="text-align: right;">12.6M</td>
+<td style="text-align: right;">24M</td>
+<td style="text-align: right;">47M</td>
+<td style="text-align: right;"><strong>129M</strong></td>
+</tr>
+<tr>
+<td>JARO_WINKLER</td>
+<td style="text-align: right;">0.51M</td>
+<td style="text-align: right;">0.5M</td>
+<td style="text-align: right;">1.8M</td>
+<td style="text-align: right;">11.9M</td>
+<td style="text-align: right;">14M</td>
+<td style="text-align: right;">41M</td>
+<td style="text-align: right;"><strong>141M</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="speedup-ratio-vs-t0-same-scorer-same-workload">Speedup ratio vs <code>T=0</code> (same scorer, same workload)</h3>
+<table>
+<thead>
+<tr>
+<th>Scorer</th>
+<th style="text-align: right;">T=0.3</th>
+<th style="text-align: right;">T=0.5</th>
+<th style="text-align: right;">T=0.7</th>
+<th style="text-align: right;">T=0.85</th>
+<th style="text-align: right;">T=0.95</th>
+<th style="text-align: right;">T=0.99</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;"><strong>26x</strong></td>
+<td style="text-align: right;"><strong>64x</strong></td>
+<td style="text-align: right;"><strong>109x</strong></td>
+<td style="text-align: right;"><strong>236x</strong></td>
+<td style="text-align: right;"><strong>458x</strong></td>
+<td style="text-align: right;"><strong>587x</strong></td>
+</tr>
+<tr>
+<td>DAMERAU_LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;"><strong>26x</strong></td>
+<td style="text-align: right;"><strong>72x</strong></td>
+<td style="text-align: right;"><strong>141x</strong></td>
+<td style="text-align: right;"><strong>298x</strong></td>
+<td style="text-align: right;"><strong>384x</strong></td>
+<td style="text-align: right;"><strong>598x</strong></td>
+</tr>
+<tr>
+<td>HAMMING_NORMALIZED</td>
+<td style="text-align: right;"><strong>49x</strong></td>
+<td style="text-align: right;"><strong>264x</strong></td>
+<td style="text-align: right;"><strong>233x</strong></td>
+<td style="text-align: right;"><strong>238x</strong></td>
+<td style="text-align: right;"><strong>246x</strong></td>
+<td style="text-align: right;"><strong>293x</strong></td>
+</tr>
+<tr>
+<td>INDEL_NORMALIZED</td>
+<td style="text-align: right;"><strong>24x</strong></td>
+<td style="text-align: right;"><strong>53x</strong></td>
+<td style="text-align: right;"><strong>83x</strong></td>
+<td style="text-align: right;"><strong>142x</strong></td>
+<td style="text-align: right;"><strong>306x</strong></td>
+<td style="text-align: right;"><strong>611x</strong></td>
+</tr>
+<tr>
+<td>JARO</td>
+<td style="text-align: right;">0.9x</td>
+<td style="text-align: right;">4.1x</td>
+<td style="text-align: right;"><strong>24x</strong></td>
+<td style="text-align: right;"><strong>46x</strong></td>
+<td style="text-align: right;"><strong>90x</strong></td>
+<td style="text-align: right;"><strong>245x</strong></td>
+</tr>
+<tr>
+<td>JARO_WINKLER</td>
+<td style="text-align: right;">1.0x</td>
+<td style="text-align: right;">3.5x</td>
+<td style="text-align: right;"><strong>23x</strong></td>
+<td style="text-align: right;"><strong>27x</strong></td>
+<td style="text-align: right;"><strong>80x</strong></td>
+<td style="text-align: right;"><strong>275x</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Jaro / Jaro-Winkler show no benefit until the threshold rises above
+the natural-distribution floor of the <code>(2 + min/max)/3</code> length
+bound. For length 4–40 random strings that happens around T ≈ 0.7;
+above that the bound rules out most pairs and the speedup compounds.</p>
+<h3 id="cdist_top_k-throughput-pairssec"><code>cdist_top_k</code> throughput (pairs/sec)</h3>
+<table>
+<thead>
+<tr>
+<th>Scorer</th>
+<th style="text-align: right;">k=1</th>
+<th style="text-align: right;">k=10</th>
+<th style="text-align: right;">k=100</th>
+<th style="text-align: right;">k=1000</th>
+<th style="text-align: right;">k=10000</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">8.0M</td>
+<td style="text-align: right;">25.3M</td>
+<td style="text-align: right;">21.1M</td>
+<td style="text-align: right;">17.0M</td>
+<td style="text-align: right;">8.5M</td>
+</tr>
+<tr>
+<td>DAMERAU_LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">20.0M</td>
+<td style="text-align: right;">23.4M</td>
+<td style="text-align: right;">19.4M</td>
+<td style="text-align: right;">18.6M</td>
+<td style="text-align: right;">12.2M</td>
+</tr>
+<tr>
+<td>HAMMING_NORMALIZED (n=100)</td>
+<td style="text-align: right;">78.0M</td>
+<td style="text-align: right;">68.9M</td>
+<td style="text-align: right;">71.1M</td>
+<td style="text-align: right;">61.6M</td>
+<td style="text-align: right;">24.0M</td>
+</tr>
+<tr>
+<td>INDEL_NORMALIZED</td>
+<td style="text-align: right;">29.1M</td>
+<td style="text-align: right;">24.5M</td>
+<td style="text-align: right;">21.5M</td>
+<td style="text-align: right;">17.4M</td>
+<td style="text-align: right;">7.5M</td>
+</tr>
+<tr>
+<td>JARO</td>
+<td style="text-align: right;">15.3M</td>
+<td style="text-align: right;">14.2M</td>
+<td style="text-align: right;">13.9M</td>
+<td style="text-align: right;">12.6M</td>
+<td style="text-align: right;">8.9M</td>
+</tr>
+<tr>
+<td>JARO_WINKLER</td>
+<td style="text-align: right;">15.1M</td>
+<td style="text-align: right;">12.2M</td>
+<td style="text-align: right;">13.6M</td>
+<td style="text-align: right;">13.4M</td>
+<td style="text-align: right;">10.0M</td>
+</tr>
+</tbody>
+</table>
+<p>The row-sort matters most at small <code>k</code>: with the longest queries
+processed first, the global heap-min bound rises early and the
+per-pair cutoff push-down has a tight value to compare against for
+the bulk of the remaining rows. At very large <code>k</code> the heap rarely
+fills with strong matches so the bound stays close to the
+<code>(1.0 - safe margin)</code> floor and the kernel-level cutoff doesn't bite.</p>
+<h3 id="cross-arch-throughput-at-t099-pairssec">Cross-arch throughput at <code>T=0.99</code> (pairs/sec)</h3>
+<p>Same script, same workload, four different SIMD backends.</p>
+<table>
+<thead>
+<tr>
+<th>Scorer</th>
+<th style="text-align: right;">Tiger Lake <code>x86_avx512bwvl</code></th>
+<th style="text-align: right;">Graviton4 <code>linux_aarch64_neon</code></th>
+<th style="text-align: right;">Mac M-series <code>macos_arm64_neon</code></th>
+<th style="text-align: right;">Loongson <code>linux_loongarch64_lasx</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">290M</td>
+<td style="text-align: right;">318M</td>
+<td style="text-align: right;">996M</td>
+<td style="text-align: right;">370M</td>
+</tr>
+<tr>
+<td>DAMERAU_LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">297M</td>
+<td style="text-align: right;">318M</td>
+<td style="text-align: right;">1,014M</td>
+<td style="text-align: right;">426M</td>
+</tr>
+<tr>
+<td>HAMMING_NORMALIZED (n=100)</td>
+<td style="text-align: right;">136M</td>
+<td style="text-align: right;">70M</td>
+<td style="text-align: right;">295M</td>
+<td style="text-align: right;">139M</td>
+</tr>
+<tr>
+<td>INDEL_NORMALIZED</td>
+<td style="text-align: right;">286M</td>
+<td style="text-align: right;">272M</td>
+<td style="text-align: right;">995M</td>
+<td style="text-align: right;">402M</td>
+</tr>
+<tr>
+<td>JARO</td>
+<td style="text-align: right;">129M</td>
+<td style="text-align: right;">160M</td>
+<td style="text-align: right;">784M</td>
+<td style="text-align: right;">190M</td>
+</tr>
+<tr>
+<td>JARO_WINKLER</td>
+<td style="text-align: right;">141M</td>
+<td style="text-align: right;">105M</td>
+<td style="text-align: right;">543M</td>
+<td style="text-align: right;">136M</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cross-arch-speedup-vs-t0-same-scorer-same-host">Cross-arch speedup vs <code>T=0</code> (same scorer, same host)</h3>
+<table>
+<thead>
+<tr>
+<th>Scorer</th>
+<th style="text-align: right;">Tiger Lake</th>
+<th style="text-align: right;">Graviton4</th>
+<th style="text-align: right;">Mac M-series</th>
+<th style="text-align: right;">Loongson</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">587x</td>
+<td style="text-align: right;">699x</td>
+<td style="text-align: right;">537x</td>
+<td style="text-align: right;"><strong>1,199x</strong></td>
+</tr>
+<tr>
+<td>DAMERAU_LEVENSHTEIN_NORMALIZED</td>
+<td style="text-align: right;">598x</td>
+<td style="text-align: right;">714x</td>
+<td style="text-align: right;">478x</td>
+<td style="text-align: right;"><strong>1,353x</strong></td>
+</tr>
+<tr>
+<td>HAMMING_NORMALIZED</td>
+<td style="text-align: right;">293x</td>
+<td style="text-align: right;">145x</td>
+<td style="text-align: right;">147x</td>
+<td style="text-align: right;">487x</td>
+</tr>
+<tr>
+<td>INDEL_NORMALIZED</td>
+<td style="text-align: right;">611x</td>
+<td style="text-align: right;">567x</td>
+<td style="text-align: right;">540x</td>
+<td style="text-align: right;"><strong>1,408x</strong></td>
+</tr>
+<tr>
+<td>JARO</td>
+<td style="text-align: right;">245x</td>
+<td style="text-align: right;">339x</td>
+<td style="text-align: right;">429x</td>
+<td style="text-align: right;">642x</td>
+</tr>
+<tr>
+<td>JARO_WINKLER</td>
+<td style="text-align: right;">275x</td>
+<td style="text-align: right;">225x</td>
+<td style="text-align: right;">293x</td>
+<td style="text-align: right;">472x</td>
+</tr>
+</tbody>
+</table>
+<p>The speedup ratios are algorithmic — the bound math is independent
+of ISA, so the cross-host spread reflects only how much the
+un-pruned baseline costs vs the post-pruning hot path on each
+machine. Mac's M-series tops the absolute throughput because the
+inner SIMD loops are bit-parallel ops that the Apple core hands
+back at high IPC; Loongson posts the largest <em>ratio</em> because its
+un-pruned baseline (full Myers / OSA / Indel scan per pair at
+length 4–40) is slowest in absolute terms.</p>
+<p>Power8 numbers are deferred (host RAM too tight for a full <code>-O3</code>
+rebuild — see <code>docs/power8-gcc10-workarounds.md</code>).</p>
+<h3 id="reading-the-numbers">Reading the numbers</h3>
+<p>The relative speedups carry over across hosts; the absolute
+throughput numbers don't. The pre-pruning baseline (<code>T=0</code>) is
+<code>cdist_above_threshold</code> running every pair through full SIMD —
+equivalent to a full <code>cdist</code> plus the iterator overhead — so it's
+the right "no optimization" reference for the speedup ratios.</p>
 <h2 id="notes-on-comparing-across-families">Notes on comparing across families</h2>
 <p>These numbers are intended for engineering direction, not publication-grade
 claims. Different families used different baselines (parasail where

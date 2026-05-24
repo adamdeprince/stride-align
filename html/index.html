@@ -23,13 +23,17 @@
 </header>
 <nav class="nav">
 <a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
-
+<div class="lang-switch" aria-label="Translations">
+  <a hreflang="en" href="index.html" class="active">English</a>
+  <a hreflang="zh-CN" href="index.zh-CN.html">简体中文</a>
+</div>
 </nav>
 <main class="content">
-<p><code>stride-align</code> is a <a href="BENCHMARK.html">blazing fast library</a> to tell you how "similar" two strings are.
-It does this by implementing the Smith-Waterman and Needleman-Wunsch
-algorithms. Instead of giving you a lecture, we're going to learn by
-doing. Let's dive right into how it works.</p>
+<p><code>stride-align</code> is a <a href="BENCHMARK.html">blazing fast library</a> to tell you
+how "similar" two strings are.  It does this by implementing the
+Smith-Waterman and Needleman-Wunsch algorithms. Instead of giving you
+a lecture, we're going to learn by doing. Let's dive right into how it
+works.</p>
 <h2 id="installation">Installation</h2>
 <pre><code class="language-bash">pip install stride-align
 </code></pre>
@@ -41,13 +45,13 @@ GitHub release instead of PyPI (PyPI does not yet accept the
 
 PY=$(python3 -c 'import sys; print(f&quot;cp{sys.version_info.major}{sys.version_info.minor}&quot;)')
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.1.0/stride_align-0.1.0-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
 </code></pre>
-<p>Prebuilt LoongArch64 wheels are available for Python 3.10, 3.11, 3.12,
-3.13, and 3.14. If you are on a different Python (or just want to
-build from source), <code>pip install stride-align</code> falls back to the
-source distribution on PyPI, which compiles the LSX/LASX kernels
-locally.</p>
+<p>Prebuilt LoongArch64 wheels are available for Python 3.9, 3.10,
+3.11, 3.12, 3.13, and 3.14. If you are on a different Python (or
+just want to build from source), <code>pip install stride-align</code> falls
+back to the source distribution on PyPI, which compiles the
+LSX/LASX kernels locally.</p>
 <p>First, just a disclaimer: I'm not using religious texts here to push
 an agenda - for this demo I need multiple largish public domain
 documents that have the same meaning but are phrased differently. The
@@ -185,13 +189,13 @@ for line in sys.stdin:
         new_line.append(word)
     print(' '.join(new_line), flush=True)
 </code></pre>
-<p>The first thing this script does is try to find our operating
-system's list of correctly spelled words. Its location can vary from
-distribution to distribution. Once we've found it, we load it, strip off
-newlines and start the act of spell checking.</p>
-<p>The spell checking looks a lot like the matching we did before. For each
-candidate word, we match it against all of the words in our list of
-correctly spelled words, use <code>argmax()</code> to find the highest-scoring
+<p>The first thing this script does is try to find our operating system's
+list of correctly spelled words. Its location can vary from
+distribution to distribution. Once we've found it, we load it, strip
+off newlines and start the act of spell checking.</p>
+<p>The spell checking looks a lot like the matching we did before. For
+each candidate word, we match it against all of the words in our list
+of correctly spelled words, use <code>argmax()</code> to find the highest-scoring
 candidate, and replace the word with that candidate. We could speed
 things up with some optimizations, like not searching for a match for
 correctly spelled words, but this is a demo and that optimization is
@@ -263,6 +267,91 @@ instead of using automatic selection.</p>
 Gapped Alignment Report". CIGAR is the compact alignment-operation notation
 used by SAM/BAM tooling. If you want the full formal version, see the
 <a href="https://samtools.github.io/hts-specs/SAMv1.pdf">SAM specification</a>.</p>
+<h3 id="edit-distance-scorers">Edit-distance scorers</h3>
+<p>Beyond Smith-Waterman and Needleman-Wunsch, <code>stride-align</code> exposes
+six unit-cost edit-distance and similarity metrics — each with its
+own SIMD-batched code path:</p>
+<pre><code class="language-python">import stride_align
+
+# Levenshtein (Myers 1999 bit-parallel) — inserts, deletes, substitutes
+stride_align.levenshtein_score(&quot;kitten&quot;, &quot;sitting&quot;)               # -&gt; 3
+stride_align.levenshtein_normalized_score(&quot;kitten&quot;, &quot;sitting&quot;)    # -&gt; 0.571...
+stride_align.levenshtein_scores(&quot;kitten&quot;, [&quot;kit&quot;, &quot;sitting&quot;])     # -&gt; ndarray[int64]
+
+# Optional `score_cutoff` (rapidfuzz convention): bail early per-target,
+# results that exceed the cutoff come back as `cutoff + 1`.
+stride_align.levenshtein_scores(query, targets, score_cutoff=3)
+
+# Damerau-Levenshtein (OSA-restricted, Hyyrö 2002) — adds adjacent
+# transposition at unit cost. This is what rapidfuzz exposes as
+# OSA.distance and is what most callers asking for
+# &quot;Damerau-Levenshtein&quot; actually want.
+stride_align.damerau_levenshtein_score(&quot;ab&quot;, &quot;ba&quot;)                # -&gt; 1
+
+# True Damerau-Levenshtein — the unrestricted form, where one
+# character may participate in more than one edit. Slower (no
+# bit-parallel kernel yet) but matches rapidfuzz.distance.DamerauLevenshtein
+# exactly. Diverges from OSA on overlapping transpositions, e.g.
+# &quot;ca&quot; -&gt; &quot;abc&quot;: OSA=3, true-DL=2.
+stride_align.true_damerau_levenshtein_score(&quot;ca&quot;, &quot;abc&quot;)          # -&gt; 2
+
+# Indel — Levenshtein restricted to insertions and deletions, no
+# substitutions. Equivalent to |a| + |b| - 2 * LCS(a, b). Bit-
+# parallel Allison-Dix (1986) inner loop.
+stride_align.indel_score(&quot;kitten&quot;, &quot;sitting&quot;)                     # -&gt; 5
+
+# Hamming — count of positions where two equal-length strings differ.
+# Cutoff variant bails the byte loop once mismatches exceed the cap.
+stride_align.hamming_score(&quot;100&quot;, &quot;110&quot;)                          # -&gt; 1
+
+# Jaro / Jaro-Winkler — similarities in [0, 1]; Winkler adds a
+# capped prefix bonus.
+stride_align.jaro_similarity(&quot;martha&quot;, &quot;marhta&quot;)                  # -&gt; 0.944...
+stride_align.jaro_winkler_similarity(&quot;martha&quot;, &quot;marhta&quot;)          # -&gt; 0.961...
+</code></pre>
+<p>The batch variants (<code>*_scores</code>, <code>*_similarities</code>) pack one target
+per SIMD lane on every supported backend:</p>
+<ul>
+<li>x86: SSE4.1 / AVX2 / AVX-512 / AVX10-256 / AVX10-512</li>
+<li>ARM: NEON (Linux + macOS), SVE / SVE2</li>
+<li>LoongArch: LSX / LASX</li>
+<li>PowerPC: VSX</li>
+</ul>
+<p>For Lev / OSA, patterns up to 64 chars run a single-word Myers;
+65–256 chars use the multi-word kernel (W=2/3/4). Indel and OSA
+fall back to scalar bit-parallel for patterns &gt;64 (multi-word
+generalization deferred); true-DL is scalar DP only.</p>
+<h3 id="cdist-cdist_above_threshold-cdist_top_k"><code>cdist</code>, <code>cdist_above_threshold</code>, <code>cdist_top_k</code></h3>
+<p>For all-pairs scoring across two lists of strings, <code>stride-align</code>
+ships three matrix-style entry points:</p>
+<pre><code class="language-python">qs = [&quot;kitten&quot;, &quot;sitting&quot;, &quot;kit&quot;]
+ts = [&quot;kitten&quot;, &quot;kit&quot;, &quot;sitting&quot;, &quot;biting&quot;]
+
+# Full N×M similarity matrix — ndarray[float64] (similarity scorers)
+# or ndarray[int64] (distance scorers).
+sa.cdist(qs, ts, scorer=sa.Scorer.JARO)
+
+# Streaming filter — yields only pairs whose similarity exceeds the
+# threshold. Workers feed a bounded queue; the caller drains it.
+# Length pruning + per-pair cutoff push-down into the kernel skip
+# most of the work at high thresholds.
+for score, q, t in sa.cdist_above_threshold(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, threshold=0.7,
+):
+    ...
+
+# Top-k by score — returns at most k highest-scoring (or lowest, for
+# distance scorers) (score, query, target) tuples. Heaps are
+# per-thread; a shared atomic global-min bound lets the per-pair
+# cutoff push-down lift the prune threshold as work progresses.
+sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+</code></pre>
+<p>At high thresholds the pruning is dramatic — see the cross-arch
+table in <a href="BENCHMARK.html">BENCHMARK.md</a> (the <code>cdist pruning</code> rows).
+Loongson LASX in particular flips the expected ranking against
+Tiger Lake AVX-512 at T=0.99; the comparison report lives at
+<a href="docs/loongson-vs-tiger-lake-cdist-2026-05-24.html">docs/loongson-vs-tiger-lake-cdist-2026-05-24.md</a>.</p>
+<p>See <a href="BENCHMARK.html">BENCHMARK.md</a> for full cross-architecture numbers.</p>
 <h2 id="optimizations-and-benchmarks">Optimizations and Benchmarks</h2>
 <p>Careful attention has been, and continues to be, paid to <code>stride-align</code>'s
 performance story. The library includes SIMD optimization for a variety of
@@ -277,7 +366,7 @@ souvenirs are appreciated. Tea, calligraphy bookmarks, paper-cut ornaments,
 Chinese knot charms, panda keychains, and small dragon desk objects are all
 welcome. Please do not send anything expensive or anything that requires
 customs paperwork.</p>
-<p>See <a href="BENCHMARKS.html">complete benchmarks</a>.</p>
+<p>See <a href="BENCHMARK.html">complete benchmarks</a>.</p>
 <h2 id="native-microbench">Native Microbench</h2>
 <p>For perf profiling without Python frames or benchmark orchestration, configure a
 native x86 microbench build:</p>

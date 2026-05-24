@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>Changelog</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p>All notable changes to <code>stride-align</code> are recorded here. The format
+follows <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a> and
+this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
+<h2 id="030-2026-05-24">[0.3.0] - 2026-05-24</h2>
+<h3 id="added">Added</h3>
+<ul>
+<li>
+<p><strong>Indel distance</strong> (<code>Scorer.INDEL</code> / <code>Scorer.INDEL_NORMALIZED</code>).
+  Levenshtein restricted to insertions and deletions; equivalent to
+  <code>|a| + |b| - 2 * LCS(a, b)</code>. Bit-parallel single-word kernel uses
+  the Allison-Dix (1986) recurrence; multi-word patterns fall back
+  to scalar DP. Public API: <code>indel_score</code>, <code>indel_normalized_score</code>,
+  <code>indel_scores</code>, <code>indel_normalized_scores</code>, <code>indel_top_k</code>,
+  <code>indel_best</code>, and the corresponding normalized variants. Wired
+  through every backend, <code>cdist</code>, <code>cdist_above_threshold</code>,
+  <code>cdist_top_k</code>, and the function-reference dispatch in <code>extract</code>.</p>
+</li>
+<li>
+<p><strong>True (unrestricted) Damerau-Levenshtein</strong>
+  (<code>Scorer.TRUE_DAMERAU_LEVENSHTEIN</code> /
+  <code>Scorer.TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED</code>). The unrestricted
+  form where a single character may participate in multiple edits.
+  Diverges from OSA on overlapping transpositions
+  (e.g. <code>"ca"</code>→<code>"abc"</code>: OSA=3, true-DL=2). Scalar DP only; no
+  bit-parallel kernel yet (Hyyrö 2003 exists but is significantly
+  more complex than OSA's bit-parallel and rarely the bottleneck).
+  Existing <code>Scorer.DAMERAU_LEVENSHTEIN</code> continues to refer to OSA —
+  the API name is unchanged.</p>
+</li>
+<li>
+<p><strong>Length-difference pruning</strong> for <code>cdist_above_threshold</code> and
+  <code>cdist_top_k</code>. Each pair is gated by a closed-form upper bound on
+  the achievable normalized similarity before any SIMD work runs;
+  bounds are scorer-specific (<code>min/max</code> for Lev/OSA/true-DL,
+  <code>(2 + min/max)/3</code> for Jaro, <code>2*min/(q+t)</code> for Indel, <code>1.0</code> if
+  equal-length for Hamming).</p>
+</li>
+<li>
+<p><strong><code>cdist_top_k</code> row-sort by query length, descending.</strong> Longest
+  queries processed first so close-length high-scoring pairs
+  surface early and the shared <code>global_min_bound</code> atomic reaches a
+  useful value before the short-query rows run.</p>
+</li>
+<li>
+<p><strong>Per-pair cutoff push-down into the SIMD kernels.</strong> Myers
+  (Levenshtein single-word + multi-word), OSA single-word, and the
+  Hamming inner loop all bail when the running distance plus
+  remaining-chars allowance proves the pair can't reach its cutoff;
+  bailed lanes return the per-pair <code>cutoff + 1</code> sentinel.</p>
+</li>
+<li>
+<p><strong><code>docs/adding-a-new-algorithm.md</code></strong>: grep-able checklist for the
+  touch points (<code>Scorer</code> enum, runtime helpers, cdist switches,
+  bindings, per-backend Implementation methods, tests) a new
+  scorer / alignment algorithm / SIMD backend has to hit.</p>
+</li>
+<li>
+<p><strong>Python 3.9 support.</strong> The three <code>match</code> blocks in the Python
+  layer became dict lookups; <code>from __future__ import annotations</code>
+  was already in place project-wide. <code>pyproject.toml</code>
+  <code>requires-python = "&gt;=3.9"</code>, classifiers extended.</p>
+</li>
+</ul>
+<h3 id="changed">Changed</h3>
+<ul>
+<li><strong>Lowered the build-time C++ requirement from C++23 to C++20.</strong>
+  The project doesn't actually use any C++23 library feature — the
+  <code>cxx_std_23</code> setting was aspirational. Lowering it lets gcc 10
+  toolchains build the project (POWER8 Ubuntu 20.04 ships gcc 9.4
+  and 10.5). Two stdlib gaps in gcc-10 libstdc++ are bridged with
+  feature-test-gated fallbacks (<code>std::bit_cast</code> →
+  <code>__builtin_bit_cast</code>, <code>std::make_unique_for_overwrite</code> → plain
+  <code>new T[n]</code>). See <code>docs/power8-gcc10-workarounds.md</code> for the full
+  list and the revert recipe once gcc 16 lands.</li>
+</ul>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li><strong><code>cdist_above_threshold</code> iterator on macOS and LoongArch64.</strong> The
+  end-of-stream signal previously used <code>throw nb::stop_iteration()</code>,
+  which relies on cross-DSO RTTI matching for nanobind's
+  <code>builtin_exception</code>. macOS's two-level namespace and at least one
+  LoongArch toolchain configuration defeat that lookup, and the
+  exception ended up routed through nanobind's generic
+  <code>std::exception</code> translator → bare <code>RuntimeError</code> instead of
+  Python's <code>StopIteration</code>. Replaced with the C-API path
+  (<code>PyErr_SetNone(PyExc_StopIteration)</code> plus a null <code>nb::object</code>
+  return), which bypasses C++ exception machinery entirely. Fixes
+  91 macOS test failures.</li>
+</ul>
+<h2 id="020">[0.2.0]</h2>
+<p>(Existing behavior at this tag was not previously tracked in this
+file; future releases will list specific deltas.)</p>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

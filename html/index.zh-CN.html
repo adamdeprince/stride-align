@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stride-align — 简体中文</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>stride-align</h1>
+<p class="tagline">Smith-Waterman &amp; Needleman-Wunsch · 简体中文</p>
+</header>
+<nav class="nav">
+<a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+<div class="lang-switch" aria-label="Translations">
+  <a hreflang="en" href="index.html">English</a>
+  <a hreflang="zh-CN" href="index.zh-CN.html" class="active">简体中文</a>
+</div>
+</nav>
+<main class="content">
+<p><code>stride-align</code> 是一个<a href="BENCHMARK.html">极速库</a>，用来判断两个字符串的
+“相似程度”。它通过实现 Smith-Waterman 和 Needleman-Wunsch 算法来完成
+这件事。这里不讲理论，直接动手——边做边学。</p>
+<h2 id="_1">安装</h2>
+<pre><code class="language-bash">pip install stride-align
+</code></pre>
+<p>在龙芯（Loongson）系统上，请先从你的 Linux 发行版安装 NumPy，再
+安装 <code>stride-align</code>；龙架构（LoongArch64）的 wheel 要从 GitHub
+release 获取，而不是 PyPI（PyPI 暂不接受 <code>linux_loongarch64</code> 或
+<code>manylinux_2_38_loongarch64</code> 平台标签）：</p>
+<pre><code class="language-bash">sudo apt install python3-numpy
+
+PY=$(python3 -c 'import sys; print(f&quot;cp{sys.version_info.major}{sys.version_info.minor}&quot;)')
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<p>预编译的龙架构（LoongArch64）wheel 覆盖 Python 3.9、3.10、3.11、
+3.12、3.13 和 3.14。如果你用的是其他 Python 版本（或者想从源码
+构建），<code>pip install stride-align</code> 会回退到 PyPI 上的源码发行版，
+在本地编译 LSX/LASX 内核。</p>
+<p>先声明一下：这里用宗教文本不是要带任何立场——这个 demo 需要几份
+比较大的、含义相同但表达不同的公共领域文档，圣经恰好极其符合这个
+要求。</p>
+<p>假设我们有两个句子——用《创世记》的开篇：</p>
+<p>美国标准译本（American Standard Version，ASV）是这样的：“In the
+beginning God created the heavens and the earth.”</p>
+<p>英王钦定版（King James Version，KJV）则是：“In the beginning God created
+the heaven and the earth.”</p>
+<p>肉眼就能看到区别——heavens 还是 heaven。但怎么把这种差异量化？用
+下面这一小段代码：</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;In the beginning God created the heaven and the earth.&quot;))
+</code></pre>
+<p>运行后输出：</p>
+<pre><code class="language-python">0.9907407407407407
+</code></pre>
+<p>归一化得分在 <code>0</code> 和 <code>1</code> 之间。得分为 <code>1</code> 表示在默认评分模型下两个
+输入完全匹配。得分接近 <code>0</code> 表示两份输入几乎没有共同之处，不过
+Smith-Waterman 仍可能在原本不相关的字符串内部找到小的局部匹配。</p>
+<p>现在换一下文本，看看得分怎么变。</p>
+<pre><code class="language-python">import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      &quot;In the beginning God created the heavens and the earth.&quot;,
+      &quot;The quick brown fox jumped over the lazy dog.&quot;))
+</code></pre>
+<p>Python 输出：</p>
+<pre><code>0.12222222222222222
+</code></pre>
+<p>明白了吗？字符串越相似，得分越高。</p>
+<p>我们来做个稍大点的例子，感受一下这个库的性能。你可能会注意到我们
+在 Smith-Waterman 和 Needleman-Wunsch 之间切换，大概会想什么时候
+用哪一个。当你想拿整段输入与整段输入比较时，用 Needleman-Wunsch。
+当你想在较大的输入内部找出匹配最好的区域时，用 Smith-Waterman。</p>
+<p>好，进入 demo 代码。这一部分需要 <code>requests</code>：</p>
+<pre><code class="language-bash">pip install requests
+</code></pre>
+<pre><code class="language-python">import os, time, requests
+import stride_align as sa
+
+if not os.path.exists(&quot;kjv.txt&quot;):
+    response = requests.get(&quot;https://openbible.com/textfiles/kjv.txt&quot;)
+    response.raise_for_status()
+    response.encoding = &quot;utf-8-sig&quot;
+    open(&quot;kjv.txt&quot;, &quot;w&quot;, encoding=&quot;utf-8&quot;).write(response.text)
+
+lines = [line.strip().lower() for line in open(&quot;kjv.txt&quot;)][2:]
+
+while True:
+    if not (query := input(&quot;Enter a snippet to match.  Press enter to end.\n&quot;)):
+        break
+    t = time.perf_counter()
+    scores = sa.needleman_wunsch_normalized_scores(query.lower(), lines)
+    best = int(scores.argmax())
+    print()
+    print(&quot;Score:&quot;, float(scores[best]))
+    print(lines[best])
+    print(&quot;Search time: %0.2fms&quot; % ((time.perf_counter() - t) * 1000))
+    print()
+    print()
+</code></pre>
+<p>这能拿来干什么？假设我们手上有一段圣经经文，想知道它出自哪一章
+哪一节。你说用 <code>grep</code>？哎，不行，这里有个问题：我们手上的经文是
+另一个译本，比方说 Catholic Public Domain 译本，而电脑上的是
+King James 版本。<code>grep</code> 的精确匹配在这里行不通。怎么找到对应的
+章节？当然是用 <code>stride-align</code> 搜索“最接近”或“最相似”的字符串。</p>
+<p>demo 的第一部分处理下载和缓存。<a href="https://openbible.com">Open Bible</a>
+把这份文本放在了 HTTP 可访问的位置，我们要尊重他们的带宽，所以
+下载下来就缓存住，做个体面的网络公民。</p>
+<p>接下来把所有行加载到一个列表里。我们去掉换行符，把所有内容转成
+小写——免得在 Shift 键问题上较劲。</p>
+<p>最后那段 <code>while True:</code> 循环读取一行文本——大概就是来自 Catholic
+版本、我们想查章节的那句经文——用 Needleman-Wunsch 的批处理形式
+把它和 King James 版本里所有行做匹配。它返回一个得分数组。我们
+用 <code>argmax()</code> 找到最高分对应的行，再把对应索引的那行打印出来。
+试一下。</p>
+<p>我准备用 Catholic 圣经里的 Jeremiah 4:28——它和 King James 圣经
+里的同一节其实差别挺大。来看看效果……</p>
+<pre><code>$ python3 demo2.py
+Enter a snippet to match.  Press enter to end.
+The earth will mourn, and the heavens will lament from above. For I have spoken, I have decided, and I have not regretted. Neither will I be turned away from it.
+
+Score: 0.3598901098901099
+jeremiah 4:28   for this shall the earth mourn, and the heavens above be black: because i have spoken [it], i have purposed [it], and will not repent, neither will i turn back from it.
+Search time: 206.51ms
+
+</code></pre>
+<p>……找到了！而且相当快。</p>
+<p>再来一个 demo：拼写检查。</p>
+<p>这是一个玩具拼写检查器，不是生产级的。它忽略标点、大小写、词频、
+专有名词和上下文。重点是用一个熟悉的任务展示同样的“一对多查询”
+模式。</p>
+<pre><code class="language-python">import os, sys
+import stride_align as sa
+
+paths = ['/usr/share/dict/words',
+         '/usr/dict/words',
+         '/var/lib/dict/words',
+         '/etc/dictionaries-common/words']
+
+for path in paths:
+    if os.path.exists(path):
+        break
+else:
+    print(&quot;Sorry, I can't find your dictionary&quot;, file=sys.stderr)
+    exit(1)
+
+
+words = [line.strip().lower() for line in open(path)]
+
+
+for line in sys.stdin:
+    new_line = []
+    for word in line.split():
+        scores = sa.needleman_wunsch_normalized_scores(word.lower(), words)
+        word = words[int(scores.argmax())]
+        new_line.append(word)
+    print(' '.join(new_line), flush=True)
+</code></pre>
+<p>脚本做的第一件事是尝试找到操作系统里的拼写正确词表。它的位置因
+发行版而异。找到之后，加载、去掉换行符，然后开始拼写检查。</p>
+<p>拼写检查本身跟前面的匹配很像。对每个输入词，把它和正确词表里的
+所有词做匹配，用 <code>argmax()</code> 找到分最高的那个，然后用它替换。
+这里还有不少可以优化的地方，比如对已经拼对的词直接跳过查找，
+不过这是个 demo，这点优化就留作读者练习了。</p>
+<p>来看看效果！</p>
+<pre><code class="language-bash">$ cat - | python3 demo3.py
+this is a demonstrtion of a spel checker
+it doesn't matter that I can't spell corectly
+
+this is a demonstration of a spell checker
+it doesn't matter that i can't spell correctly
+</code></pre>
+<h2 id="_2">细节</h2>
+<p>当前实现提供：</p>
+<ul>
+<li>Needleman-Wunsch 仅得分对齐</li>
+<li>Needleman-Wunsch 带回溯的对齐</li>
+<li>Smith-Waterman 仅得分对齐</li>
+<li>Smith-Waterman 带回溯的对齐</li>
+<li>与 <code>massive-speedup</code> 中专门化模式一致的 backend 布局</li>
+<li>CPU/backend 检测，以及 Python 层的 backend dispatch</li>
+</ul>
+<p>C++/Python 边界接受：</p>
+<ul>
+<li><code>bytes</code> 对 <code>bytes</code></li>
+<li><code>str</code> 对 <code>str</code></li>
+<li>由不可变可哈希 Python 对象组成的序列</li>
+<li>混合的“序列/对象”输入——某一侧的 <code>str</code> 或 <code>bytes</code> 会被当作
+  序列处理</li>
+</ul>
+<p>直接拿 <code>bytes</code> 对 <code>str</code> 配对会抛出 <code>TypeError</code>。</p>
+<p>当前实现是通用的动态规划内核，配上把 Python 输入序列化成 8、16、
+32 或 64 位 token 流的预处理。SIMD 专门化的 backend 之后可以替换
+对应的 backend 编译单元，而不动 Python API。</p>
+<p>仅得分函数返回数值得分。归一化版本返回 <code>0</code> 到 <code>1</code> 之间的分数。
+路径函数返回对齐结果对象，里面包含得分、对齐后的值、操作序列，
+以及可用时的 CIGAR 摘要。</p>
+<h2 id="api">API</h2>
+<pre><code class="language-python">import stride_align
+
+score = stride_align.needleman_wunsch_score(&quot;ACGT&quot;, &quot;ACCT&quot;)
+scores = stride_align.Scores(&quot;ACGT&quot;, variant=&quot;needleman_wunsch&quot;).compare([&quot;ACCT&quot;, &quot;AGGT&quot;])
+result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;)
+wide_result = stride_align.smith_waterman_path(&quot;ACCGT&quot;, &quot;CCG&quot;, width=64)
+object_result = stride_align.needleman_wunsch_path(
+    [frozenset({1}), frozenset({2})],
+    [frozenset({1}), frozenset({3})],
+)
+
+print(score)
+print(scores)
+print(result.score, result.aligned_query, result.aligned_target, result.operations)
+print(wide_result.score)
+print(object_result.aligned_query, object_result.aligned_target)
+</code></pre>
+<p>“一个 query 对多个 target”的得分工作流，请使用
+<code>Scores(...).compare([...])</code> 或者 <code>*_scores()</code> 函数。这条路径
+会一次性准备好 query / profile，是反复做中英文文本比对时推荐的
+高性能 API。</p>
+<p>对于直接配对的快速路径，回溯输出会保留输入类型：</p>
+<ul>
+<li><code>str</code> 输入返回对齐后的 <code>str</code></li>
+<li><code>bytes</code> 输入返回对齐后的 <code>bytes</code></li>
+<li>序列/对象输入返回对齐后的 <code>tuple</code> 值，空位用 <code>None</code></li>
+</ul>
+<p>传 <code>width=8</code>、<code>16</code>、<code>32</code> 或 <code>64</code> 可以强制内部 token / 评分宽度，
+而不是用自动选择。</p>
+<p>部分函数会暴露 CIGAR 字符串——CIGAR 是 “Concise Idiosyncratic
+Gapped Alignment Report” 的缩写，是 SAM/BAM 工具链使用的紧凑
+对齐操作记法。如果想看完整规范，见
+<a href="https://samtools.github.io/hts-specs/SAMv1.pdf">SAM specification</a>。</p>
+<h3 id="_3">编辑距离评分器</h3>
+<p>除了 Smith-Waterman 和 Needleman-Wunsch，<code>stride-align</code> 还提供六种
+单位代价的编辑距离/相似度度量——每一种都有自己的 SIMD 批处理代码
+路径：</p>
+<pre><code class="language-python">import stride_align
+
+# Levenshtein（Myers 1999 位并行）——插入、删除、替换
+stride_align.levenshtein_score(&quot;kitten&quot;, &quot;sitting&quot;)               # -&gt; 3
+stride_align.levenshtein_normalized_score(&quot;kitten&quot;, &quot;sitting&quot;)    # -&gt; 0.571...
+stride_align.levenshtein_scores(&quot;kitten&quot;, [&quot;kit&quot;, &quot;sitting&quot;])     # -&gt; ndarray[int64]
+
+# 可选的 `score_cutoff`（rapidfuzz 的约定）：按 target 提前退出，
+# 超过 cutoff 的结果以 `cutoff + 1` 形式返回。
+stride_align.levenshtein_scores(query, targets, score_cutoff=3)
+
+# Damerau-Levenshtein（OSA 受限版，Hyyrö 2002）——在单位代价
+# 下增加相邻字符的转置。这是 rapidfuzz 用 OSA.distance 暴露的
+# 那个，也是大多数人嘴里说的“Damerau-Levenshtein”实际上想要的。
+stride_align.damerau_levenshtein_score(&quot;ab&quot;, &quot;ba&quot;)                # -&gt; 1
+
+# True Damerau-Levenshtein ——不受限版本，一个字符可以参与多次
+# 编辑。较慢（目前没有位并行内核），但与
+# rapidfuzz.distance.DamerauLevenshtein 完全一致。和 OSA 在重叠
+# 转置上会分叉，例如 &quot;ca&quot; -&gt; &quot;abc&quot;：OSA=3，true-DL=2。
+stride_align.true_damerau_levenshtein_score(&quot;ca&quot;, &quot;abc&quot;)          # -&gt; 2
+
+# Indel ——仅限插入和删除的 Levenshtein，不允许替换。
+# 等价于 |a| + |b| - 2 * LCS(a, b)。Allison-Dix（1986）位并行
+# 内层循环。
+stride_align.indel_score(&quot;kitten&quot;, &quot;sitting&quot;)                     # -&gt; 5
+
+# Hamming ——两个等长字符串中位置不同的个数。
+# 带 cutoff 的变体在累计差异超出上限时直接退出。
+stride_align.hamming_score(&quot;100&quot;, &quot;110&quot;)                          # -&gt; 1
+
+# Jaro / Jaro-Winkler ——[0, 1] 区间的相似度；Winkler 在前缀
+# 上加一个有上限的加成。
+stride_align.jaro_similarity(&quot;martha&quot;, &quot;marhta&quot;)                  # -&gt; 0.944...
+stride_align.jaro_winkler_similarity(&quot;martha&quot;, &quot;marhta&quot;)          # -&gt; 0.961...
+</code></pre>
+<p>批处理变体（<code>*_scores</code>、<code>*_similarities</code>）在每一个支持的 backend
+上都按“一个 target 一个 SIMD lane”的方式打包起来：</p>
+<ul>
+<li>x86：SSE4.1 / AVX2 / AVX-512 / AVX10-256 / AVX10-512</li>
+<li>ARM：NEON（Linux + macOS）、SVE / SVE2</li>
+<li>龙架构（LoongArch）：LSX / LASX</li>
+<li>PowerPC：VSX</li>
+</ul>
+<p>对 Lev / OSA 而言，长度 ≤ 64 的模式走单字 Myers；65–256 走多字
+内核（W=2/3/4）。Indel 和 OSA 在模式长度 &gt; 64 时回退到标量
+位并行（多字推广暂未实现）；true-DL 目前只有标量 DP。</p>
+<h3 id="cdistcdist_above_thresholdcdist_top_k"><code>cdist</code>、<code>cdist_above_threshold</code>、<code>cdist_top_k</code></h3>
+<p>针对两份字符串列表的全配对评分场景，<code>stride-align</code> 提供三个
+矩阵风格的入口：</p>
+<pre><code class="language-python">qs = [&quot;kitten&quot;, &quot;sitting&quot;, &quot;kit&quot;]
+ts = [&quot;kitten&quot;, &quot;kit&quot;, &quot;sitting&quot;, &quot;biting&quot;]
+
+# 完整 N×M 相似度矩阵 —— ndarray[float64]（相似度评分器）
+# 或 ndarray[int64]（距离评分器）。
+sa.cdist(qs, ts, scorer=sa.Scorer.JARO)
+
+# 流式过滤 ——只产出相似度超过阈值的对。worker 向一个有界队列喂数据，
+# 调用方负责消费。长度剪枝 + 把每对的 cutoff 下推到 kernel 里，
+# 在高阈值下能跳过绝大部分工作。
+for score, q, t in sa.cdist_above_threshold(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, threshold=0.7,
+):
+    ...
+
+# 按得分取 top-k ——返回最多 k 个最高得分（对距离评分器则是
+# 最低）的 (score, query, target) 三元组。每个线程一个堆；
+# 一个共享的原子全局最小值边界，让每对的 cutoff 下推
+# 随着工作推进抬高剪枝阈值。
+sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+</code></pre>
+<p>在高阈值下剪枝的效果非常夸张——见 <a href="BENCHMARK.html">BENCHMARK.md</a>
+中的跨架构表（<code>cdist pruning</code> 那几行）。特别是龙芯（Loongson）的
+LASX 后端在 T=0.99 下，让通常预期会领先的 Tiger Lake AVX-512
+反而落后；对比报告见
+<a href="docs/loongson-vs-tiger-lake-cdist-2026-05-24.html">docs/loongson-vs-tiger-lake-cdist-2026-05-24.md</a>。</p>
+<p>完整的跨架构数据见 <a href="BENCHMARK.html">BENCHMARK.md</a>。</p>
+<h2 id="_4">优化和基准测试</h2>
+<p><code>stride-align</code> 的性能一直被认真对待，而且仍在持续优化。这个库为
+x86、Arm、龙架构（LoongArch）等多个常见目标做了 SIMD 优化。</p>
+<p><strong>龙架构（LoongArch）/ 龙芯（Loongson）。</strong> 龙芯的优化故事尤其
+值得一说：在基准用例下（英文文本、16 位得分宽度、仅得分的
+Smith-Waterman），LASX backend 比 generic backend 快 16 倍，
+比 Parasail 快 <strong>22.4 倍</strong>。</p>
+<p>如果你是在龙芯服务器上做研究，并且从这份提速里得到好处的研究者，
+欢迎引用、提交 bug、贡献基准用例；我也很乐意收到一些不贵的中国
+小纪念品——茶叶、书法书签、剪纸、中国结、熊猫钥匙扣、小龙摆件
+之类都很好。请不要寄贵重物品或需要报关的东西。</p>
+<p>完整基准测试见 <a href="BENCHMARK.html">BENCHMARK.md</a>。</p>
+<h2 id="microbench">原生 microbench</h2>
+<p>如果想在不经 Python 帧、不走基准编排的情况下做性能分析，可以配置
+一份原生 x86 microbench 构建：</p>
+<pre><code class="language-bash">nanobind_dir=&quot;$(.venv/bin/python -m nanobind --cmake_dir)&quot;
+cmake -S . -B build/perf \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+  -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+  -DPython_EXECUTABLE=.venv/bin/python \
+  -Dnanobind_DIR=&quot;$nanobind_dir&quot;
+cmake --build build/perf --target stride_align_x86_microbench
+build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+python tools/x86_microbench_regression.py \
+  --binary build/perf/stride_align_x86_microbench \
+  --cpu 2 \
+  --backends avx2,avx512bwvl \
+  --shapes 1:1,1:many \
+  --passes english,chinese \
+  --widths 16,32 \
+  --write-json /tmp/stride-align-x86-microbench.json
+.venv/bin/python tools/pinned_benchmark_sweep.py \
+  --output-dir /tmp/stride-align-pinned \
+  --cpu 2 \
+  --iterations 15 \
+  --warmups 3
+</code></pre>
+<p><code>STRIDE_ALIGN_PERF_SYMBOLS=ON</code> 会保留 nanobind 模块不被 strip，
+并加入调试符号和 frame pointer，同时保持 <code>-O3</code>。</p>
+<p>签入仓库的原生 microbench 基线在
+<code>benchmarks/x86_microbench_baseline.json</code>。把它当作一个宽松阈值的
+本地兜底，不要当成跨机器的 SLA。</p>
+<h2 id="_5">引用</h2>
+<p>如果你在研究中用到了我的软件，请引用我。</p>
+<pre><code class="language-bibtex">@software{deprince_stride_align,
+  author       = {DePrince, Adam},
+  title        = {stride-align: Fast Smith-Waterman and Needleman-Wunsch alignment for Python},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/adamdeprince/stride-align},
+  note         = {Python/C++ library for sequence and string alignment}
+}
+</code></pre>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

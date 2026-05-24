@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Convert stride-align README*.md and BENCHMARK.md to themed HTML."""
+"""Convert every stride-align *.md file (including docs/) to themed HTML
+in the html/ tree. Preserves docs/ subdirectory layout. Handles the
+README language matrix via the LANGS table; everything else is rendered
+through a single generic builder."""
 
 import html as _html
 import re
@@ -11,11 +14,10 @@ REPO = Path("/home/adam/dev/stride-align")
 OUT = REPO / "html"
 OUT.mkdir(exist_ok=True)
 
-# English only for now. Translation entries can be re-added here when the
-# translated README*.md files are updated; the rest of the script already
-# handles RTL / multi-language output.
+# Add a row per README translation that exists in the repo root.
 LANGS = [
     ("",        "en",     "English",              "ltr"),
+    ("zh-CN",   "zh-CN",  "简体中文",             "ltr"),
 ]
 
 
@@ -200,10 +202,73 @@ def build_benchmark() -> None:
     print(f"wrote {out_path}")
 
 
+def build_generic(md_relpath: Path) -> None:
+    """Convert any markdown file under REPO to a matching .html under OUT,
+    preserving subdirectories. Used for everything that isn't the README
+    matrix or the BENCHMARK page (those have bespoke builders above)."""
+    md_path = REPO / md_relpath
+    md_text = md_path.read_text(encoding="utf-8")
+    body = render_md_to_html(md_text)
+    body = rewrite_local_links(body, is_readme=False)
+    body, page_h1 = strip_top_h1_and_lang_line(body, suffix="")
+
+    # Compute the page's relative depth so the `home` link can point back
+    # to index.html with the correct number of `../` segments.
+    depth = len(md_relpath.parent.parts)
+    up = "../" * depth
+    home_link = f'<a class="home" href="{up}index.html">README</a>'
+
+    # `lang` is en by default; if the filename matches a translation
+    # suffix in LANGS, switch to that lang code.
+    name = md_path.stem  # e.g. "loongson-vs-tiger-lake-cdist-2026-05-24" or "README.zh-CN"
+    lang = "en"
+    direction = "ltr"
+    for suffix, code, _label, lang_dir in LANGS:
+        if suffix and name.endswith(f".{suffix}"):
+            lang = code
+            direction = lang_dir
+            break
+
+    title_base = page_h1 or md_path.stem
+    out_html = template(
+        title=f"{title_base} — stride-align",
+        lang=lang,
+        direction=direction,
+        masthead_title=page_h1 or md_path.stem,
+        tagline="stride-align documentation",
+        nav_inner="",
+        content=body.rstrip(),
+        home_link=home_link,
+    )
+    out_path = OUT / md_relpath.with_suffix(".html")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(out_html, encoding="utf-8")
+    print(f"wrote {out_path}")
+
+
 def main() -> None:
+    # README language matrix → index*.html
     for suffix, *_ in LANGS:
         build_readme(suffix)
+    # BENCHMARK has its own bespoke builder (different tagline, home link).
     build_benchmark()
+
+    # Everything else: walk the repo for *.md, skip the ones the bespoke
+    # builders already produced (README*.md, BENCHMARK.md) and ignore the
+    # vendored / staging trees.
+    handled_root = {
+        REPO / "BENCHMARK.md",
+        *(REPO / readme_filename(suffix) for suffix, *_ in LANGS),
+    }
+    skip_dirs = {"html", "build", "dist", "wheelhouse", ".venv", ".git",
+                 ".pytest_cache", "__pycache__", "node_modules"}
+    for md in sorted(REPO.rglob("*.md")):
+        if md in handled_root:
+            continue
+        if any(part in skip_dirs or part.startswith("wheelhouse_") for part in md.relative_to(REPO).parts):
+            continue
+        rel = md.relative_to(REPO)
+        build_generic(rel)
 
 
 if __name__ == "__main__":

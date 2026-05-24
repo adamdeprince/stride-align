@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoongArch LSX/LASX vandn.v documentation gotcha — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>LoongArch LSX/LASX vandn.v documentation gotcha</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="../index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p><strong>TL;DR.</strong> On LoongArch, <code>__lsx_vandn_v(a, b)</code> (and <code>__lasx_xvandn_v</code>)
+computes <code>~a &amp; b</code> — the same semantics as Intel's <code>_mm_andnot_si128(a,
+b)</code>. This is <strong>not</strong> what the LoongArch ISA reference's instruction
+mnemonic "VANDN" suggests when read against the Power/ARM <code>vandc</code> /
+<code>bic</code> convention (which is <code>a &amp; ~b</code>). Anyone porting SIMD code from
+those ISAs by mnemonic intuition will produce code that compiles, links,
+and silently returns wrong answers.</p>
+<p>We hit this when porting the bit-parallel Levenshtein + Damerau-
+Levenshtein SIMD kernels to <code>linux_loongarch64_lsx</code> and <code>_lasx</code>. Every
+<code>andnot_</code> call did the opposite operation, the score-delta mask was
+inverted, and small inputs returned negative distances. The fix was a
+single-line operand swap once we'd built a probe binary and run it on
+real hardware. Three hours of debugging would have been zero if the
+manual had simply written out the operation in its first paragraph.</p>
+<h2 id="what-our-wrapper-now-does">What our wrapper now does</h2>
+<pre><code class="language-cpp">// LSX vandn(x, y) = ~x &amp; y (Intel-style), contrary to the LoongArch
+// ISA reference's mnemonic name; same semantics as Intel andnot_si128.
+static Vec andnot_(Vec a, Vec b) { return __lsx_vandn_v(a, b); }
+</code></pre>
+<p>LASX is the same convention: <code>__lasx_xvandn_v(a, b) = ~a &amp; b</code>.</p>
+<h2 id="what-the-loongarch-documentation-says-and-why-its-confusing">What the LoongArch documentation says (and why it's confusing)</h2>
+<p>The LoongArch Vol. 1 ISA reference describes <code>vandn.v vd, vj, vk</code> as
+"vector AND-NOT". The mnemonic "AND-NOT" is reused across ISAs but
+with two distinct meanings:</p>
+<table>
+<thead>
+<tr>
+<th>ISA</th>
+<th>Mnemonic</th>
+<th>Operation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intel SSE / AVX</td>
+<td><code>andn</code> / <code>andnotps</code> / <code>_mm_andnot_si128(a, b)</code></td>
+<td><code>~a &amp; b</code></td>
+</tr>
+<tr>
+<td>ARM NEON</td>
+<td><code>bic</code> (bit clear) <code>vbicq(a, b)</code></td>
+<td><code>a &amp; ~b</code></td>
+</tr>
+<tr>
+<td>PowerPC AltiVec</td>
+<td><code>vandc(a, b)</code> / <code>vec_andc(a, b)</code></td>
+<td><code>a &amp; ~b</code></td>
+</tr>
+<tr>
+<td>LoongArch LSX</td>
+<td><code>vandn.v vd, vj, vk</code></td>
+<td><strong><code>~vj &amp; vk</code> (Intel-style)</strong></td>
+</tr>
+<tr>
+<td>LoongArch LASX</td>
+<td><code>xvandn.v xd, xj, xk</code></td>
+<td><strong><code>~xj &amp; xk</code> (Intel-style)</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The LoongArch ISA reference does state the formula correctly in the
+operation pseudocode (<code>VR[vd] ← ~VR[vj] &amp; VR[vk]</code>), but the human
+reading the mnemonic — especially someone arriving from a Power or ARM
+background — will guess wrong. The "AND-NOT" label suggests <code>vj</code>
+remains AND'd with the <em>NOT</em> of <code>vk</code>, like Power's <code>vandc</code> or ARM's
+<code>bic</code>.</p>
+<p>GCC's intrinsic header <code>lsxintrin.h</code> documents
+<code>__lsx_vandn_v(__m128i _1, __m128i _2)</code> simply as
+<code>(__m128i)__builtin_lsx_vandn_v((v16i8)_1, (v16i8)_2)</code> — no operand
+ordering explanation at all. Same for LASX.</p>
+<h2 id="how-to-verify">How to verify</h2>
+<p>A two-line probe on any LoongArch box:</p>
+<pre><code class="language-cpp">#include &lt;lsxintrin.h&gt;
+#include &lt;cstdio&gt;
+int main() {
+  __m128i a = __lsx_vreplgr2vr_d(0xFFFFFFFFFFFFFFFFLL);
+  __m128i b = __lsx_vreplgr2vr_d(0x1LL);
+  __m128i r = __lsx_vandn_v(a, b);
+  std::printf(&quot;vandn(0xFF.., 0x1) lane 0 = 0x%lx\n&quot;,
+              (unsigned long)__lsx_vpickve2gr_du(r, 0));
+  // Intel-style ~a &amp; b -&gt; 0x0
+  // Power-style a &amp; ~b -&gt; 0xFFFFFFFFFFFFFFFE
+  return 0;
+}
+</code></pre>
+<p>Build with <code>g++ -mlsx</code>, run on the target. We observe <code>0x0</code>,
+confirming Intel-style semantics.</p>
+<h2 id="recommendation">Recommendation</h2>
+<p>If you maintain a portable SIMD wrapper layer:</p>
+<ol>
+<li><strong>Don't trust mnemonic naming across ISAs.</strong> Always check the
+   operation pseudocode in the ISA reference (or run a probe).</li>
+<li><strong>Pick one convention for <code>andnot_(a, b)</code> in your wrapper.</strong> This
+   project follows Intel's: <code>andnot_(a, b) = ~a &amp; b</code>. Power and ARM
+   wrappers swap operands at the intrinsic call (<code>vec_andc(b, a)</code>,
+   <code>vbicq_u64(b, a)</code>). LoongArch passes through unchanged.</li>
+<li><strong>Add a smoke test.</strong> Any nontrivial SIMD kernel that uses
+   <code>andnot_</code> will produce wrong answers on day one if the operand
+   order is wrong; a single <code>andnot_(0xFF..F, 1)</code> unit test catches
+   the entire class of bug.</li>
+</ol>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><code>src/cpp/levenshtein_simd_ops.hpp</code> — the LsxOps / LasxOps bundles,
+  where the comment refers back to this doc.</li>
+<li>LoongArch Reference Manual, "Volume 1 — Basic Architecture",
+  section "Vector AND-NOT instructions" (<code>vandn.v</code> / <code>xvandn.v</code>).</li>
+<li>Intel Intrinsics Guide: <code>_mm_andnot_si128</code> (Intel-style).</li>
+<li>ARM C Language Extensions: <code>vbicq_u64</code> (Power/ARM style).</li>
+<li>AltiVec Programming Interface Manual: <code>vec_andc</code> (Power-style).</li>
+</ul>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

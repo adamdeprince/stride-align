@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SME Experiment — Pickup Notes — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>SME Experiment — Pickup Notes</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p>This file records where the experimental SME backend work was paused. The goal
+of the experiment was to add a Smith-Waterman specialization for "one short
+query against hundreds-to-thousands of short targets" on Apple Silicon with
+SME (M4+), defaulting to NEON for everything else.</p>
+<p>Nothing in the live codebase changed during this experiment — it stopped at
+the toolchain-debugging stage. The C++ source tree is exactly as it was
+before; no SME files were created, no build targets added.</p>
+<hr>
+<h2 id="status">Status</h2>
+<p><strong>Paused.</strong> Apple Clang 17 has a codegen bug that makes the SVE/SME intrinsic
+path unusable on M4. An inline-asm workaround was proved to work, but using
+it means writing the SME kernel in 150-300 lines of hand-rolled assembly,
+which the user judged too costly for the experimental scope. Revisit if
+Apple Clang ships a fix or if the workload data motivates the asm investment.</p>
+<hr>
+<h2 id="goal-recap">Goal recap</h2>
+<p>User direction: build an experimental SME specialization that defaults to
+NEON except for <code>1 short query x many short targets</code>. The "many" group must
+be split into two buckets:</p>
+<ul>
+<li><strong>Fits in SME</strong>: most targets, processed through the SME fast path.</li>
+<li><strong>Doesn't fit</strong>: long-tail outliers, processed through the existing NEON
+  per-target striped Farrar path.</li>
+</ul>
+<p>Four candidate heuristics for length-variance handling (user-provided):</p>
+<ol>
+<li><strong>Length-bucket the batch</strong> — sort/group targets by length; one ZA tile
+   per bucket; a small fraction of long-tail targets get their own (smaller,
+   less-parallel) bucket. Standard approach for batched protein alignment
+   libraries.</li>
+<li><strong>Two-tier dispatch</strong> — bulk of targets through the SME-resident fast
+   path; &gt;2 sigma length outliers through the existing striped per-target
+   path. Small classification overhead, SME pass stays full-width.</li>
+<li><strong>Truncate-and-retry</strong> — run all targets to length L in the tile, mark
+   any whose endpoint score was not reached as unfinished, re-process the
+   unfinished ones in a second pass. Works if the long-tail fraction is
+   small.</li>
+<li><strong>Mask-on-completion</strong> — keep targets in the tile but mask their
+   contribution after they reach their endpoint. Wastes some ZA capacity
+   but avoids re-batching overhead. Best when length variance is modest
+   (within 2-3x).</li>
+</ol>
+<p>User's explicit simplification: the initial split is <strong>"fits in SME vs.
+doesn't fit"</strong> (heuristic #1 collapsed to two buckets). Heuristics #2-4 are
+ways to refine the "fits" bucket later.</p>
+<hr>
+<h2 id="hardware-target-and-tiers">Hardware target and tiers</h2>
+<p>The dispatcher must distinguish SME-only from SME2-capable hosts:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>FEAT_SME</th>
+<th>FEAT_SME2</th>
+<th>Chip example (per user)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NEON only</td>
+<td>0</td>
+<td>0</td>
+<td>any Apple silicon pre-M4</td>
+</tr>
+<tr>
+<td>SME path</td>
+<td>1</td>
+<td>0</td>
+<td>M3 (per user; needs verification)</td>
+</tr>
+<tr>
+<td>SME2 path</td>
+<td>1</td>
+<td>1</td>
+<td>M4 Max (verified, see below)</td>
+</tr>
+</tbody>
+</table>
+<p>The base SME path uses streaming-SVE registers (SVL-wide vectors). SME2
+adds multi-vector loads/predicates (<code>LD1H {z0.h, z1.h}</code> etc.) that the
+column inner loop can use; gate those behind the SME2 check at runtime.</p>
+<p>Detection on macOS is via sysctl, e.g.:</p>
+<pre><code class="language-c">int v = 0; size_t n = sizeof v;
+sysctlbyname(&quot;hw.optional.arm.FEAT_SME2&quot;, &amp;v, &amp;n, nullptr, 0);
+</code></pre>
+<p>Verified probe output on the M4 Max test host <code>wopr</code>:</p>
+<pre><code>hw.optional.arm.FEAT_SME:    1
+hw.optional.arm.FEAT_SME2:   1
+SME_I8I32:   1
+SME_I16I32:  1
+SME_F32F32:  1
+FEAT_SME_I16I64: 1
+SVL on M4 Max: 512 bits (svcntb in streaming = 64; cntd in streaming = 8)
+</code></pre>
+<p>Whether M3 actually reports <code>FEAT_SME=1</code> is unconfirmed; this experiment
+trusts the user's statement that M3 is SME-only. The dispatcher logic is
+chip-name-agnostic — it keys off the feature bits — so the M3 question is
+not a blocker.</p>
+<hr>
+<h2 id="apple-clang-17-codegen-bug-root-cause-of-the-sigill">Apple Clang 17 codegen bug (root cause of the SIGILL)</h2>
+<p><strong>Symptom:</strong> any function marked <code>__arm_locally_streaming</code> that has SVE
+register footprint SIGILLs on entry on M4 Max, even though <code>FEAT_SME=1</code>
+and <code>__arm_has_sme()</code> returns 1.</p>
+<p><strong>Cause:</strong> Apple Clang's prologue emits a non-streaming SVE counting
+instruction (<code>CNTD</code>) before <code>SMSTART sm</code>. It uses <code>CNTD</code> to compute the
+SVE callee-save stack area size and a DWARF <code>vg</code> (vector granule)
+unwind offset. On hosts that have both non-streaming SVE and streaming
+SVE, <code>CNTD</code> works in either mode. Apple M4 has <strong>streaming SVE only</strong> —
+plain <code>FEAT_SVE</code> is not present — so <code>CNTD</code> outside <code>smstart</code> is illegal
+and the process dies before reaching the function body.</p>
+<p>Sample faulty prologue (Apple Clang 17, <code>-O2 -march=armv9-a+sme</code>):</p>
+<pre><code>__Z9test_cntbv:
+    rdsvl   x9, #1      ; OK: RDSVL works outside streaming on FEAT_SME
+    lsr     x9, x9, #3
+    str     x9, [sp, #-80]!
+    cntd    x9          ; &lt;-- SIGILL on M4 (non-streaming SVE)
+    str     x9, [sp, #8]
+    ... stack saves ...
+    smstart sm          ; too late
+    rdvl    x0, #1      ; only this is &quot;in streaming&quot;
+    smstop  sm
+</code></pre>
+<p>The correct fix in the compiler would be to use <code>RDSVL</code>-derived math for
+both the stack frame and the CFI offset, not <code>CNTD</code>. Whether and when
+this lands in Apple's Clang is unknown.</p>
+<p><strong>Reproducer commit kit</strong> — drop the four <code>cpp</code> files below in <code>/tmp</code>,
+compile with <code>clang++ -O2 -march=armv9-a+sme -std=c++23</code>, run.</p>
+<ul>
+<li><code>sme_min.cpp</code>: <code>__arm_locally_streaming</code> function with <strong>no</strong> SVE
+  intrinsics. Should print and exit 0.</li>
+<li><code>sme_step.cpp</code>: progressively introduces <code>svcntb</code>, <code>svptrue_b16</code>,
+  <code>svdup_n_s16</code>, <code>svld1_s16</code>. First call should SIGILL (exit 132).</li>
+<li><code>sme_rdsvl.cpp</code>: inline asm <code>rdsvl x0, #1</code> outside streaming. Returns
+  64 on M4 (= 512-bit SVL / 8), exits 0.</li>
+<li><code>sme_cntd.cpp</code>: inline asm <code>cntd x0</code> outside streaming. <strong>SIGILLs</strong>
+  on M4.</li>
+<li><code>sme_asm.cpp</code>: inline asm block doing <code>smstart sm; rdsvl; cntd; smstop sm</code>.
+  Returns <code>(64, 8)</code>, exits 0 — this is the working pattern.</li>
+</ul>
+<p>The contents of all of these are short enough to recreate; just remember
+<code>__arm_locally_streaming</code> (keyword, not <code>__attribute__</code>).</p>
+<hr>
+<h2 id="workaround-that-works">Workaround that works</h2>
+<p>Wrap the entire kernel body in one inline-asm block. The compiler never
+sees SVE intrinsics, so it never inserts the buggy prologue. Pattern:</p>
+<pre><code class="language-cpp">asm volatile(
+    &quot;smstart sm\n\t&quot;
+    // ... all SVE/SME instructions here ...
+    &quot;smstop  sm\n\t&quot;
+    : /* outputs */
+    : /* inputs */
+    : &quot;memory&quot;, &quot;x0&quot;, &quot;x1&quot;, /* etc. */
+);
+</code></pre>
+<p>This was verified on M4 with <code>rdsvl</code> + <code>cntd</code> inside the block: both run
+correctly, the block enters/exits streaming cleanly, exit 0.</p>
+<p>Implication: the actual SME kernel must be <strong>hand-written asm</strong> (either
+inline asm in C++ or a separate <code>.s</code> file). C-level SVE/SME intrinsics
+are off the table for the foreseeable future of Apple Clang 17.</p>
+<p>A clean separation: dispatcher in C++ (sysctl detection, bucket split,
+NEON fallback), and one or two <code>.s</code> files containing the streaming-SVE
+batched-SW kernel(s), linked via <code>extern "C"</code> declarations.</p>
+<hr>
+<h2 id="pickup-plan">Pickup plan</h2>
+<p>Two pieces of work, independent:</p>
+<h3 id="1-dispatcher-no-sme-knowledge-required">1. Dispatcher (no SME knowledge required)</h3>
+<p>Build entirely in C++/NEON. Deliverable: a new entry point
+<code>smith_waterman_farrar_scores_dispatched(query, targets, ...)</code> on the
+mac NEON backend that:</p>
+<p>a. Detects <code>FEAT_SME</code> / <code>FEAT_SME2</code> via <code>sysctlbyname</code> once at module
+   init, caches the result.
+b. Decides whether the workload qualifies as "1 short query x many short
+   targets":
+   - one query, multiple targets
+   - target count above some threshold (start with N &gt;= 16)
+   - representative target length below some threshold (start with
+     median target length &lt;= 256 chars)
+   Outside this regime, hand off to the existing NEON 1:many path.
+c. Inside the regime, classify each target as fits-in-SME-budget
+   (length &lt;= <code>SME_TARGET_LIMIT</code>, start with 256) or outlier.
+d. Route the "fits" bucket through the SME kernel hook if available,
+   else through NEON one-by-one.
+e. Route the "doesn't fit" bucket through the existing NEON striped
+   path.
+f. Stitch the two result lists back together in original input order.</p>
+<p>With the SME kernel stubbed out as "loop over targets calling
+<code>smith_waterman_farrar_score</code>", this is already a measurable artifact —
+it lets us see whether the bucket split itself has overhead worth
+caring about, and gives a clean drop-in point for the real kernel.</p>
+<p>Naming convention proposed: the dispatcher lives on the macOS NEON
+backend as a <code>_sme_dispatched</code> private hook so it's clearly separate
+from the public NEON API; the public <code>smith_waterman_scores</code> does not
+need to change.</p>
+<h3 id="2-sme-kernel-only-after-1-is-in-place">2. SME kernel (only after #1 is in place)</h3>
+<p>Hand-roll a streaming-SVE batched Smith-Waterman in inline asm or a
+<code>.s</code> file. Sketch of the design:</p>
+<ul>
+<li><strong>Inter-task SIMD</strong>: lanes = different targets, all targets process
+  the same query position in lockstep. At SVL=512, that's 32 lanes
+  of i16 (32 targets per stream).</li>
+<li><strong>Storage</strong>: H, E, F columns sized <code>2 * max_padded_target_length *
+  N_targets * sizeof(int16_t)</code>. For N=32, padded length=256, that's
+  32 KB — fits in L1.</li>
+<li><strong>Padding</strong>: targets shorter than the bucket's <code>L</code> get padded; the
+  padding character must not match any query character (use a token
+  outside the alphabet) so their contributions decay to zero / the
+  SW floor.</li>
+<li><strong>Outer loop</strong>: query position i; inner loop: target position j.</li>
+<li><strong>Score extraction</strong>: at end of each target's actual length, snapshot
+  the running max for that lane; combine after the streaming pass.</li>
+</ul>
+<p>For the SME2 path, the inner loop can use multi-vector loads
+(<code>LD1H {z0.h, z1.h}, p0/z, [...]</code>) to fetch two target columns per
+issue cycle. Gate this behind the FEAT_SME2 runtime flag.</p>
+<p>If the SME2 path doesn't materially beat the SME base path on this
+workload, drop the SME2 specialization. Keep the dispatch simple.</p>
+<p>Skeleton signature for the C++ side:</p>
+<pre><code class="language-cpp">extern &quot;C&quot; void stride_align_sme_batch_sw_score_i16(
+    const std::int16_t* query,        // length q_len
+    std::int32_t q_len,
+    const std::int16_t* targets_pad,  // [N x L] padded targets
+    std::int32_t n_targets,
+    std::int32_t pad_len,             // L (same for the whole bucket)
+    const std::int32_t* target_lens,  // actual length of each target
+    std::int16_t match_score,
+    std::int16_t mismatch_score,
+    std::int16_t gap_score,
+    std::int16_t* out_scores          // length N
+);
+</code></pre>
+<p>Implement in <code>src/cpp/backends/sme/macos_arm64_sme_batch.s</code> (or <code>.cpp</code>
+if you go with inline asm). Build it with <code>-march=armv9-a+sme+sme2</code> so
+SME2 instructions assemble; the runtime SME2 check still decides
+whether the kernel actually issues SME2 ops.</p>
+<hr>
+<h2 id="what-was-actually-done-during-this-session">What was actually done during this session</h2>
+<ul>
+<li>Confirmed M4 Max has FEAT_SME=1 and FEAT_SME2=1 with full integer
+  outer-product support.</li>
+<li>Wrote and ran five probe binaries on wopr that pinned down exactly
+  which instruction SIGILLs and why.</li>
+<li>Read Apple Clang 17's <code>arm_sme.h</code> and the assembly it produces for
+  trivial streaming functions.</li>
+<li>Verified the inline-asm workaround works end-to-end.</li>
+</ul>
+<p><strong>No source file in the stride-align repo was modified during this
+experiment.</strong> All probe files lived under <code>/tmp/</code> on wopr.</p>
+<hr>
+<h2 id="open-questions-for-whoever-picks-this-up">Open questions for whoever picks this up</h2>
+<ol>
+<li>Is the M3 (or any pre-M4 Apple silicon) actually <code>FEAT_SME=1</code>? Not
+   verified during this experiment; user's statement was assumed.</li>
+<li>Does Apple Clang 18+ fix the <code>CNTD</code>-before-<code>SMSTART</code> bug? Worth a
+   one-line probe before committing to the inline-asm path.</li>
+<li>Is there any signal that Apple's Accelerate framework already exposes
+   a streaming-SVE batched DP somewhere? Linking against it might be a
+   shortcut around hand-rolling the kernel — but it would have to be
+   inspected to see if it actually does SW DP.</li>
+<li>What's the right <code>SME_TARGET_LIMIT</code>? Pick something defensible
+   (e.g., padded SME L1 budget) and let the benchmark choose between
+   the inner heuristics (#2-4 from above) on top of the basic
+   fits/doesn't-fit split.</li>
+</ol>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POWER8 / gcc-10 build workarounds — TO BE REVERTED — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>POWER8 / gcc-10 build workarounds — TO BE REVERTED</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="../index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p>POWER8 (Ubuntu 20.04, repo at <code>/home/kxpoem/dev/stride-align</code>) only has
+gcc 9.4 and gcc 10.5 in its system package set, and libstdc++ paired
+with those is 10.x. gcc-10's libstdc++ ships C++20 language support but
+misses several C++20 <em>library</em> additions that landed in libstdc++ 11.</p>
+<p>We carry a few workarounds so the project can build on this host until
+the in-progress gcc 16 build on the user's build machine lands and
+gets installed on POWER8. <strong>Every workaround below should be reverted
+once POWER8 has gcc 16.</strong> This file exists so they're easy to find
+and remove.</p>
+<h2 id="1-cmake-c-standard-lowered-from-23-20">1. CMake C++ standard lowered from 23 → 20</h2>
+<p><strong>Files:</strong>
+* <code>CMakeLists.txt:14</code> — <code>set(CMAKE_CXX_STANDARD 20)</code>
+* <code>CMakeLists.txt:142</code> — <code>target_compile_features(${target_name} PRIVATE cxx_std_20)</code></p>
+<p><strong>Why:</strong> CMake's <code>cxx_std_23</code> compiler-feature lookup requires gcc 11+;
+gcc 10.5 is rejected even though the <em>language</em> features we use are
+all C++20. The codebase doesn't actually use any C++23 stdlib feature
+— this was always nominal.</p>
+<p><strong>Revert:</strong> Restore both lines to <code>23</code> and update the comment block
+above the <code>target_compile_features</code> call.</p>
+<p><strong>Commit:</strong> <code>eb510c1</code> ("build: require cxx_std_20 instead of
+cxx_std_23")</p>
+<h2 id="2-stdbit_cast-__builtin_bit_cast-fallback">2. <code>std::bit_cast</code> → <code>__builtin_bit_cast</code> fallback</h2>
+<p><strong>File:</strong> <code>src/cpp/backends/swar.hpp</code>, lines ~39-50</p>
+<p><strong>Why:</strong> libstdc++ 10 has the language builtin <code>__builtin_bit_cast</code>
+but not the <code>std::bit_cast</code> template wrapper. Added a
+<code>stride_align_bit_cast&lt;To&gt;(from)</code> helper gated on
+<code>__cpp_lib_bit_cast &gt;= 201806L</code>.</p>
+<p><strong>Revert:</strong> Delete the <code>stride_align_bit_cast</code> helper template and
+restore both call sites to <code>std::bit_cast&lt;Lane&gt;(raw)</code> /
+<code>std::bit_cast&lt;RawLane&gt;(value)</code>.</p>
+<p><strong>Commit:</strong> <code>6853b8c</code> ("swar: route bit_cast through a helper that
+falls back to __builtin_bit_cast")</p>
+<h2 id="3-stdmake_unique_for_overwrite-new-tracecelln-fallback">3. <code>std::make_unique_for_overwrite</code> → <code>new TraceCell[n]</code> fallback</h2>
+<p><strong>File:</strong> <code>src/cpp/backends/profile_traceback.hpp</code>, around line 91 in
+the <code>TraceTable</code> constructor</p>
+<p><strong>Why:</strong> libstdc++ 10 doesn't have <code>std::make_unique_for_overwrite</code>
+(C++20 P1020). The fallback uses <code>new TraceCell[n]</code> under
+<code>__cpp_lib_smart_ptr_for_overwrite</code> guard. Semantic difference: the
+fallback value-initializes the cells (a zero-fill we don't strictly
+need since the DP rewrites them), but that's not on a hot path for
+the gcc-10 build.</p>
+<p><strong>Revert:</strong> Replace the <code>#if/#else/#endif</code> block with the original
+unconditional <code>: data_(std::make_unique_for_overwrite&lt;TraceCell[]&gt;(
+std::max&lt;std::size_t&gt;(cell_count, 1U))) {}</code> and delete the comment
+block.</p>
+<p><strong>Commit:</strong> <code>080c01a</code> ("profile_traceback + docs: gcc-10 fallback for
+make_unique_for_overwrite")</p>
+<h2 id="how-to-revert-all-three-after-gcc-16-ships">How to revert all three after gcc 16 ships</h2>
+<p>When the new toolchain is on POWER8:</p>
+<pre><code class="language-sh"># Identify the commits to revert
+git log --oneline -- \
+    CMakeLists.txt \
+    src/cpp/backends/swar.hpp \
+    src/cpp/backends/profile_traceback.hpp | grep -i &quot;gcc-10\|cxx_std_20\|bit_cast\|make_unique_for_overwrite&quot;
+
+# Revert each
+git revert &lt;eb510c1&gt; &lt;6853b8c&gt; &lt;make_unique_for_overwrite-commit-if-any&gt;
+
+# Verify on POWER8 with gcc 16:
+ssh power8 'cd /home/kxpoem/dev/stride-align &amp;&amp; rm -rf build &amp;&amp; \
+    .venv/bin/pip install -e . --no-build-isolation \
+    --config-settings=cmake.define.STRIDE_ALIGN_STATIC_CXX_RUNTIME=ON &amp;&amp; \
+    .venv/bin/python -m pytest tests/'
+</code></pre>
+<p>(<code>STRIDE_ALIGN_STATIC_CXX_RUNTIME=ON</code> may also become unnecessary
+once libc on the host catches up — re-check whether the runtime
+needs <code>__libc_single_threaded</code> once you rebuild with gcc 16's
+libstdc++.)</p>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

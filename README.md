@@ -1,9 +1,12 @@
 # stride-align
 
-`stride-align` is a [blazing fast library](BENCHMARK.md) to tell you how "similar" two strings are.
-It does this by implementing the Smith-Waterman and Needleman-Wunsch
-algorithms. Instead of giving you a lecture, we're going to learn by
-doing. Let's dive right into how it works.
+**Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
+
+`stride-align` is a [blazing fast library](BENCHMARK.md) to tell you
+how "similar" two strings are.  It does this by implementing the
+Smith-Waterman and Needleman-Wunsch algorithms. Instead of giving you
+a lecture, we're going to learn by doing. Let's dive right into how it
+works.
 
 ## Installation
 
@@ -204,14 +207,14 @@ for line in sys.stdin:
     print(' '.join(new_line), flush=True)
 ```
 
-The first thing this script does is try to find our operating
-system's list of correctly spelled words. Its location can vary from
-distribution to distribution. Once we've found it, we load it, strip off
-newlines and start the act of spell checking.
+The first thing this script does is try to find our operating system's
+list of correctly spelled words. Its location can vary from
+distribution to distribution. Once we've found it, we load it, strip
+off newlines and start the act of spell checking.
 
-The spell checking looks a lot like the matching we did before. For each
-candidate word, we match it against all of the words in our list of
-correctly spelled words, use `argmax()` to find the highest-scoring
+The spell checking looks a lot like the matching we did before. For
+each candidate word, we match it against all of the words in our list
+of correctly spelled words, use `argmax()` to find the highest-scoring
 candidate, and replace the word with that candidate. We could speed
 things up with some optimizations, like not searching for a match for
 correctly spelled words, but this is a demo and that optimization is
@@ -412,7 +415,7 @@ Chinese knot charms, panda keychains, and small dragon desk objects are all
 welcome. Please do not send anything expensive or anything that requires
 customs paperwork.
 
-See [complete benchmarks](BENCHMARKS.md).
+See [complete benchmarks](BENCHMARK.md).
 
 ## Native Microbench
 
