@@ -13,22 +13,35 @@ pip install stride-align
 ```
 
 在龙芯（Loongson）系统上，请先从你的 Linux 发行版安装 NumPy，再
-安装 `stride-align`；龙架构（LoongArch64）的 wheel 要从 GitHub
-release 获取，而不是 PyPI（PyPI 暂不接受 `linux_loongarch64` 或
-`manylinux_2_38_loongarch64` 平台标签）：
+安装 `stride-align`；龙架构（LoongArch64）的 wheel 需要从下面任一
+镜像获取 —— PyPI 暂不接受 `linux_loongarch64` 或
+`manylinux_2_38_loongarch64` 平台标签，所以二进制安装目前只有这
+一条路径。
 
 ```bash
 sudo apt install python3-numpy
-
 PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+```
+
+从 GitHub 安装：
+
+```bash
 pip install \
   https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
 ```
 
-预编译的龙架构（LoongArch64）wheel 覆盖 Python 3.9、3.10、3.11、
-3.12、3.13 和 3.14。如果你用的是其他 Python 版本（或者想从源码
-构建），`pip install stride-align` 会回退到 PyPI 上的源码发行版，
-在本地编译 LSX/LASX 内核。
+如果从 GitHub 下载不方便，可以改用 `stride-align.com` 上的镜像；
+这里提供的是同一份 wheel：
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
+```
+
+预编译的龙架构（LoongArch64）wheel 在两个镜像上都覆盖 Python
+3.9、3.10、3.11、3.12、3.13 和 3.14。如果你用的是其他 Python 版本
+（或者想从源码构建），`pip install stride-align` 会回退到 PyPI
+上的源码发行版，在本地编译 LSX/LASX 内核。
 
 先声明一下：这里用宗教文本不是要带任何立场——这个 demo 需要几份
 比较大的、含义相同但表达不同的公共领域文档，圣经恰好极其符合这个
@@ -280,8 +293,8 @@ Gapped Alignment Report” 的缩写，是 SAM/BAM 工具链使用的紧凑
 ### 编辑距离评分器
 
 除了 Smith-Waterman 和 Needleman-Wunsch，`stride-align` 还提供六种
-单位代价的编辑距离/相似度度量——每一种都有自己的 SIMD 批处理代码
-路径：
+单位代价的编辑距离/相似度度量。其中大多数都有 SIMD 批处理代码
+路径；true-DL 目前是例外，仍然走标量 DP：
 
 ```python
 import stride_align
@@ -330,8 +343,8 @@ stride_align.jaro_winkler_similarity("martha", "marhta")          # -> 0.961...
 - PowerPC：VSX
 
 对 Lev / OSA 而言，长度 ≤ 64 的模式走单字 Myers；65–256 走多字
-内核（W=2/3/4）。Indel 和 OSA 在模式长度 > 64 时回退到标量
-位并行（多字推广暂未实现）；true-DL 目前只有标量 DP。
+内核（W=2/3/4）。Indel 在模式长度 > 64 时回退到标量位并行
+（多字推广暂未实现）；true-DL 目前只有标量 DP。
 
 ### `cdist`、`cdist_above_threshold`、`cdist_top_k`
 
@@ -380,13 +393,13 @@ Smith-Waterman），LASX backend 比 generic backend 快 16 倍，
 比 Parasail 快 **22.4 倍**。
 
 如果你是在龙芯服务器上做研究，并且从这份提速里得到好处的研究者，
-欢迎引用、提交 bug、贡献基准用例；我也很乐意收到一些不贵的中国
-小纪念品——茶叶、书法书签、剪纸、中国结、熊猫钥匙扣、小龙摆件
-之类都很好。请不要寄贵重物品或需要报关的东西。
+欢迎引用、提交 bug、贡献基准用例；如果你愿意表达一点心意，我也很喜欢收到一些不贵的中国小纪念品——
+茶叶、书法书签、剪纸、中国结、熊猫钥匙扣、小龙摆件之类都很好。
+请不要寄贵重物品或需要报关的东西。
 
 完整基准测试见 [BENCHMARK.md](BENCHMARK.md)。
 
-## 原生 microbench
+## 原生微基准
 
 如果想在不经 Python 帧、不走基准编排的情况下做性能分析，可以配置
 一份原生 x86 microbench 构建：
