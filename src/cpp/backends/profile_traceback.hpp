@@ -87,9 +87,21 @@ template <typename TraceCell>
 class TraceTable {
  public:
   // Interior cells are overwritten by DP; callers initialize only readable boundaries.
+  // `std::make_unique_for_overwrite` is C++20 but libstdc++ only shipped
+  // it in version 11. On older toolchains (gcc 10, POWER8 Ubuntu 20.04)
+  // we fall back to `new TraceCell[n]` — that's value-initialized rather
+  // than default-initialized, costing a zero-fill we don't need, but
+  // semantically identical for the DP traceback path. The fallback is
+  // never on the perf-critical path for the host arches (graviton4,
+  // loongson, mac, x86) that have libstdc++ 11+.
   explicit TraceTable(std::size_t cell_count)
+#if defined(__cpp_lib_smart_ptr_for_overwrite) && \
+    __cpp_lib_smart_ptr_for_overwrite >= 202002L
       : data_(std::make_unique_for_overwrite<TraceCell[]>(
             std::max<std::size_t>(cell_count, 1U))) {}
+#else
+      : data_(new TraceCell[std::max<std::size_t>(cell_count, 1U)]) {}
+#endif
 
   TraceCell& operator[](std::size_t index) noexcept {
     return data_[index];
