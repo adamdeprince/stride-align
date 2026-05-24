@@ -46,7 +46,7 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 8 | **2.40x** | 2.51x | 1.56x | 3.03x |
 | Damerau-Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 7 | **1.99x** | 2.22x | 1.46x | 2.57x |
 | Jaro batch (cross-arch, N=1000) | `x86_avx512bwvl` / `*_neon` / `*_lasx` / `*_vsx` | rapidfuzz | 10 | **5.1x** | 3.7x | 1.54x | 263x |
-| cdist pruning (Intel x86, T=0.99) | `x86_avx512bwvl` | own T=0 baseline | 6 | **403x** | 440x | 245x | 611x |
+| cdist pruning (cross-arch, T=0.99) | `x86_avx512bwvl` / `*_neon` / `*_lasx` | own T=0 baseline | 24 | **426x** | 512x | 145x | 1,408x |
 
 ## Intel x86 - 2026-05-18
 
@@ -1176,15 +1176,49 @@ the bulk of the remaining rows. At very large `k` the heap rarely
 fills with strong matches so the bound stays close to the
 `(1.0 - safe margin)` floor and the kernel-level cutoff doesn't bite.
 
+### Cross-arch throughput at `T=0.99` (pairs/sec)
+
+Same script, same workload, four different SIMD backends.
+
+| Scorer | Tiger Lake `x86_avx512bwvl` | Graviton4 `linux_aarch64_neon` | Mac M-series `macos_arm64_neon` | Loongson `linux_loongarch64_lasx` |
+| --- | ---: | ---: | ---: | ---: |
+| LEVENSHTEIN_NORMALIZED        | 290M | 318M |   996M | 370M |
+| DAMERAU_LEVENSHTEIN_NORMALIZED| 297M | 318M | 1,014M | 426M |
+| HAMMING_NORMALIZED (n=100)    | 136M |  70M |   295M | 139M |
+| INDEL_NORMALIZED              | 286M | 272M |   995M | 402M |
+| JARO                          | 129M | 160M |   784M | 190M |
+| JARO_WINKLER                  | 141M | 105M |   543M | 136M |
+
+### Cross-arch speedup vs `T=0` (same scorer, same host)
+
+| Scorer | Tiger Lake | Graviton4 | Mac M-series | Loongson |
+| --- | ---: | ---: | ---: | ---: |
+| LEVENSHTEIN_NORMALIZED        | 587x | 699x |   537x | **1,199x** |
+| DAMERAU_LEVENSHTEIN_NORMALIZED| 598x | 714x |   478x | **1,353x** |
+| HAMMING_NORMALIZED            | 293x | 145x |   147x |   487x  |
+| INDEL_NORMALIZED              | 611x | 567x |   540x | **1,408x** |
+| JARO                          | 245x | 339x |   429x |   642x  |
+| JARO_WINKLER                  | 275x | 225x |   293x |   472x  |
+
+The speedup ratios are algorithmic — the bound math is independent
+of ISA, so the cross-host spread reflects only how much the
+un-pruned baseline costs vs the post-pruning hot path on each
+machine. Mac's M-series tops the absolute throughput because the
+inner SIMD loops are bit-parallel ops that the Apple core hands
+back at high IPC; Loongson posts the largest *ratio* because its
+un-pruned baseline (full Myers / OSA / Indel scan per pair at
+length 4–40) is slowest in absolute terms.
+
+Power8 numbers are deferred (host RAM too tight for a full `-O3`
+rebuild — see `docs/power8-gcc10-workarounds.md`).
+
 ### Reading the numbers
 
-These are absolute throughput on one Tiger Lake host with one
-specific workload size and threading config. The relative speedups
-(second table) carry over to other hosts; the absolute numbers do
-not. The pre-pruning baseline (T=0) is `cdist_above_threshold` with
-the threshold-zero — every pair runs through full SIMD, equivalent
-to `cdist` plus the iterator overhead — so it's the right "no
-optimization" reference for the speedup ratios.
+The relative speedups carry over across hosts; the absolute
+throughput numbers don't. The pre-pruning baseline (`T=0`) is
+`cdist_above_threshold` running every pair through full SIMD —
+equivalent to a full `cdist` plus the iterator overhead — so it's
+the right "no optimization" reference for the speedup ratios.
 
 ## Notes on comparing across families
 
