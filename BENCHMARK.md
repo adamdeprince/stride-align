@@ -46,6 +46,7 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 8 | **2.40x** | 2.51x | 1.56x | 3.03x |
 | Damerau-Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 7 | **1.99x** | 2.22x | 1.46x | 2.57x |
 | Jaro batch (cross-arch, N=1000) | `x86_avx512bwvl` / `*_neon` / `*_lasx` / `*_vsx` | rapidfuzz | 10 | **5.1x** | 3.7x | 1.54x | 263x |
+| cdist pruning (Intel x86, T=0.99) | `x86_avx512bwvl` | own T=0 baseline | 6 | **403x** | 440x | 245x | 611x |
 
 ## Intel x86 - 2026-05-18
 
@@ -1092,6 +1093,98 @@ Lev. Above q_len = 256, Lev's scalar dispatch picks up via Hyyrö's
 multi-word Myers (no upper bound on q_len). Future work to extend
 the SIMD batch beyond W = 4 is small but the use case (queries >
 256 chars in batches of 1000+) is rare.
+
+## cdist pruning + cutoff push-down (Intel x86) - 2026-05-24
+
+Three optimizations stacked on top of `cdist_above_threshold` and
+`cdist_top_k`:
+
+1. **Length-difference pruning.** Each pair `(q, t)` is gated by a
+   closed-form upper bound on the achievable normalized similarity
+   before any SIMD work runs. Bounds: `min/max` for Lev / OSA /
+   true-DL, `(2 + min/max)/3` for Jaro, `2*min/(q+t)` for Indel,
+   `1.0` if equal-length for Hamming.
+2. **Row-sort by query length, descending.** `cdist_top_k`
+   processes the longest queries first so close-length high-scoring
+   pairs surface early and the shared `global_min_bound` atomic
+   reaches a useful value before the short-query rows run.
+3. **Per-pair cutoff push-down into the SIMD kernel.** The Myers /
+   OSA / Hamming inner loops bail per lane when the score exceeds
+   the per-pair cutoff plus the remaining-chars allowance; bailed
+   lanes return the `cutoff + 1` sentinel. Lev/OSA use
+   `floor((1-T)*max(|q|, |t|) + 1e-9)`; Hamming uses
+   `floor((1-T)*|q|)`. Indel's bit-parallel Allison-Dix doesn't
+   track a running distance per column, and Jaro/JW have multi-term
+   scores without a clean per-column bail, so those two scorer
+   families benefit from length pruning only.
+
+All three are correctness-preserving — tests in
+`tests/test_cdist_length_pruning.py` pin the result set against the
+un-pruned full `cdist` matrix at multiple thresholds and the
+floating-point integer-boundary edges.
+
+### Setup
+
+Tiger Lake `x86_avx512bwvl`, N=400 queries × M=400 targets =
+160,000 pairs, random lowercase ASCII. Lengths 4–40 for Lev / OSA /
+Indel / Jaro / JW; lengths 100 (equal-length) for Hamming.
+`cpu_count=4`. Reproduce via `tools/bench_cdist_pruning.py --scorer
+<name>`.
+
+### `cdist_above_threshold` throughput (pairs/sec)
+
+| Scorer | T=0 | T=0.3 | T=0.5 | T=0.7 | T=0.85 | T=0.95 | T=0.99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| LEVENSHTEIN_NORMALIZED        | 0.49M | 12.7M |  31.3M |  53.7M | 116M | 226M | **290M** |
+| DAMERAU_LEVENSHTEIN_NORMALIZED| 0.50M | 13.0M |  35.5M |  70.2M | 147M | 190M | **297M** |
+| HAMMING_NORMALIZED (n=100)    | 0.46M | 22.5M | 122M   | 108M   | 110M | 114M | **136M** |
+| INDEL_NORMALIZED              | 0.47M | 11.3M |  24.7M |  39.0M |  66M | 143M | **286M** |
+| JARO                          | 0.53M |  0.5M |   2.2M |  12.6M |  24M |  47M | **129M** |
+| JARO_WINKLER                  | 0.51M |  0.5M |   1.8M |  11.9M |  14M |  41M | **141M** |
+
+### Speedup ratio vs `T=0` (same scorer, same workload)
+
+| Scorer | T=0.3 | T=0.5 | T=0.7 | T=0.85 | T=0.95 | T=0.99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| LEVENSHTEIN_NORMALIZED        | **26x** |  **64x** | **109x** | **236x** | **458x** | **587x** |
+| DAMERAU_LEVENSHTEIN_NORMALIZED| **26x** |  **72x** | **141x** | **298x** | **384x** | **598x** |
+| HAMMING_NORMALIZED            | **49x** | **264x** | **233x** | **238x** | **246x** | **293x** |
+| INDEL_NORMALIZED              | **24x** |  **53x** |  **83x** | **142x** | **306x** | **611x** |
+| JARO                          |  0.9x   |  4.1x    |  **24x** |  **46x** |  **90x** | **245x** |
+| JARO_WINKLER                  |  1.0x   |  3.5x    |  **23x** |  **27x** |  **80x** | **275x** |
+
+Jaro / Jaro-Winkler show no benefit until the threshold rises above
+the natural-distribution floor of the `(2 + min/max)/3` length
+bound. For length 4–40 random strings that happens around T ≈ 0.7;
+above that the bound rules out most pairs and the speedup compounds.
+
+### `cdist_top_k` throughput (pairs/sec)
+
+| Scorer | k=1 | k=10 | k=100 | k=1000 | k=10000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LEVENSHTEIN_NORMALIZED        |  8.0M | 25.3M | 21.1M | 17.0M |  8.5M |
+| DAMERAU_LEVENSHTEIN_NORMALIZED| 20.0M | 23.4M | 19.4M | 18.6M | 12.2M |
+| HAMMING_NORMALIZED (n=100)    | 78.0M | 68.9M | 71.1M | 61.6M | 24.0M |
+| INDEL_NORMALIZED              | 29.1M | 24.5M | 21.5M | 17.4M |  7.5M |
+| JARO                          | 15.3M | 14.2M | 13.9M | 12.6M |  8.9M |
+| JARO_WINKLER                  | 15.1M | 12.2M | 13.6M | 13.4M | 10.0M |
+
+The row-sort matters most at small `k`: with the longest queries
+processed first, the global heap-min bound rises early and the
+per-pair cutoff push-down has a tight value to compare against for
+the bulk of the remaining rows. At very large `k` the heap rarely
+fills with strong matches so the bound stays close to the
+`(1.0 - safe margin)` floor and the kernel-level cutoff doesn't bite.
+
+### Reading the numbers
+
+These are absolute throughput on one Tiger Lake host with one
+specific workload size and threading config. The relative speedups
+(second table) carry over to other hosts; the absolute numbers do
+not. The pre-pruning baseline (T=0) is `cdist_above_threshold` with
+the threshold-zero — every pair runs through full SIMD, equivalent
+to `cdist` plus the iterator overhead — so it's the right "no
+optimization" reference for the speedup ratios.
 
 ## Notes on comparing across families
 
