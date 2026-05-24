@@ -83,7 +83,87 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   return), which bypasses C++ exception machinery entirely. Fixes
   91 macOS test failures.
 
-## [0.2.0]
+## [0.2.0] - 2026-05-19
 
-(Existing behavior at this tag was not previously tracked in this
-file; future releases will list specific deltas.)
+Backfilled from git history; this entry was not in the tree at
+the v0.2.0 tag.
+
+### Added
+
+* **Levenshtein scoring** (`Scorer.LEVENSHTEIN` /
+  `Scorer.LEVENSHTEIN_NORMALIZED`). Myers (1999) bit-parallel
+  scalar reference plus a SIMD batch kernel (one target per 64-bit
+  lane) on every backend. Single-word path for patterns ≤ 64
+  characters; multi-word kernel (W=2/3/4) for 65–256.
+* `score_cutoff` parameter on the Levenshtein and per-target Lev
+  scores APIs — bails per-target once the lower-bound score
+  exceeds the cutoff; results that exceed the cap come back as
+  `cutoff + 1` (rapidfuzz convention).
+* **Damerau-Levenshtein (OSA-restricted, Hyyrö 2002)** —
+  `Scorer.DAMERAU_LEVENSHTEIN` / `Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED`.
+  Scalar DP + bit-parallel scalar + SIMD batch on x86, NEON
+  (Linux + macOS), SVE / SVE2, LSX / LASX, and PowerPC VSX. The
+  "OSA-restricted" form is what rapidfuzz exposes as `OSA.distance`
+  and is what most callers asking for "Damerau-Levenshtein"
+  actually want.
+* Cross-architecture benchmark sweeps for Levenshtein and OSA
+  recorded under `benchmarks/` and summarized in
+  [BENCHMARK.md](BENCHMARK.md). Highlight: AVX-512 LEV /
+  DAML between 3.0x – 4.2x rapidfuzz on short targets; Mac M4
+  NEON 5.5x – 8.5x python-Levenshtein.
+
+### Changed
+
+* LSX / LASX `vandn` semantics corrected to Intel-style `(~a) & b`
+  (the LoongArch naming previously implied the opposite operand
+  order). Affects the LSX / LASX backends only.
+* `tools/benchmark_libs.py` extended with Levenshtein columns
+  (`rapidfuzz`, `editdistance`, `Levenshtein`).
+* New `tools/correctness_check.py` script.
+* README localizations and the language carousel were dropped (English
+  only for this release); the HTML build was regenerated to match.
+  README now documents the LoongArch64 wheel sideload from the GitHub
+  release (PyPI does not accept the `linux_loongarch64` platform tag).
+
+## [0.1.0] - 2026-05-18
+
+Initial public release.
+
+### Added
+
+* **Smith-Waterman and Needleman-Wunsch** sequence alignment with
+  a nanobind C++23 backend and runtime SIMD dispatch.
+* Backends:
+  * x86: SSE4.1, AVX2, AVX-512 BWVL, AVX10-256, AVX10-512
+  * ARM: Linux NEON / ASIMD, SVE, SVE2; macOS arm64 NEON
+  * LoongArch (Loongson): LSX, LASX
+  * PowerPC64: VSX
+  * RISC-V: RVV (stub)
+  * Portable: SWAR + pure-Python fallback
+* Public API:
+  * `smith_waterman_score` / `needleman_wunsch_score` /
+    `smith_waterman_farrar_score`
+  * Plural `*_scores` returning zero-copy `numpy.ndarray[int64]`
+  * `*_normalized_score` / `*_normalized_scores` returning
+    `float64` (length-normalized similarity in [0, 1])
+  * Path / path-info / CIGAR variants for both SW and NW
+  * Affine and linear gap models, score widths 8 / 16 / 32 / 64
+  * String, bytes, and arbitrary-token sequence inputs
+* CIGAR output uses the extended SAM convention (`=` sequence
+  match, `X` mismatch, `I` / `D` indel). `build_cigar` /
+  `ReverseCigarBuilder` emit digits via `std::to_chars` into a
+  stack buffer with pre-reserved capacity (1.2x–2.2x speedup per
+  row over the naive formulation).
+* Benchmarks vs parasail (geomean across 80-row sweeps, 2026-05-18):
+  Intel AVX-512 BWVL **1.752x**, AVX2 1.377x; Graviton4 NEON
+  1.138x; Mac M4 NEON 1.065x; Loongson LASX **4.909x** (vs
+  generic), **7.517x** (vs patched parasail, 1:1); Power8 VSX
+  **3.772x**.
+* Docs / tooling:
+  * README in 16 languages with RTL-ready CSS (en, zh-CN, zh-TW,
+    ja, de, ko, fr, es, pt-BR, ru, vi, id, hi, ar, tr, pl) — note:
+    the translations were dropped again in v0.2.0 and the
+    Simplified Chinese reintroduced in v0.3.0.
+  * Themed `html/` rendition of every README + BENCHMARK.
+  * `BENCHMARK.md` cross-architecture writeup.
+  * Two runnable demos (Bible-verse nearest match + spell checker).

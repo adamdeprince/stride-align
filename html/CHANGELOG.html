@@ -115,9 +115,87 @@ this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</
   return), which bypasses C++ exception machinery entirely. Fixes
   91 macOS test failures.</li>
 </ul>
-<h2 id="020">[0.2.0]</h2>
-<p>(Existing behavior at this tag was not previously tracked in this
-file; future releases will list specific deltas.)</p>
+<h2 id="020-2026-05-19">[0.2.0] - 2026-05-19</h2>
+<p>Backfilled from git history; this entry was not in the tree at
+the v0.2.0 tag.</p>
+<h3 id="added_1">Added</h3>
+<ul>
+<li><strong>Levenshtein scoring</strong> (<code>Scorer.LEVENSHTEIN</code> /
+  <code>Scorer.LEVENSHTEIN_NORMALIZED</code>). Myers (1999) bit-parallel
+  scalar reference plus a SIMD batch kernel (one target per 64-bit
+  lane) on every backend. Single-word path for patterns ≤ 64
+  characters; multi-word kernel (W=2/3/4) for 65–256.</li>
+<li><code>score_cutoff</code> parameter on the Levenshtein and per-target Lev
+  scores APIs — bails per-target once the lower-bound score
+  exceeds the cutoff; results that exceed the cap come back as
+  <code>cutoff + 1</code> (rapidfuzz convention).</li>
+<li><strong>Damerau-Levenshtein (OSA-restricted, Hyyrö 2002)</strong> —
+  <code>Scorer.DAMERAU_LEVENSHTEIN</code> / <code>Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED</code>.
+  Scalar DP + bit-parallel scalar + SIMD batch on x86, NEON
+  (Linux + macOS), SVE / SVE2, LSX / LASX, and PowerPC VSX. The
+  "OSA-restricted" form is what rapidfuzz exposes as <code>OSA.distance</code>
+  and is what most callers asking for "Damerau-Levenshtein"
+  actually want.</li>
+<li>Cross-architecture benchmark sweeps for Levenshtein and OSA
+  recorded under <code>benchmarks/</code> and summarized in
+  <a href="BENCHMARK.html">BENCHMARK.md</a>. Highlight: AVX-512 LEV /
+  DAML between 3.0x – 4.2x rapidfuzz on short targets; Mac M4
+  NEON 5.5x – 8.5x python-Levenshtein.</li>
+</ul>
+<h3 id="changed_1">Changed</h3>
+<ul>
+<li>LSX / LASX <code>vandn</code> semantics corrected to Intel-style <code>(~a) &amp; b</code>
+  (the LoongArch naming previously implied the opposite operand
+  order). Affects the LSX / LASX backends only.</li>
+<li><code>tools/benchmark_libs.py</code> extended with Levenshtein columns
+  (<code>rapidfuzz</code>, <code>editdistance</code>, <code>Levenshtein</code>).</li>
+<li>New <code>tools/correctness_check.py</code> script.</li>
+<li>README localizations and the language carousel were dropped (English
+  only for this release); the HTML build was regenerated to match.
+  README now documents the LoongArch64 wheel sideload from the GitHub
+  release (PyPI does not accept the <code>linux_loongarch64</code> platform tag).</li>
+</ul>
+<h2 id="010-2026-05-18">[0.1.0] - 2026-05-18</h2>
+<p>Initial public release.</p>
+<h3 id="added_2">Added</h3>
+<ul>
+<li><strong>Smith-Waterman and Needleman-Wunsch</strong> sequence alignment with
+  a nanobind C++23 backend and runtime SIMD dispatch.</li>
+<li>Backends:</li>
+<li>x86: SSE4.1, AVX2, AVX-512 BWVL, AVX10-256, AVX10-512</li>
+<li>ARM: Linux NEON / ASIMD, SVE, SVE2; macOS arm64 NEON</li>
+<li>LoongArch (Loongson): LSX, LASX</li>
+<li>PowerPC64: VSX</li>
+<li>RISC-V: RVV (stub)</li>
+<li>Portable: SWAR + pure-Python fallback</li>
+<li>Public API:</li>
+<li><code>smith_waterman_score</code> / <code>needleman_wunsch_score</code> /
+    <code>smith_waterman_farrar_score</code></li>
+<li>Plural <code>*_scores</code> returning zero-copy <code>numpy.ndarray[int64]</code></li>
+<li><code>*_normalized_score</code> / <code>*_normalized_scores</code> returning
+    <code>float64</code> (length-normalized similarity in [0, 1])</li>
+<li>Path / path-info / CIGAR variants for both SW and NW</li>
+<li>Affine and linear gap models, score widths 8 / 16 / 32 / 64</li>
+<li>String, bytes, and arbitrary-token sequence inputs</li>
+<li>CIGAR output uses the extended SAM convention (<code>=</code> sequence
+  match, <code>X</code> mismatch, <code>I</code> / <code>D</code> indel). <code>build_cigar</code> /
+  <code>ReverseCigarBuilder</code> emit digits via <code>std::to_chars</code> into a
+  stack buffer with pre-reserved capacity (1.2x–2.2x speedup per
+  row over the naive formulation).</li>
+<li>Benchmarks vs parasail (geomean across 80-row sweeps, 2026-05-18):
+  Intel AVX-512 BWVL <strong>1.752x</strong>, AVX2 1.377x; Graviton4 NEON
+  1.138x; Mac M4 NEON 1.065x; Loongson LASX <strong>4.909x</strong> (vs
+  generic), <strong>7.517x</strong> (vs patched parasail, 1:1); Power8 VSX
+  <strong>3.772x</strong>.</li>
+<li>Docs / tooling:</li>
+<li>README in 16 languages with RTL-ready CSS (en, zh-CN, zh-TW,
+    ja, de, ko, fr, es, pt-BR, ru, vi, id, hi, ar, tr, pl) — note:
+    the translations were dropped again in v0.2.0 and the
+    Simplified Chinese reintroduced in v0.3.0.</li>
+<li>Themed <code>html/</code> rendition of every README + BENCHMARK.</li>
+<li><code>BENCHMARK.md</code> cross-architecture writeup.</li>
+<li>Two runnable demos (Bible-verse nearest match + spell checker).</li>
+</ul>
 </main>
 <footer class="footer">
 stride-align · open source on
