@@ -1372,42 +1372,41 @@ class _ParasailBenchmarkBackend:
         return result
 
 
+_VARIANT_TO_FN_NAME = {
+    "sw-farrar-score": "smith_waterman_farrar_score",
+    "sw-score": "smith_waterman_score",
+    "nw-score": "needleman_wunsch_score",
+    "sw-path-info": "smith_waterman_path_info",
+    "nw-path-info": "needleman_wunsch_path_info",
+    "sw-cigar": "smith_waterman_cigar",
+    "nw-cigar": "needleman_wunsch_cigar",
+    "sw-trade-cigar": "smith_waterman_trade_cigar",
+    "nw-trade-cigar": "needleman_wunsch_trade_cigar",
+    "sw-path": "smith_waterman_path",
+    "nw-path": "needleman_wunsch_path",
+}
+
+_VARIANT_TO_BATCH_FN_NAME = {
+    "sw-farrar-score": "smith_waterman_farrar_scores",
+    "sw-score": "smith_waterman_scores",
+    "nw-score": "needleman_wunsch_scores",
+}
+
+
 def _function_for_variant(module: Any, variant: str):
-    match variant:
-        case "sw-farrar-score":
-            return module.smith_waterman_farrar_score
-        case "sw-score":
-            return module.smith_waterman_score
-        case "nw-score":
-            return module.needleman_wunsch_score
-        case "sw-path-info":
-            return module.smith_waterman_path_info
-        case "nw-path-info":
-            return module.needleman_wunsch_path_info
-        case "sw-cigar":
-            return module.smith_waterman_cigar
-        case "nw-cigar":
-            return module.needleman_wunsch_cigar
-        case "sw-trade-cigar":
-            return module.smith_waterman_trade_cigar
-        case "nw-trade-cigar":
-            return module.needleman_wunsch_trade_cigar
-        case "sw-path":
-            return module.smith_waterman_path
-        case "nw-path":
-            return module.needleman_wunsch_path
-    raise AssertionError(f"unhandled benchmark variant {variant!r}")
+    name = _VARIANT_TO_FN_NAME.get(variant)
+    if name is None:
+        raise AssertionError(f"unhandled benchmark variant {variant!r}")
+    return getattr(module, name)
 
 
 def _batch_function_for_variant(module: Any, variant: str):
-    match variant:
-        case "sw-farrar-score":
-            return module.smith_waterman_farrar_scores
-        case "sw-score":
-            return module.smith_waterman_scores
-        case "nw-score":
-            return module.needleman_wunsch_scores
-    raise AssertionError(f"batch scoring is not available for benchmark variant {variant!r}")
+    name = _VARIANT_TO_BATCH_FN_NAME.get(variant)
+    if name is None:
+        raise AssertionError(
+            f"batch scoring is not available for benchmark variant {variant!r}"
+        )
+    return getattr(module, name)
 
 
 def _generator_for_variant(variant: str) -> str:

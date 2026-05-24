@@ -20,40 +20,27 @@ from ._cpu import (
 )
 
 
+_BACKEND_MODULE_NAMES = {
+    BackendKind.GENERIC: "stride_align._generic",
+    BackendKind.SWAR: "stride_align._swar",
+    BackendKind.X86_SSE41: "stride_align._sse41",
+    BackendKind.X86_AVX2: "stride_align._avx2",
+    BackendKind.X86_AVX512BWVL: "stride_align._avx512bwvl",
+    BackendKind.X86_AVX10_256: "stride_align._avx10_256",
+    BackendKind.X86_AVX10_512: "stride_align._avx10_512",
+    BackendKind.LINUX_AARCH64_NEON: "stride_align._neon",
+    BackendKind.LINUX_AARCH64_SVE: "stride_align._sve",
+    BackendKind.LINUX_AARCH64_SVE2: "stride_align._sve2",
+    BackendKind.MACOS_ARM64_NEON: "stride_align._macos_arm64_neon",
+    BackendKind.LINUX_LOONGARCH64_LSX: "stride_align._lsx",
+    BackendKind.LINUX_LOONGARCH64_LASX: "stride_align._lasx",
+    BackendKind.LINUX_POWERPC64_VSX: "stride_align._vsx",
+    BackendKind.LINUX_RISCV64_RVV: "stride_align._rvv",
+}
+
+
 def _backend_module_name(kind: BackendKind) -> str:
-    match kind:
-        case BackendKind.GENERIC:
-            return "stride_align._generic"
-        case BackendKind.SWAR:
-            return "stride_align._swar"
-        case BackendKind.X86_SSE41:
-            return "stride_align._sse41"
-        case BackendKind.X86_AVX2:
-            return "stride_align._avx2"
-        case BackendKind.X86_AVX512BWVL:
-            return "stride_align._avx512bwvl"
-        case BackendKind.X86_AVX10_256:
-            return "stride_align._avx10_256"
-        case BackendKind.X86_AVX10_512:
-            return "stride_align._avx10_512"
-        case BackendKind.LINUX_AARCH64_NEON:
-            return "stride_align._neon"
-        case BackendKind.LINUX_AARCH64_SVE:
-            return "stride_align._sve"
-        case BackendKind.LINUX_AARCH64_SVE2:
-            return "stride_align._sve2"
-        case BackendKind.MACOS_ARM64_NEON:
-            return "stride_align._macos_arm64_neon"
-        case BackendKind.LINUX_LOONGARCH64_LSX:
-            return "stride_align._lsx"
-        case BackendKind.LINUX_LOONGARCH64_LASX:
-            return "stride_align._lasx"
-        case BackendKind.LINUX_POWERPC64_VSX:
-            return "stride_align._vsx"
-        case BackendKind.LINUX_RISCV64_RVV:
-            return "stride_align._rvv"
-        case _:
-            return "stride_align._generic"
+    return _BACKEND_MODULE_NAMES.get(kind, "stride_align._generic")
 
 
 def _import_module_suppressing_duplicate_type_warnings(module_name: str) -> ModuleType:
