@@ -21,7 +21,7 @@ sudo apt install python3-numpy
 
 PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.2.0/stride_align-0.2.0-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 Prebuilt LoongArch64 wheels are available for Python 3.9, 3.10,
