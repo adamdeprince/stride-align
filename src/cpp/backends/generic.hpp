@@ -11,9 +11,11 @@
 
 #include <nanobind/nanobind.h>
 
+#include "byte_view.hpp"
 #include "cpu.hpp"
 #include "farrar_preprocess.hpp"
 #include "preprocess.hpp"
+#include "scorer.hpp"
 #include "backends/score_fast_paths.hpp"
 #include "stride_align/alignment.hpp"
 
@@ -51,12 +53,19 @@ inline Cell substitution_score(
   return query_base == target_base ? match_score : mismatch_score;
 }
 
-template <typename Token, typename Cell, bool LocalAlignment>
+// Scorer-policy core for `score_only`. Hot loop dispatches the
+// per-cell substitution through `scorer.substitute(q, t)`, which
+// inlines to either a single cmov (`MatchMismatchScorer`) or a
+// single matrix load (`MatrixScorer`). The existing 4-arg signature
+// below forwards to this with a `MatchMismatchScorer` value
+// constructed at the call site — sizeof(scorer) is two cells, the
+// compiler folds it into immediates, and the codegen ends up
+// identical to the pre-policy version.
+template <typename Token, typename Cell, bool LocalAlignment, typename Scorer>
 Score score_only(
     std::span<const Token> query,
     std::span<const Token> target,
-    Cell match_score,
-    Cell mismatch_score,
+    Scorer scorer,
     Cell gap_score) {
   std::vector<Cell> previous(target.size() + 1, 0);
   std::vector<Cell> current(target.size() + 1, 0);
@@ -78,11 +87,7 @@ Score score_only(
     for (std::size_t column = 1; column <= target.size(); ++column) {
       const Cell diagonal = static_cast<Cell>(
           previous[column - 1] +
-          substitution_score<Token, Cell>(
-              query[row - 1],
-              target[column - 1],
-              match_score,
-              mismatch_score));
+          scorer.substitute(query[row - 1], target[column - 1]));
       const Cell up = static_cast<Cell>(previous[column] + gap_score);
       const Cell left = static_cast<Cell>(current[column - 1] + gap_score);
 
@@ -105,6 +110,23 @@ Score score_only(
   }
 
   return static_cast<Score>(previous.back());
+}
+
+// Back-compat: the existing match/mismatch entry point becomes a
+// thin wrapper that constructs the MatchMismatchScorer at the call
+// site. Existing call sites compile unchanged.
+template <typename Token, typename Cell, bool LocalAlignment>
+inline Score score_only(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_score) {
+  return score_only<Token, Cell, LocalAlignment>(
+      query, target,
+      ::stride_align::scorer::MatchMismatchScorer<Cell>{match_score,
+                                                       mismatch_score},
+      gap_score);
 }
 
 template <typename Cell>
@@ -136,12 +158,11 @@ Score farrar_score_only(
   return static_cast<Score>(best_score);
 }
 
-template <typename Token, typename Cell, bool LocalAlignment>
+template <typename Token, typename Cell, bool LocalAlignment, typename Scorer>
 TracebackResult traceback(
     std::span<const Token> query,
     std::span<const Token> target,
-    Cell match_score,
-    Cell mismatch_score,
+    Scorer scorer,
     Cell gap_score) {
   const std::size_t row_count = query.size() + 1;
   const std::size_t column_count = target.size() + 1;
@@ -172,11 +193,7 @@ TracebackResult traceback(
     for (std::size_t column = 1; column < column_count; ++column) {
       const Cell diagonal = static_cast<Cell>(
           scores[index(row - 1, column - 1)] +
-          substitution_score<Token, Cell>(
-              query[row - 1],
-              target[column - 1],
-              match_score,
-              mismatch_score));
+          scorer.substitute(query[row - 1], target[column - 1]));
       const Cell up = static_cast<Cell>(scores[index(row - 1, column)] + gap_score);
       const Cell left = static_cast<Cell>(scores[index(row, column - 1)] + gap_score);
 
@@ -253,6 +270,21 @@ TracebackResult traceback(
   result.query_start = row;
   result.target_start = column;
   return result;
+}
+
+// Back-compat traceback wrapper for match/mismatch callers.
+template <typename Token, typename Cell, bool LocalAlignment>
+inline TracebackResult traceback(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Cell match_score,
+    Cell mismatch_score,
+    Cell gap_score) {
+  return traceback<Token, Cell, LocalAlignment>(
+      query, target,
+      ::stride_align::scorer::MatchMismatchScorer<Cell>{match_score,
+                                                       mismatch_score},
+      gap_score);
 }
 
 template <typename Token>
@@ -711,6 +743,46 @@ struct PreparedFarrarScore {
   Score gap_score = -1;
 };
 
+// Matrix-mode score dispatch. Caller passes byte sequences whose
+// values are already alphabet indices in [0, stride) plus a row-
+// major (stride × stride) int8 matrix. No fast-path shortcuts apply
+// — those rely on the match/mismatch summary that the matrix path
+// doesn't share — so we go straight to the Scorer-policy core.
+//
+// Phase 1: 8-bit cells only. Wider cells / matrices require either
+// matrix-data widening or per-cell-width matrix variants and are
+// deferred to a follow-up commit.
+template <bool LocalAlignment>
+inline Score dispatch_matrix_score_u8(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    std::int8_t gap_score) {
+  using Scorer = ::stride_align::scorer::MatrixScorer<std::int8_t>;
+  Scorer scorer{matrix, stride};
+  return score_only<std::uint8_t, std::int8_t, LocalAlignment>(
+      query, target, scorer, gap_score);
+}
+
+template <bool LocalAlignment>
+inline AlignmentResult dispatch_matrix_traceback_u8(
+    const PreparedAlignment& prepared,
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    std::int8_t gap_score) {
+  using Scorer = ::stride_align::scorer::MatrixScorer<std::int8_t>;
+  Scorer scorer{matrix, stride};
+  auto trace =
+      traceback<std::uint8_t, std::int8_t, LocalAlignment>(
+          query, target, scorer, gap_score);
+  const auto& q_vec = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
+  const auto& t_vec = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
+  return build_alignment_result<std::uint8_t>(prepared, trace, q_vec, t_vec);
+}
+
 }  // namespace detail
 
 template <BackendKind Kind>
@@ -800,7 +872,82 @@ struct Implementation {
     return detail::dispatch_traceback<false>(prepared, match_score, mismatch_score, gap_score);
   }
 
+  // --- Matrix-mode alignment (Phase 1: score-only, 8-bit cells) ----
+  //
+  // The caller is responsible for pre-mapping query / target tokens
+  // to alphabet indices in [0, stride). The matrix buffer is
+  // row-major (stride × stride) `int8_t`. These methods bypass the
+  // PreparedAlignment / fast-path infrastructure entirely — fast
+  // paths assume a match/mismatch summary that doesn't generalize
+  // to arbitrary matrices.
+
+  static Score smith_waterman_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_score_dispatch<true>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static Score needleman_wunsch_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_score_dispatch<false>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
   static constexpr BackendKind backend_kind = Kind;
+
+ private:
+  template <bool LocalAlignment>
+  static Score matrix_score_dispatch(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    namespace bv = ::stride_align::byte_view;
+    const auto q_kind = bv::classify(query_indices.ptr());
+    const auto t_kind = bv::classify(target_indices.ptr());
+    const auto m_kind = bv::classify(matrix_buffer.ptr());
+    if (q_kind == bv::ByteCompatKind::None ||
+        t_kind == bv::ByteCompatKind::None ||
+        m_kind == bv::ByteCompatKind::None) {
+      PyErr_SetString(
+          PyExc_TypeError,
+          "matrix-mode alignment expects byte-compatible inputs "
+          "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+          "to map sequences to alphabet indices.");
+      throw nb::python_error();
+    }
+    const std::uint8_t* q_ptr = nullptr;
+    std::size_t q_len = 0;
+    const std::uint8_t* t_ptr = nullptr;
+    std::size_t t_len = 0;
+    const std::uint8_t* m_ptr = nullptr;
+    std::size_t m_len = 0;
+    bv::view(query_indices.ptr(), q_kind, q_ptr, q_len);
+    bv::view(target_indices.ptr(), t_kind, t_ptr, t_len);
+    bv::view(matrix_buffer.ptr(), m_kind, m_ptr, m_len);
+    if (m_len != stride * stride) {
+      PyErr_Format(
+          PyExc_ValueError,
+          "matrix buffer size %zu does not match stride * stride = %zu",
+          m_len, stride * stride);
+      throw nb::python_error();
+    }
+    return detail::dispatch_matrix_score_u8<LocalAlignment>(
+        std::span<const std::uint8_t>(q_ptr, q_len),
+        std::span<const std::uint8_t>(t_ptr, t_len),
+        reinterpret_cast<const std::int8_t*>(m_ptr),
+        stride,
+        static_cast<std::int8_t>(gap_score));
+  }
 };
 
 }  // namespace stride_align::backend_generic

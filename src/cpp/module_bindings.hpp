@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "affine.hpp"
+#include "backends/generic.hpp"
 #include "backends/profile_traceback.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
@@ -838,6 +839,39 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("gap_open_score") = nb::none(),
       nb::arg("gap_extend_score") = nb::none(),
       nb::arg("width") = nb::none());
+
+  // Matrix-mode Smith-Waterman score. Caller-supplied substitution
+  // matrix replaces the match/mismatch pair. Phase 1: linear gap,
+  // 8-bit cells, scalar generic kernel. Each backend can opt into a
+  // SIMD-matrix kernel later by defining `smith_waterman_score_matrix`
+  // on its Implementation. The Python wrapper validates that
+  // `matrix` and `match_score`/`mismatch_score` are mutually
+  // exclusive.
+  m.def(
+      "smith_waterman_score_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_score) {
+        if constexpr (requires {
+                        Implementation::smith_waterman_score_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride, gap_score);
+                      }) {
+          return Implementation::smith_waterman_score_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::smith_waterman_score_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_score") = -1);
 
   m.def(
       "smith_waterman_scores",
@@ -1785,6 +1819,33 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("gap_open_score") = nb::none(),
       nb::arg("gap_extend_score") = nb::none(),
       nb::arg("width") = nb::none());
+
+  // Matrix-mode Needleman-Wunsch — same shape as the SW variant.
+  m.def(
+      "needleman_wunsch_score_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_score) {
+        if constexpr (requires {
+                        Implementation::needleman_wunsch_score_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride, gap_score);
+                      }) {
+          return Implementation::needleman_wunsch_score_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::needleman_wunsch_score_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_score") = -1);
 
   m.def(
       "needleman_wunsch_scores",

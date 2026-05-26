@@ -362,6 +362,60 @@ def _select_backend(
     return _first_available(_REAL_SIMD_WIDE_PRIORITY) or _GENERIC_BACKEND
 
 
+_UNSET: Any = object()
+
+
+def _matrix_kwargs_clean(
+    *,
+    match_score: Any,
+    mismatch_score: Any,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+    width: int | None,
+) -> None:
+    if match_score is not _UNSET or mismatch_score is not _UNSET:
+        raise TypeError(
+            "matrix= is mutually exclusive with match_score=/mismatch_score=; "
+            "pass either a SubstitutionMatrix or scalar match/mismatch, not both."
+        )
+    if gap_open_score is not None or gap_extend_score is not None:
+        raise NotImplementedError(
+            "matrix-mode alignment currently supports linear gaps only; "
+            "pass gap_score= and leave gap_open_score=/gap_extend_score= as None."
+        )
+    if width is not None:
+        raise NotImplementedError(
+            "matrix-mode alignment does not yet honour width=; the generic "
+            "scalar kernel is used for all matrix-mode calls in this release."
+        )
+
+
+def _dispatch_matrix(
+    function_name: str,
+    query: object,
+    target: object,
+    matrix: Any,
+    gap_score: int,
+) -> int:
+    from .matrices import SubstitutionMatrix
+
+    if not isinstance(matrix, SubstitutionMatrix):
+        raise TypeError(
+            f"matrix= must be a stride_align.matrices.SubstitutionMatrix "
+            f"(got {type(matrix).__name__})"
+        )
+    q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
+    t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
+    backend = _GENERIC_BACKEND
+    return getattr(backend, function_name)(
+        q_bytes,
+        t_bytes,
+        matrix.matrix.tobytes(),
+        matrix.stride,
+        gap_score,
+    )
+
+
 def _dispatch(
     function_name: str,
     variant: str,
@@ -746,20 +800,32 @@ def smith_waterman_score(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> int:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        return _dispatch_matrix(
+            "smith_waterman_score_matrix", query, target, matrix, gap_score,
+        )
     return _dispatch(
         "smith_waterman_score",
         "sw-score",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -981,20 +1047,32 @@ def needleman_wunsch_score(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> int:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        return _dispatch_matrix(
+            "needleman_wunsch_score_matrix", query, target, matrix, gap_score,
+        )
     return _dispatch(
         "needleman_wunsch_score",
         "nw-score",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
