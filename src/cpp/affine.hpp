@@ -14,6 +14,7 @@
 
 #include "farrar_preprocess.hpp"
 #include "preprocess.hpp"
+#include "scorer.hpp"
 #include "stride_align/alignment.hpp"
 
 namespace stride_align::affine {
@@ -70,12 +71,15 @@ inline Score substitution_score(
   return query_base == target_base ? match_score : mismatch_score;
 }
 
-template <typename Token, bool LocalAlignment>
+// Scorer-policy core. The match/mismatch and matrix paths share this DP
+// recurrence; only `scorer.substitute(q, t)` differs. The compiler folds
+// MatchMismatchScorer's two-cell payload into immediates and the per-cell
+// dispatch becomes the same cmov / matrix-load it was pre-policy.
+template <typename Token, bool LocalAlignment, typename Scorer>
 Score score_only(
     std::span<const Token> query,
     std::span<const Token> target,
-    Score match_score,
-    Score mismatch_score,
+    Scorer scorer,
     Score gap_open_score,
     Score gap_extend_score) {
   const std::size_t columns = target.size() + 1U;
@@ -110,11 +114,7 @@ Score score_only(
     for (std::size_t column = 1; column <= target.size(); ++column) {
       const Score diagonal = add_score(
           previous_h[column - 1U],
-          substitution_score<Token>(
-              query[row - 1U],
-              target[column - 1U],
-              match_score,
-              mismatch_score));
+          static_cast<Score>(scorer.substitute(query[row - 1U], target[column - 1U])));
       const Score e_score = std::max(
           add_score(previous_h[column], gap_open_score),
           add_score(previous_e[column], gap_extend_score));
@@ -140,6 +140,40 @@ Score score_only(
     return best_score;
   }
   return previous_h.back();
+}
+
+// Back-compat wrapper: existing match/mismatch callers compile unchanged.
+template <typename Token, bool LocalAlignment>
+inline Score score_only(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  return score_only<Token, LocalAlignment>(
+      query,
+      target,
+      ::stride_align::scorer::MatchMismatchScorer<Score>{match_score, mismatch_score},
+      gap_open_score,
+      gap_extend_score);
+}
+
+// Matrix-mode scalar affine score dispatch. Inputs are byte indices in
+// [0, stride) plus a row-major (stride × stride) int8 matrix. Uses Score
+// (int64) cells unconditionally — the scalar fallback prioritises
+// correctness over width-selection complexity.
+template <bool LocalAlignment>
+inline Score score_only_matrix(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  ::stride_align::scorer::MatrixScorer<Score> scorer{matrix, stride};
+  return score_only<std::uint8_t, LocalAlignment>(
+      query, target, scorer, gap_open_score, gap_extend_score);
 }
 
 template <typename Token, bool LocalAlignment>

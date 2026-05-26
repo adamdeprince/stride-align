@@ -900,6 +900,68 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("gap_score") = -1);
 
   m.def(
+      "smith_waterman_affine_score_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_open_score,
+         Score gap_extend_score) {
+        if constexpr (requires {
+                        Implementation::smith_waterman_affine_score_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride,
+                            gap_open_score, gap_extend_score);
+                      }) {
+          return Implementation::smith_waterman_affine_score_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::smith_waterman_affine_score_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_open_score"),
+      nb::arg("gap_extend_score"));
+
+  m.def(
+      "smith_waterman_affine_scores_matrix",
+      [](nb::handle query_indices,
+         nb::handle targets,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_open_score,
+         Score gap_extend_score) {
+        if constexpr (requires {
+                        Implementation::smith_waterman_affine_scores_matrix(
+                            query_indices, targets,
+                            matrix_buffer, stride,
+                            gap_open_score, gap_extend_score);
+                      }) {
+          return Implementation::smith_waterman_affine_scores_matrix(
+              query_indices, targets,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::smith_waterman_affine_scores_matrix(
+              query_indices, targets,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("targets"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_open_score"),
+      nb::arg("gap_extend_score"));
+
+  m.def(
       "smith_waterman_scores",
       [](nb::handle query,
          nb::handle targets,
@@ -1898,6 +1960,68 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("matrix_buffer"),
       nb::arg("stride"),
       nb::arg("gap_score") = -1);
+
+  m.def(
+      "needleman_wunsch_affine_score_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_open_score,
+         Score gap_extend_score) {
+        if constexpr (requires {
+                        Implementation::needleman_wunsch_affine_score_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride,
+                            gap_open_score, gap_extend_score);
+                      }) {
+          return Implementation::needleman_wunsch_affine_score_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::needleman_wunsch_affine_score_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_open_score"),
+      nb::arg("gap_extend_score"));
+
+  m.def(
+      "needleman_wunsch_affine_scores_matrix",
+      [](nb::handle query_indices,
+         nb::handle targets,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_open_score,
+         Score gap_extend_score) {
+        if constexpr (requires {
+                        Implementation::needleman_wunsch_affine_scores_matrix(
+                            query_indices, targets,
+                            matrix_buffer, stride,
+                            gap_open_score, gap_extend_score);
+                      }) {
+          return Implementation::needleman_wunsch_affine_scores_matrix(
+              query_indices, targets,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::needleman_wunsch_affine_scores_matrix(
+              query_indices, targets,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("targets"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_open_score"),
+      nb::arg("gap_extend_score"));
 
   m.def(
       "needleman_wunsch_scores",

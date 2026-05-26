@@ -12,6 +12,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "affine.hpp"
 #include "byte_view.hpp"
 #include "cpu.hpp"
 #include "farrar_preprocess.hpp"
@@ -963,6 +964,58 @@ struct Implementation {
         query_indices, targets, matrix_buffer, stride, gap_score);
   }
 
+  // Affine matrix-mode entry points (scalar fallback). Routes through
+  // affine::score_only_matrix, which uses int64 cells unconditionally —
+  // no width selection in the scalar path. SIMD backends override these
+  // with their own affine matrix kernels when available.
+  static Score smith_waterman_affine_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    return matrix_affine_score_dispatch<true>(
+        query_indices, target_indices, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static Score needleman_wunsch_affine_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    return matrix_affine_score_dispatch<false>(
+        query_indices, target_indices, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<Score> smith_waterman_affine_scores_matrix(
+      nb::handle query_indices,
+      nb::handle targets,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    return matrix_affine_scores_dispatch<true>(
+        query_indices, targets, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<Score> needleman_wunsch_affine_scores_matrix(
+      nb::handle query_indices,
+      nb::handle targets,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    return matrix_affine_scores_dispatch<false>(
+        query_indices, targets, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
   static constexpr BackendKind backend_kind = Kind;
 
  private:
@@ -1034,6 +1087,82 @@ struct Implementation {
       nb::handle item(items[i]);
       scores.push_back(matrix_score_dispatch<LocalAlignment>(
           query_indices, item, matrix_buffer, stride, gap_score));
+    }
+    return scores;
+  }
+
+  template <bool LocalAlignment>
+  static Score matrix_affine_score_dispatch(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    namespace bv = ::stride_align::byte_view;
+    const auto q_kind = bv::classify(query_indices.ptr());
+    const auto t_kind = bv::classify(target_indices.ptr());
+    const auto m_kind = bv::classify(matrix_buffer.ptr());
+    if (q_kind == bv::ByteCompatKind::None ||
+        t_kind == bv::ByteCompatKind::None ||
+        m_kind == bv::ByteCompatKind::None) {
+      PyErr_SetString(
+          PyExc_TypeError,
+          "matrix-mode affine alignment expects byte-compatible inputs "
+          "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+          "to map sequences to alphabet indices.");
+      throw nb::python_error();
+    }
+    const std::uint8_t* q_ptr = nullptr;
+    std::size_t q_len = 0;
+    const std::uint8_t* t_ptr = nullptr;
+    std::size_t t_len = 0;
+    const std::uint8_t* m_ptr = nullptr;
+    std::size_t m_len = 0;
+    bv::view(query_indices.ptr(), q_kind, q_ptr, q_len);
+    bv::view(target_indices.ptr(), t_kind, t_ptr, t_len);
+    bv::view(matrix_buffer.ptr(), m_kind, m_ptr, m_len);
+    if (m_len != stride * stride) {
+      PyErr_Format(
+          PyExc_ValueError,
+          "matrix buffer size %zu does not match stride * stride = %zu",
+          m_len, stride * stride);
+      throw nb::python_error();
+    }
+    return ::stride_align::affine::detail::score_only_matrix<LocalAlignment>(
+        std::span<const std::uint8_t>(q_ptr, q_len),
+        std::span<const std::uint8_t>(t_ptr, t_len),
+        reinterpret_cast<const std::int8_t*>(m_ptr),
+        stride,
+        gap_open_score,
+        gap_extend_score);
+  }
+
+  template <bool LocalAlignment>
+  static std::vector<Score> matrix_affine_scores_dispatch(
+      nb::handle query_indices,
+      nb::handle targets,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    PyObject* fast_targets = PySequence_Fast(
+        targets.ptr(), "targets must be a sequence of target sequences");
+    if (fast_targets == nullptr) {
+      throw nb::python_error();
+    }
+    nb::object owner = nb::steal<nb::object>(fast_targets);
+    const auto target_count = static_cast<std::size_t>(
+        PySequence_Fast_GET_SIZE(fast_targets));
+    PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+
+    std::vector<Score> scores;
+    scores.reserve(target_count);
+    for (std::size_t i = 0; i < target_count; ++i) {
+      nb::handle item(items[i]);
+      scores.push_back(matrix_affine_score_dispatch<LocalAlignment>(
+          query_indices, item, matrix_buffer, stride,
+          gap_open_score, gap_extend_score));
     }
     return scores;
   }

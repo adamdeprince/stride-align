@@ -2258,6 +2258,184 @@ Score global_affine_score(
   return global_affine_score_state<OpsTemplate, Cell>(state);
 }
 
+// Matrix-mode affine: same shape as prepare_matrix_score_state but builds a
+// PreparedAffineScoreState with separate open/extend gap costs. The query
+// profile is identical to the linear path — only the per-cell DP recurrence
+// differs (open vs. extend on E and F), which is handled by the existing
+// affine_score_state / global_affine_score_state inner kernels.
+template <template <typename, typename> class OpsTemplate, typename Cell>
+void prepare_matrix_affine_score_state(
+    PreparedAffineScoreState<Cell>& state,
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  state.gap_open_score = static_cast<Cell>(gap_open_score);
+  state.gap_extend_score = static_cast<Cell>(gap_extend_score);
+  state.query_size = query.size();
+  state.target_size = target.size();
+  state.target_profile_offsets.clear();
+
+  if (query.empty() || target.empty()) {
+    state.segment_count = 0;
+    state.profile_indices.fill(missing_profile_index);
+    return;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  const auto profile_tokens = collect_profile_tokens(target, state.profile_indices);
+  state.target_profile_offsets.reserve(target.size());
+  const auto state_cells = state.segment_count * lane_count;
+
+  const Cell oob_padding = static_cast<Cell>(matrix_global_min(matrix, stride));
+  state.profile.assign(profile_tokens.size() * state_cells, oob_padding);
+  for (std::size_t profile_index = 0; profile_index < profile_tokens.size(); ++profile_index) {
+    const auto token = profile_tokens[profile_index];
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* lanes = state.profile.data() +
+          ((profile_index * state.segment_count + segment) * lane_count);
+      fill_matrix_profile_row<OpsTemplate, Cell>(
+          lanes, query, token, matrix, stride, oob_padding, segment, state.segment_count);
+    }
+  }
+  for (const auto token : target) {
+    state.target_profile_offsets.push_back(
+        static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
+  }
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score affine_score_matrix(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  thread_local PreparedAffineScoreState<Cell> state;
+  prepare_matrix_affine_score_state<OpsTemplate, Cell>(
+      state, query, target, matrix, stride, gap_open_score, gap_extend_score);
+  return affine_score_state<OpsTemplate, Cell>(state);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_affine_score_matrix(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  thread_local PreparedAffineScoreState<Cell> state;
+  prepare_matrix_affine_score_state<OpsTemplate, Cell>(
+      state, query, target, matrix, stride, gap_open_score, gap_extend_score);
+  return global_affine_score_state<OpsTemplate, Cell>(state);
+}
+
+// Batch affine matrix-mode: full-alphabet query profile built once, reused
+// across all targets. Mirrors prepare_matrix_query_profile.
+template <template <typename, typename> class OpsTemplate, typename Cell>
+void prepare_matrix_affine_query_profile(
+    PreparedAffineScoreState<Cell>& state,
+    std::span<const std::uint8_t> query,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  state.gap_open_score = static_cast<Cell>(gap_open_score);
+  state.gap_extend_score = static_cast<Cell>(gap_extend_score);
+  state.query_size = query.size();
+  // profile_indices is identity in batch mode; the inner kernel doesn't
+  // read it but keeping it sane avoids surprises in debugging.
+  for (std::size_t i = 0; i < state.profile_indices.size(); ++i) {
+    state.profile_indices[i] = static_cast<std::uint16_t>(i);
+  }
+
+  if (query.empty()) {
+    state.segment_count = 0;
+    return;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  const auto state_cells = state.segment_count * lane_count;
+
+  const Cell oob_padding = static_cast<Cell>(matrix_global_min(matrix, stride));
+  state.profile.assign(stride * state_cells, oob_padding);
+  for (std::size_t token = 0; token < stride; ++token) {
+    for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+      Cell* lanes = state.profile.data() +
+          ((token * state.segment_count + segment) * lane_count);
+      fill_matrix_profile_row<OpsTemplate, Cell>(
+          lanes, query, static_cast<std::uint8_t>(token), matrix, stride,
+          oob_padding, segment, state.segment_count);
+    }
+  }
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::vector<Score> affine_score_matrix_batch(
+    std::span<const std::uint8_t> query,
+    const std::vector<std::vector<std::uint8_t>>& targets,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  thread_local PreparedAffineScoreState<Cell> state;
+  prepare_matrix_affine_query_profile<OpsTemplate, Cell>(
+      state, query, matrix, stride, gap_open_score, gap_extend_score);
+
+  std::vector<Score> scores;
+  scores.reserve(targets.size());
+  for (const auto& target : targets) {
+    rebind_matrix_target(
+        state,
+        std::span<const std::uint8_t>(target.data(), target.size()),
+        Ops::lane_count);
+    scores.push_back(affine_score_state<OpsTemplate, Cell>(state));
+  }
+  return scores;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+std::vector<Score> global_affine_score_matrix_batch(
+    std::span<const std::uint8_t> query,
+    const std::vector<std::vector<std::uint8_t>>& targets,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  thread_local PreparedAffineScoreState<Cell> state;
+  prepare_matrix_affine_query_profile<OpsTemplate, Cell>(
+      state, query, matrix, stride, gap_open_score, gap_extend_score);
+
+  std::vector<Score> scores;
+  scores.reserve(targets.size());
+  for (const auto& target : targets) {
+    rebind_matrix_target(
+        state,
+        std::span<const std::uint8_t>(target.data(), target.size()),
+        Ops::lane_count);
+    scores.push_back(global_affine_score_state<OpsTemplate, Cell>(state));
+  }
+  return scores;
+}
+
 inline AlignmentPath boundary_affine_path(
     std::size_t query_size,
     std::size_t target_size,
@@ -3690,9 +3868,12 @@ void prepare_matrix_query_profile(
 // prepare_matrix_query_profile) untouched. The token→row map is the
 // identity offset `token * state_cells`, which works because the
 // query profile covers every token in [0, stride).
-template <typename Cell>
+// Templated on State so the same helper covers PreparedScoreState (linear)
+// and PreparedAffineScoreState (affine) — both expose target_size,
+// target_profile_offsets, and segment_count fields.
+template <typename State>
 void rebind_matrix_target(
-    PreparedScoreState<Cell>& state,
+    State& state,
     std::span<const std::uint8_t> target,
     std::size_t lane_count) {
   state.target_size = target.size();
@@ -3720,7 +3901,7 @@ std::vector<Score> score_matrix_batch(
   std::vector<Score> scores;
   scores.reserve(targets.size());
   for (const auto& target : targets) {
-    rebind_matrix_target<Cell>(
+    rebind_matrix_target(
         state,
         std::span<const std::uint8_t>(target.data(), target.size()),
         Ops::lane_count);
@@ -3744,7 +3925,7 @@ std::vector<Score> global_score_matrix_batch(
   std::vector<Score> scores;
   scores.reserve(targets.size());
   for (const auto& target : targets) {
-    rebind_matrix_target<Cell>(
+    rebind_matrix_target(
         state,
         std::span<const std::uint8_t>(target.data(), target.size()),
         Ops::lane_count);
@@ -6173,6 +6354,118 @@ std::vector<Score> dispatch_global_score_matrix_batch(
   }
 
   PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode batch global Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+Score dispatch_affine_score_matrix(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    KernelBits score_bits,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  switch (score_bits) {
+    case KernelBits::bits8:
+      return affine_score_matrix<OpsTemplate, std::int8_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits16:
+      return affine_score_matrix<OpsTemplate, std::int16_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits32:
+      return affine_score_matrix<OpsTemplate, std::int32_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits64:
+      return affine_score_matrix<OpsTemplate, std::int64_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode affine Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+Score dispatch_global_affine_score_matrix(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    KernelBits score_bits,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  switch (score_bits) {
+    case KernelBits::bits8:
+      return global_affine_score_matrix<OpsTemplate, std::int8_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits16:
+      return global_affine_score_matrix<OpsTemplate, std::int16_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits32:
+      return global_affine_score_matrix<OpsTemplate, std::int32_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits64:
+      return global_affine_score_matrix<OpsTemplate, std::int64_t>(
+          query, target, matrix, stride, gap_open_score, gap_extend_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode global affine Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+std::vector<Score> dispatch_affine_score_matrix_batch(
+    std::span<const std::uint8_t> query,
+    const std::vector<std::vector<std::uint8_t>>& targets,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    KernelBits score_bits,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  switch (score_bits) {
+    case KernelBits::bits8:
+      return affine_score_matrix_batch<OpsTemplate, std::int8_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits16:
+      return affine_score_matrix_batch<OpsTemplate, std::int16_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits32:
+      return affine_score_matrix_batch<OpsTemplate, std::int32_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits64:
+      return affine_score_matrix_batch<OpsTemplate, std::int64_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode batch affine Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+std::vector<Score> dispatch_global_affine_score_matrix_batch(
+    std::span<const std::uint8_t> query,
+    const std::vector<std::vector<std::uint8_t>>& targets,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    KernelBits score_bits,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  switch (score_bits) {
+    case KernelBits::bits8:
+      return global_affine_score_matrix_batch<OpsTemplate, std::int8_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits16:
+      return global_affine_score_matrix_batch<OpsTemplate, std::int16_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits32:
+      return global_affine_score_matrix_batch<OpsTemplate, std::int32_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+    case KernelBits::bits64:
+      return global_affine_score_matrix_batch<OpsTemplate, std::int64_t>(
+          query, targets, matrix, stride, gap_open_score, gap_extend_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode batch global affine Farrar score width");
   throw nb::python_error();
 }
 

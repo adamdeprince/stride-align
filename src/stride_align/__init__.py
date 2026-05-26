@@ -369,25 +369,54 @@ def _matrix_kwargs_clean(
     *,
     match_score: Any,
     mismatch_score: Any,
-    gap_open_score: int | None,
-    gap_extend_score: int | None,
     width: int | None,
 ) -> None:
+    """Validate the kwargs that are NOT supplied alongside matrix=.
+
+    Affine gap kwargs (gap_open_score / gap_extend_score) are allowed in
+    matrix mode and resolved separately by the caller; this guard only
+    rejects the mutually-exclusive match_score / mismatch_score path and
+    the width override.
+    """
     if match_score is not _UNSET or mismatch_score is not _UNSET:
         raise TypeError(
             "matrix= is mutually exclusive with match_score=/mismatch_score=; "
             "pass either a SubstitutionMatrix or scalar match/mismatch, not both."
         )
-    if gap_open_score is not None or gap_extend_score is not None:
-        raise NotImplementedError(
-            "matrix-mode alignment currently supports linear gaps only; "
-            "pass gap_score= and leave gap_open_score=/gap_extend_score= as None."
-        )
     if width is not None:
         raise NotImplementedError(
-            "matrix-mode alignment does not yet honour width=; the generic "
-            "scalar kernel is used for all matrix-mode calls in this release."
+            "matrix-mode alignment does not yet honour width=; cell width is "
+            "picked automatically from the matrix score bound."
         )
+
+
+def _matrix_gap_route(
+    *,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+) -> tuple[bool, int, int]:
+    """Return (is_affine, resolved_open, resolved_extend).
+
+    When gap_open_score and gap_extend_score are both None — or both
+    explicitly equal — we route through the linear-gap kernel. Otherwise
+    the affine kernel.
+    """
+    open_score = gap_score if gap_open_score is None else gap_open_score
+    extend_score = open_score if gap_extend_score is None else gap_extend_score
+    is_affine = open_score != extend_score
+    return is_affine, int(open_score), int(extend_score)
+
+
+def _validate_matrix(matrix: Any) -> Any:
+    from .matrices import SubstitutionMatrix
+
+    if not isinstance(matrix, SubstitutionMatrix):
+        raise TypeError(
+            f"matrix= must be a stride_align.matrices.SubstitutionMatrix "
+            f"(got {type(matrix).__name__})"
+        )
+    return matrix
 
 
 def _dispatch_matrix(
@@ -397,13 +426,7 @@ def _dispatch_matrix(
     matrix: Any,
     gap_score: int,
 ) -> int:
-    from .matrices import SubstitutionMatrix
-
-    if not isinstance(matrix, SubstitutionMatrix):
-        raise TypeError(
-            f"matrix= must be a stride_align.matrices.SubstitutionMatrix "
-            f"(got {type(matrix).__name__})"
-        )
+    matrix = _validate_matrix(matrix)
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
     # _LEVENSHTEIN_BACKEND is the best available SIMD backend; the C++
@@ -419,6 +442,27 @@ def _dispatch_matrix(
     )
 
 
+def _dispatch_matrix_affine(
+    function_name: str,
+    query: object,
+    target: object,
+    matrix: Any,
+    gap_open_score: int,
+    gap_extend_score: int,
+) -> int:
+    matrix = _validate_matrix(matrix)
+    q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
+    t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
+    return getattr(_LEVENSHTEIN_BACKEND, function_name)(
+        q_bytes,
+        t_bytes,
+        matrix.matrix.tobytes(),
+        matrix.stride,
+        gap_open_score,
+        gap_extend_score,
+    )
+
+
 def _dispatch_matrix_many(
     function_name: str,
     query: object,
@@ -426,13 +470,7 @@ def _dispatch_matrix_many(
     matrix: Any,
     gap_score: int,
 ) -> np.ndarray:
-    from .matrices import SubstitutionMatrix
-
-    if not isinstance(matrix, SubstitutionMatrix):
-        raise TypeError(
-            f"matrix= must be a stride_align.matrices.SubstitutionMatrix "
-            f"(got {type(matrix).__name__})"
-        )
+    matrix = _validate_matrix(matrix)
     target_tuple = _materialize_targets(targets)
     if not target_tuple:
         return np.empty(0, dtype=np.int64)
@@ -446,6 +484,33 @@ def _dispatch_matrix_many(
         matrix.matrix.tobytes(),
         matrix.stride,
         gap_score,
+    )
+    return np.asarray(scores, dtype=np.int64)
+
+
+def _dispatch_matrix_affine_many(
+    function_name: str,
+    query: object,
+    targets: object,
+    matrix: Any,
+    gap_open_score: int,
+    gap_extend_score: int,
+) -> np.ndarray:
+    matrix = _validate_matrix(matrix)
+    target_tuple = _materialize_targets(targets)
+    if not target_tuple:
+        return np.empty(0, dtype=np.int64)
+    q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
+    encoded_targets = tuple(
+        matrix.encode(t) if isinstance(t, str) else bytes(t) for t in target_tuple
+    )
+    scores = getattr(_LEVENSHTEIN_BACKEND, function_name)(
+        q_bytes,
+        encoded_targets,
+        matrix.matrix.tobytes(),
+        matrix.stride,
+        gap_open_score,
+        gap_extend_score,
     )
     return np.asarray(scores, dtype=np.int64)
 
@@ -663,12 +728,20 @@ def smith_waterman_scores(
         _matrix_kwargs_clean(
             match_score=match_score,
             mismatch_score=mismatch_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
             width=width,
         )
+        is_affine, open_s, extend_s = _matrix_gap_route(
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+        if is_affine:
+            return _dispatch_matrix_affine_many(
+                "smith_waterman_affine_scores_matrix",
+                query, targets, matrix, open_s, extend_s,
+            )
         return _dispatch_matrix_many(
-            "smith_waterman_scores_matrix", query, targets, matrix, gap_score,
+            "smith_waterman_scores_matrix", query, targets, matrix, open_s,
         )
     return _dispatch_many(
         "sw-score",
@@ -736,12 +809,20 @@ def needleman_wunsch_scores(
         _matrix_kwargs_clean(
             match_score=match_score,
             mismatch_score=mismatch_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
             width=width,
         )
+        is_affine, open_s, extend_s = _matrix_gap_route(
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+        if is_affine:
+            return _dispatch_matrix_affine_many(
+                "needleman_wunsch_affine_scores_matrix",
+                query, targets, matrix, open_s, extend_s,
+            )
         return _dispatch_matrix_many(
-            "needleman_wunsch_scores_matrix", query, targets, matrix, gap_score,
+            "needleman_wunsch_scores_matrix", query, targets, matrix, open_s,
         )
     return _dispatch_many(
         "nw-score",
@@ -870,12 +951,20 @@ def smith_waterman_score(
         _matrix_kwargs_clean(
             match_score=match_score,
             mismatch_score=mismatch_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
             width=width,
         )
+        is_affine, open_s, extend_s = _matrix_gap_route(
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+        if is_affine:
+            return _dispatch_matrix_affine(
+                "smith_waterman_affine_score_matrix",
+                query, target, matrix, open_s, extend_s,
+            )
         return _dispatch_matrix(
-            "smith_waterman_score_matrix", query, target, matrix, gap_score,
+            "smith_waterman_score_matrix", query, target, matrix, open_s,
         )
     return _dispatch(
         "smith_waterman_score",
@@ -1117,12 +1206,20 @@ def needleman_wunsch_score(
         _matrix_kwargs_clean(
             match_score=match_score,
             mismatch_score=mismatch_score,
-            gap_open_score=gap_open_score,
-            gap_extend_score=gap_extend_score,
             width=width,
         )
+        is_affine, open_s, extend_s = _matrix_gap_route(
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+        if is_affine:
+            return _dispatch_matrix_affine(
+                "needleman_wunsch_affine_score_matrix",
+                query, target, matrix, open_s, extend_s,
+            )
         return _dispatch_matrix(
-            "needleman_wunsch_score_matrix", query, target, matrix, gap_score,
+            "needleman_wunsch_score_matrix", query, target, matrix, open_s,
         )
     return _dispatch(
         "needleman_wunsch_score",

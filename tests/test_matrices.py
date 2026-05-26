@@ -77,9 +77,46 @@ def test_matrix_mutually_exclusive_with_match_mismatch() -> None:
         sa.needleman_wunsch_score("HE", "HE", matrix=blosum62, match_score=2)
 
 
-def test_matrix_rejects_affine_gaps() -> None:
-    with pytest.raises(NotImplementedError, match="linear gaps"):
-        sa.smith_waterman_score("HE", "HE", matrix=blosum62, gap_open_score=-10, gap_extend_score=-1)
+def test_matrix_affine_gaps_supported() -> None:
+    # Affine gaps in matrix mode used to raise NotImplementedError. They now
+    # route to the affine matrix kernel — verify it runs and produces the
+    # standard NCBI BLOSUM62 affine score for a known peptide pair.
+    # H:H=8, E:E=5, no gaps inserted → 13 (same as linear case).
+    score = sa.smith_waterman_score(
+        "HE", "HE", matrix=blosum62, gap_open_score=-11, gap_extend_score=-1
+    )
+    assert score == 13
+
+
+def test_matrix_affine_gaps_distinguish_open_extend() -> None:
+    # Pick a pair where the optimal alignment contains a gap so the
+    # difference between gap_open and gap_extend actually matters.
+    # HEAGAW vs HEW — best SW alignment inserts a 3-AA gap in target.
+    # With open=-100 extend=-1 the gap penalty is much higher than
+    # with open=-1 extend=-1 (= linear -1).
+    q, t = "HEAGAW", "HEW"
+    cheap_gap = sa.smith_waterman_score(
+        q, t, matrix=blosum62, gap_open_score=-1, gap_extend_score=-1
+    )
+    expensive_open = sa.smith_waterman_score(
+        q, t, matrix=blosum62, gap_open_score=-100, gap_extend_score=-1
+    )
+    # Cheap-gap config must score strictly higher than expensive-open
+    # config (it can use the gap, expensive-open can't afford to).
+    assert cheap_gap > expensive_open
+
+
+def test_matrix_affine_batch_matches_single() -> None:
+    q = "HEAGAWGHEE"
+    targets = ["PAWHEAE", "HEAGAWGHEE", "WW", ""]
+    single = [
+        sa.smith_waterman_score(q, t, matrix=blosum62, gap_open_score=-11, gap_extend_score=-1)
+        for t in targets
+    ]
+    batch = sa.smith_waterman_scores(
+        q, targets, matrix=blosum62, gap_open_score=-11, gap_extend_score=-1
+    )
+    assert list(batch) == single
 
 
 def test_matrix_rejects_bad_type() -> None:
