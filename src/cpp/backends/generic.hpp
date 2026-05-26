@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -749,20 +750,54 @@ struct PreparedFarrarScore {
 // — those rely on the match/mismatch summary that the matrix path
 // doesn't share — so we go straight to the Scorer-policy core.
 //
-// Phase 1: 8-bit cells only. Wider cells / matrices require either
-// matrix-data widening or per-cell-width matrix variants and are
-// deferred to a follow-up commit.
+// Cell width is selected from the score bound: NW alignments span
+// O(query_len + target_len) cells so the worst-case score grows
+// linearly. Hardcoding int8 here is wrong for any non-trivial
+// alignment.
+inline std::int32_t matrix_max_abs(const std::int8_t* matrix, std::size_t stride) {
+  std::int32_t max_abs = 0;
+  const std::size_t cells = stride * stride;
+  for (std::size_t i = 0; i < cells; ++i) {
+    const std::int32_t value = matrix[i];
+    const std::int32_t magnitude = value < 0 ? -value : value;
+    if (magnitude > max_abs) {
+      max_abs = magnitude;
+    }
+  }
+  return max_abs;
+}
+
 template <bool LocalAlignment>
 inline Score dispatch_matrix_score_u8(
     std::span<const std::uint8_t> query,
     std::span<const std::uint8_t> target,
     const std::int8_t* matrix,
     std::size_t stride,
-    std::int8_t gap_score) {
-  using Scorer = ::stride_align::scorer::MatrixScorer<std::int8_t>;
-  Scorer scorer{matrix, stride};
-  return score_only<std::uint8_t, std::int8_t, LocalAlignment>(
-      query, target, scorer, gap_score);
+    Score gap_score) {
+  const std::int32_t gap_magnitude = gap_score < 0 ? -gap_score : gap_score;
+  const std::int32_t max_abs =
+      std::max(matrix_max_abs(matrix, stride), gap_magnitude);
+  const std::uint64_t bound =
+      static_cast<std::uint64_t>(query.size() + target.size()) *
+      static_cast<std::uint64_t>(max_abs);
+
+  const auto run = [&](auto cell_tag) -> Score {
+    using Cell = typename decltype(cell_tag)::type;
+    ::stride_align::scorer::MatrixScorer<Cell> scorer{matrix, stride};
+    return score_only<std::uint8_t, Cell, LocalAlignment>(
+        query, target, scorer, static_cast<Cell>(gap_score));
+  };
+
+  if (bound <= static_cast<std::uint64_t>(std::numeric_limits<std::int8_t>::max())) {
+    return run(std::type_identity<std::int8_t>{});
+  }
+  if (bound <= static_cast<std::uint64_t>(std::numeric_limits<std::int16_t>::max())) {
+    return run(std::type_identity<std::int16_t>{});
+  }
+  if (bound <= static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+    return run(std::type_identity<std::int32_t>{});
+  }
+  return run(std::type_identity<std::int64_t>{});
 }
 
 template <bool LocalAlignment>
@@ -772,12 +807,15 @@ inline AlignmentResult dispatch_matrix_traceback_u8(
     std::span<const std::uint8_t> target,
     const std::int8_t* matrix,
     std::size_t stride,
-    std::int8_t gap_score) {
-  using Scorer = ::stride_align::scorer::MatrixScorer<std::int8_t>;
-  Scorer scorer{matrix, stride};
+    Score gap_score) {
+  // Traceback materialises the score grid in memory; pick the widest
+  // cell type unconditionally to avoid yet another bound calculation
+  // and keep parity with the score-only path's correctness in the
+  // worst case.
+  ::stride_align::scorer::MatrixScorer<std::int64_t> scorer{matrix, stride};
   auto trace =
-      traceback<std::uint8_t, std::int8_t, LocalAlignment>(
-          query, target, scorer, gap_score);
+      traceback<std::uint8_t, std::int64_t, LocalAlignment>(
+          query, target, scorer, static_cast<std::int64_t>(gap_score));
   const auto& q_vec = std::get<std::vector<std::uint8_t>>(prepared.query_tokens);
   const auto& t_vec = std::get<std::vector<std::uint8_t>>(prepared.target_tokens);
   return build_alignment_result<std::uint8_t>(prepared, trace, q_vec, t_vec);
@@ -946,7 +984,7 @@ struct Implementation {
         std::span<const std::uint8_t>(t_ptr, t_len),
         reinterpret_cast<const std::int8_t*>(m_ptr),
         stride,
-        static_cast<std::int8_t>(gap_score));
+        gap_score);
   }
 };
 

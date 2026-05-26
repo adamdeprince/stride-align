@@ -38,7 +38,12 @@ struct MatchMismatchScorer {
 };
 
 // Policy: substitution cost from a contiguous row-major
-// (alphabet × alphabet) matrix. The caller is responsible for
+// (alphabet × alphabet) int8 matrix. The matrix data is always int8
+// regardless of the kernel cell width — that's the public API
+// contract (BLOSUM62, PAM, etc. all fit in int8). The `Cell` template
+// parameter selects the *arithmetic* width the kernel uses to
+// accumulate intermediate scores; substitute() widens each int8
+// lookup to Cell on every access. Caller is responsible for
 // guaranteeing every Token in both inputs is a valid index in
 // [0, stride). Out-of-range tokens are undefined behaviour — the
 // hot loop intentionally skips the bounds check.
@@ -51,14 +56,15 @@ template <typename Cell>
 struct MatrixScorer {
   static_assert(std::is_integral_v<Cell>);
 
-  const Cell* matrix;
+  const std::int8_t* matrix;
   std::size_t stride;
 
   template <typename Token>
   inline Cell substitute(Token q, Token t) const noexcept {
     static_assert(std::is_integral_v<Token>);
-    return matrix[static_cast<std::size_t>(q) * stride +
-                  static_cast<std::size_t>(t)];
+    return static_cast<Cell>(
+        matrix[static_cast<std::size_t>(q) * stride +
+               static_cast<std::size_t>(t)]);
   }
 };
 
