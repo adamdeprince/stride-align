@@ -939,6 +939,30 @@ struct Implementation {
         query_indices, target_indices, matrix_buffer, stride, gap_score);
   }
 
+  // Scalar batch matrix mode: a fallback for backends without a
+  // dedicated SIMD batch kernel. Each pair runs the same scalar
+  // dispatch the singular path uses — no profile reuse, since the
+  // scalar kernel doesn't carry one.
+  static std::vector<Score> smith_waterman_scores_matrix(
+      nb::handle query_indices,
+      nb::handle targets,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_scores_dispatch<true>(
+        query_indices, targets, matrix_buffer, stride, gap_score);
+  }
+
+  static std::vector<Score> needleman_wunsch_scores_matrix(
+      nb::handle query_indices,
+      nb::handle targets,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_scores_dispatch<false>(
+        query_indices, targets, matrix_buffer, stride, gap_score);
+  }
+
   static constexpr BackendKind backend_kind = Kind;
 
  private:
@@ -985,6 +1009,33 @@ struct Implementation {
         reinterpret_cast<const std::int8_t*>(m_ptr),
         stride,
         gap_score);
+  }
+
+  template <bool LocalAlignment>
+  static std::vector<Score> matrix_scores_dispatch(
+      nb::handle query_indices,
+      nb::handle targets,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    PyObject* fast_targets = PySequence_Fast(
+        targets.ptr(), "targets must be a sequence of target sequences");
+    if (fast_targets == nullptr) {
+      throw nb::python_error();
+    }
+    nb::object owner = nb::steal<nb::object>(fast_targets);
+    const auto target_count = static_cast<std::size_t>(
+        PySequence_Fast_GET_SIZE(fast_targets));
+    PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+
+    std::vector<Score> scores;
+    scores.reserve(target_count);
+    for (std::size_t i = 0; i < target_count; ++i) {
+      nb::handle item(items[i]);
+      scores.push_back(matrix_score_dispatch<LocalAlignment>(
+          query_indices, item, matrix_buffer, stride, gap_score));
+    }
+    return scores;
   }
 };
 

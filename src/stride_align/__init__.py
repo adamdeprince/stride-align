@@ -406,14 +406,48 @@ def _dispatch_matrix(
         )
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
-    backend = _GENERIC_BACKEND
-    return getattr(backend, function_name)(
+    # _LEVENSHTEIN_BACKEND is the best available SIMD backend; the C++
+    # binding's `if constexpr (requires { ... })` check falls back to the
+    # scalar generic kernel for backends that don't yet ship a matrix
+    # path.
+    return getattr(_LEVENSHTEIN_BACKEND, function_name)(
         q_bytes,
         t_bytes,
         matrix.matrix.tobytes(),
         matrix.stride,
         gap_score,
     )
+
+
+def _dispatch_matrix_many(
+    function_name: str,
+    query: object,
+    targets: object,
+    matrix: Any,
+    gap_score: int,
+) -> np.ndarray:
+    from .matrices import SubstitutionMatrix
+
+    if not isinstance(matrix, SubstitutionMatrix):
+        raise TypeError(
+            f"matrix= must be a stride_align.matrices.SubstitutionMatrix "
+            f"(got {type(matrix).__name__})"
+        )
+    target_tuple = _materialize_targets(targets)
+    if not target_tuple:
+        return np.empty(0, dtype=np.int64)
+    q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
+    encoded_targets = tuple(
+        matrix.encode(t) if isinstance(t, str) else bytes(t) for t in target_tuple
+    )
+    scores = getattr(_LEVENSHTEIN_BACKEND, function_name)(
+        q_bytes,
+        encoded_targets,
+        matrix.matrix.tobytes(),
+        matrix.stride,
+        gap_score,
+    )
+    return np.asarray(scores, dtype=np.int64)
 
 
 def _dispatch(
@@ -617,19 +651,31 @@ def smith_waterman_scores(
     query: object,
     targets: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> np.ndarray:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        return _dispatch_matrix_many(
+            "smith_waterman_scores_matrix", query, targets, matrix, gap_score,
+        )
     return _dispatch_many(
         "sw-score",
         query,
         targets,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -678,19 +724,31 @@ def needleman_wunsch_scores(
     query: object,
     targets: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> np.ndarray:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        return _dispatch_matrix_many(
+            "needleman_wunsch_scores_matrix", query, targets, matrix, gap_score,
+        )
     return _dispatch_many(
         "nw-score",
         query,
         targets,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
