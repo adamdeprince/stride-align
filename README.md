@@ -314,6 +314,68 @@ Gapped Alignment Report". CIGAR is the compact alignment-operation notation
 used by SAM/BAM tooling. If you want the full formal version, see the
 [SAM specification](https://samtools.github.io/hts-specs/SAMv1.pdf).
 
+### Substitution matrices (BLOSUM, PAM)
+
+For protein alignment, `stride_align.matrices` ships the canonical
+BLOSUM and PAM substitution matrices. Pass any of them via the
+`matrix=` kwarg on `smith_waterman_score`, `needleman_wunsch_score`,
+or their `_scores` batch counterparts:
+
+```python
+import stride_align
+from stride_align.matrices import blosum62, pam250
+
+# Local alignment, NCBI standard BLOSUM62 with affine gaps (open=-11,
+# extend=-1). matrix= is mutually exclusive with match_score / mismatch_score.
+stride_align.smith_waterman_score(
+    "HEAGAWGHEE", "PAWHEAE",
+    matrix=blosum62,
+    gap_open_score=-11, gap_extend_score=-1,
+)
+
+# Batch (1 query × N targets) with profile reuse — the recommended
+# path for "score one query against a library".
+stride_align.smith_waterman_scores(
+    "HEAGAWGHEE",
+    ["PAWHEAE", "HEAGAWGHEE", "MEEPS"],
+    matrix=pam250, gap_open_score=-14, gap_extend_score=-2,
+)
+
+# Custom matrices: parse any NCBI-format text file
+custom = stride_align.matrices.SubstitutionMatrix.from_ncbi_text(
+    open("/path/to/BLOSUM62").read(),
+    name="BLOSUM62",
+    gap_open=-11, gap_extend=-1,
+)
+```
+
+Each built-in `SubstitutionMatrix` exposes its alphabet, matrix data
+(`int8` ndarray), and recommended gap defaults via `.gap_score`
+(linear), `.gap_open`, and `.gap_extend`. Both linear gaps (`gap_score=`)
+and affine gaps (`gap_open_score=` + `gap_extend_score=`) are
+supported on the AVX-512 backend; other SIMD backends currently fall
+back to the scalar generic kernel for matrix-mode.
+
+The shipped matrix values come from the NCBI BLAST distribution
+[`ftp.ncbi.nih.gov/blast/matrices/`](https://ftp.ncbi.nih.gov/blast/matrices/),
+which carries the canonical reference scores. The original
+publications are:
+
+- **BLOSUM45 / 50 / 62 / 80 / 90** — Henikoff S., Henikoff J.G. (1992).
+  *Amino acid substitution matrices from protein blocks*. PNAS
+  89(22):10915–10919.
+  [doi:10.1073/pnas.89.22.10915](https://doi.org/10.1073/pnas.89.22.10915)
+  &nbsp;·&nbsp;
+  [PDF (open access)](https://www.pnas.org/doi/pdf/10.1073/pnas.89.22.10915)
+- **PAM30 / 70 / 250** — Dayhoff M.O., Schwartz R.M., Orcutt B.C.
+  (1978). *A model of evolutionary change in proteins*. In *Atlas of
+  Protein Sequence and Structure*, vol. 5, supplement 3, pages 345–352.
+  National Biomedical Research Foundation, Washington, D.C. (Book
+  chapter; not available online as an open PDF. A widely cited
+  follow-on derivation appears in Schwartz R.M., Dayhoff M.O. (1978),
+  *Matrices for detecting distant relationships*, same volume,
+  pages 353–358.)
+
 ### Edit-distance scorers
 
 Beyond Smith-Waterman and Needleman-Wunsch, `stride-align` exposes

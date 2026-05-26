@@ -290,6 +290,64 @@ Gapped Alignment Report” 的缩写，是 SAM/BAM 工具链使用的紧凑
 对齐操作记法。如果想看完整规范，见
 [SAM specification](https://samtools.github.io/hts-specs/SAMv1.pdf)。
 
+### 替换矩阵（BLOSUM、PAM）
+
+针对蛋白质比对，`stride_align.matrices` 提供了规范的 BLOSUM
+与 PAM 替换矩阵。可通过 `smith_waterman_score`、
+`needleman_wunsch_score` 及其 `_scores` 批量版本上的 `matrix=`
+关键字传入：
+
+```python
+import stride_align
+from stride_align.matrices import blosum62, pam250
+
+# 局部比对，NCBI 标准 BLOSUM62 + 仿射空位（open=-11, extend=-1）。
+# matrix= 与 match_score / mismatch_score 互斥。
+stride_align.smith_waterman_score(
+    "HEAGAWGHEE", "PAWHEAE",
+    matrix=blosum62,
+    gap_open_score=-11, gap_extend_score=-1,
+)
+
+# 批量（1 条查询 × N 条目标），共用一次构建好的剖面 —— 推荐用法。
+stride_align.smith_waterman_scores(
+    "HEAGAWGHEE",
+    ["PAWHEAE", "HEAGAWGHEE", "MEEPS"],
+    matrix=pam250, gap_open_score=-14, gap_extend_score=-2,
+)
+
+# 自定义矩阵：直接解析 NCBI 文本格式
+custom = stride_align.matrices.SubstitutionMatrix.from_ncbi_text(
+    open("/path/to/BLOSUM62").read(),
+    name="BLOSUM62",
+    gap_open=-11, gap_extend=-1,
+)
+```
+
+每个内置 `SubstitutionMatrix` 都暴露字母表、矩阵数据
+（`int8` ndarray）以及推荐的空位默认值 `.gap_score`（线性）、
+`.gap_open`、`.gap_extend`。线性空位（`gap_score=`）与仿射空位
+（`gap_open_score=` + `gap_extend_score=`）在 AVX-512 后端都受支持；
+其它 SIMD 后端目前对矩阵模式会回退到标量通用内核。
+
+矩阵数值来自 NCBI BLAST 发行版
+[`ftp.ncbi.nih.gov/blast/matrices/`](https://ftp.ncbi.nih.gov/blast/matrices/)，
+即规范的参考分值。原始文献为：
+
+- **BLOSUM45 / 50 / 62 / 80 / 90** —— Henikoff S.、Henikoff J.G.（1992）。
+  *Amino acid substitution matrices from protein blocks*。PNAS
+  89(22):10915–10919。
+  [doi:10.1073/pnas.89.22.10915](https://doi.org/10.1073/pnas.89.22.10915)
+  &nbsp;·&nbsp;
+  [PDF（开放获取）](https://www.pnas.org/doi/pdf/10.1073/pnas.89.22.10915)
+- **PAM30 / 70 / 250** —— Dayhoff M.O.、Schwartz R.M.、Orcutt B.C.
+  （1978）。*A model of evolutionary change in proteins*。收于
+  *Atlas of Protein Sequence and Structure*，第 5 卷，补遗 3，
+  第 345–352 页。美国国家生物医学研究基金会（NBRF），华盛顿特区。
+  （书籍章节，无开放 PDF。常引用的后续推导见
+  Schwartz R.M.、Dayhoff M.O.（1978），*Matrices for detecting distant
+  relationships*，同卷第 353–358 页。）
+
 ### 编辑距离评分器
 
 除了 Smith-Waterman 和 Needleman-Wunsch，`stride-align` 还提供六种

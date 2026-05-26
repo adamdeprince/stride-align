@@ -6,7 +6,17 @@ import numpy as np
 import pytest
 
 import stride_align as sa
-from stride_align.matrices import SubstitutionMatrix, blosum62
+from stride_align.matrices import (
+    SubstitutionMatrix,
+    blosum45,
+    blosum50,
+    blosum62,
+    blosum80,
+    blosum90,
+    pam30,
+    pam70,
+    pam250,
+)
 
 
 def _diag_sum(seq: str, matrix: SubstitutionMatrix) -> int:
@@ -104,6 +114,61 @@ def test_matrix_affine_gaps_distinguish_open_extend() -> None:
     # Cheap-gap config must score strictly higher than expensive-open
     # config (it can use the gap, expensive-open can't afford to).
     assert cheap_gap > expensive_open
+
+
+def test_all_builtin_matrices_have_canonical_shape() -> None:
+    # Every shipped BLOSUM / PAM matrix uses the NCBI 24-letter protein
+    # alphabet and an int8 symmetric matrix.
+    import numpy as np
+    matrices = [blosum45, blosum50, blosum62, blosum80, blosum90, pam30, pam70, pam250]
+    for m in matrices:
+        assert m.alphabet == "ARNDCQEGHILKMFPSTWYVBZX*"
+        assert m.matrix.shape == (24, 24)
+        assert m.matrix.dtype == np.int8
+        assert np.array_equal(m.matrix, m.matrix.T), f"{m.name} not symmetric"
+        assert m.gap_open is not None and m.gap_open < 0
+        assert m.gap_extend is not None and m.gap_extend < 0
+
+
+def test_pam250_known_diagonal() -> None:
+    # NCBI PAM250 reference values.
+    assert int(pam250.matrix[pam250.alphabet.index("W"), pam250.alphabet.index("W")]) == 17
+    assert int(pam250.matrix[pam250.alphabet.index("C"), pam250.alphabet.index("C")]) == 12
+
+
+def test_blosum90_known_diagonal() -> None:
+    # NCBI BLOSUM90 reference values.
+    assert int(blosum90.matrix[blosum90.alphabet.index("W"), blosum90.alphabet.index("W")]) == 11
+    assert int(blosum90.matrix[blosum90.alphabet.index("H"), blosum90.alphabet.index("H")]) == 8
+
+
+def test_from_ncbi_text_round_trip() -> None:
+    # Parse a tiny NCBI-style matrix.
+    text = """
+    # comment line
+       A  B  C
+    A  4 -1 -2
+    B -1  5  0
+    C -2  0  9
+    """
+    m = SubstitutionMatrix.from_ncbi_text(
+        text, name="tiny", gap_open=-5, gap_extend=-1, wildcard="C"
+    )
+    assert m.alphabet == "ABC"
+    assert m.matrix.shape == (3, 3)
+    assert int(m.matrix[0, 1]) == -1
+    assert int(m.matrix[2, 2]) == 9
+    assert m.gap_open == -5 and m.gap_extend == -1
+
+
+def test_from_ncbi_text_rejects_row_header_mismatch() -> None:
+    text = """
+       A  B
+    A  1  2
+    X  3  4
+    """
+    with pytest.raises(ValueError, match="row labels do not match"):
+        SubstitutionMatrix.from_ncbi_text(text)
 
 
 def test_matrix_affine_batch_matches_single() -> None:
