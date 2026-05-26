@@ -1846,13 +1846,8 @@ struct TargetImplementation {
       throw nb::python_error();
     }
     const auto* matrix = reinterpret_cast<const std::int8_t*>(m_ptr);
-
-    // Build PreparedFarrarAlignment directly from the indices — no
-    // tokenisation, the byte values *are* alphabet indices in [0, stride).
-    ::stride_align::PreparedFarrarAlignment prepared;
-    prepared.query_tokens.assign(q_ptr, q_ptr + q_len);
-    prepared.target_tokens.assign(t_ptr, t_ptr + t_len);
-    prepared.symbol_count = stride;
+    const std::span<const std::uint8_t> q_span(q_ptr, q_len);
+    const std::span<const std::uint8_t> t_span(t_ptr, t_len);
 
     // Bound the worst-case score by the matrix's max absolute value over
     // (query_len + target_len) cells. That sets the kernel's cell width.
@@ -1872,15 +1867,15 @@ struct TargetImplementation {
     const std::uint64_t score_bound =
         static_cast<std::uint64_t>(q_len + t_len) *
         static_cast<std::uint64_t>(max_abs);
-    prepared.score_bound = score_bound;
-    prepared.score_bits = ::stride_align::farrar_detail::select_score_bits(score_bound);
+    const KernelBits score_bits =
+        ::stride_align::farrar_detail::select_score_bits(score_bound);
 
     if constexpr (LocalAlignment) {
       return farrar_fixed_kernel::detail::dispatch_score_matrix<SimdOps>(
-          prepared, matrix, stride, gap_score);
+          q_span, t_span, matrix, stride, score_bits, gap_score);
     } else {
       return farrar_fixed_kernel::detail::dispatch_global_score_matrix<SimdOps>(
-          prepared, matrix, stride, gap_score);
+          q_span, t_span, matrix, stride, score_bits, gap_score);
     }
   }
 };
