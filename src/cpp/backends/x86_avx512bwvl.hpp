@@ -17,7 +17,9 @@
 #include "backends/farrar_fixed_kernel.hpp"
 #include "backends/profile_traceback.hpp"
 #include "backends/x86_fixed_kernel.hpp"
+#include "byte_view.hpp"
 #include "cdist_simd.hpp"
+#include "farrar_preprocess.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
 #include "jaro_simd.hpp"
@@ -1779,6 +1781,108 @@ struct TargetImplementation {
         reject_duplicates,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
+
+  // Matrix-mode entry points. Inputs are already alphabet indices
+  // (bytes / 1-byte unicode) and a contiguous row-major (stride × stride)
+  // int8 substitution matrix; the SubstitutionMatrix Python wrapper does
+  // the str → indices encoding. Routed through the same striped Farrar
+  // inner loop as match/mismatch — only the query profile differs.
+  static Score smith_waterman_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_score_dispatch<true>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static Score needleman_wunsch_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_score_dispatch<false>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+ private:
+  template <bool LocalAlignment>
+  static Score matrix_score_dispatch(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    namespace bv = ::stride_align::byte_view;
+    const auto q_kind = bv::classify(query_indices.ptr());
+    const auto t_kind = bv::classify(target_indices.ptr());
+    const auto m_kind = bv::classify(matrix_buffer.ptr());
+    if (q_kind == bv::ByteCompatKind::None ||
+        t_kind == bv::ByteCompatKind::None ||
+        m_kind == bv::ByteCompatKind::None) {
+      PyErr_SetString(
+          PyExc_TypeError,
+          "matrix-mode alignment expects byte-compatible inputs "
+          "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+          "to map sequences to alphabet indices.");
+      throw nb::python_error();
+    }
+    const std::uint8_t* q_ptr = nullptr;
+    std::size_t q_len = 0;
+    const std::uint8_t* t_ptr = nullptr;
+    std::size_t t_len = 0;
+    const std::uint8_t* m_ptr = nullptr;
+    std::size_t m_len = 0;
+    bv::view(query_indices.ptr(), q_kind, q_ptr, q_len);
+    bv::view(target_indices.ptr(), t_kind, t_ptr, t_len);
+    bv::view(matrix_buffer.ptr(), m_kind, m_ptr, m_len);
+    if (m_len != stride * stride) {
+      PyErr_Format(
+          PyExc_ValueError,
+          "matrix buffer size %zu does not match stride * stride = %zu",
+          m_len, stride * stride);
+      throw nb::python_error();
+    }
+    const auto* matrix = reinterpret_cast<const std::int8_t*>(m_ptr);
+
+    // Build PreparedFarrarAlignment directly from the indices — no
+    // tokenisation, the byte values *are* alphabet indices in [0, stride).
+    ::stride_align::PreparedFarrarAlignment prepared;
+    prepared.query_tokens.assign(q_ptr, q_ptr + q_len);
+    prepared.target_tokens.assign(t_ptr, t_ptr + t_len);
+    prepared.symbol_count = stride;
+
+    // Bound the worst-case score by the matrix's max absolute value over
+    // (query_len + target_len) cells. That sets the kernel's cell width.
+    std::int32_t max_abs = 0;
+    const std::size_t cells = stride * stride;
+    for (std::size_t i = 0; i < cells; ++i) {
+      const std::int32_t value = matrix[i];
+      const std::int32_t magnitude = value < 0 ? -value : value;
+      if (magnitude > max_abs) {
+        max_abs = magnitude;
+      }
+    }
+    const std::int32_t gap_magnitude = gap_score < 0 ? -gap_score : gap_score;
+    if (gap_magnitude > max_abs) {
+      max_abs = gap_magnitude;
+    }
+    const std::uint64_t score_bound =
+        static_cast<std::uint64_t>(q_len + t_len) *
+        static_cast<std::uint64_t>(max_abs);
+    prepared.score_bound = score_bound;
+    prepared.score_bits = ::stride_align::farrar_detail::select_score_bits(score_bound);
+
+    if constexpr (LocalAlignment) {
+      return farrar_fixed_kernel::detail::dispatch_score_matrix<SimdOps>(
+          prepared, matrix, stride, gap_score);
+    } else {
+      return farrar_fixed_kernel::detail::dispatch_global_score_matrix<SimdOps>(
+          prepared, matrix, stride, gap_score);
+    }
+  }
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -2567,6 +2671,28 @@ struct Implementation {
         queries, targets, scorer, k, tqdm_factory, cpu_count,
         reject_duplicates,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score smith_waterman_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    ensure_supported();
+    return TargetImplementation::smith_waterman_score_matrix(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static STRIDE_ALIGN_X86_BASELINE Score needleman_wunsch_score_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    ensure_supported();
+    return TargetImplementation::needleman_wunsch_score_matrix(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx512bwvl;

@@ -544,6 +544,74 @@ void fill_score_profile_row(
   }
 }
 
+// Matrix-mode profile row: lane L holds matrix[query[query_index] * stride + token]
+// for the in-bounds part of the striped query, and `oob_padding` (the matrix-
+// global minimum) for striped slots past the query end. Padding with the
+// matrix minimum matches the role mismatch_score plays in the match/mismatch
+// path: OOB lanes contribute the worst possible score and therefore cannot
+// produce a false maximum.
+template <template <typename, typename> class OpsTemplate, typename Cell>
+void fill_matrix_profile_row(
+    Cell* lanes,
+    std::span<const std::uint8_t> query,
+    std::uint8_t token,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Cell oob_padding,
+    std::size_t segment,
+    std::size_t segment_count) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  for (std::size_t lane = 0; lane < lane_count; ++lane) {
+    const std::size_t query_index = lane * segment_count + segment;
+    if (query_index < query.size()) {
+      lanes[lane] = static_cast<Cell>(
+          matrix[static_cast<std::size_t>(query[query_index]) * stride +
+                 static_cast<std::size_t>(token)]);
+    } else {
+      lanes[lane] = oob_padding;
+    }
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+AlignedVector<Cell> build_matrix_profile(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> profile_tokens,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Cell oob_padding,
+    std::size_t segment_count) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  AlignedVector<Cell> profile(profile_tokens.size() * segment_count * lane_count, oob_padding);
+
+  for (std::size_t profile_index = 0; profile_index < profile_tokens.size(); ++profile_index) {
+    const auto token = profile_tokens[profile_index];
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+      Cell* lanes = profile.data() + ((profile_index * segment_count + segment) * lane_count);
+      fill_matrix_profile_row<OpsTemplate, Cell>(
+          lanes, query, token, matrix, stride, oob_padding, segment, segment_count);
+    }
+  }
+
+  return profile;
+}
+
+inline std::int8_t matrix_global_min(const std::int8_t* matrix, std::size_t stride) {
+  if (stride == 0) {
+    return 0;
+  }
+  std::int8_t minimum = matrix[0];
+  const std::size_t cells = stride * stride;
+  for (std::size_t i = 1; i < cells; ++i) {
+    if (matrix[i] < minimum) {
+      minimum = matrix[i];
+    }
+  }
+  return minimum;
+}
+
 template <template <typename, typename> class OpsTemplate, typename Cell>
 AlignedVector<Cell> build_profile(
     std::span<const std::uint8_t> query,
@@ -3476,6 +3544,77 @@ Score global_score(
   return global_score_state<OpsTemplate, Cell>(state);
 }
 
+// Matrix-mode prep: identical state shape to prepare_score_state, but the
+// query profile is built from the (matrix, query) pair instead of a single
+// match/mismatch summary. No fast-path heuristics apply because the matrix
+// can't be summarised by two scalars.
+template <template <typename, typename> class OpsTemplate, typename Cell>
+PreparedScoreState<Cell> prepare_matrix_score_state(
+    const PreparedFarrarAlignment& prepared,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  const auto query = std::span<const std::uint8_t>(
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
+  const auto target = std::span<const std::uint8_t>(
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
+
+  PreparedScoreState<Cell> state;
+  state.gap_score = static_cast<Cell>(gap_score);
+  state.query_size = query.size();
+  state.target_size = target.size();
+  state.kernel_strategy = ScoreKernelStrategy::automatic;
+
+  if (query.empty() || target.empty()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  const auto profile_tokens = collect_profile_tokens(target, state.profile_indices);
+  state.target_profile_offsets.reserve(target.size());
+  const auto state_cells = state.segment_count * lane_count;
+
+  const Cell oob_padding = static_cast<Cell>(matrix_global_min(matrix, stride));
+  state.profile = build_matrix_profile<OpsTemplate, Cell>(
+      query, profile_tokens, matrix, stride, oob_padding, state.segment_count);
+  for (const auto token : target) {
+    state.target_profile_offsets.push_back(
+        static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
+  }
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+  return state;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score score_matrix(
+    const PreparedFarrarAlignment& prepared,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  auto state = prepare_matrix_score_state<OpsTemplate, Cell>(
+      prepared, matrix, stride, gap_score);
+  return score_state<OpsTemplate, Cell>(state);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell>
+Score global_score_matrix(
+    const PreparedFarrarAlignment& prepared,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  auto state = prepare_matrix_score_state<OpsTemplate, Cell>(
+      prepared, matrix, stride, gap_score);
+  return global_score_state<OpsTemplate, Cell>(state);
+}
+
 struct LinearLocalEndpoint {
   Score score = 0;
   std::size_t row = 0;
@@ -5796,6 +5935,48 @@ Score dispatch_global_score(
   }
 
   PyErr_SetString(PyExc_RuntimeError, "unsupported global Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+Score dispatch_score_matrix(
+    const PreparedFarrarAlignment& prepared,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return score_matrix<OpsTemplate, std::int8_t>(prepared, matrix, stride, gap_score);
+    case KernelBits::bits16:
+      return score_matrix<OpsTemplate, std::int16_t>(prepared, matrix, stride, gap_score);
+    case KernelBits::bits32:
+      return score_matrix<OpsTemplate, std::int32_t>(prepared, matrix, stride, gap_score);
+    case KernelBits::bits64:
+      return score_matrix<OpsTemplate, std::int64_t>(prepared, matrix, stride, gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode Farrar score width");
+  throw nb::python_error();
+}
+
+template <template <typename, typename> class OpsTemplate>
+Score dispatch_global_score_matrix(
+    const PreparedFarrarAlignment& prepared,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  switch (prepared.score_bits) {
+    case KernelBits::bits8:
+      return global_score_matrix<OpsTemplate, std::int8_t>(prepared, matrix, stride, gap_score);
+    case KernelBits::bits16:
+      return global_score_matrix<OpsTemplate, std::int16_t>(prepared, matrix, stride, gap_score);
+    case KernelBits::bits32:
+      return global_score_matrix<OpsTemplate, std::int32_t>(prepared, matrix, stride, gap_score);
+    case KernelBits::bits64:
+      return global_score_matrix<OpsTemplate, std::int64_t>(prepared, matrix, stride, gap_score);
+  }
+
+  PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode global Farrar score width");
   throw nb::python_error();
 }
 
