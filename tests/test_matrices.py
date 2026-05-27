@@ -79,12 +79,16 @@ def test_short_pair_known_score() -> None:
 
 
 def test_matrix_mutually_exclusive_with_match_mismatch() -> None:
+    # The mutex check fires when match_score / mismatch_score differ from
+    # their built-in defaults (2 / -1). Passing an explicit value equal
+    # to the default is indistinguishable from leaving them out (normal
+    # Python kwarg semantics), and is silently allowed alongside matrix=.
     with pytest.raises(TypeError, match="mutually exclusive"):
-        sa.smith_waterman_score("HE", "HE", matrix=blosum62, match_score=2)
+        sa.smith_waterman_score("HE", "HE", matrix=blosum62, match_score=5)
     with pytest.raises(TypeError, match="mutually exclusive"):
-        sa.smith_waterman_score("HE", "HE", matrix=blosum62, mismatch_score=-1)
+        sa.smith_waterman_score("HE", "HE", matrix=blosum62, mismatch_score=-3)
     with pytest.raises(TypeError, match="mutually exclusive"):
-        sa.needleman_wunsch_score("HE", "HE", matrix=blosum62, match_score=2)
+        sa.needleman_wunsch_score("HE", "HE", matrix=blosum62, match_score=5)
 
 
 def test_matrix_affine_gaps_supported() -> None:
