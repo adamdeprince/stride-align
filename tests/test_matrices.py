@@ -171,6 +171,145 @@ def test_from_ncbi_text_rejects_row_header_mismatch() -> None:
         SubstitutionMatrix.from_ncbi_text(text)
 
 
+def test_cdist_matrix_local_global() -> None:
+    queries = ["HEAGAWGHEE", "PAWHEAE"]
+    targets = ["HE", "AWGHE", "PAWHEAE"]
+    sw = sa.cdist(queries, targets, matrix=blosum62,
+                  gap_open_score=-11, gap_extend_score=-1, scorer="sw")
+    nw = sa.cdist(queries, targets, matrix=blosum62,
+                  gap_open_score=-11, gap_extend_score=-1, scorer="nw")
+    assert sw.shape == (2, 3)
+    assert sw.dtype == np.int64
+    # Spot-check the symmetric case: aligning PAWHEAE to itself.
+    assert sw[1, 2] == sa.smith_waterman_score(
+        "PAWHEAE", "PAWHEAE", matrix=blosum62,
+        gap_open_score=-11, gap_extend_score=-1
+    )
+    assert nw[1, 2] == sa.needleman_wunsch_score(
+        "PAWHEAE", "PAWHEAE", matrix=blosum62,
+        gap_open_score=-11, gap_extend_score=-1
+    )
+
+
+def test_cdist_matrix_passes_function_reference_scorer() -> None:
+    queries = ["HE", "WW"]
+    targets = ["HE", "WW"]
+    sw = sa.cdist(queries, targets, matrix=blosum62, gap_score=-4,
+                  scorer=sa.smith_waterman_scores)
+    nw = sa.cdist(queries, targets, matrix=blosum62, gap_score=-4,
+                  scorer=sa.needleman_wunsch_scores)
+    assert sw.shape == (2, 2)
+    assert nw.shape == (2, 2)
+
+
+def test_cdist_top_k_matrix() -> None:
+    queries = ["HEAGAWGHEE", "PAWHEAE", "MEEPS", "WW"]
+    targets = ["HE", "AWGHE", "PAWHEAE", "XQQQ"]
+    top = sa.cdist_top_k(
+        queries, targets, matrix=blosum62,
+        gap_open_score=-11, gap_extend_score=-1,
+        scorer="sw", k=3,
+    )
+    assert len(top) == 3
+    # All entries are (score, query, target) tuples.
+    for score, q, t in top:
+        assert isinstance(score, int)
+        assert q in queries
+        assert t in targets
+    # The best pair should be PAWHEAE × PAWHEAE.
+    best = max(top, key=lambda x: x[0])
+    assert best[1] == "PAWHEAE" and best[2] == "PAWHEAE"
+
+
+def test_cdist_above_threshold_matrix() -> None:
+    queries = ["HEAGAWGHEE", "PAWHEAE"]
+    targets = ["AWGHE", "PAWHEAE", "XXX"]
+    matches = list(sa.cdist_above_threshold(
+        queries, targets, matrix=blosum62,
+        gap_open_score=-11, gap_extend_score=-1,
+        scorer="sw", threshold=15,
+    ))
+    # Every score must be >= threshold.
+    for score, q, t in matches:
+        assert score >= 15
+    # The self-match PAWHEAE × PAWHEAE clearly clears 15.
+    assert any(q == "PAWHEAE" and t == "PAWHEAE" for _, q, t in matches)
+
+
+def test_cdist_matrix_rejects_unknown_scorer() -> None:
+    with pytest.raises(ValueError, match="matrix-mode cdist scorer"):
+        sa.cdist(["A"], ["A"], matrix=blosum62, scorer="hamming")
+
+
+def test_matrix_path_returns_aligned_strings() -> None:
+    # Trivial pair where the optimal SW alignment has no gaps.
+    r = sa.smith_waterman_path("HE", "HE", matrix=blosum62,
+                               gap_open_score=-11, gap_extend_score=-1)
+    assert r.score == 13
+    assert r.aligned_query == "HE"
+    assert r.aligned_target == "HE"
+    assert r.operations == "=="
+    assert r.query_start == 0 and r.query_end == 2
+
+
+def test_matrix_path_with_gaps() -> None:
+    # A pair where SW inserts a gap. We don't assert which optimal path
+    # the kernel picks (multiple may share the optimum); we assert the
+    # reconstructed aligned strings are consistent with the operations.
+    r = sa.smith_waterman_path("HEAGAWGHEE", "PAWHEAE", matrix=blosum62,
+                               gap_open_score=-11, gap_extend_score=-1)
+    # Reconstruction consistency: every '=' position has matching chars,
+    # every 'X' has differing chars, every 'D'/'I' has a gap on the
+    # matching side.
+    for q_c, t_c, op in zip(r.aligned_query, r.aligned_target, r.operations):
+        if op == "=":
+            assert q_c == t_c
+        elif op == "X":
+            assert q_c != t_c and q_c != "-" and t_c != "-"
+        elif op == "D":
+            assert t_c == "-"
+        elif op == "I":
+            assert q_c == "-"
+
+
+def test_matrix_path_info_returns_cigar() -> None:
+    p = sa.smith_waterman_path_info("HE", "HE", matrix=blosum62,
+                                    gap_open_score=-11, gap_extend_score=-1)
+    assert p.score == 13
+    assert p.cigar == "2="
+    assert p.matches == 2
+    assert p.aligned_length == 2
+
+
+def test_matrix_cigar_shortcut() -> None:
+    cigar = sa.smith_waterman_cigar("HE", "HE", matrix=blosum62,
+                                    gap_open_score=-11, gap_extend_score=-1)
+    assert cigar == "2="
+
+
+def test_matrix_nw_path_full_length() -> None:
+    # NW always traverses both sequences end-to-end, so the operations
+    # string covers the full pair.
+    r = sa.needleman_wunsch_path("HE", "HEW", matrix=blosum62,
+                                 gap_open_score=-11, gap_extend_score=-1)
+    assert r.query_start == 0 and r.query_end == 2
+    assert r.target_start == 0 and r.target_end == 3
+    # Aligned strings cover the full target (3) with the query padded.
+    assert len(r.aligned_target) == 3
+    assert len(r.aligned_query) == 3
+    assert "-" in r.aligned_query
+
+
+def test_matrix_path_bytes_input() -> None:
+    qb = blosum62.encode("HE")
+    tb = blosum62.encode("HE")
+    r = sa.smith_waterman_path(qb, tb, matrix=blosum62,
+                               gap_open_score=-11, gap_extend_score=-1)
+    assert r.score == 13
+    # Bytes in → bytes out.
+    assert isinstance(r.aligned_query, (bytes, bytearray))
+
+
 def test_matrix_affine_batch_matches_single() -> None:
     q = "HEAGAWGHEE"
     targets = ["PAWHEAE", "HEAGAWGHEE", "WW", ""]

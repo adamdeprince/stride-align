@@ -822,6 +822,42 @@ inline AlignmentResult dispatch_matrix_traceback_u8(
   return build_alignment_result<std::uint8_t>(prepared, trace, q_vec, t_vec);
 }
 
+// Matrix-mode path-info dispatcher (linear gap). Returns AlignmentPath —
+// just score + endpoints + operations + cigar + counts, no aligned-string
+// materialisation. The Python wrapper rebuilds aligned strings from the
+// caller's input plus the operations string when the public-API call is
+// smith_waterman_path / needleman_wunsch_path.
+template <bool LocalAlignment>
+inline AlignmentPath dispatch_matrix_path_info_u8(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  ::stride_align::scorer::MatrixScorer<std::int64_t> scorer{matrix, stride};
+  auto trace =
+      traceback<std::uint8_t, std::int64_t, LocalAlignment>(
+          query, target, scorer, static_cast<std::int64_t>(gap_score));
+  return make_alignment_path(
+      trace.score, trace.query_start, trace.query_end,
+      trace.target_start, trace.target_end, trace.operations);
+}
+
+template <bool LocalAlignment>
+inline AlignmentPath dispatch_matrix_affine_path_info_u8(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  auto trace = ::stride_align::affine::detail::traceback_matrix<LocalAlignment>(
+      query, target, matrix, stride, gap_open_score, gap_extend_score);
+  return make_alignment_path(
+      trace.score, trace.query_start, trace.query_end,
+      trace.target_start, trace.target_end, trace.operations);
+}
+
 }  // namespace detail
 
 template <BackendKind Kind>
@@ -962,6 +998,54 @@ struct Implementation {
       Score gap_score) {
     return matrix_scores_dispatch<false>(
         query_indices, targets, matrix_buffer, stride, gap_score);
+  }
+
+  // Matrix-mode traceback (path-info). Returns AlignmentPath; the
+  // Python wrapper builds aligned strings on top when the caller wants
+  // smith_waterman_path / needleman_wunsch_path (with aligned_query /
+  // aligned_target fields).
+  static AlignmentPath smith_waterman_path_info_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_path_info_dispatch<true>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static AlignmentPath needleman_wunsch_path_info_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    return matrix_path_info_dispatch<false>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static AlignmentPath smith_waterman_affine_path_info_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    return matrix_affine_path_info_dispatch<true>(
+        query_indices, target_indices, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static AlignmentPath needleman_wunsch_affine_path_info_matrix(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    return matrix_affine_path_info_dispatch<false>(
+        query_indices, target_indices, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
   }
 
   // Affine matrix-mode entry points (scalar fallback). Routes through
@@ -1165,6 +1249,98 @@ struct Implementation {
           gap_open_score, gap_extend_score));
     }
     return scores;
+  }
+
+  template <bool LocalAlignment>
+  static AlignmentPath matrix_path_info_dispatch(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_score) {
+    namespace bv = ::stride_align::byte_view;
+    const auto q_kind = bv::classify(query_indices.ptr());
+    const auto t_kind = bv::classify(target_indices.ptr());
+    const auto m_kind = bv::classify(matrix_buffer.ptr());
+    if (q_kind == bv::ByteCompatKind::None ||
+        t_kind == bv::ByteCompatKind::None ||
+        m_kind == bv::ByteCompatKind::None) {
+      PyErr_SetString(
+          PyExc_TypeError,
+          "matrix-mode traceback expects byte-compatible inputs "
+          "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+          "to map sequences to alphabet indices.");
+      throw nb::python_error();
+    }
+    const std::uint8_t* q_ptr = nullptr;
+    std::size_t q_len = 0;
+    const std::uint8_t* t_ptr = nullptr;
+    std::size_t t_len = 0;
+    const std::uint8_t* m_ptr = nullptr;
+    std::size_t m_len = 0;
+    bv::view(query_indices.ptr(), q_kind, q_ptr, q_len);
+    bv::view(target_indices.ptr(), t_kind, t_ptr, t_len);
+    bv::view(matrix_buffer.ptr(), m_kind, m_ptr, m_len);
+    if (m_len != stride * stride) {
+      PyErr_Format(
+          PyExc_ValueError,
+          "matrix buffer size %zu does not match stride * stride = %zu",
+          m_len, stride * stride);
+      throw nb::python_error();
+    }
+    return detail::dispatch_matrix_path_info_u8<LocalAlignment>(
+        std::span<const std::uint8_t>(q_ptr, q_len),
+        std::span<const std::uint8_t>(t_ptr, t_len),
+        reinterpret_cast<const std::int8_t*>(m_ptr),
+        stride,
+        gap_score);
+  }
+
+  template <bool LocalAlignment>
+  static AlignmentPath matrix_affine_path_info_dispatch(
+      nb::handle query_indices,
+      nb::handle target_indices,
+      nb::handle matrix_buffer,
+      std::size_t stride,
+      Score gap_open_score,
+      Score gap_extend_score) {
+    namespace bv = ::stride_align::byte_view;
+    const auto q_kind = bv::classify(query_indices.ptr());
+    const auto t_kind = bv::classify(target_indices.ptr());
+    const auto m_kind = bv::classify(matrix_buffer.ptr());
+    if (q_kind == bv::ByteCompatKind::None ||
+        t_kind == bv::ByteCompatKind::None ||
+        m_kind == bv::ByteCompatKind::None) {
+      PyErr_SetString(
+          PyExc_TypeError,
+          "matrix-mode affine traceback expects byte-compatible inputs "
+          "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+          "to map sequences to alphabet indices.");
+      throw nb::python_error();
+    }
+    const std::uint8_t* q_ptr = nullptr;
+    std::size_t q_len = 0;
+    const std::uint8_t* t_ptr = nullptr;
+    std::size_t t_len = 0;
+    const std::uint8_t* m_ptr = nullptr;
+    std::size_t m_len = 0;
+    bv::view(query_indices.ptr(), q_kind, q_ptr, q_len);
+    bv::view(target_indices.ptr(), t_kind, t_ptr, t_len);
+    bv::view(matrix_buffer.ptr(), m_kind, m_ptr, m_len);
+    if (m_len != stride * stride) {
+      PyErr_Format(
+          PyExc_ValueError,
+          "matrix buffer size %zu does not match stride * stride = %zu",
+          m_len, stride * stride);
+      throw nb::python_error();
+    }
+    return detail::dispatch_matrix_affine_path_info_u8<LocalAlignment>(
+        std::span<const std::uint8_t>(q_ptr, q_len),
+        std::span<const std::uint8_t>(t_ptr, t_len),
+        reinterpret_cast<const std::int8_t*>(m_ptr),
+        stride,
+        gap_open_score,
+        gap_extend_score);
   }
 };
 

@@ -121,6 +121,30 @@ ScoreNDArray call_score_many(nb::handle targets, Function&& function) {
 
 inline void bind_alignment_result_type(nb::module_& m) {
   nb::class_<AlignmentResult>(m, "AlignmentResult")
+      .def(
+          "__init__",
+          [](AlignmentResult* self, Score score, std::size_t query_start,
+             std::size_t query_end, std::size_t target_start,
+             std::size_t target_end, nb::object aligned_query,
+             nb::object aligned_target, const std::string& operations) {
+            new (self) AlignmentResult();
+            self->score = score;
+            self->query_start = query_start;
+            self->query_end = query_end;
+            self->target_start = target_start;
+            self->target_end = target_end;
+            self->aligned_query = std::move(aligned_query);
+            self->aligned_target = std::move(aligned_target);
+            self->operations = operations;
+          },
+          nb::arg("score") = 0,
+          nb::arg("query_start") = 0,
+          nb::arg("query_end") = 0,
+          nb::arg("target_start") = 0,
+          nb::arg("target_end") = 0,
+          nb::arg("aligned_query") = nb::none(),
+          nb::arg("aligned_target") = nb::none(),
+          nb::arg("operations") = std::string())
       .def_ro("score", &AlignmentResult::score)
       .def_ro("query_start", &AlignmentResult::query_start)
       .def_ro("query_end", &AlignmentResult::query_end)
@@ -919,6 +943,63 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         } else {
           return ::stride_align::backend_generic::Implementation<
               ::stride_align::BackendKind::generic>::smith_waterman_affine_score_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_open_score"),
+      nb::arg("gap_extend_score"));
+
+  m.def(
+      "smith_waterman_path_info_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_score) {
+        if constexpr (requires {
+                        Implementation::smith_waterman_path_info_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride, gap_score);
+                      }) {
+          return Implementation::smith_waterman_path_info_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::smith_waterman_path_info_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_score") = -1);
+
+  m.def(
+      "smith_waterman_affine_path_info_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_open_score,
+         Score gap_extend_score) {
+        if constexpr (requires {
+                        Implementation::smith_waterman_affine_path_info_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride,
+                            gap_open_score, gap_extend_score);
+                      }) {
+          return Implementation::smith_waterman_affine_path_info_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::smith_waterman_affine_path_info_matrix(
               query_indices, target_indices,
               matrix_buffer, stride, gap_open_score, gap_extend_score);
         }
@@ -1981,6 +2062,63 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         } else {
           return ::stride_align::backend_generic::Implementation<
               ::stride_align::BackendKind::generic>::needleman_wunsch_affine_score_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_open_score"),
+      nb::arg("gap_extend_score"));
+
+  m.def(
+      "needleman_wunsch_path_info_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_score) {
+        if constexpr (requires {
+                        Implementation::needleman_wunsch_path_info_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride, gap_score);
+                      }) {
+          return Implementation::needleman_wunsch_path_info_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::needleman_wunsch_path_info_matrix(
+              query_indices, target_indices, matrix_buffer, stride, gap_score);
+        }
+      },
+      nb::arg("query_indices"),
+      nb::arg("target_indices"),
+      nb::arg("matrix_buffer"),
+      nb::arg("stride"),
+      nb::arg("gap_score") = -1);
+
+  m.def(
+      "needleman_wunsch_affine_path_info_matrix",
+      [](nb::handle query_indices,
+         nb::handle target_indices,
+         nb::handle matrix_buffer,
+         std::size_t stride,
+         Score gap_open_score,
+         Score gap_extend_score) {
+        if constexpr (requires {
+                        Implementation::needleman_wunsch_affine_path_info_matrix(
+                            query_indices, target_indices,
+                            matrix_buffer, stride,
+                            gap_open_score, gap_extend_score);
+                      }) {
+          return Implementation::needleman_wunsch_affine_path_info_matrix(
+              query_indices, target_indices,
+              matrix_buffer, stride, gap_open_score, gap_extend_score);
+        } else {
+          return ::stride_align::backend_generic::Implementation<
+              ::stride_align::BackendKind::generic>::needleman_wunsch_affine_path_info_matrix(
               query_indices, target_indices,
               matrix_buffer, stride, gap_open_score, gap_extend_score);
         }

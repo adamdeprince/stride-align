@@ -176,12 +176,11 @@ inline Score score_only_matrix(
       query, target, scorer, gap_open_score, gap_extend_score);
 }
 
-template <typename Token, bool LocalAlignment>
+template <typename Token, bool LocalAlignment, typename Scorer>
 TracebackResult traceback(
     std::span<const Token> query,
     std::span<const Token> target,
-    Score match_score,
-    Score mismatch_score,
+    Scorer scorer,
     Score gap_open_score,
     Score gap_extend_score) {
   const std::size_t rows = query.size() + 1U;
@@ -224,11 +223,7 @@ TracebackResult traceback(
 
       const Score diagonal = add_score(
           h[index(row - 1U, column - 1U)],
-          substitution_score<Token>(
-              query[row - 1U],
-              target[column - 1U],
-              match_score,
-              mismatch_score));
+          static_cast<Score>(scorer.substitute(query[row - 1U], target[column - 1U])));
       Score cell = std::max({diagonal, e[cell_index], f[cell_index]});
       if constexpr (LocalAlignment) {
         cell = std::max<Score>(0, cell);
@@ -272,11 +267,7 @@ TracebackResult traceback(
       if (row > 0 && column > 0) {
         const Score diagonal = add_score(
             h[index(row - 1U, column - 1U)],
-            substitution_score<Token>(
-                query[row - 1U],
-                target[column - 1U],
-                match_score,
-                mismatch_score));
+            static_cast<Score>(scorer.substitute(query[row - 1U], target[column - 1U])));
         if (h[cell_index] == diagonal) {
           result.operations.push_back(query[row - 1U] == target[column - 1U] ? '=' : 'X');
           --row;
@@ -317,6 +308,39 @@ TracebackResult traceback(
   result.query_start = row;
   result.target_start = column;
   return result;
+}
+
+// Back-compat wrapper: existing match/mismatch traceback callers compile unchanged.
+template <typename Token, bool LocalAlignment>
+inline TracebackResult traceback(
+    std::span<const Token> query,
+    std::span<const Token> target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  return traceback<Token, LocalAlignment>(
+      query,
+      target,
+      ::stride_align::scorer::MatchMismatchScorer<Score>{match_score, mismatch_score},
+      gap_open_score,
+      gap_extend_score);
+}
+
+// Matrix-mode scalar affine traceback. Uses Score (int64) cells for the DP
+// grid — the traceback path materialises a full row*column score matrix
+// anyway, so the cell-width savings of the score-only path don't apply.
+template <bool LocalAlignment>
+inline TracebackResult traceback_matrix(
+    std::span<const std::uint8_t> query,
+    std::span<const std::uint8_t> target,
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  ::stride_align::scorer::MatrixScorer<Score> scorer{matrix, stride};
+  return traceback<std::uint8_t, LocalAlignment>(
+      query, target, scorer, gap_open_score, gap_extend_score);
 }
 
 template <typename Token>

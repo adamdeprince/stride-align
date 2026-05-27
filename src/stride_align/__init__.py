@@ -488,6 +488,117 @@ def _dispatch_matrix_many(
     return np.asarray(scores, dtype=np.int64)
 
 
+def _dispatch_matrix_path_info(
+    query: object,
+    target: object,
+    matrix: Any,
+    *,
+    local: bool,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+) -> AlignmentPath:
+    matrix = _validate_matrix(matrix)
+    q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
+    t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
+    is_affine, open_s, extend_s = _matrix_gap_route(
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+    )
+    if is_affine:
+        fn = ("smith_waterman_affine_path_info_matrix"
+              if local else "needleman_wunsch_affine_path_info_matrix")
+        return getattr(_LEVENSHTEIN_BACKEND, fn)(
+            q_bytes, t_bytes, matrix.matrix.tobytes(), matrix.stride,
+            open_s, extend_s,
+        )
+    fn = ("smith_waterman_path_info_matrix"
+          if local else "needleman_wunsch_path_info_matrix")
+    return getattr(_LEVENSHTEIN_BACKEND, fn)(
+        q_bytes, t_bytes, matrix.matrix.tobytes(), matrix.stride, open_s,
+    )
+
+
+def _materialize_alignment_strings(
+    query: object,
+    target: object,
+    path: AlignmentPath,
+) -> tuple[object, object]:
+    """Rebuild aligned_query / aligned_target from the path operations.
+
+    Operation alphabet (CIGAR-extended): `=` match, `X` mismatch, `D`
+    gap-in-target (query advances), `I` gap-in-query (target advances).
+    For str inputs the gap fill character is `-`; for bytes inputs it is
+    the byte ``b"-"``.
+    """
+    is_str = isinstance(query, str) and isinstance(target, str)
+    is_bytes = isinstance(query, (bytes, bytearray)) and isinstance(target, (bytes, bytearray))
+    if not (is_str or is_bytes):
+        # Sequence/object inputs are not yet materialised for matrix mode.
+        return None, None
+
+    if is_str:
+        gap = "-"
+        join = "".join
+    else:
+        gap = b"-"
+        join = b"".join
+
+    q_iter = iter(query[path.query_start:path.query_end])
+    t_iter = iter(target[path.target_start:path.target_end])
+    aligned_q: list = []
+    aligned_t: list = []
+    for op in path.operations:
+        if op in ("=", "X"):
+            aligned_q.append(next(q_iter))
+            aligned_t.append(next(t_iter))
+        elif op == "D":
+            aligned_q.append(next(q_iter))
+            aligned_t.append(gap)
+        elif op == "I":
+            aligned_q.append(gap)
+            aligned_t.append(next(t_iter))
+    if is_str:
+        return join(aligned_q), join(aligned_t)
+    # bytes/bytearray: items are ints under iteration; rebuild via bytes(...).
+    return bytes(aligned_q), bytes(aligned_t)
+
+
+def _dispatch_matrix_path(
+    query: object,
+    target: object,
+    matrix: Any,
+    *,
+    local: bool,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+) -> AlignmentResult:
+    path = _dispatch_matrix_path_info(
+        query, target, matrix,
+        local=local,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+    )
+    aligned_q, aligned_t = _materialize_alignment_strings(query, target, path)
+    if aligned_q is None:
+        aligned_q = "" if isinstance(query, str) else b""
+    if aligned_t is None:
+        aligned_t = "" if isinstance(target, str) else b""
+    return AlignmentResult(
+        score=path.score,
+        query_start=path.query_start,
+        query_end=path.query_end,
+        target_start=path.target_start,
+        target_end=path.target_end,
+        aligned_query=aligned_q,
+        aligned_target=aligned_t,
+        operations=path.operations,
+    )
+
+
 def _dispatch_matrix_affine_many(
     function_name: str,
     query: object,
@@ -1014,20 +1125,31 @@ def smith_waterman_path(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentResult:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score, mismatch_score=mismatch_score, width=width,
+        )
+        return _dispatch_matrix_path(
+            query, target, matrix, local=True,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
     return _dispatch(
         "smith_waterman_path",
         "sw-path",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -1039,20 +1161,31 @@ def smith_waterman_path_info(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentPath:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score, mismatch_score=mismatch_score, width=width,
+        )
+        return _dispatch_matrix_path_info(
+            query, target, matrix, local=True,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
     return _dispatch(
         "smith_waterman_path_info",
         "sw-path-info",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -1064,20 +1197,31 @@ def smith_waterman_cigar(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> str:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score, mismatch_score=mismatch_score, width=width,
+        )
+        return _dispatch_matrix_path_info(
+            query, target, matrix, local=True,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        ).cigar
     return _dispatch(
         "smith_waterman_cigar",
         "sw-cigar",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -1269,20 +1413,31 @@ def needleman_wunsch_path(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentResult:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score, mismatch_score=mismatch_score, width=width,
+        )
+        return _dispatch_matrix_path(
+            query, target, matrix, local=False,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
     return _dispatch(
         "needleman_wunsch_path",
         "nw-path",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -1294,20 +1449,31 @@ def needleman_wunsch_path_info(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> AlignmentPath:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score, mismatch_score=mismatch_score, width=width,
+        )
+        return _dispatch_matrix_path_info(
+            query, target, matrix, local=False,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
     return _dispatch(
         "needleman_wunsch_path_info",
         "nw-path-info",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -1319,20 +1485,31 @@ def needleman_wunsch_cigar(
     query: object,
     target: object,
     *,
-    match_score: int = 2,
-    mismatch_score: int = -1,
+    match_score: Any = _UNSET,
+    mismatch_score: Any = _UNSET,
+    matrix: Any = None,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
     width: int | None = None,
 ) -> str:
+    if matrix is not None:
+        _matrix_kwargs_clean(
+            match_score=match_score, mismatch_score=mismatch_score, width=width,
+        )
+        return _dispatch_matrix_path_info(
+            query, target, matrix, local=False,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        ).cigar
     return _dispatch(
         "needleman_wunsch_cigar",
         "nw-cigar",
         query,
         target,
-        match_score=match_score,
-        mismatch_score=mismatch_score,
+        match_score=2 if match_score is _UNSET else match_score,
+        mismatch_score=-1 if mismatch_score is _UNSET else mismatch_score,
         gap_score=gap_score,
         gap_open_score=gap_open_score,
         gap_extend_score=gap_extend_score,
@@ -2163,11 +2340,89 @@ def extract_best(
 #     C++ via a PyObject* -> Scorer table populated at import time.
 
 
+_MATRIX_CDIST_LOCAL = ("sw", "smith_waterman", "smith-waterman", "local")
+_MATRIX_CDIST_GLOBAL = ("nw", "needleman_wunsch", "needleman-wunsch", "global")
+
+
+def _resolve_matrix_cdist_mode(scorer: Any) -> bool:
+    """Return True for local (SW), False for global (NW).
+
+    Accepts either a string mode label or one of the module-level
+    score / scores functions for SW or NW.
+    """
+    if isinstance(scorer, str):
+        label = scorer.lower()
+        if label in _MATRIX_CDIST_LOCAL:
+            return True
+        if label in _MATRIX_CDIST_GLOBAL:
+            return False
+        raise ValueError(
+            f"matrix-mode cdist scorer must be 'sw'/'nw' (or smith_waterman_score / "
+            f"needleman_wunsch_score / *_scores); got {scorer!r}"
+        )
+    if scorer in (smith_waterman_score, smith_waterman_scores):
+        return True
+    if scorer in (needleman_wunsch_score, needleman_wunsch_scores):
+        return False
+    raise ValueError(
+        "matrix-mode cdist scorer must be one of: 'sw', 'nw', "
+        "smith_waterman_score, smith_waterman_scores, "
+        "needleman_wunsch_score, needleman_wunsch_scores"
+    )
+
+
+def _cdist_matrix(
+    queries: object,
+    targets: object,
+    *,
+    matrix: Any,
+    scorer: Any,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+) -> np.ndarray:
+    local = _resolve_matrix_cdist_mode(scorer)
+    matrix = _validate_matrix(matrix)
+    is_affine, open_s, extend_s = _matrix_gap_route(
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+    )
+    query_tuple = _materialize_targets(queries)
+    target_tuple = _materialize_targets(targets)
+    if not query_tuple:
+        return np.empty((0, len(target_tuple)), dtype=np.int64)
+    if not target_tuple:
+        return np.empty((len(query_tuple), 0), dtype=np.int64)
+
+    if is_affine:
+        batch_fn = "smith_waterman_affine_scores_matrix" if local \
+            else "needleman_wunsch_affine_scores_matrix"
+        dispatcher = _dispatch_matrix_affine_many
+        result = np.empty((len(query_tuple), len(target_tuple)), dtype=np.int64)
+        for i, q in enumerate(query_tuple):
+            row = dispatcher(batch_fn, q, target_tuple, matrix, open_s, extend_s)
+            result[i, :] = row
+        return result
+
+    batch_fn = "smith_waterman_scores_matrix" if local else "needleman_wunsch_scores_matrix"
+    dispatcher = _dispatch_matrix_many
+    result = np.empty((len(query_tuple), len(target_tuple)), dtype=np.int64)
+    for i, q in enumerate(query_tuple):
+        row = dispatcher(batch_fn, q, target_tuple, matrix, open_s)
+        result[i, :] = row
+    return result
+
+
 def cdist(
     queries: object,
     targets: object,
     *,
-    scorer: "Scorer | object",
+    scorer: "Scorer | object" = None,
+    matrix: Any = None,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     tqdm: object = None,
     cpu_count: int = 0,
     prefix_weight: float = 0.1,
@@ -2206,6 +2461,16 @@ def cdist(
     another Python thread to mutate the original lists while cdist is
     running.
     """
+    if matrix is not None:
+        return _cdist_matrix(
+            queries, targets,
+            matrix=matrix, scorer=scorer if scorer is not None else "sw",
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+    if scorer is None:
+        raise TypeError("cdist requires either scorer= or matrix=")
     resolved_cpu_count = cpu_count
     if resolved_cpu_count <= 0:
         resolved_cpu_count = os.cpu_count() or 1
@@ -2224,8 +2489,12 @@ def cdist_above_threshold(
     queries: object,
     targets: object,
     *,
-    scorer: "Scorer | object",
+    scorer: "Scorer | object" = None,
     threshold: float,
+    matrix: Any = None,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     tqdm: object = None,
     cpu_count: int = 0,
     prefix_weight: float = 0.1,
@@ -2256,7 +2525,22 @@ def cdist_above_threshold(
 
     Abandoning the iterator mid-loop (``break``) is safe — its
     destructor signals the workers to stop and joins them.
+
+    Matrix mode (``matrix=``): the threshold is interpreted as a raw
+    integer score (not a [0, 1] normalized similarity), and the call
+    runs single-threaded in Python on top of the batch matrix kernel.
     """
+    if matrix is not None:
+        return _cdist_above_threshold_matrix(
+            queries, targets,
+            matrix=matrix, scorer=scorer if scorer is not None else "sw",
+            threshold=int(threshold),
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+    if scorer is None:
+        raise TypeError("cdist_above_threshold requires either scorer= or matrix=")
     resolved_cpu_count = cpu_count
     if resolved_cpu_count <= 0:
         resolved_cpu_count = os.cpu_count() or 1
@@ -2272,12 +2556,52 @@ def cdist_above_threshold(
     )
 
 
+def _cdist_above_threshold_matrix(
+    queries: object,
+    targets: object,
+    *,
+    matrix: Any,
+    scorer: Any,
+    threshold: int,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+):
+    """Iterator over (score, query, target) for matrix-mode cdist."""
+    scores = _cdist_matrix(
+        queries, targets,
+        matrix=matrix, scorer=scorer,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+    )
+    query_tuple = _materialize_targets(queries)
+    target_tuple = _materialize_targets(targets)
+    return _cdist_threshold_iter(scores, query_tuple, target_tuple, threshold)
+
+
+def _cdist_threshold_iter(
+    scores: np.ndarray,
+    query_tuple: tuple,
+    target_tuple: tuple,
+    threshold: int,
+):
+    for i, q in enumerate(query_tuple):
+        row = scores[i]
+        for j in np.flatnonzero(row >= threshold):
+            yield int(row[j]), q, target_tuple[j]
+
+
 def cdist_top_k(
     queries: object,
     targets: object,
     *,
-    scorer: "Scorer | object",
+    scorer: "Scorer | object" = None,
     k: int,
+    matrix: Any = None,
+    gap_score: int = -1,
+    gap_open_score: int | None = None,
+    gap_extend_score: int | None = None,
     tqdm: object = None,
     cpu_count: int = 0,
     reject_duplicates: bool = False,
@@ -2308,7 +2632,26 @@ def cdist_top_k(
     if they match, the pair is skipped (and so is its symmetric
     mirror). Useful for fuzzy-match workflows that want to surface
     near-duplicates while ignoring exact duplicates.
+
+    Matrix mode (``matrix=``): scores are raw integers (no [0, 1]
+    normalization), reject_duplicates is unsupported, and the call
+    runs single-threaded in Python on top of the batch matrix kernel.
     """
+    if matrix is not None:
+        if reject_duplicates:
+            raise NotImplementedError(
+                "reject_duplicates is not supported for matrix-mode cdist_top_k"
+            )
+        return _cdist_top_k_matrix(
+            queries, targets,
+            matrix=matrix, scorer=scorer if scorer is not None else "sw",
+            k=int(k),
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+        )
+    if scorer is None:
+        raise TypeError("cdist_top_k requires either scorer= or matrix=")
     resolved_cpu_count = cpu_count
     if resolved_cpu_count <= 0:
         resolved_cpu_count = os.cpu_count() or 1
@@ -2323,6 +2666,40 @@ def cdist_top_k(
         prefix_threshold=prefix_threshold,
         prefix_cap=prefix_cap,
     )
+
+
+def _cdist_top_k_matrix(
+    queries: object,
+    targets: object,
+    *,
+    matrix: Any,
+    scorer: Any,
+    k: int,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+) -> list[tuple[int, object, object]]:
+    scores = _cdist_matrix(
+        queries, targets,
+        matrix=matrix, scorer=scorer,
+        gap_score=gap_score,
+        gap_open_score=gap_open_score,
+        gap_extend_score=gap_extend_score,
+    )
+    query_tuple = _materialize_targets(queries)
+    target_tuple = _materialize_targets(targets)
+    if scores.size == 0 or k <= 0:
+        return []
+    # Top-k by partial sort over the flattened (Q × T) score grid.
+    flat = scores.ravel()
+    take = min(k, flat.size)
+    indices = np.argpartition(-flat, take - 1)[:take]
+    result: list[tuple[int, object, object]] = []
+    ncols = scores.shape[1]
+    for flat_idx in indices:
+        i, j = int(flat_idx) // ncols, int(flat_idx) % ncols
+        result.append((int(flat[flat_idx]), query_tuple[i], target_tuple[j]))
+    return result
 
 
 # Register each top-level scoring function with the C++ scorer table
