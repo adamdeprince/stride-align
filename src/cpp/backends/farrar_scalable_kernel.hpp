@@ -306,11 +306,11 @@ PreparedScoreState<Cell> prepare_score_state(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
@@ -445,11 +445,11 @@ PreparedScoreState<Cell> prepare_global_score_state(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
@@ -512,11 +512,11 @@ PreparedAffineScoreState<Cell> prepare_affine_score_state(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   PreparedAffineScoreState<Cell> state;
   state.gap_open_score = static_cast<Cell>(gap_open_score);

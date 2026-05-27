@@ -388,11 +388,11 @@ inline Score dispatch_prepared_affine_score(PreparedAffineScore& prepared) {
         using State = std::decay_t<decltype(state)>;
         if constexpr (std::is_same_v<State, GenericPreparedAffineScore>) {
           const auto query = std::span<const std::uint8_t>(
-              state.prepared.query_tokens.data(),
-              state.prepared.query_tokens.size());
+              state.prepared.query_uint8().data(),
+              state.prepared.query_uint8().size());
           const auto target = std::span<const std::uint8_t>(
-              state.prepared.target_tokens.data(),
-              state.prepared.target_tokens.size());
+              state.prepared.target_uint8().data(),
+              state.prepared.target_uint8().size());
           return affine::detail::score_only<std::uint8_t, true>(
               query,
               target,
@@ -414,11 +414,11 @@ inline Score dispatch_prepared_global_affine_score(PreparedAffineScore& prepared
         using State = std::decay_t<decltype(state)>;
         if constexpr (std::is_same_v<State, GenericPreparedAffineScore>) {
           const auto query = std::span<const std::uint8_t>(
-              state.prepared.query_tokens.data(),
-              state.prepared.query_tokens.size());
+              state.prepared.query_uint8().data(),
+              state.prepared.query_uint8().size());
           const auto target = std::span<const std::uint8_t>(
-              state.prepared.target_tokens.data(),
-              state.prepared.target_tokens.size());
+              state.prepared.target_uint8().data(),
+              state.prepared.target_uint8().size());
           return affine::detail::score_only<std::uint8_t, false>(
               query,
               target,
@@ -591,11 +591,11 @@ inline Score dispatch_affine_farrar_score(
     Score gap_open_score,
     Score gap_extend_score) {
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   switch (prepared.score_bits) {
     case KernelBits::bits8:
@@ -640,11 +640,11 @@ inline Score dispatch_global_affine_farrar_score(
     Score gap_open_score,
     Score gap_extend_score) {
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   switch (prepared.score_bits) {
     case KernelBits::bits8:

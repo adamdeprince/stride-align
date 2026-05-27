@@ -687,11 +687,11 @@ inline Score dispatch_farrar_score(
     Score mismatch_score,
     Score gap_score) {
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   if (const auto fast = score_fast_paths::fast_score_only<std::uint8_t, std::int64_t, true>(
           query,

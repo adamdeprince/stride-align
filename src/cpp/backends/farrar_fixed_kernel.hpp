@@ -791,11 +791,11 @@ PreparedScoreState<Cell> prepare_score_state(
   constexpr std::size_t lane_count = Ops::lane_count;
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
@@ -1017,11 +1017,11 @@ PreparedScoreState<Cell> prepare_global_score_state(
   constexpr std::size_t lane_count = Ops::lane_count;
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
@@ -1077,11 +1077,11 @@ PreparedAffineScoreState<Cell> prepare_affine_score_state(
   constexpr std::size_t lane_count = Ops::lane_count;
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
 
   PreparedAffineScoreState<Cell> state;
   state.gap_open_score = static_cast<Cell>(gap_open_score);
@@ -3012,11 +3012,11 @@ AlignmentPath affine_striped_path_info(
       gap_open_score,
       gap_extend_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return affine_striped_traceback_state<OpsTemplate, Cell, LocalAlignment, false>(
       state,
       query,
@@ -3037,11 +3037,11 @@ std::string affine_striped_cigar(
       gap_open_score,
       gap_extend_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return affine_striped_traceback_state<OpsTemplate, Cell, LocalAlignment, true>(
       state,
       query,
@@ -4669,11 +4669,11 @@ AlignmentPath linear_sw_masked_path_info(
       mismatch_score,
       gap_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return linear_sw_masked_trace_state<
       OpsTemplate,
       Cell,
@@ -4692,11 +4692,11 @@ LinearTracebackResult linear_sw_masked_traceback(
       mismatch_score,
       gap_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return linear_sw_masked_trace_state<
       OpsTemplate,
       Cell,
@@ -4715,11 +4715,11 @@ std::string linear_sw_masked_cigar(
       mismatch_score,
       gap_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return linear_sw_masked_trace_state<
       OpsTemplate,
       Cell,
@@ -4738,11 +4738,11 @@ LinearCigarTrace linear_sw_masked_cigar_trace(
       mismatch_score,
       gap_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return linear_sw_masked_trace_state<
       OpsTemplate,
       Cell,
@@ -4786,11 +4786,11 @@ LinearCigarTrace linear_sw_score_first_masked_cigar_trace(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return linear_sw_masked_trace_state<
       OpsTemplate,
       Cell,
@@ -5351,11 +5351,11 @@ std::string linear_sw_striped_cigar(
       mismatch_score,
       gap_score);
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   return linear_sw_striped_cigar_state<OpsTemplate, Cell>(state, query, target);
 }
 
@@ -5648,7 +5648,7 @@ std::string linear_sw_checkpointed_cigar(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
-  if (prepared.query_tokens.empty() || prepared.target_tokens.empty()) {
+  if (prepared.query_uint8().empty() || prepared.target_uint8().empty()) {
     return "";
   }
 
@@ -5674,11 +5674,11 @@ std::string linear_sw_checkpointed_cigar(
   ReverseCigarBuilder cigar;
   std::vector<std::uint8_t> trace;
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_tokens.data(),
-      prepared.query_tokens.size());
+      prepared.query_uint8().data(),
+      prepared.query_uint8().size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_tokens.data(),
-      prepared.target_tokens.size());
+      prepared.target_uint8().data(),
+      prepared.target_uint8().size());
   using Ops = ScoreOps<OpsTemplate, Cell>;
   constexpr std::size_t lane_count = Ops::lane_count;
   const std::size_t state_cell_count = state.segment_count * lane_count;

@@ -568,8 +568,8 @@ inline Score smith_waterman_farrar_score(
       gap_extend_score,
       width);
   return detail::score_only<std::uint8_t, true>(
-      std::span<const std::uint8_t>(prepared.query_tokens.data(), prepared.query_tokens.size()),
-      std::span<const std::uint8_t>(prepared.target_tokens.data(), prepared.target_tokens.size()),
+      std::span<const std::uint8_t>(prepared.query_uint8().data(), prepared.query_uint8().size()),
+      std::span<const std::uint8_t>(prepared.target_uint8().data(), prepared.target_uint8().size()),
       match_score,
       mismatch_score,
       gap_open_score,
