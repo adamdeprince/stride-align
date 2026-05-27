@@ -929,6 +929,26 @@ inline Score linear_score(
     Score mismatch_score,
     Score gap_score,
     unsigned int width) {
+  // Wide-uint16 ndarray dispatch (Phase B parallel path). When both
+  // sides are 2-byte SIMD-friendly numpy dtypes (int16/uint16/float16)
+  // we skip tokenisation entirely and feed the buffers straight into
+  // the 16-bit Farrar kernel.
+  {
+    namespace nv = ::stride_align::numpy_view;
+    auto q_view = nv::try_acquire(query.ptr());
+    auto t_view = nv::try_acquire(target.ptr());
+    if (::stride_align::farrar_detail::ndarray_pair_is_wide_uint16(q_view, t_view)) {
+      const auto wide = ::stride_align::farrar_detail::prepare_farrar_alignment_wide_uint16(
+          q_view, t_view, match_score, mismatch_score, gap_score, gap_score, width);
+      if constexpr (LocalAlignment) {
+        return farrar_fixed_kernel::detail::wide_dispatch_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      } else {
+        return farrar_fixed_kernel::detail::wide_dispatch_global_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      }
+    }
+  }
   if (gap_score > 0) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);

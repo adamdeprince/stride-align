@@ -350,6 +350,75 @@ inline std::vector<std::uint8_t> compact_object_tokens(
   return encoded;
 }
 
+// Wide-token Farrar dispatch helper for 2-byte ndarray dtypes
+// (int16 / uint16 / float16). Inputs are bitcast to uint16 tokens; the
+// kernel runs at 16-bit Cell width (SimdOps<uint16, int16>). Both query
+// and target views must be already validated (matching dtype, supported
+// dtype, no unsupported buffer) by the caller.
+inline PreparedFarrarAlignmentWide<std::uint16_t>
+prepare_farrar_alignment_wide_uint16(
+    const ::stride_align::numpy_view::View& query_view,
+    const ::stride_align::numpy_view::View& target_view,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarAlignmentWide<std::uint16_t> prepared;
+  const auto q_count = query_view.element_count();
+  const auto t_count = target_view.element_count();
+  prepared.query_tokens.resize(q_count);
+  prepared.target_tokens.resize(t_count);
+  if (q_count > 0) {
+    std::memcpy(prepared.query_tokens.data(), query_view.data(),
+                q_count * sizeof(std::uint16_t));
+  }
+  if (t_count > 0) {
+    std::memcpy(prepared.target_tokens.data(), target_view.data(),
+                t_count * sizeof(std::uint16_t));
+  }
+  // We don't pre-scan the actual distinct count — score_bound just
+  // mirrors the score-only logic, and the 65 535-row cap in
+  // wide_collect_profile_tokens catches the extreme case at DP time.
+  prepared.symbol_count = q_count + t_count;
+  prepared.score_bound = detail::compute_score_bound(
+      q_count, t_count, match_score, mismatch_score,
+      gap_open_score, gap_extend_score);
+  prepared.score_bits = detail::apply_forced_kernel_bits(
+      farrar_detail::select_score_bits(prepared.score_bound),
+      width);
+  if (prepared.score_bits != KernelBits::bits16) {
+    // Wide-uint16 kernel uses 16-bit cells; any forced widening to 32+
+    // would need a Token=uint16, Cell=int32 SimdOps specialisation that
+    // doesn't currently exist. Fall through with the int16 cell width
+    // chosen by select_score_bits; if the score bound exceeded int16
+    // we'd be here only because forced width set us so — degrade
+    // gracefully back to bits16.
+    prepared.score_bits = KernelBits::bits16;
+  }
+  return prepared;
+}
+
+// True iff both objects are ndarrays with matching 2-byte SIMD dtype
+// (int16 / uint16 / float16). The wide-uint16 Farrar path is the
+// natural home for these inputs — Phase A's hash-tokenise-to-uint8
+// fallback raised ValueError above 256 distinct values, which the wide
+// path lifts entirely.
+inline bool ndarray_pair_is_wide_uint16(
+    const ::stride_align::numpy_view::View& q,
+    const ::stride_align::numpy_view::View& t) noexcept {
+  using ::stride_align::numpy_view::NdarrayDtype;
+  if (!q.acquired || !t.acquired) {
+    return false;
+  }
+  if (q.dtype != t.dtype) {
+    return false;
+  }
+  return q.dtype == NdarrayDtype::Int16 ||
+         q.dtype == NdarrayDtype::UInt16 ||
+         q.dtype == NdarrayDtype::Float16;
+}
+
 // ndarray tokenisation. For uint8/int8 dtypes the buffer copies through
 // memcpy (the byte storage is the token storage). For wider dtypes, we
 // build a hash-table from native-width keys → compact uint8 tokens. The

@@ -81,13 +81,49 @@ def test_path_rejects_ndarray() -> None:
         sa.needleman_wunsch_path(arr, arr, match_score=2, mismatch_score=-1, gap_score=-1)
 
 
-def test_distinct_symbols_capped_at_256() -> None:
-    # Phase A tokenises wider-than-uint8 arrays to 8-bit before feeding
-    # the Farrar kernel, so the combined-distinct-symbols cap is 256.
+def test_distinct_symbols_capped_at_256_for_int32() -> None:
+    # int32/uint32/int64/uint64/float32/float64 still go through the
+    # Phase A tokenise-to-uint8 path (the wide-uint16 kernel covers
+    # only 2-byte dtypes for now), so the combined-distinct-symbols
+    # cap is 256 for those dtypes.
     q = np.arange(300, dtype=np.int32)
     t = np.arange(300, dtype=np.int32)
     with pytest.raises(ValueError, match="256 distinct symbols"):
         sa.smith_waterman_score(q, t, match_score=2, mismatch_score=-1, gap_score=-1)
+
+
+def test_wide_uint16_path_lifts_256_cap() -> None:
+    # int16 / uint16 / float16 now route through the wide Farrar kernel
+    # (16-bit cells, hash-keyed token→row map), so >256 distinct values
+    # work end-to-end instead of raising ValueError.
+    for dtype in [np.uint16, np.int16]:
+        q = np.arange(500, dtype=dtype)
+        t = np.arange(500, dtype=dtype)
+        # Identity self-alignment: 500 matches × 2 = 1000.
+        score = sa.smith_waterman_score(
+            q, t, match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+        assert score == 1000, f"{dtype}: got {score}"
+
+
+def test_wide_uint16_matches_list_within_256() -> None:
+    # On inputs that fit in the narrow tokeniser's 256-symbol cap, the
+    # wide uint16 path produces the same score as the list-based
+    # reference (which uses the narrow uint8 path).
+    import random
+    random.seed(11)
+    for _ in range(50):
+        q_ints = [random.randint(0, 250) for _ in range(random.randint(1, 60))]
+        t_ints = [random.randint(0, 250) for _ in range(random.randint(1, 60))]
+        list_score = sa.smith_waterman_score(
+            q_ints, t_ints, match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+        q16 = np.asarray(q_ints, dtype=np.uint16)
+        t16 = np.asarray(t_ints, dtype=np.uint16)
+        wide_score = sa.smith_waterman_score(
+            q16, t16, match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+        assert list_score == wide_score
 
 
 def test_under_256_symbols_works_int32() -> None:
