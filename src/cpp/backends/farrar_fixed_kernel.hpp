@@ -6800,6 +6800,242 @@ inline std::vector<Score> matrix_affine_scores_dispatch_helper(
   }
 }
 
+// ===========================================================================
+// Wide-token Farrar path (Phase B parallel implementation).
+// ===========================================================================
+//
+// Mirrors the narrow helpers above for Token ∈ uint16_t / uint32_t /
+// uint64_t. See the file-level comment for the mirror-sync checklist. The
+// inner DP loops (`score_state`, `global_score_state`,
+// `affine_score_state`) are token-agnostic — they read state.profile which
+// is Cell-wide — so the wide path reuses them as-is. Only the profile
+// builders and prep are duplicated here.
+
+template <typename Token>
+inline std::vector<Token> wide_collect_profile_tokens(
+    std::span<const Token> target,
+    std::unordered_map<Token, std::uint16_t>& profile_indices) {
+  profile_indices.clear();
+  std::vector<Token> profile_tokens;
+  for (const auto token : target) {
+    auto [iter, inserted] = profile_indices.try_emplace(token, 0);
+    if (inserted) {
+      if (profile_indices.size() > std::numeric_limits<std::uint16_t>::max()) {
+        ::stride_align::detail::throw_value_error(
+            "wide Farrar profile supports at most 65 535 distinct tokens "
+            "per call");
+      }
+      iter->second = static_cast<std::uint16_t>(profile_indices.size() - 1U);
+      profile_tokens.push_back(token);
+    }
+  }
+  return profile_tokens;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+void wide_fill_score_profile_row(
+    Cell* lanes,
+    std::span<const Token> query,
+    Token token,
+    Cell match_score,
+    Cell mismatch_score,
+    std::size_t segment,
+    std::size_t segment_count) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  for (std::size_t lane = 0; lane < lane_count; ++lane) {
+    const std::size_t query_index = lane * segment_count + segment;
+    lanes[lane] = query_index < query.size() && query[query_index] == token ? match_score
+                                                                             : mismatch_score;
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+AlignedVector<Cell> wide_build_profile(
+    std::span<const Token> query,
+    std::span<const Token> profile_tokens,
+    Cell match_score,
+    Cell mismatch_score,
+    std::size_t segment_count) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  AlignedVector<Cell> profile(profile_tokens.size() * segment_count * lane_count, mismatch_score);
+
+  for (std::size_t profile_index = 0; profile_index < profile_tokens.size(); ++profile_index) {
+    const auto token = profile_tokens[profile_index];
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+      Cell* lanes = profile.data() + ((profile_index * segment_count + segment) * lane_count);
+      wide_fill_score_profile_row<OpsTemplate, Token, Cell>(
+          lanes, query, token, match_score, mismatch_score, segment, segment_count);
+    }
+  }
+
+  return profile;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+PreparedScoreState<Cell> wide_prepare_score_state(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  const auto query = std::span<const Token>(
+      prepared.query_tokens.data(), prepared.query_tokens.size());
+  const auto target = std::span<const Token>(
+      prepared.target_tokens.data(), prepared.target_tokens.size());
+
+  const auto match = static_cast<Cell>(match_score);
+  const auto mismatch = static_cast<Cell>(mismatch_score);
+  PreparedScoreState<Cell> state;
+  state.gap_score = static_cast<Cell>(gap_score);
+  state.query_size = query.size();
+  state.target_size = target.size();
+  state.kernel_strategy = ScoreKernelStrategy::automatic;
+
+  // Wide path skips the uint8-only fast_score heuristic — those rely on
+  // an alphabet-bounded summary that doesn't generalise. Falls straight
+  // through to the DP, which is the common case for >256-distinct inputs.
+  if (query.empty() || target.empty()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  std::unordered_map<Token, std::uint16_t> wide_indices;
+  const auto profile_tokens = wide_collect_profile_tokens<Token>(target, wide_indices);
+  state.target_profile_offsets.reserve(target.size());
+  const auto state_cells = state.segment_count * lane_count;
+
+  state.profile = wide_build_profile<OpsTemplate, Token, Cell>(
+      query,
+      std::span<const Token>(profile_tokens.data(), profile_tokens.size()),
+      match, mismatch, state.segment_count);
+  for (const auto token : target) {
+    state.target_profile_offsets.push_back(
+        static_cast<std::size_t>(wide_indices[token]) * state_cells);
+  }
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+  return state;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+PreparedScoreState<Cell> wide_prepare_global_score_state(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  const auto query = std::span<const Token>(
+      prepared.query_tokens.data(), prepared.query_tokens.size());
+  const auto target = std::span<const Token>(
+      prepared.target_tokens.data(), prepared.target_tokens.size());
+
+  const auto match = static_cast<Cell>(match_score);
+  const auto mismatch = static_cast<Cell>(mismatch_score);
+  PreparedScoreState<Cell> state;
+  state.gap_score = static_cast<Cell>(gap_score);
+  state.query_size = query.size();
+  state.target_size = target.size();
+
+  if (query.empty() || target.empty()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  std::unordered_map<Token, std::uint16_t> wide_indices;
+  const auto profile_tokens = wide_collect_profile_tokens<Token>(target, wide_indices);
+  state.profile = wide_build_profile<OpsTemplate, Token, Cell>(
+      query,
+      std::span<const Token>(profile_tokens.data(), profile_tokens.size()),
+      match, mismatch, state.segment_count);
+  state.target_profile_offsets.reserve(target.size());
+  const auto state_cells = state.segment_count * lane_count;
+  for (const auto token : target) {
+    state.target_profile_offsets.push_back(
+        static_cast<std::size_t>(wide_indices[token]) * state_cells);
+  }
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  return state;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+Score wide_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = wide_prepare_score_state<OpsTemplate, Token, Cell>(
+      prepared, match_score, mismatch_score, gap_score);
+  return score_state<OpsTemplate, Cell>(state);  // shared inner DP
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+Score wide_global_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  auto state = wide_prepare_global_score_state<OpsTemplate, Token, Cell>(
+      prepared, match_score, mismatch_score, gap_score);
+  return global_score_state<OpsTemplate, Cell>(state);  // shared inner DP
+}
+
+// Token-width dispatcher: picks the Cell width that matches the Token
+// width (the SimdOps specialisations require them to be the same width).
+// If the score bound would overflow that Cell width, throws — the wider-
+// Cell variant is a follow-up; for now wide-Token kernels run at the
+// minimum cell width necessary to hold the token alphabet.
+template <template <typename, typename> class OpsTemplate, typename Token>
+Score wide_dispatch_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  if constexpr (sizeof(Token) == 2) {
+    return wide_score<OpsTemplate, Token, std::int16_t>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else if constexpr (sizeof(Token) == 4) {
+    return wide_score<OpsTemplate, Token, std::int32_t>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else if constexpr (sizeof(Token) == 8) {
+    return wide_score<OpsTemplate, Token, std::int64_t>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else {
+    static_assert(sizeof(Token) == 2 || sizeof(Token) == 4 || sizeof(Token) == 8,
+                  "wide path supports uint16/32/64 tokens");
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token>
+Score wide_dispatch_global_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  if constexpr (sizeof(Token) == 2) {
+    return wide_global_score<OpsTemplate, Token, std::int16_t>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else if constexpr (sizeof(Token) == 4) {
+    return wide_global_score<OpsTemplate, Token, std::int32_t>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else if constexpr (sizeof(Token) == 8) {
+    return wide_global_score<OpsTemplate, Token, std::int64_t>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else {
+    static_assert(sizeof(Token) == 2 || sizeof(Token) == 4 || sizeof(Token) == 8,
+                  "wide path supports uint16/32/64 tokens");
+  }
+}
+
 }  // namespace detail
 
 }  // namespace stride_align::farrar_fixed_kernel

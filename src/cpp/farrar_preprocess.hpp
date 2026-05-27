@@ -9,6 +9,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -35,6 +36,22 @@ struct PreparedFarrarBatchAlignment {
   std::uint64_t score_bound = 0;
   std::vector<std::uint8_t> query_tokens;
   std::vector<std::vector<std::uint8_t>> target_tokens;
+};
+
+// Wider-token Farrar input. See the "parallel-implementation plan"
+// comment at the top of backends/farrar_fixed_kernel.hpp for the
+// rationale. Token ∈ uint16_t / uint32_t / uint64_t. Symbol count is
+// no longer bounded by 256 — the wide_collect_profile_tokens helper
+// uses a hash map keyed by Token value.
+template <typename Token>
+struct PreparedFarrarAlignmentWide {
+  static_assert(std::is_unsigned_v<Token>);
+  static_assert(sizeof(Token) >= 2);
+  KernelBits score_bits = KernelBits::bits64;
+  std::uint64_t symbol_count = 0;
+  std::uint64_t score_bound = 0;
+  std::vector<Token> query_tokens;
+  std::vector<Token> target_tokens;
 };
 
 namespace farrar_detail {
