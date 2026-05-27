@@ -298,8 +298,6 @@ PreparedScoreState<Cell> prepare_score_state(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
-  const auto& q_tokens = prepared.query_uint8();
-  const auto& t_tokens = prepared.target_uint8();
   using Ops = ScoreOps<OpsTemplate, Cell>;
   const std::size_t lane_count = Ops::lane_count();
   if (lane_count == 0) {
@@ -308,11 +306,11 @@ PreparedScoreState<Cell> prepare_score_state(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      q_tokens.data(),
-      q_tokens.size());
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
   const auto target = std::span<const std::uint8_t>(
-      t_tokens.data(),
-      t_tokens.size());
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
@@ -439,8 +437,6 @@ PreparedScoreState<Cell> prepare_global_score_state(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
-  const auto& q_tokens = prepared.query_uint8();
-  const auto& t_tokens = prepared.target_uint8();
   using Ops = ScoreOps<OpsTemplate, Cell>;
   const std::size_t lane_count = Ops::lane_count();
   if (lane_count == 0) {
@@ -449,11 +445,11 @@ PreparedScoreState<Cell> prepare_global_score_state(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      q_tokens.data(),
-      q_tokens.size());
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
   const auto target = std::span<const std::uint8_t>(
-      t_tokens.data(),
-      t_tokens.size());
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
@@ -508,8 +504,6 @@ PreparedAffineScoreState<Cell> prepare_affine_score_state(
     Score mismatch_score,
     Score gap_open_score,
     Score gap_extend_score) {
-  const auto& q_tokens = prepared.query_uint8();
-  const auto& t_tokens = prepared.target_uint8();
   using Ops = ScoreOps<OpsTemplate, Cell>;
   const std::size_t lane_count = Ops::lane_count();
   if (lane_count == 0) {
@@ -518,11 +512,11 @@ PreparedAffineScoreState<Cell> prepare_affine_score_state(
   }
 
   const auto query = std::span<const std::uint8_t>(
-      q_tokens.data(),
-      q_tokens.size());
+      prepared.query_tokens.data(),
+      prepared.query_tokens.size());
   const auto target = std::span<const std::uint8_t>(
-      t_tokens.data(),
-      t_tokens.size());
+      prepared.target_tokens.data(),
+      prepared.target_tokens.size());
 
   PreparedAffineScoreState<Cell> state;
   state.gap_open_score = static_cast<Cell>(gap_open_score);

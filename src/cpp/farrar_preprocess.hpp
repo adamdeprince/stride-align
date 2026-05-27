@@ -25,27 +25,8 @@ struct PreparedFarrarAlignment {
   KernelBits score_bits = KernelBits::bits64;
   std::uint64_t symbol_count = 0;
   std::uint64_t score_bound = 0;
-  // Token storage is a width-variant so future kernel paths can carry
-  // uint16 / uint32 / uint64 tokens natively (numpy wider dtypes, unicode
-  // auto-promote on >256 distinct codepoints, small-input bypass on
-  // raw UCS-4). The existing 8-bit Farrar kernel reads through the
-  // query_uint8() / target_uint8() accessors; the variant always holds
-  // a vector<uint8_t> in this build.
-  TokenStorage query_tokens;
-  TokenStorage target_tokens;
-
-  const std::vector<std::uint8_t>& query_uint8() const {
-    return std::get<std::vector<std::uint8_t>>(query_tokens);
-  }
-  const std::vector<std::uint8_t>& target_uint8() const {
-    return std::get<std::vector<std::uint8_t>>(target_tokens);
-  }
-  std::vector<std::uint8_t>& query_uint8_mut() {
-    return std::get<std::vector<std::uint8_t>>(query_tokens);
-  }
-  std::vector<std::uint8_t>& target_uint8_mut() {
-    return std::get<std::vector<std::uint8_t>>(target_tokens);
-  }
+  std::vector<std::uint8_t> query_tokens;
+  std::vector<std::uint8_t> target_tokens;
 };
 
 struct PreparedFarrarBatchAlignment {
@@ -408,7 +389,7 @@ inline void tokenise_ndarray_pair(
     prepared.query_tokens = ndarray_tokens_memcpy(query_view);
     prepared.target_tokens = ndarray_tokens_memcpy(target_view);
     prepared.symbol_count =
-        byte_symbol_count(prepared.query_uint8(), prepared.target_uint8());
+        byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
     return;
   }
   switch (dtype) {
@@ -535,7 +516,7 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
     prepared.query_tokens = farrar_detail::copy_bytes_tokens_8(query.ptr());
     prepared.target_tokens = farrar_detail::copy_bytes_tokens_8(target.ptr());
     prepared.symbol_count =
-        farrar_detail::byte_symbol_count(prepared.query_uint8(), prepared.target_uint8());
+        farrar_detail::byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
   } else if (query_is_unicode && target_is_unicode) {
     const std::size_t query_lookup_size = farrar_detail::direct_unicode_lookup_size(query.ptr());
     const std::size_t target_lookup_size = farrar_detail::direct_unicode_lookup_size(target.ptr());
@@ -563,8 +544,8 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
   }
 
   prepared.score_bound = detail::compute_score_bound(
-      prepared.query_uint8().size(),
-      prepared.target_uint8().size(),
+      prepared.query_tokens.size(),
+      prepared.target_tokens.size(),
       match_score,
       mismatch_score,
       gap_open_score,
