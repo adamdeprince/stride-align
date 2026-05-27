@@ -135,6 +135,34 @@ inline std::uint64_t byte_symbol_count(
   return count;
 }
 
+// True iff the combined alphabet of (query, target) contains at most
+// `threshold` distinct codepoints. Used by the unicode auto-promote
+// path: UCS-2 / UCS-4 strings with ≤threshold distinct codepoints can
+// still take the fast 8-bit Farrar kernel; everything else routes to
+// the wide kernel. UCS-1 strings can have at most 256 distinct
+// codepoints by construction so the caller can skip this scan.
+inline bool unicode_distinct_count_within(
+    PyObject* query, PyObject* target, std::size_t threshold) {
+  std::unordered_map<Py_UCS4, std::uint8_t> seen;
+  seen.reserve(threshold + 1);
+  const auto scan = [&](PyObject* obj) -> bool {
+    const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(obj));
+    const int kind = PyUnicode_KIND(obj);
+    void* data = PyUnicode_DATA(obj);
+    for (std::size_t i = 0; i < size; ++i) {
+      const auto cp = static_cast<Py_UCS4>(
+          PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(i)));
+      auto [iter, inserted] = seen.try_emplace(cp, 0);
+      if (inserted && seen.size() > threshold) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!scan(query)) return false;
+  return scan(target);
+}
+
 inline std::vector<std::uint8_t> compact_unicode_tokens(
     PyObject* unicode_object,
     std::unordered_map<Py_UCS4, std::uint8_t>& token_map) {
@@ -537,6 +565,73 @@ inline void tokenise_ndarray_pair(
     case NdarrayDtype::None:
       break;
   }
+}
+
+// Wide unicode tokeniser — produces uint16 tokens via a hash-keyed map,
+// no 256-distinct cap. The caller chooses this path when
+// unicode_distinct_count_within(query, target, 256) returned false.
+// Throws ValueError if the combined alphabet exceeds 65 535 distinct
+// codepoints (we'd need uint32 tokens beyond that — Phase B follow-up).
+inline std::vector<std::uint16_t> compact_unicode_tokens_uint16(
+    PyObject* unicode_object,
+    std::unordered_map<Py_UCS4, std::uint16_t>& token_map) {
+  const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(unicode_object));
+  const int kind = PyUnicode_KIND(unicode_object);
+  void* data = PyUnicode_DATA(unicode_object);
+
+  std::vector<std::uint16_t> tokens;
+  tokens.reserve(size);
+  for (std::size_t index = 0; index < size; ++index) {
+    const auto codepoint = static_cast<Py_UCS4>(
+        PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(index)));
+    auto iter = token_map.find(codepoint);
+    if (iter == token_map.end()) {
+      const auto next_token = token_map.size();
+      if (next_token > std::numeric_limits<std::uint16_t>::max()) {
+        detail::throw_value_error(
+            "wide unicode tokeniser supports at most 65 535 distinct "
+            "codepoints; consider chunking the input or extending the "
+            "Farrar kernel to uint32 tokens");
+      }
+      iter = token_map.emplace(
+          codepoint, static_cast<std::uint16_t>(next_token)).first;
+    }
+    tokens.push_back(iter->second);
+  }
+  return tokens;
+}
+
+// Build a PreparedFarrarAlignmentWide<uint16_t> from two Python unicode
+// objects (UCS-1/2/4, mixed widths OK — codepoints are widened to
+// Py_UCS4 internally before tokenising).
+inline PreparedFarrarAlignmentWide<std::uint16_t>
+prepare_farrar_alignment_wide_unicode_uint16(
+    PyObject* query,
+    PyObject* target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarAlignmentWide<std::uint16_t> prepared;
+  std::unordered_map<Py_UCS4, std::uint16_t> token_map;
+  prepared.query_tokens = compact_unicode_tokens_uint16(query, token_map);
+  prepared.target_tokens = compact_unicode_tokens_uint16(target, token_map);
+  prepared.symbol_count = token_map.size();
+  prepared.score_bound = detail::compute_score_bound(
+      prepared.query_tokens.size(), prepared.target_tokens.size(),
+      match_score, mismatch_score, gap_open_score, gap_extend_score);
+  prepared.score_bits = detail::apply_forced_kernel_bits(
+      farrar_detail::select_score_bits(prepared.score_bound),
+      width);
+  if (prepared.score_bits != KernelBits::bits16) {
+    // Same constraint as the wide ndarray path: SimdOps<uint16, intN>
+    // only exists for N=16. If select_score_bits chose a smaller cell
+    // (bits8), promote to bits16 since the token width forces 16-bit.
+    // If forced wider, degrade gracefully.
+    prepared.score_bits = KernelBits::bits16;
+  }
+  return prepared;
 }
 
 }  // namespace farrar_detail

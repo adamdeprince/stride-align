@@ -949,6 +949,27 @@ inline Score linear_score(
       }
     }
   }
+  // Unicode auto-promote: UCS-2/UCS-4 strings with >256 distinct
+  // codepoints route to the 16-bit Farrar kernel. UCS-1 strings can
+  // have at most 256 distinct codepoints by construction.
+  if (PyUnicode_Check(query.ptr()) && PyUnicode_Check(target.ptr()) &&
+      (PyUnicode_KIND(query.ptr()) != PyUnicode_1BYTE_KIND ||
+       PyUnicode_KIND(target.ptr()) != PyUnicode_1BYTE_KIND)) {
+    if (!::stride_align::farrar_detail::unicode_distinct_count_within(
+            query.ptr(), target.ptr(), 256U)) {
+      const auto wide =
+          ::stride_align::farrar_detail::prepare_farrar_alignment_wide_unicode_uint16(
+              query.ptr(), target.ptr(),
+              match_score, mismatch_score, gap_score, gap_score, width);
+      if constexpr (LocalAlignment) {
+        return farrar_fixed_kernel::detail::wide_dispatch_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      } else {
+        return farrar_fixed_kernel::detail::wide_dispatch_global_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      }
+    }
+  }
   if (gap_score > 0) {
     const auto prepared =
         prepare_alignment(query, target, match_score, mismatch_score, gap_score, width);
