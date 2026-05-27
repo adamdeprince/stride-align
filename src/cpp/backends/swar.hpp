@@ -590,12 +590,14 @@ inline Score dispatch_affine_farrar_score(
     Score mismatch_score,
     Score gap_open_score,
     Score gap_extend_score) {
+  const auto& q_tokens = prepared.query_uint8();
+  const auto& t_tokens = prepared.target_uint8();
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_uint8().data(),
-      prepared.query_uint8().size());
+      q_tokens.data(),
+      q_tokens.size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_uint8().data(),
-      prepared.target_uint8().size());
+      t_tokens.data(),
+      t_tokens.size());
 
   switch (prepared.score_bits) {
     case KernelBits::bits8:
@@ -639,12 +641,14 @@ inline Score dispatch_global_affine_farrar_score(
     Score mismatch_score,
     Score gap_open_score,
     Score gap_extend_score) {
+  const auto& q_tokens = prepared.query_uint8();
+  const auto& t_tokens = prepared.target_uint8();
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_uint8().data(),
-      prepared.query_uint8().size());
+      q_tokens.data(),
+      q_tokens.size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_uint8().data(),
-      prepared.target_uint8().size());
+      t_tokens.data(),
+      t_tokens.size());
 
   switch (prepared.score_bits) {
     case KernelBits::bits8:

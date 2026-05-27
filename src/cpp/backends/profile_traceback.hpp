@@ -1989,12 +1989,14 @@ inline AlignmentResult materialize_alignment_result(
 
 template <typename Fn>
 auto dispatch_profile_width(const PreparedFarrarAlignment& prepared, Fn&& fn) {
+  const auto& q_tokens = prepared.query_uint8();
+  const auto& t_tokens = prepared.target_uint8();
   const auto query = std::span<const std::uint8_t>(
-      prepared.query_uint8().data(),
-      prepared.query_uint8().size());
+      q_tokens.data(),
+      q_tokens.size());
   const auto target = std::span<const std::uint8_t>(
-      prepared.target_uint8().data(),
-      prepared.target_uint8().size());
+      t_tokens.data(),
+      t_tokens.size());
 
   switch (prepared.score_bits) {
     case KernelBits::bits8:
