@@ -1547,6 +1547,74 @@ struct Implementation {
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
+  // ----- Matrix-mode entry points -------------------------------------
+  // SSE4.1 has no runtime CPU-feature gate (every x86_64 CPU supports
+  // SSE4.1), so there's no TargetImplementation/Implementation split —
+  // the matrix methods live directly on Implementation here.
+  static Score smith_waterman_score_matrix(
+      nb::handle query_indices, nb::handle target_indices,
+      nb::handle matrix_buffer, std::size_t stride, Score gap_score) {
+    return farrar_fixed_kernel::detail::matrix_score_dispatch_helper<detail::SimdOps, true>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static Score needleman_wunsch_score_matrix(
+      nb::handle query_indices, nb::handle target_indices,
+      nb::handle matrix_buffer, std::size_t stride, Score gap_score) {
+    return farrar_fixed_kernel::detail::matrix_score_dispatch_helper<detail::SimdOps, false>(
+        query_indices, target_indices, matrix_buffer, stride, gap_score);
+  }
+
+  static std::vector<Score> smith_waterman_scores_matrix(
+      nb::handle query_indices, nb::handle targets,
+      nb::handle matrix_buffer, std::size_t stride, Score gap_score) {
+    return farrar_fixed_kernel::detail::matrix_scores_dispatch_helper<detail::SimdOps, true>(
+        query_indices, targets, matrix_buffer, stride, gap_score);
+  }
+
+  static std::vector<Score> needleman_wunsch_scores_matrix(
+      nb::handle query_indices, nb::handle targets,
+      nb::handle matrix_buffer, std::size_t stride, Score gap_score) {
+    return farrar_fixed_kernel::detail::matrix_scores_dispatch_helper<detail::SimdOps, false>(
+        query_indices, targets, matrix_buffer, stride, gap_score);
+  }
+
+  static Score smith_waterman_affine_score_matrix(
+      nb::handle query_indices, nb::handle target_indices,
+      nb::handle matrix_buffer, std::size_t stride,
+      Score gap_open_score, Score gap_extend_score) {
+    return farrar_fixed_kernel::detail::matrix_affine_score_dispatch_helper<detail::SimdOps, true>(
+        query_indices, target_indices, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static Score needleman_wunsch_affine_score_matrix(
+      nb::handle query_indices, nb::handle target_indices,
+      nb::handle matrix_buffer, std::size_t stride,
+      Score gap_open_score, Score gap_extend_score) {
+    return farrar_fixed_kernel::detail::matrix_affine_score_dispatch_helper<detail::SimdOps, false>(
+        query_indices, target_indices, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<Score> smith_waterman_affine_scores_matrix(
+      nb::handle query_indices, nb::handle targets,
+      nb::handle matrix_buffer, std::size_t stride,
+      Score gap_open_score, Score gap_extend_score) {
+    return farrar_fixed_kernel::detail::matrix_affine_scores_dispatch_helper<detail::SimdOps, true>(
+        query_indices, targets, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<Score> needleman_wunsch_affine_scores_matrix(
+      nb::handle query_indices, nb::handle targets,
+      nb::handle matrix_buffer, std::size_t stride,
+      Score gap_open_score, Score gap_extend_score) {
+    return farrar_fixed_kernel::detail::matrix_affine_scores_dispatch_helper<detail::SimdOps, false>(
+        query_indices, targets, matrix_buffer, stride,
+        gap_open_score, gap_extend_score);
+  }
+
   static constexpr BackendKind backend_kind = BackendKind::x86_sse41;
 };
 

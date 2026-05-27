@@ -18,6 +18,7 @@
 #include <nanobind/nanobind.h>
 
 #include "backends/score_fast_paths.hpp"
+#include "byte_view.hpp"
 #include "farrar_preprocess.hpp"
 #include "stride_align/alignment.hpp"
 
@@ -6467,6 +6468,265 @@ std::vector<Score> dispatch_global_affine_score_matrix_batch(
 
   PyErr_SetString(PyExc_RuntimeError, "unsupported matrix-mode batch global affine Farrar score width");
   throw nb::python_error();
+}
+
+// ----- Shared Python-side dispatch helpers ---------------------------------
+//
+// Each backend's Implementation forwards its matrix-mode methods to these
+// templates with its own SimdOps. The helpers handle the byte-view
+// extraction (bytes / 1-byte unicode), validate the matrix buffer shape,
+// compute the score bound (matrix max-abs vs. gap magnitudes × span
+// length) to pick the kernel cell width, and call into the typed
+// dispatchers above. Keeping these here means each new backend adds
+// ~30 lines of wiring instead of duplicating ~200 lines per file.
+
+inline std::int32_t matrix_max_abs_with_gap(
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_score) {
+  std::int32_t max_abs = 0;
+  const std::size_t cells = stride * stride;
+  for (std::size_t i = 0; i < cells; ++i) {
+    const std::int32_t value = matrix[i];
+    const std::int32_t magnitude = value < 0 ? -value : value;
+    if (magnitude > max_abs) {
+      max_abs = magnitude;
+    }
+  }
+  const std::int32_t gap_magnitude = gap_score < 0 ? -gap_score : gap_score;
+  return std::max(max_abs, gap_magnitude);
+}
+
+inline std::int32_t matrix_max_abs_with_affine(
+    const std::int8_t* matrix,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  const Score worst = std::min(gap_open_score, gap_extend_score);
+  return matrix_max_abs_with_gap(matrix, stride, worst);
+}
+
+inline void matrix_view_or_throw(
+    nb::handle obj,
+    const char* context,
+    const std::uint8_t*& ptr,
+    std::size_t& len) {
+  namespace bv = ::stride_align::byte_view;
+  const auto kind = bv::classify(obj.ptr());
+  if (kind == bv::ByteCompatKind::None) {
+    PyErr_SetString(PyExc_TypeError, context);
+    throw nb::python_error();
+  }
+  bv::view(obj.ptr(), kind, ptr, len);
+}
+
+inline void matrix_buffer_check(std::size_t actual, std::size_t expected) {
+  if (actual != expected) {
+    PyErr_Format(
+        PyExc_ValueError,
+        "matrix buffer size %zu does not match stride * stride = %zu",
+        actual, expected);
+    throw nb::python_error();
+  }
+}
+
+inline std::vector<std::vector<std::uint8_t>> collect_byte_targets(
+    nb::handle targets,
+    const char* mismatch_message,
+    std::size_t& max_target_len) {
+  namespace bv = ::stride_align::byte_view;
+  PyObject* fast_targets =
+      PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
+  if (fast_targets == nullptr) {
+    throw nb::python_error();
+  }
+  nb::object owner = nb::steal<nb::object>(fast_targets);
+  const auto count = static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
+  PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+  std::vector<std::vector<std::uint8_t>> out;
+  out.reserve(count);
+  max_target_len = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto kind = bv::classify(items[i]);
+    if (kind == bv::ByteCompatKind::None) {
+      PyErr_SetString(PyExc_TypeError, mismatch_message);
+      throw nb::python_error();
+    }
+    const std::uint8_t* ptr = nullptr;
+    std::size_t len = 0;
+    bv::view(items[i], kind, ptr, len);
+    out.emplace_back(ptr, ptr + len);
+    if (len > max_target_len) {
+      max_target_len = len;
+    }
+  }
+  return out;
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+inline Score matrix_score_dispatch_helper(
+    nb::handle query_indices,
+    nb::handle target_indices,
+    nb::handle matrix_buffer,
+    std::size_t stride,
+    Score gap_score) {
+  const std::uint8_t* q_ptr = nullptr;
+  std::size_t q_len = 0;
+  const std::uint8_t* t_ptr = nullptr;
+  std::size_t t_len = 0;
+  const std::uint8_t* m_ptr = nullptr;
+  std::size_t m_len = 0;
+  constexpr auto msg =
+      "matrix-mode alignment expects byte-compatible inputs "
+      "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+      "to map sequences to alphabet indices.";
+  matrix_view_or_throw(query_indices, msg, q_ptr, q_len);
+  matrix_view_or_throw(target_indices, msg, t_ptr, t_len);
+  matrix_view_or_throw(matrix_buffer, msg, m_ptr, m_len);
+  matrix_buffer_check(m_len, stride * stride);
+
+  const auto* matrix = reinterpret_cast<const std::int8_t*>(m_ptr);
+  const std::int32_t max_abs = matrix_max_abs_with_gap(matrix, stride, gap_score);
+  const std::uint64_t score_bound =
+      static_cast<std::uint64_t>(q_len + t_len) * static_cast<std::uint64_t>(max_abs);
+  const KernelBits score_bits = ::stride_align::farrar_detail::select_score_bits(score_bound);
+  const std::span<const std::uint8_t> q_span(q_ptr, q_len);
+  const std::span<const std::uint8_t> t_span(t_ptr, t_len);
+
+  if constexpr (LocalAlignment) {
+    return dispatch_score_matrix<OpsTemplate>(
+        q_span, t_span, matrix, stride, score_bits, gap_score);
+  } else {
+    return dispatch_global_score_matrix<OpsTemplate>(
+        q_span, t_span, matrix, stride, score_bits, gap_score);
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+inline std::vector<Score> matrix_scores_dispatch_helper(
+    nb::handle query_indices,
+    nb::handle targets,
+    nb::handle matrix_buffer,
+    std::size_t stride,
+    Score gap_score) {
+  const std::uint8_t* q_ptr = nullptr;
+  std::size_t q_len = 0;
+  const std::uint8_t* m_ptr = nullptr;
+  std::size_t m_len = 0;
+  constexpr auto msg =
+      "matrix-mode batch alignment expects byte-compatible query "
+      "and matrix buffer; use SubstitutionMatrix.encode to map "
+      "sequences to alphabet indices.";
+  matrix_view_or_throw(query_indices, msg, q_ptr, q_len);
+  matrix_view_or_throw(matrix_buffer, msg, m_ptr, m_len);
+  matrix_buffer_check(m_len, stride * stride);
+
+  std::size_t max_target_len = 0;
+  auto target_bytes = collect_byte_targets(
+      targets,
+      "every target in matrix-mode batch must be bytes or 1-byte unicode",
+      max_target_len);
+
+  const auto* matrix = reinterpret_cast<const std::int8_t*>(m_ptr);
+  const std::int32_t max_abs = matrix_max_abs_with_gap(matrix, stride, gap_score);
+  const std::uint64_t score_bound =
+      static_cast<std::uint64_t>(q_len + max_target_len) *
+      static_cast<std::uint64_t>(max_abs);
+  const KernelBits score_bits = ::stride_align::farrar_detail::select_score_bits(score_bound);
+  const std::span<const std::uint8_t> q_span(q_ptr, q_len);
+
+  if constexpr (LocalAlignment) {
+    return dispatch_score_matrix_batch<OpsTemplate>(
+        q_span, target_bytes, matrix, stride, score_bits, gap_score);
+  } else {
+    return dispatch_global_score_matrix_batch<OpsTemplate>(
+        q_span, target_bytes, matrix, stride, score_bits, gap_score);
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+inline Score matrix_affine_score_dispatch_helper(
+    nb::handle query_indices,
+    nb::handle target_indices,
+    nb::handle matrix_buffer,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  const std::uint8_t* q_ptr = nullptr;
+  std::size_t q_len = 0;
+  const std::uint8_t* t_ptr = nullptr;
+  std::size_t t_len = 0;
+  const std::uint8_t* m_ptr = nullptr;
+  std::size_t m_len = 0;
+  constexpr auto msg =
+      "matrix-mode affine alignment expects byte-compatible inputs "
+      "(bytes or 1-byte unicode); use SubstitutionMatrix.encode "
+      "to map sequences to alphabet indices.";
+  matrix_view_or_throw(query_indices, msg, q_ptr, q_len);
+  matrix_view_or_throw(target_indices, msg, t_ptr, t_len);
+  matrix_view_or_throw(matrix_buffer, msg, m_ptr, m_len);
+  matrix_buffer_check(m_len, stride * stride);
+
+  const auto* matrix = reinterpret_cast<const std::int8_t*>(m_ptr);
+  const std::int32_t max_abs =
+      matrix_max_abs_with_affine(matrix, stride, gap_open_score, gap_extend_score);
+  const std::uint64_t score_bound =
+      static_cast<std::uint64_t>(q_len + t_len) * static_cast<std::uint64_t>(max_abs);
+  const KernelBits score_bits = ::stride_align::farrar_detail::select_score_bits(score_bound);
+  const std::span<const std::uint8_t> q_span(q_ptr, q_len);
+  const std::span<const std::uint8_t> t_span(t_ptr, t_len);
+
+  if constexpr (LocalAlignment) {
+    return dispatch_affine_score_matrix<OpsTemplate>(
+        q_span, t_span, matrix, stride, score_bits, gap_open_score, gap_extend_score);
+  } else {
+    return dispatch_global_affine_score_matrix<OpsTemplate>(
+        q_span, t_span, matrix, stride, score_bits, gap_open_score, gap_extend_score);
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+inline std::vector<Score> matrix_affine_scores_dispatch_helper(
+    nb::handle query_indices,
+    nb::handle targets,
+    nb::handle matrix_buffer,
+    std::size_t stride,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  const std::uint8_t* q_ptr = nullptr;
+  std::size_t q_len = 0;
+  const std::uint8_t* m_ptr = nullptr;
+  std::size_t m_len = 0;
+  constexpr auto msg =
+      "matrix-mode affine batch expects byte-compatible query and "
+      "matrix buffer; use SubstitutionMatrix.encode to map sequences "
+      "to alphabet indices.";
+  matrix_view_or_throw(query_indices, msg, q_ptr, q_len);
+  matrix_view_or_throw(matrix_buffer, msg, m_ptr, m_len);
+  matrix_buffer_check(m_len, stride * stride);
+
+  std::size_t max_target_len = 0;
+  auto target_bytes = collect_byte_targets(
+      targets,
+      "every target in matrix-mode affine batch must be bytes or 1-byte unicode",
+      max_target_len);
+
+  const auto* matrix = reinterpret_cast<const std::int8_t*>(m_ptr);
+  const std::int32_t max_abs =
+      matrix_max_abs_with_affine(matrix, stride, gap_open_score, gap_extend_score);
+  const std::uint64_t score_bound =
+      static_cast<std::uint64_t>(q_len + max_target_len) *
+      static_cast<std::uint64_t>(max_abs);
+  const KernelBits score_bits = ::stride_align::farrar_detail::select_score_bits(score_bound);
+  const std::span<const std::uint8_t> q_span(q_ptr, q_len);
+
+  if constexpr (LocalAlignment) {
+    return dispatch_affine_score_matrix_batch<OpsTemplate>(
+        q_span, target_bytes, matrix, stride, score_bits, gap_open_score, gap_extend_score);
+  } else {
+    return dispatch_global_affine_score_matrix_batch<OpsTemplate>(
+        q_span, target_bytes, matrix, stride, score_bits, gap_open_score, gap_extend_score);
+  }
 }
 
 }  // namespace detail
