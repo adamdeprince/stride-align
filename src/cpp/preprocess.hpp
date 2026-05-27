@@ -16,6 +16,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "numpy_view.hpp"
 #include "promotion.hpp"
 #include "stride_align/alignment.hpp"
 
@@ -458,6 +459,26 @@ inline PreparedAlignment prepare_alignment(
 
   if ((query_is_bytes && target_is_unicode) || (query_is_unicode && target_is_bytes)) {
     detail::throw_type_error("bytes and str inputs cannot be aligned directly against each other");
+  }
+
+  // ndarray inputs are accepted on the Farrar score-only path
+  // (smith_waterman_score / needleman_wunsch_score), not on the
+  // traceback / path / cigar paths that route through this function.
+  // Raise here rather than letting ndarrays silently take the slow
+  // PyObject sequence path. Unsupported-dtype ndarrays (object,
+  // record, non-contiguous) also raise.
+  for (auto* obj : {query.ptr(), target.ptr()}) {
+    if (PyBytes_Check(obj) || PyUnicode_Check(obj)) {
+      continue;
+    }
+    auto v = ::stride_align::numpy_view::try_acquire(obj);
+    if (v.acquired || v.unsupported_buffer) {
+      detail::throw_type_error(
+          "ndarray inputs are only supported on the score-only path "
+          "(smith_waterman_score / needleman_wunsch_score); "
+          "traceback / path / cigar variants do not yet support "
+          "ndarray inputs");
+    }
   }
 
   if (query_is_bytes && target_is_bytes) {

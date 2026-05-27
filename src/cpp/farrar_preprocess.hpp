@@ -14,6 +14,7 @@
 
 #include <nanobind/nanobind.h>
 
+#include "numpy_view.hpp"
 #include "preprocess.hpp"
 
 namespace stride_align {
@@ -332,6 +333,126 @@ inline std::vector<std::uint8_t> compact_object_tokens(
   return encoded;
 }
 
+// ndarray tokenisation. For uint8/int8 dtypes the buffer copies through
+// memcpy (the byte storage is the token storage). For wider dtypes, we
+// build a hash-table from native-width keys → compact uint8 tokens. The
+// 8-bit cap matches the Farrar profile path which is hardcoded to 8-bit
+// tokens; if the inputs together carry more than 256 distinct values
+// the call raises ValueError. Phase B will lift this cap by extending
+// the Farrar template to wider tokens.
+template <typename Native>
+inline std::vector<std::uint8_t> ndarray_tokens_wide(
+    const ::stride_align::numpy_view::View& view,
+    std::unordered_map<Native, std::uint8_t>& token_map) {
+  const auto count = view.element_count();
+  const auto* data = static_cast<const Native*>(view.data());
+  std::vector<std::uint8_t> tokens;
+  tokens.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    Native key;
+    std::memcpy(&key, data + i, sizeof(Native));
+    auto [iter, inserted] = token_map.try_emplace(key, 0);
+    if (inserted) {
+      if (token_map.size() > 256U) {
+        detail::throw_value_error(
+            "ndarray alignment supports at most 256 distinct symbols "
+            "across query+target in this release; tokenise inputs to "
+            "uint8 if you need a smaller alphabet");
+      }
+      iter->second = static_cast<std::uint8_t>(token_map.size() - 1U);
+    }
+    tokens.push_back(iter->second);
+  }
+  return tokens;
+}
+
+inline std::vector<std::uint8_t> ndarray_tokens_memcpy(
+    const ::stride_align::numpy_view::View& view) {
+  const auto count = view.element_count();
+  std::vector<std::uint8_t> tokens(count);
+  if (count > 0) {
+    std::memcpy(tokens.data(), view.data(), count);
+  }
+  return tokens;
+}
+
+// Fill prepared.{query_tokens,target_tokens,symbol_count} from a pair
+// of validated ndarray views with matching dtype. Throws on
+// >256-distinct-symbol overflow for wider dtypes.
+inline void tokenise_ndarray_pair(
+    PreparedFarrarAlignment& prepared,
+    const ::stride_align::numpy_view::View& query_view,
+    const ::stride_align::numpy_view::View& target_view) {
+  using ::stride_align::numpy_view::NdarrayDtype;
+  const auto dtype = query_view.dtype;
+  if (dtype == NdarrayDtype::Int8 || dtype == NdarrayDtype::UInt8) {
+    prepared.query_tokens = ndarray_tokens_memcpy(query_view);
+    prepared.target_tokens = ndarray_tokens_memcpy(target_view);
+    prepared.symbol_count =
+        byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
+    return;
+  }
+  switch (dtype) {
+    case NdarrayDtype::Int16: {
+      std::unordered_map<std::int16_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::int16_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::int16_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::UInt16: {
+      std::unordered_map<std::uint16_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::uint16_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::uint16_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::Float16: {
+      // Treat float16 as raw bit patterns (uint16). NaN payloads compare
+      // by bit pattern, not IEEE NaN-NaN semantics.
+      std::unordered_map<std::uint16_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::uint16_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::uint16_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::Int32: {
+      std::unordered_map<std::int32_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::int32_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::int32_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::UInt32:
+    case NdarrayDtype::Float32: {
+      std::unordered_map<std::uint32_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::uint32_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::uint32_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::Int64: {
+      std::unordered_map<std::int64_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::int64_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::int64_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::UInt64:
+    case NdarrayDtype::Float64: {
+      std::unordered_map<std::uint64_t, std::uint8_t> map;
+      prepared.query_tokens = ndarray_tokens_wide<std::uint64_t>(query_view, map);
+      prepared.target_tokens = ndarray_tokens_wide<std::uint64_t>(target_view, map);
+      prepared.symbol_count = map.size();
+      break;
+    }
+    case NdarrayDtype::Int8:
+    case NdarrayDtype::UInt8:
+    case NdarrayDtype::None:
+      break;
+  }
+}
+
 }  // namespace farrar_detail
 
 inline PreparedFarrarAlignment prepare_farrar_alignment(
@@ -351,9 +472,47 @@ inline PreparedFarrarAlignment prepare_farrar_alignment(
     detail::throw_type_error("bytes and str inputs cannot be aligned directly against each other");
   }
 
+  // ndarray detection happens before the sequence fallback. If either
+  // side is an ndarray we require the other to be an ndarray with the
+  // same dtype. Mixing ndarray with bytes/str/sequence raises, and
+  // ndarrays of unsupported dtype (object, record, non-contiguous)
+  // also raise rather than silently falling through to the sequence
+  // path.
+  ::stride_align::numpy_view::View query_view, target_view;
+  if (!(query_is_bytes || query_is_unicode)) {
+    query_view = ::stride_align::numpy_view::try_acquire(query.ptr());
+  }
+  if (!(target_is_bytes || target_is_unicode)) {
+    target_view = ::stride_align::numpy_view::try_acquire(target.ptr());
+  }
+  if (query_view.unsupported_buffer || target_view.unsupported_buffer) {
+    detail::throw_type_error(
+        "ndarray dtype is not supported for alignment; supported "
+        "dtypes are int8/16/32/64, uint8/16/32/64, and "
+        "float16/32/64. Object-dtype arrays, record dtypes, and "
+        "non-contiguous arrays are rejected — use a list for "
+        "object-typed sequences");
+  }
+  const bool query_is_ndarray = query_view.acquired;
+  const bool target_is_ndarray = target_view.acquired;
+  if (query_is_ndarray != target_is_ndarray ||
+      (query_is_ndarray && (query_is_bytes || target_is_bytes ||
+                            query_is_unicode || target_is_unicode))) {
+    detail::throw_type_error(
+        "ndarray inputs can only align against another ndarray of the "
+        "same dtype; mixing ndarray with bytes/str/sequence is not "
+        "supported");
+  }
+  if (query_is_ndarray && query_view.dtype != target_view.dtype) {
+    detail::throw_type_error(
+        "ndarray query and target must share the same dtype");
+  }
+
   PreparedFarrarAlignment prepared;
 
-  if (query_is_bytes && target_is_bytes) {
+  if (query_is_ndarray) {
+    farrar_detail::tokenise_ndarray_pair(prepared, query_view, target_view);
+  } else if (query_is_bytes && target_is_bytes) {
     prepared.query_tokens = farrar_detail::copy_bytes_tokens_8(query.ptr());
     prepared.target_tokens = farrar_detail::copy_bytes_tokens_8(target.ptr());
     prepared.symbol_count =
@@ -446,10 +605,100 @@ inline PreparedFarrarBatchAlignment prepare_farrar_batch_alignment(
     detail::throw_type_error("bytes and str inputs cannot be aligned directly against each other");
   }
 
+  // ndarray batch dispatch: query + all targets must be ndarrays with the
+  // same dtype, or none of them may be. Unsupported dtypes (object,
+  // record, non-contiguous) raise rather than falling through.
+  ::stride_align::numpy_view::View query_view;
+  std::vector<::stride_align::numpy_view::View> target_views;
+  bool batch_is_ndarray = false;
+  if (!(query_is_bytes || query_is_unicode)) {
+    query_view = ::stride_align::numpy_view::try_acquire(query.ptr());
+    if (query_view.unsupported_buffer) {
+      detail::throw_type_error(
+          "ndarray query dtype is not supported for alignment; "
+          "supported dtypes are int8/16/32/64, uint8/16/32/64, and "
+          "float16/32/64.");
+    }
+    batch_is_ndarray = query_view.acquired;
+  }
+  if (batch_is_ndarray) {
+    target_views.reserve(target_count);
+    for (std::size_t index = 0; index < target_count; ++index) {
+      auto view = ::stride_align::numpy_view::try_acquire(items[index]);
+      if (view.unsupported_buffer) {
+        detail::throw_type_error(
+            "ndarray target dtype is not supported for alignment; "
+            "supported dtypes are int8/16/32/64, uint8/16/32/64, and "
+            "float16/32/64.");
+      }
+      if (!view.acquired) {
+        detail::throw_type_error(
+            "ndarray inputs can only align against another ndarray of the "
+            "same dtype; mixing ndarray with bytes/str/sequence is not "
+            "supported");
+      }
+      if (view.dtype != query_view.dtype) {
+        detail::throw_type_error(
+            "ndarray query and targets must all share the same dtype");
+      }
+      target_views.push_back(std::move(view));
+    }
+  } else {
+    // If any target is an ndarray but the query is not (or vice versa),
+    // raise. This catches the "ndarray query + bytes targets" case too.
+    for (std::size_t index = 0; index < target_count; ++index) {
+      if (PyBytes_Check(items[index]) || PyUnicode_Check(items[index])) {
+        continue;
+      }
+      auto probe = ::stride_align::numpy_view::try_acquire(items[index]);
+      if (probe.unsupported_buffer || probe.acquired) {
+        detail::throw_type_error(
+            "ndarray targets cannot align against a non-ndarray query; "
+            "convert all sides to the same input kind");
+      }
+    }
+  }
+
   PreparedFarrarBatchAlignment prepared;
   prepared.target_tokens.reserve(target_count);
 
-  if (query_is_bytes && all_targets_bytes) {
+  if (batch_is_ndarray) {
+    using ::stride_align::numpy_view::NdarrayDtype;
+    const auto dtype = query_view.dtype;
+    if (dtype == NdarrayDtype::Int8 || dtype == NdarrayDtype::UInt8) {
+      prepared.query_tokens = farrar_detail::ndarray_tokens_memcpy(query_view);
+      for (const auto& tv : target_views) {
+        prepared.target_tokens.push_back(farrar_detail::ndarray_tokens_memcpy(tv));
+      }
+      prepared.symbol_count =
+          farrar_detail::byte_symbol_count(prepared.query_tokens, prepared.target_tokens);
+    } else {
+      // Reuse the wide-dtype tokenization with a shared map across the batch.
+      auto tokenise_batch = [&](auto native_tag) {
+        using Native = typename decltype(native_tag)::type;
+        std::unordered_map<Native, std::uint8_t> map;
+        prepared.query_tokens =
+            farrar_detail::ndarray_tokens_wide<Native>(query_view, map);
+        for (const auto& tv : target_views) {
+          prepared.target_tokens.push_back(
+              farrar_detail::ndarray_tokens_wide<Native>(tv, map));
+        }
+        prepared.symbol_count = map.size();
+      };
+      switch (dtype) {
+        case NdarrayDtype::Int16:   tokenise_batch(std::type_identity<std::int16_t>{});  break;
+        case NdarrayDtype::UInt16:
+        case NdarrayDtype::Float16: tokenise_batch(std::type_identity<std::uint16_t>{}); break;
+        case NdarrayDtype::Int32:   tokenise_batch(std::type_identity<std::int32_t>{});  break;
+        case NdarrayDtype::UInt32:
+        case NdarrayDtype::Float32: tokenise_batch(std::type_identity<std::uint32_t>{}); break;
+        case NdarrayDtype::Int64:   tokenise_batch(std::type_identity<std::int64_t>{});  break;
+        case NdarrayDtype::UInt64:
+        case NdarrayDtype::Float64: tokenise_batch(std::type_identity<std::uint64_t>{}); break;
+        default: break;
+      }
+    }
+  } else if (query_is_bytes && all_targets_bytes) {
     prepared.query_tokens = farrar_detail::copy_bytes_tokens_8(query.ptr());
     for (std::size_t index = 0; index < target_count; ++index) {
       prepared.target_tokens.push_back(farrar_detail::copy_bytes_tokens_8(items[index]));
