@@ -83,15 +83,24 @@ def test_path_rejects_ndarray() -> None:
 
 def test_wide_uint32_lifts_distinct_symbol_cap() -> None:
     # int32 / uint32 / float32 now route through the wide Farrar kernel
-    # (32-bit cells); identity self-alignment of a 70 000-distinct
-    # vector still works end-to-end.
+    # (32-bit cells). The striped profile is keyed by the *target*
+    # alphabet, so we keep the target tiny and only the query wide —
+    # that proves the >256-distinct path runs without allocating a
+    # |target|×|query| profile that OOMs memory-constrained hosts.
     for dtype in [np.int32, np.uint32]:
         q = np.arange(70_000, dtype=dtype)
-        t = np.arange(70_000, dtype=dtype)
+        t = q[:2].copy()
         score = sa.smith_waterman_score(
             q, t, match_score=2, mismatch_score=-1, gap_score=-1,
         )
-        assert score == 140_000, f"{dtype}: got {score}"
+        # Best local alignment: target's two values match the start of
+        # the query contiguously → 2 matches × 2 = 4.
+        assert score == 4, f"{dtype}: got {score}"
+        # Mirror direction: tiny query vs huge target (also small profile).
+        rev = sa.smith_waterman_score(
+            t, q, match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+        assert rev == 4, f"{dtype} rev: got {rev}"
 
 
 def test_wide_uint64_lifts_distinct_symbol_cap() -> None:
@@ -178,6 +187,62 @@ def test_batch_mixed_target_kinds_rejected() -> None:
     with pytest.raises(TypeError, match="ndarray"):
         sa.smith_waterman_scores(
             query, [np.array([1], dtype=np.int32), "ab"],
+            match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int16, np.uint32, np.int32, np.uint64, np.int64])
+def test_batch_scores_wide_ndarray_matches_per_pair(dtype) -> None:
+    # Batch (1 query x N targets) with a >256-distinct alphabet must route
+    # through the wide kernel and agree with the per-pair wide path.
+    query = np.arange(300, dtype=dtype)
+    targets = [
+        np.arange(300, dtype=dtype),            # identity -> 600
+        np.arange(300, dtype=dtype)[::-1].copy(),  # reversed
+        np.arange(150, 450, dtype=dtype),       # half-overlap
+    ]
+    batch = sa.smith_waterman_scores(
+        query, targets, match_score=2, mismatch_score=-1, gap_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.smith_waterman_score(query, t, match_score=2, mismatch_score=-1, gap_score=-1)
+        for t in targets
+    ]
+    assert batch == per_pair
+    assert batch[0] == 600  # identity self-alignment
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int32])
+def test_batch_needleman_wide_ndarray_matches_per_pair(dtype) -> None:
+    query = np.arange(300, dtype=dtype)
+    targets = [
+        np.arange(300, dtype=dtype),
+        np.arange(1, 301, dtype=dtype),
+    ]
+    batch = sa.needleman_wunsch_scores(
+        query, targets, match_score=2, mismatch_score=-1, gap_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.needleman_wunsch_score(query, t, match_score=2, mismatch_score=-1, gap_score=-1)
+        for t in targets
+    ]
+    assert batch == per_pair
+
+
+def test_batch_wide_ndarray_dtype_mismatch_rejected() -> None:
+    query = np.arange(300, dtype=np.uint16)
+    with pytest.raises(TypeError, match="dtype"):
+        sa.smith_waterman_scores(
+            query, [np.arange(300, dtype=np.uint32)],
+            match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+
+
+def test_batch_wide_ndarray_mixed_kind_rejected() -> None:
+    query = np.arange(300, dtype=np.uint16)
+    with pytest.raises(TypeError, match="ndarray"):
+        sa.smith_waterman_scores(
+            query, [np.arange(300, dtype=np.uint16), "ab"],
             match_score=2, mismatch_score=-1, gap_score=-1,
         )
 

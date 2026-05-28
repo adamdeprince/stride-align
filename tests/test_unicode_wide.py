@@ -100,6 +100,44 @@ def test_ucs4_alphabet_above_uint16_cap_routes_to_uint32() -> None:
     assert score_rev == 4
 
 
+def test_batch_unicode_wide_matches_per_pair() -> None:
+    # Batch with a >256-distinct CJK alphabet routes through the wide
+    # uint16 batch kernel; results must match the per-pair wide path.
+    alphabet = "".join(chr(0x4E00 + i) for i in range(300))
+    query = alphabet
+    targets = [
+        alphabet,                       # identity -> 600
+        alphabet[::-1],                 # reversed
+        _build_chinese(120, 300, seed=7),
+        "abc",                          # disjoint ASCII -> 0
+    ]
+    batch = sa.smith_waterman_scores(
+        query, targets, match_score=2, mismatch_score=-1, gap_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.smith_waterman_score(query, t, match_score=2, mismatch_score=-1, gap_score=-1)
+        for t in targets
+    ]
+    assert batch == per_pair
+    assert batch[0] == 600
+    assert batch[3] == 0
+
+
+def test_batch_unicode_small_alphabet_matches_per_pair() -> None:
+    # <=256 distinct codepoints stays on the narrow byte batch; verify the
+    # classifier doesn't wrongly promote and the scores still match.
+    query = "你好世界"
+    targets = ["你好啊朋友", "世界你好", "abc"]
+    batch = sa.smith_waterman_scores(
+        query, targets, match_score=2, mismatch_score=-1, gap_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.smith_waterman_score(query, t, match_score=2, mismatch_score=-1, gap_score=-1)
+        for t in targets
+    ]
+    assert batch == per_pair
+
+
 def test_mixed_ucs1_ucs2_with_large_target_promotes() -> None:
     # UCS-1 query, UCS-2 target with >256 distinct → wide path.
     q = "abc"

@@ -141,6 +141,24 @@ _SHORT_LINEAR_FARRAR_PRIORITY = (
     BackendKind.LINUX_RISCV64_RVV,
 )
 
+# Wide-token inputs (ndarray itemsize >= 2, non-UCS-1 unicode with large
+# alphabets) route through the Phase B wide Farrar kernels, which only
+# the fixed-kernel SIMD backends implement. SWAR is pure C scalar and
+# also lacks wide wiring, so it's excluded too. SVE/SVE2/RVV use the
+# scalable kernel and don't have wide_* templates yet.
+_FIXED_KERNEL_WIDE_PRIORITY = (
+    BackendKind.X86_AVX10_512,
+    BackendKind.X86_AVX512BWVL,
+    BackendKind.X86_AVX10_256,
+    BackendKind.X86_AVX2,
+    BackendKind.X86_SSE41,
+    BackendKind.LINUX_AARCH64_NEON,
+    BackendKind.MACOS_ARM64_NEON,
+    BackendKind.LINUX_LOONGARCH64_LASX,
+    BackendKind.LINUX_LOONGARCH64_LSX,
+    BackendKind.LINUX_POWERPC64_VSX,
+)
+
 _VALID_WIDTHS = {0, 8, 16, 32, 64}
 
 
@@ -229,6 +247,31 @@ def _length(value: object) -> int | None:
         return None
 
 
+def _input_needs_wide_tokens(query: object, target: object) -> bool:
+    """True if the inputs need a fixed-kernel SIMD backend rather than
+    SWAR / scalable-kernel (SVE/SVE2/RVV) / generic. Two triggers:
+
+    1. **Any ndarray** — SWAR and the scalable-kernel backends reject
+       ndarrays in their `prepare_alignment` path, and generic falls
+       back to the pure-Python loop; only the fixed-kernel SIMD
+       backends accept ndarrays end-to-end (including int8/uint8 via
+       memcpy and the wider dtypes via the Phase B wide kernels).
+    2. **Potentially wide unicode** — strings with any codepoint above
+       U+00FF could exceed the 256-distinct cap, which the narrow
+       byte tokeniser rejects. We use a bounded scan and fall back to
+       a conservative "yes" past 256 chars."""
+    for obj in (query, target):
+        if hasattr(obj, "dtype") and hasattr(obj, "shape"):
+            return True
+        if isinstance(obj, str) and obj and not obj.isascii():
+            for index, ch in enumerate(obj):
+                if index >= 256:
+                    return True
+                if ord(ch) > 0xFF:
+                    return True
+    return False
+
+
 def _profile_traceback_compatible(query: object, target: object) -> bool:
     if isinstance(query, bytes) and isinstance(target, bytes):
         return True
@@ -309,6 +352,16 @@ def _select_backend(
 
     if cells == 0:
         return _GENERIC_BACKEND
+
+    # Wide-token inputs (ndarray itemsize >= 2, large-alphabet unicode)
+    # need a fixed-kernel SIMD backend regardless of cells/score_width —
+    # SWAR and scalable-kernel backends (SVE/SVE2/RVV) lack wide_*
+    # templates and would raise on >256 distinct symbols. Applies to all
+    # score-only variants (linear, affine, farrar-score).
+    if variant in {"sw-score", "nw-score", "sw-farrar-score"} and _input_needs_wide_tokens(
+        query, target
+    ):
+        return _first_available(_FIXED_KERNEL_WIDE_PRIORITY) or _GENERIC_BACKEND
 
     if not affine and variant in {"sw-score", "nw-score"}:
         if cells <= 4096 and score_width == 8:

@@ -54,6 +54,17 @@ struct PreparedFarrarAlignmentWide {
   std::vector<Token> target_tokens;
 };
 
+template <typename Token>
+struct PreparedFarrarBatchAlignmentWide {
+  static_assert(std::is_unsigned_v<Token>);
+  static_assert(sizeof(Token) >= 2);
+  KernelBits score_bits = KernelBits::bits64;
+  std::uint64_t symbol_count = 0;
+  std::uint64_t score_bound = 0;
+  std::vector<Token> query_tokens;
+  std::vector<std::vector<Token>> target_tokens;
+};
+
 namespace farrar_detail {
 
 inline KernelBits select_score_bits(std::uint64_t score_bound) {
@@ -812,6 +823,218 @@ prepare_farrar_alignment_wide_unicode_uint32(
       farrar_detail::select_score_bits(prepared.score_bound),
       width);
   // Token=uint32 only pairs with Cell=int32.
+  prepared.score_bits = KernelBits::bits32;
+  return prepared;
+}
+
+// --- Wide batch (1 query x N targets) -------------------------------------
+//
+// The single-pair wide path has three entry kinds (ndarray >=2-byte,
+// unicode >256 distinct, unicode >65 535 distinct). The batch path
+// mirrors each, choosing one token width for the whole batch. The
+// narrow byte batch (prepare_farrar_batch_alignment) stays the default
+// for 8-bit ndarrays and small unicode alphabets.
+
+enum class WideBatchKind { None, U16, U32, U64 };
+
+// Decide which (if any) wide token width a batch needs, based on the
+// query alone for ndarrays (target dtype agreement is validated later by
+// the builder) and on the combined alphabet for unicode. Returns None
+// when the narrow byte batch should handle the inputs.
+inline WideBatchKind classify_batch_wide(
+    nb::handle query, PyObject* const* items, std::size_t target_count) {
+  using ::stride_align::numpy_view::NdarrayDtype;
+  const bool query_is_unicode = PyUnicode_Check(query.ptr()) != 0;
+  const bool query_is_bytes = PyBytes_Check(query.ptr()) != 0;
+
+  if (!(query_is_unicode || query_is_bytes)) {
+    auto q_view = ::stride_align::numpy_view::try_acquire(query.ptr());
+    if (!q_view.acquired) {
+      return WideBatchKind::None;  // not an ndarray query; narrow path decides.
+    }
+    switch (q_view.dtype) {
+      case NdarrayDtype::Int16:
+      case NdarrayDtype::UInt16:
+      case NdarrayDtype::Float16: return WideBatchKind::U16;
+      case NdarrayDtype::Int32:
+      case NdarrayDtype::UInt32:
+      case NdarrayDtype::Float32: return WideBatchKind::U32;
+      case NdarrayDtype::Int64:
+      case NdarrayDtype::UInt64:
+      case NdarrayDtype::Float64: return WideBatchKind::U64;
+      default: return WideBatchKind::None;  // int8/uint8 -> narrow byte batch.
+    }
+  }
+
+  if (!query_is_unicode) {
+    return WideBatchKind::None;  // bytes batch stays narrow.
+  }
+  // Unicode: the narrow byte batch handles <=256 distinct codepoints.
+  // Above that we need uint16 tokens; above 65 535 we need raw-uint32.
+  bool all_unicode = true;
+  bool all_ucs1 = PyUnicode_KIND(query.ptr()) == PyUnicode_1BYTE_KIND;
+  for (std::size_t i = 0; i < target_count; ++i) {
+    if (PyUnicode_Check(items[i]) == 0) {
+      all_unicode = false;
+      break;
+    }
+    all_ucs1 = all_ucs1 && PyUnicode_KIND(items[i]) == PyUnicode_1BYTE_KIND;
+  }
+  if (!all_unicode || all_ucs1) {
+    // Mixed kinds are rejected by the narrow path; all-UCS-1 can never
+    // exceed 256 distinct codepoints, so the narrow byte batch suffices.
+    return WideBatchKind::None;
+  }
+
+  constexpr std::size_t kU16Cap = 65536U;  // 0..65535
+  std::unordered_map<Py_UCS4, std::uint8_t> seen;
+  bool over_256 = false;
+  const auto scan = [&](PyObject* obj) -> bool {  // returns false once >65535.
+    const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(obj));
+    const int kind = PyUnicode_KIND(obj);
+    void* data = PyUnicode_DATA(obj);
+    for (std::size_t i = 0; i < size; ++i) {
+      const auto cp = static_cast<Py_UCS4>(
+          PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(i)));
+      auto [iter, inserted] = seen.try_emplace(cp, 0);
+      if (inserted) {
+        if (seen.size() > 256U) over_256 = true;
+        if (seen.size() > kU16Cap - 1U) return false;
+      }
+    }
+    return true;
+  };
+  bool within_u16 = scan(query.ptr());
+  for (std::size_t i = 0; i < target_count && within_u16; ++i) {
+    within_u16 = scan(items[i]);
+  }
+  if (!within_u16) return WideBatchKind::U32;
+  if (over_256) return WideBatchKind::U16;
+  return WideBatchKind::None;
+}
+
+// Build a wide batch struct from a query + target sequence of ndarrays,
+// all sharing the same dtype whose element width equals sizeof(Token).
+// Validation mirrors the narrow batch (mixed kinds / dtype mismatch
+// raise the same TypeErrors).
+template <typename Token>
+inline PreparedFarrarBatchAlignmentWide<Token>
+prepare_farrar_batch_wide_ndarray(
+    nb::handle query,
+    PyObject* const* items,
+    std::size_t target_count,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarBatchAlignmentWide<Token> prepared;
+  auto query_view = ::stride_align::numpy_view::try_acquire(query.ptr());
+  const auto q_count = query_view.element_count();
+  prepared.query_tokens.resize(q_count);
+  if (q_count > 0) {
+    std::memcpy(prepared.query_tokens.data(), query_view.data(),
+                q_count * sizeof(Token));
+  }
+  prepared.target_tokens.reserve(target_count);
+  std::size_t max_target_size = 0;
+  for (std::size_t i = 0; i < target_count; ++i) {
+    auto view = ::stride_align::numpy_view::try_acquire(items[i]);
+    if (view.unsupported_buffer) {
+      detail::throw_type_error(
+          "ndarray target dtype is not supported for alignment; "
+          "supported dtypes are int8/16/32/64, uint8/16/32/64, and "
+          "float16/32/64.");
+    }
+    if (!view.acquired) {
+      detail::throw_type_error(
+          "ndarray inputs can only align against another ndarray of the "
+          "same dtype; mixing ndarray with bytes/str/sequence is not "
+          "supported");
+    }
+    if (view.dtype != query_view.dtype) {
+      detail::throw_type_error(
+          "ndarray query and targets must all share the same dtype");
+    }
+    const auto t_count = view.element_count();
+    std::vector<Token> tokens(t_count);
+    if (t_count > 0) {
+      std::memcpy(tokens.data(), view.data(), t_count * sizeof(Token));
+    }
+    max_target_size = std::max(max_target_size, t_count);
+    prepared.target_tokens.push_back(std::move(tokens));
+  }
+  prepared.symbol_count = q_count + max_target_size;
+  prepared.score_bound = detail::compute_score_bound(
+      q_count, max_target_size, match_score, mismatch_score,
+      gap_open_score, gap_extend_score);
+  if constexpr (sizeof(Token) == 2) {
+    prepared.score_bits = KernelBits::bits16;
+  } else if constexpr (sizeof(Token) == 4) {
+    prepared.score_bits = KernelBits::bits32;
+  } else {
+    prepared.score_bits = KernelBits::bits64;
+  }
+  return prepared;
+}
+
+// Build a uint16-token wide batch from unicode inputs (combined alphabet
+// >256 but <=65 535 distinct codepoints). A single token map is shared
+// across the query and every target so identical codepoints align.
+inline PreparedFarrarBatchAlignmentWide<std::uint16_t>
+prepare_farrar_batch_wide_unicode_uint16(
+    nb::handle query,
+    PyObject* const* items,
+    std::size_t target_count,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarBatchAlignmentWide<std::uint16_t> prepared;
+  std::unordered_map<Py_UCS4, std::uint16_t> token_map;
+  prepared.query_tokens = compact_unicode_tokens_uint16(query.ptr(), token_map);
+  prepared.target_tokens.reserve(target_count);
+  std::size_t max_target_size = 0;
+  for (std::size_t i = 0; i < target_count; ++i) {
+    auto tokens = compact_unicode_tokens_uint16(items[i], token_map);
+    max_target_size = std::max(max_target_size, tokens.size());
+    prepared.target_tokens.push_back(std::move(tokens));
+  }
+  prepared.symbol_count = token_map.size();
+  prepared.score_bound = detail::compute_score_bound(
+      prepared.query_tokens.size(), max_target_size,
+      match_score, mismatch_score, gap_open_score, gap_extend_score);
+  prepared.score_bits = KernelBits::bits16;
+  return prepared;
+}
+
+// Build a uint32-token wide batch from unicode inputs whose combined
+// alphabet exceeds 65 535 distinct codepoints — raw codepoints become
+// tokens (no map), matching the single-pair uint32 unicode path.
+inline PreparedFarrarBatchAlignmentWide<std::uint32_t>
+prepare_farrar_batch_wide_unicode_uint32(
+    nb::handle query,
+    PyObject* const* items,
+    std::size_t target_count,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarBatchAlignmentWide<std::uint32_t> prepared;
+  prepared.query_tokens = copy_unicode_codepoints_uint32(query.ptr());
+  prepared.target_tokens.reserve(target_count);
+  std::size_t max_target_size = 0;
+  for (std::size_t i = 0; i < target_count; ++i) {
+    auto tokens = copy_unicode_codepoints_uint32(items[i]);
+    max_target_size = std::max(max_target_size, tokens.size());
+    prepared.target_tokens.push_back(std::move(tokens));
+  }
+  prepared.symbol_count = prepared.query_tokens.size() + max_target_size;
+  prepared.score_bound = detail::compute_score_bound(
+      prepared.query_tokens.size(), max_target_size,
+      match_score, mismatch_score, gap_open_score, gap_extend_score);
   prepared.score_bits = KernelBits::bits32;
   return prepared;
 }

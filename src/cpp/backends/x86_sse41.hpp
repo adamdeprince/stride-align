@@ -932,6 +932,11 @@ struct Implementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (auto wide = farrar_fixed_kernel::detail::try_wide_score_batch<detail::SimdOps, true>(
+            query, targets, match_score, mismatch_score, gap_score, width);
+        wide) {
+      return std::move(*wide);
+    }
     const auto prepared =
         prepare_farrar_batch_alignment(query, targets, match_score, mismatch_score, gap_score, width);
     return farrar_fixed_kernel::detail::dispatch_score_many<detail::SimdOps, true>(
@@ -1398,6 +1403,11 @@ struct Implementation {
       Score mismatch_score,
       Score gap_score,
       unsigned int width) {
+    if (auto wide = farrar_fixed_kernel::detail::try_wide_score_batch<detail::SimdOps, false>(
+            query, targets, match_score, mismatch_score, gap_score, width);
+        wide) {
+      return std::move(*wide);
+    }
     const auto prepared =
         prepare_farrar_batch_alignment(query, targets, match_score, mismatch_score, gap_score, width);
     return farrar_fixed_kernel::detail::dispatch_score_many<detail::SimdOps, false>(

@@ -7031,6 +7031,186 @@ Score wide_dispatch_global_score(
   }
 }
 
+// --- Wide batch (1 query x N targets) -------------------------------------
+//
+// Amortises the query profile across all targets: collect the union of
+// distinct tokens across every target, build the query profile once,
+// then per-target rewrite only target_profile_offsets and run the
+// shared score_state / global_score_state inner DP. Mirrors the
+// matrix-mode batch pattern. No target-ordered / blocked profile
+// layouts — the wide path is the large-alphabet case where the simple
+// token-major profile is the right default.
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell,
+          bool LocalAlignment>
+std::vector<Score> wide_score_batch(
+    const PreparedFarrarBatchAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  const auto query = std::span<const Token>(
+      prepared.query_tokens.data(), prepared.query_tokens.size());
+
+  std::vector<Score> results;
+  results.reserve(prepared.target_tokens.size());
+
+  if (query.empty()) {
+    for (const auto& target : prepared.target_tokens) {
+      if constexpr (LocalAlignment) {
+        results.push_back(0);
+      } else {
+        results.push_back(static_cast<Score>(target.size()) * gap_score);
+      }
+    }
+    return results;
+  }
+
+  const std::size_t segment_count = (query.size() + lane_count - 1U) / lane_count;
+  const std::size_t state_cells = segment_count * lane_count;
+
+  // Union of distinct tokens across all targets → profile row index.
+  std::unordered_map<Token, std::size_t> token_rows;
+  for (const auto& target : prepared.target_tokens) {
+    for (const auto tok : target) {
+      token_rows.try_emplace(tok, token_rows.size());
+    }
+  }
+  std::vector<Token> profile_tokens(token_rows.size());
+  for (const auto& [tok, row] : token_rows) {
+    profile_tokens[row] = tok;
+  }
+
+  PreparedScoreState<Cell> state;
+  state.gap_score = static_cast<Cell>(gap_score);
+  state.query_size = query.size();
+  state.segment_count = segment_count;
+  state.kernel_strategy = ScoreKernelStrategy::automatic;
+  state.profile = wide_build_profile<OpsTemplate, Token, Cell>(
+      query,
+      std::span<const Token>(profile_tokens.data(), profile_tokens.size()),
+      static_cast<Cell>(match_score), static_cast<Cell>(mismatch_score),
+      segment_count);
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+
+  for (const auto& target : prepared.target_tokens) {
+    state.target_size = target.size();
+    state.target_profile_offsets.clear();
+    state.target_profile_offsets.reserve(target.size());
+    for (const auto tok : target) {
+      state.target_profile_offsets.push_back(token_rows[tok] * state_cells);
+    }
+    if (target.empty()) {
+      if constexpr (LocalAlignment) {
+        results.push_back(0);
+      } else {
+        results.push_back(static_cast<Score>(query.size()) * gap_score);
+      }
+      continue;
+    }
+    if constexpr (LocalAlignment) {
+      results.push_back(score_state<OpsTemplate, Cell>(state));
+    } else {
+      results.push_back(global_score_state<OpsTemplate, Cell>(state));
+    }
+  }
+  return results;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, bool LocalAlignment>
+std::vector<Score> wide_dispatch_score_batch(
+    const PreparedFarrarBatchAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score) {
+  if constexpr (sizeof(Token) == 2) {
+    return wide_score_batch<OpsTemplate, Token, std::int16_t, LocalAlignment>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else if constexpr (sizeof(Token) == 4) {
+    return wide_score_batch<OpsTemplate, Token, std::int32_t, LocalAlignment>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else if constexpr (sizeof(Token) == 8) {
+    return wide_score_batch<OpsTemplate, Token, std::int64_t, LocalAlignment>(
+        prepared, match_score, mismatch_score, gap_score);
+  } else {
+    static_assert(sizeof(Token) == 2 || sizeof(Token) == 4 || sizeof(Token) == 8,
+                  "wide path supports uint16/32/64 tokens");
+  }
+}
+
+// Batch front door: classify the (query, targets) pair and, when it needs
+// the wide path, build the matching wide batch struct and run it. Returns
+// nullopt when the narrow byte batch should handle the inputs. Backends
+// call this first and fall through to prepare_farrar_batch_alignment +
+// dispatch_score_many on nullopt.
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+std::optional<std::vector<Score>> try_wide_score_batch(
+    nb::handle query,
+    nb::handle targets,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    unsigned int width) {
+  namespace fd = ::stride_align::farrar_detail;
+  PyObject* fast_targets =
+      PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
+  if (fast_targets == nullptr) {
+    throw nb::python_error();
+  }
+  nb::object owner = nb::steal<nb::object>(fast_targets);
+  const auto target_count =
+      static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
+  PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+
+  const auto kind = fd::classify_batch_wide(query, items, target_count);
+  const bool query_is_unicode = PyUnicode_Check(query.ptr()) != 0;
+  switch (kind) {
+    case fd::WideBatchKind::None:
+      return std::nullopt;
+    case fd::WideBatchKind::U16: {
+      if (query_is_unicode) {
+        auto prepared = fd::prepare_farrar_batch_wide_unicode_uint16(
+            query, items, target_count, match_score, mismatch_score,
+            gap_score, gap_score, width);
+        return wide_dispatch_score_batch<OpsTemplate, std::uint16_t, LocalAlignment>(
+            prepared, match_score, mismatch_score, gap_score);
+      }
+      auto prepared = fd::prepare_farrar_batch_wide_ndarray<std::uint16_t>(
+          query, items, target_count, match_score, mismatch_score,
+          gap_score, gap_score, width);
+      return wide_dispatch_score_batch<OpsTemplate, std::uint16_t, LocalAlignment>(
+          prepared, match_score, mismatch_score, gap_score);
+    }
+    case fd::WideBatchKind::U32: {
+      if (query_is_unicode) {
+        auto prepared = fd::prepare_farrar_batch_wide_unicode_uint32(
+            query, items, target_count, match_score, mismatch_score,
+            gap_score, gap_score, width);
+        return wide_dispatch_score_batch<OpsTemplate, std::uint32_t, LocalAlignment>(
+            prepared, match_score, mismatch_score, gap_score);
+      }
+      auto prepared = fd::prepare_farrar_batch_wide_ndarray<std::uint32_t>(
+          query, items, target_count, match_score, mismatch_score,
+          gap_score, gap_score, width);
+      return wide_dispatch_score_batch<OpsTemplate, std::uint32_t, LocalAlignment>(
+          prepared, match_score, mismatch_score, gap_score);
+    }
+    case fd::WideBatchKind::U64: {
+      // U64 is only reached for 8-byte ndarrays; unicode never promotes
+      // past uint32 (raw codepoints fit in 32 bits).
+      auto prepared = fd::prepare_farrar_batch_wide_ndarray<std::uint64_t>(
+          query, items, target_count, match_score, mismatch_score,
+          gap_score, gap_score, width);
+      return wide_dispatch_score_batch<OpsTemplate, std::uint64_t, LocalAlignment>(
+          prepared, match_score, mismatch_score, gap_score);
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace detail
 
 }  // namespace stride_align::farrar_fixed_kernel
