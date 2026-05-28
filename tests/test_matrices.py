@@ -389,3 +389,59 @@ def test_substitution_matrix_validation_wildcard_in_alphabet() -> None:
             gap_score=-1,
             wildcard="X",
         )
+
+
+# Matrix-mode kernels read each input element as a uint8 index into the
+# matrix alphabet. uint8/int8 ndarrays are bytes-compatible and work
+# directly; wider dtypes (int16/int32/float64/...) would silently
+# misinterpret their multi-byte representation as multiple indices.
+# Reject those at the dispatcher boundary so users get a clear error.
+
+def test_matrix_uint8_ndarray_accepted() -> None:
+    arr = np.array([0, 1, 2, 3], dtype=np.uint8)
+    matrix = SubstitutionMatrix(
+        name="tiny",
+        alphabet="ABCD",
+        matrix=np.eye(4, dtype=np.int8) * 2 - np.ones((4, 4), dtype=np.int8),
+        gap_score=-1,
+        wildcard="A",
+    )
+    score = sa.smith_waterman_score(
+        arr, arr, matrix=matrix, gap_score=-1,
+    )
+    # Identity self-alignment: diagonal entries are 1 (eye*2 - ones gives
+    # 1 on the diagonal, -1 off-diagonal); 4 matches * 1 = 4.
+    assert score == 4
+
+
+@pytest.mark.parametrize("dtype", [np.int16, np.uint16, np.int32, np.uint32, np.int64, np.uint64, np.float32, np.float64])
+def test_matrix_wide_ndarray_rejected(dtype) -> None:
+    arr = np.array([0, 1, 2, 3], dtype=dtype)
+    matrix = SubstitutionMatrix(
+        name="tiny",
+        alphabet="ABCD",
+        matrix=np.eye(4, dtype=np.int8),
+        gap_score=-1,
+        wildcard="A",
+    )
+    with pytest.raises(TypeError, match="uint8/int8"):
+        sa.smith_waterman_score(arr, arr, matrix=matrix, gap_score=-1)
+
+
+def test_matrix_wide_ndarray_rejected_in_batch() -> None:
+    matrix = SubstitutionMatrix(
+        name="tiny",
+        alphabet="ABCD",
+        matrix=np.eye(4, dtype=np.int8),
+        gap_score=-1,
+        wildcard="A",
+    )
+    query = np.array([0, 1, 2, 3], dtype=np.uint8)
+    targets = [
+        np.array([0, 1, 2, 3], dtype=np.uint8),
+        np.array([0, 1, 2, 3], dtype=np.int32),  # wide; should reject.
+    ]
+    with pytest.raises(TypeError, match="uint8/int8"):
+        sa.smith_waterman_scores(
+            query, targets, matrix=matrix, gap_score=-1,
+        )

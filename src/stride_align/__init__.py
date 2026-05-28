@@ -474,6 +474,27 @@ def _matrix_gap_route(
     return is_affine, int(open_score), int(extend_score)
 
 
+def _reject_wide_ndarray_for_matrix(*inputs: object) -> None:
+    """Matrix-mode kernels read each input element as a uint8 index into
+    the substitution matrix's alphabet. A wider-dtype ndarray (int16,
+    int32, float64, etc.) would silently misinterpret its multi-byte
+    representation as multiple indices, producing wrong scores. Catch
+    that here with a clear TypeError; the user can pre-cast to uint8 if
+    their values fit in [0, 255]."""
+    for obj in inputs:
+        if obj is None:
+            continue
+        if hasattr(obj, "dtype") and hasattr(obj, "shape"):
+            itemsize = getattr(obj.dtype, "itemsize", 0)
+            if itemsize > 1:
+                raise TypeError(
+                    "matrix= mode requires uint8/int8 ndarrays (each "
+                    "value is an index into the matrix alphabet); got "
+                    f"dtype with itemsize {itemsize}. Cast to np.uint8 "
+                    "if your values fit in [0, 255]."
+                )
+
+
 def _validate_matrix(matrix: Any) -> Any:
     from .matrices import SubstitutionMatrix
 
@@ -493,6 +514,7 @@ def _dispatch_matrix(
     gap_score: int,
 ) -> int:
     matrix = _validate_matrix(matrix)
+    _reject_wide_ndarray_for_matrix(query, target)
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
     # _LEVENSHTEIN_BACKEND is the best available SIMD backend; the C++
@@ -517,6 +539,7 @@ def _dispatch_matrix_affine(
     gap_extend_score: int,
 ) -> int:
     matrix = _validate_matrix(matrix)
+    _reject_wide_ndarray_for_matrix(query, target)
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
     return getattr(_LEVENSHTEIN_BACKEND, function_name)(
@@ -540,6 +563,7 @@ def _dispatch_matrix_many(
     target_tuple = _materialize_targets(targets)
     if not target_tuple:
         return np.empty(0, dtype=np.int64)
+    _reject_wide_ndarray_for_matrix(query, *target_tuple)
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     encoded_targets = tuple(
         matrix.encode(t) if isinstance(t, str) else bytes(t) for t in target_tuple
@@ -565,6 +589,7 @@ def _dispatch_matrix_path_info(
     gap_extend_score: int | None,
 ) -> AlignmentPath:
     matrix = _validate_matrix(matrix)
+    _reject_wide_ndarray_for_matrix(query, target)
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     t_bytes = matrix.encode(target) if isinstance(target, str) else bytes(target)
     is_affine, open_s, extend_s = _matrix_gap_route(
@@ -677,6 +702,7 @@ def _dispatch_matrix_affine_many(
     target_tuple = _materialize_targets(targets)
     if not target_tuple:
         return np.empty(0, dtype=np.int64)
+    _reject_wide_ndarray_for_matrix(query, *target_tuple)
     q_bytes = matrix.encode(query) if isinstance(query, str) else bytes(query)
     encoded_targets = tuple(
         matrix.encode(t) if isinstance(t, str) else bytes(t) for t in target_tuple
