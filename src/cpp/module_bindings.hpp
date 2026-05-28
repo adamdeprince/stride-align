@@ -25,6 +25,8 @@
 #include "stride_align/hamming.hpp"
 #include "stride_align/jaro.hpp"
 #include "stride_align/levenshtein.hpp"
+#include "stride_align/levenshtein_prepared.hpp"
+#include "byte_view.hpp"
 #include "topk.hpp"
 
 namespace stride_align::bindings {
@@ -2567,6 +2569,69 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             query, target, to_cutoff(score_cutoff));
       },
       nb::arg("query"),
+      nb::arg("target"),
+      nb::arg("score_cutoff") = nb::none());
+
+  // Persistent prepared Levenshtein scorer. Pre-builds the Myers
+  // pattern_match (PEQ) table for a fixed query and reuses it across
+  // every distance(target) call. Bytes / 1-byte-unicode queries take
+  // the prepared path; wider queries fall back to the per-call
+  // dispatch (the Python ``LevenshteinScorer`` checks ``.has_prepared``
+  // and switches accordingly).
+  using PreparedLev = ::stride_align::levenshtein::PreparedLevenshteinScoreU8;
+  nb::class_<PreparedLev>(m, "_PreparedLevenshteinScore")
+      .def_prop_ro("query_size", [](const PreparedLev& self) {
+        return self.m;
+      })
+      .def_prop_ro("single_word", [](const PreparedLev& self) {
+        return self.single_word;
+      });
+
+  m.def(
+      "_prepare_levenshtein_score",
+      [](nb::handle query) -> nb::object {
+        namespace bv = ::stride_align::byte_view;
+        const bv::ByteCompatKind kind = bv::classify(query.ptr());
+        if (kind == bv::ByteCompatKind::None) {
+          // Wider unicode / sequence inputs aren't supported by the
+          // bytes-only prepared kernel yet. Return None and let the
+          // Python LevenshteinScorer fall back to the per-call path.
+          return nb::none();
+        }
+        const std::uint8_t* ptr = nullptr;
+        std::size_t len = 0;
+        bv::view(query.ptr(), kind, ptr, len);
+        PreparedLev prepared =
+            ::stride_align::levenshtein::prepare_levenshtein_score_u8(
+                std::span<const std::uint8_t>(ptr, len));
+        return nb::cast(std::move(prepared));
+      },
+      nb::arg("query"));
+
+  m.def(
+      "_levenshtein_score_prepared",
+      [to_cutoff](
+          const PreparedLev& prepared,
+          nb::handle target,
+          nb::object score_cutoff) -> nb::object {
+        namespace bv = ::stride_align::byte_view;
+        const bv::ByteCompatKind kind = bv::classify(target.ptr());
+        if (kind == bv::ByteCompatKind::None) {
+          // Wider target — caller should fall back. Returning None
+          // tells the Python wrapper to retry through the unprepared
+          // dispatch.
+          return nb::none();
+        }
+        const std::uint8_t* ptr = nullptr;
+        std::size_t len = 0;
+        bv::view(target.ptr(), kind, ptr, len);
+        const std::size_t cutoff = to_cutoff(score_cutoff);
+        const std::size_t distance =
+            ::stride_align::levenshtein::levenshtein_score_prepared_u8(
+                prepared, std::span<const std::uint8_t>(ptr, len), cutoff);
+        return nb::cast(static_cast<long long>(distance));
+      },
+      nb::arg("prepared"),
       nb::arg("target"),
       nb::arg("score_cutoff") = nb::none());
 
