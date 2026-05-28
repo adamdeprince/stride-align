@@ -828,6 +828,12 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
+    if (auto wide = farrar_fixed_kernel::detail::try_wide_affine_score<SimdOps, true>(
+            query, target, match_score, mismatch_score,
+            gap_open_score, gap_extend_score, width);
+        wide) {
+      return *wide;
+    }
     if (gap_open_score <= 0 && gap_extend_score <= 0) {
       const auto prepared = prepare_farrar_alignment(
           query,
@@ -862,6 +868,12 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
+    if (auto wide = farrar_fixed_kernel::detail::try_wide_affine_score_batch<SimdOps, true>(
+            query, targets, match_score, mismatch_score,
+            gap_open_score, gap_extend_score, width);
+        wide) {
+      return std::move(*wide);
+    }
     const auto prepared = prepare_farrar_batch_alignment(
         query,
         targets,
@@ -1324,6 +1336,12 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
+    if (auto wide = farrar_fixed_kernel::detail::try_wide_affine_score<SimdOps, false>(
+            query, target, match_score, mismatch_score,
+            gap_open_score, gap_extend_score, width);
+        wide) {
+      return *wide;
+    }
     const auto prepared = prepare_farrar_alignment(
         query,
         target,
@@ -1348,6 +1366,12 @@ struct TargetImplementation {
       Score gap_open_score,
       Score gap_extend_score,
       unsigned int width) {
+    if (auto wide = farrar_fixed_kernel::detail::try_wide_affine_score_batch<SimdOps, false>(
+            query, targets, match_score, mismatch_score,
+            gap_open_score, gap_extend_score, width);
+        wide) {
+      return std::move(*wide);
+    }
     const auto prepared = prepare_farrar_batch_alignment(
         query,
         targets,

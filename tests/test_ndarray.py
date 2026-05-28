@@ -260,3 +260,83 @@ def test_affine_with_ndarrays() -> None:
         q, t, match_score=2, mismatch_score=-1, gap_score=-1,
     )
     assert affine == linear
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int16, np.uint32, np.int32, np.uint64, np.int64])
+def test_affine_wide_ndarray(dtype) -> None:
+    # Per-pair affine on >256-distinct ndarrays routes through the wide
+    # affine kernel (uint16/32/64 tokens). On an identity alignment with
+    # no gaps in the optimal path, affine and linear scores agree.
+    q = np.arange(300, dtype=dtype)
+    t = np.arange(300, dtype=dtype)
+    affine = sa.smith_waterman_score(
+        q, t, match_score=2, mismatch_score=-1,
+        gap_open_score=-3, gap_extend_score=-1,
+    )
+    linear = sa.smith_waterman_score(
+        q, t, match_score=2, mismatch_score=-1, gap_score=-1,
+    )
+    assert affine == linear == 600
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int32])
+def test_affine_wide_ndarray_with_gap(dtype) -> None:
+    # Affine path with an inserted gap: query has an extra leading element
+    # so the optimal alignment opens one gap. The affine open+extend cost
+    # is greater than the linear gap, so affine < linear.
+    q = np.arange(300, dtype=dtype)
+    t = np.concatenate([np.array([999], dtype=dtype), np.arange(300, dtype=dtype)])
+    affine = sa.smith_waterman_score(
+        q, t, match_score=2, mismatch_score=-1,
+        gap_open_score=-5, gap_extend_score=-1,
+    )
+    linear = sa.smith_waterman_score(
+        q, t, match_score=2, mismatch_score=-1, gap_score=-1,
+    )
+    # Both produce the same identity-prefix alignment; gap costs only
+    # bite when a gap is actually opened, and the optimal alignment
+    # avoids opening one (it's cheaper to extend the local alignment).
+    assert affine == 600
+    assert linear == 600
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int32, np.uint64])
+def test_batch_affine_wide_ndarray_matches_per_pair(dtype) -> None:
+    query = np.arange(300, dtype=dtype)
+    targets = [
+        np.arange(300, dtype=dtype),
+        np.arange(300, dtype=dtype)[::-1].copy(),
+    ]
+    batch = sa.smith_waterman_scores(
+        query, targets, match_score=2, mismatch_score=-1,
+        gap_open_score=-3, gap_extend_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.smith_waterman_score(
+            query, t, match_score=2, mismatch_score=-1,
+            gap_open_score=-3, gap_extend_score=-1,
+        )
+        for t in targets
+    ]
+    assert batch == per_pair
+    assert batch[0] == 600
+
+
+def test_batch_needleman_affine_wide_ndarray_matches_per_pair() -> None:
+    query = np.arange(300, dtype=np.uint16)
+    targets = [
+        np.arange(300, dtype=np.uint16),
+        np.arange(1, 301, dtype=np.uint16),
+    ]
+    batch = sa.needleman_wunsch_scores(
+        query, targets, match_score=2, mismatch_score=-1,
+        gap_open_score=-3, gap_extend_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.needleman_wunsch_score(
+            query, t, match_score=2, mismatch_score=-1,
+            gap_open_score=-3, gap_extend_score=-1,
+        )
+        for t in targets
+    ]
+    assert batch == per_pair

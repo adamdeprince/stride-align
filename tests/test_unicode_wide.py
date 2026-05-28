@@ -147,3 +147,37 @@ def test_mixed_ucs1_ucs2_with_large_target_promotes() -> None:
     assert sa.smith_waterman_score(
         q, t, match_score=2, mismatch_score=-1, gap_score=-1,
     ) == 0
+
+
+def test_affine_unicode_wide_matches_linear_on_identity() -> None:
+    # Affine path on a >256-distinct unicode identity alignment: no gaps
+    # in the optimal alignment, so affine == linear == 300*match.
+    chars = "".join(chr(0x4E00 + i) for i in range(300))
+    affine = sa.smith_waterman_score(
+        chars, chars, match_score=2, mismatch_score=-1,
+        gap_open_score=-3, gap_extend_score=-1,
+    )
+    linear = sa.smith_waterman_score(
+        chars, chars, match_score=2, mismatch_score=-1, gap_score=-1,
+    )
+    assert affine == linear == 600
+
+
+def test_batch_affine_unicode_wide_matches_per_pair() -> None:
+    alphabet = "".join(chr(0x4E00 + i) for i in range(300))
+    query = alphabet
+    targets = [alphabet, alphabet[::-1], "abc"]
+    batch = sa.smith_waterman_scores(
+        query, targets, match_score=2, mismatch_score=-1,
+        gap_open_score=-3, gap_extend_score=-1,
+    ).tolist()
+    per_pair = [
+        sa.smith_waterman_score(
+            query, t, match_score=2, mismatch_score=-1,
+            gap_open_score=-3, gap_extend_score=-1,
+        )
+        for t in targets
+    ]
+    assert batch == per_pair
+    assert batch[0] == 600
+    assert batch[2] == 0

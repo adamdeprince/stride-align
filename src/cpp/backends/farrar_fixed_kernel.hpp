@@ -7211,6 +7211,400 @@ std::optional<std::vector<Score>> try_wide_score_batch(
   return std::nullopt;
 }
 
+// --- Wide affine (single pair) ---------------------------------------------
+//
+// Mirrors wide_prepare_score_state but produces a PreparedAffineScoreState
+// (separate open/extend gap, optional NW initial column). The inner DP
+// kernel — affine_score_state / global_affine_score_state — is shared
+// with the narrow path.
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell,
+          bool PrepareGlobalInitial>
+PreparedAffineScoreState<Cell> wide_prepare_affine_score_state(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  const auto query = std::span<const Token>(
+      prepared.query_tokens.data(), prepared.query_tokens.size());
+  const auto target = std::span<const Token>(
+      prepared.target_tokens.data(), prepared.target_tokens.size());
+
+  const auto match = static_cast<Cell>(match_score);
+  const auto mismatch = static_cast<Cell>(mismatch_score);
+  PreparedAffineScoreState<Cell> state;
+  state.gap_open_score = static_cast<Cell>(gap_open_score);
+  state.gap_extend_score = static_cast<Cell>(gap_extend_score);
+  state.query_size = query.size();
+  state.target_size = target.size();
+  if (query.empty() || target.empty()) {
+    state.profile_indices.fill(missing_profile_index);
+    return state;
+  }
+
+  state.segment_count = (query.size() + lane_count - 1U) / lane_count;
+  std::unordered_map<Token, std::size_t> wide_indices;
+  const auto profile_tokens = wide_collect_profile_tokens<Token>(target, wide_indices);
+  const auto state_cells = state.segment_count * lane_count;
+
+  state.profile = wide_build_profile<OpsTemplate, Token, Cell>(
+      query,
+      std::span<const Token>(profile_tokens.data(), profile_tokens.size()),
+      match, mismatch, state.segment_count);
+  state.target_profile_offsets.reserve(target.size());
+  for (const auto token : target) {
+    state.target_profile_offsets.push_back(wide_indices[token] * state_cells);
+  }
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+  if constexpr (PrepareGlobalInitial) {
+    prepare_global_affine_initial_column(state, lane_count);
+  }
+  return state;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+Score wide_affine_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  auto state = wide_prepare_affine_score_state<OpsTemplate, Token, Cell, false>(
+      prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  return affine_score_state<OpsTemplate, Cell>(state);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell>
+Score wide_global_affine_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  auto state = wide_prepare_affine_score_state<OpsTemplate, Token, Cell, true>(
+      prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  return global_affine_score_state<OpsTemplate, Cell>(state);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token>
+Score wide_dispatch_affine_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  if constexpr (sizeof(Token) == 2) {
+    return wide_affine_score<OpsTemplate, Token, std::int16_t>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else if constexpr (sizeof(Token) == 4) {
+    return wide_affine_score<OpsTemplate, Token, std::int32_t>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else if constexpr (sizeof(Token) == 8) {
+    return wide_affine_score<OpsTemplate, Token, std::int64_t>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else {
+    static_assert(sizeof(Token) == 2 || sizeof(Token) == 4 || sizeof(Token) == 8,
+                  "wide path supports uint16/32/64 tokens");
+  }
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token>
+Score wide_dispatch_global_affine_score(
+    const PreparedFarrarAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  if constexpr (sizeof(Token) == 2) {
+    return wide_global_affine_score<OpsTemplate, Token, std::int16_t>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else if constexpr (sizeof(Token) == 4) {
+    return wide_global_affine_score<OpsTemplate, Token, std::int32_t>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else if constexpr (sizeof(Token) == 8) {
+    return wide_global_affine_score<OpsTemplate, Token, std::int64_t>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else {
+    static_assert(sizeof(Token) == 2 || sizeof(Token) == 4 || sizeof(Token) == 8,
+                  "wide path supports uint16/32/64 tokens");
+  }
+}
+
+// --- Wide affine batch (1 query x N targets) ------------------------------
+//
+// Same amortisation pattern as wide_score_batch: union profile across all
+// targets, reuse PreparedAffineScoreState across targets. NW per-target
+// resets h_store / h_load via prepare_global_affine_initial_column inside
+// the loop since global_affine_score_state needs the initial column each
+// call (it consumes h_store rather than re-initialising it).
+template <template <typename, typename> class OpsTemplate, typename Token, typename Cell,
+          bool LocalAlignment>
+std::vector<Score> wide_affine_score_batch(
+    const PreparedFarrarBatchAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  const auto query = std::span<const Token>(
+      prepared.query_tokens.data(), prepared.query_tokens.size());
+
+  std::vector<Score> results;
+  results.reserve(prepared.target_tokens.size());
+
+  if (query.empty()) {
+    for (const auto& target : prepared.target_tokens) {
+      if constexpr (LocalAlignment) {
+        results.push_back(0);
+      } else {
+        results.push_back(affine_gap_cost<Score>(
+            target.size(), gap_open_score, gap_extend_score));
+      }
+    }
+    return results;
+  }
+
+  const std::size_t segment_count = (query.size() + lane_count - 1U) / lane_count;
+  const std::size_t state_cells = segment_count * lane_count;
+
+  std::unordered_map<Token, std::size_t> token_rows;
+  for (const auto& target : prepared.target_tokens) {
+    for (const auto tok : target) {
+      token_rows.try_emplace(tok, token_rows.size());
+    }
+  }
+  std::vector<Token> profile_tokens(token_rows.size());
+  for (const auto& [tok, row] : token_rows) {
+    profile_tokens[row] = tok;
+  }
+
+  PreparedAffineScoreState<Cell> state;
+  state.gap_open_score = static_cast<Cell>(gap_open_score);
+  state.gap_extend_score = static_cast<Cell>(gap_extend_score);
+  state.query_size = query.size();
+  state.segment_count = segment_count;
+  state.profile = wide_build_profile<OpsTemplate, Token, Cell>(
+      query,
+      std::span<const Token>(profile_tokens.data(), profile_tokens.size()),
+      static_cast<Cell>(match_score), static_cast<Cell>(mismatch_score),
+      segment_count);
+  state.h_store.resize(state_cells);
+  state.h_load.resize(state_cells);
+  state.e_store.resize(state_cells);
+  if constexpr (!LocalAlignment) {
+    // NW initial column depends only on query_size + open/extend gaps,
+    // so compute once and let global_affine_score_state copy it into
+    // h_store/e_store at the start of each per-target call.
+    prepare_global_affine_initial_column(state, lane_count);
+  }
+
+  for (const auto& target : prepared.target_tokens) {
+    state.target_size = target.size();
+    state.target_profile_offsets.clear();
+    state.target_profile_offsets.reserve(target.size());
+    for (const auto tok : target) {
+      state.target_profile_offsets.push_back(token_rows[tok] * state_cells);
+    }
+    if (target.empty()) {
+      if constexpr (LocalAlignment) {
+        results.push_back(0);
+      } else {
+        results.push_back(affine_gap_cost<Score>(
+            query.size(), gap_open_score, gap_extend_score));
+      }
+      continue;
+    }
+    if constexpr (LocalAlignment) {
+      results.push_back(affine_score_state<OpsTemplate, Cell>(state));
+    } else {
+      results.push_back(global_affine_score_state<OpsTemplate, Cell>(state));
+    }
+  }
+  return results;
+}
+
+template <template <typename, typename> class OpsTemplate, typename Token, bool LocalAlignment>
+std::vector<Score> wide_dispatch_affine_score_batch(
+    const PreparedFarrarBatchAlignmentWide<Token>& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score) {
+  if constexpr (sizeof(Token) == 2) {
+    return wide_affine_score_batch<OpsTemplate, Token, std::int16_t, LocalAlignment>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else if constexpr (sizeof(Token) == 4) {
+    return wide_affine_score_batch<OpsTemplate, Token, std::int32_t, LocalAlignment>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else if constexpr (sizeof(Token) == 8) {
+    return wide_affine_score_batch<OpsTemplate, Token, std::int64_t, LocalAlignment>(
+        prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+  } else {
+    static_assert(sizeof(Token) == 2 || sizeof(Token) == 4 || sizeof(Token) == 8,
+                  "wide path supports uint16/32/64 tokens");
+  }
+}
+
+// Per-pair affine entry-point helper: classify a single (query, target)
+// pair via the same ndarray / unicode rules used by try_wide_score_batch,
+// build the matching PreparedFarrarAlignmentWide<Token>, and run the
+// wide affine kernel. Returns nullopt when the inputs are narrow and the
+// caller should fall through.
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+std::optional<Score> try_wide_affine_score(
+    nb::handle query,
+    nb::handle target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  namespace fd = ::stride_align::farrar_detail;
+  namespace nv = ::stride_align::numpy_view;
+  // ndarray pairs by token width.
+  {
+    auto q_view = nv::try_acquire(query.ptr());
+    auto t_view = nv::try_acquire(target.ptr());
+    if (fd::ndarray_pair_is_wide_uint64(q_view, t_view)) {
+      auto prep = fd::prepare_farrar_alignment_wide_uint64(
+          q_view, t_view, match_score, mismatch_score,
+          gap_open_score, gap_extend_score, width);
+      if constexpr (LocalAlignment) {
+        return wide_dispatch_affine_score<OpsTemplate, std::uint64_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      } else {
+        return wide_dispatch_global_affine_score<OpsTemplate, std::uint64_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      }
+    }
+    if (fd::ndarray_pair_is_wide_uint32(q_view, t_view)) {
+      auto prep = fd::prepare_farrar_alignment_wide_uint32(
+          q_view, t_view, match_score, mismatch_score,
+          gap_open_score, gap_extend_score, width);
+      if constexpr (LocalAlignment) {
+        return wide_dispatch_affine_score<OpsTemplate, std::uint32_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      } else {
+        return wide_dispatch_global_affine_score<OpsTemplate, std::uint32_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      }
+    }
+    if (fd::ndarray_pair_is_wide_uint16(q_view, t_view)) {
+      auto prep = fd::prepare_farrar_alignment_wide_uint16(
+          q_view, t_view, match_score, mismatch_score,
+          gap_open_score, gap_extend_score, width);
+      if constexpr (LocalAlignment) {
+        return wide_dispatch_affine_score<OpsTemplate, std::uint16_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      } else {
+        return wide_dispatch_global_affine_score<OpsTemplate, std::uint16_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      }
+    }
+  }
+  // Unicode wide alphabet auto-promote.
+  if (PyUnicode_Check(query.ptr()) && PyUnicode_Check(target.ptr()) &&
+      (PyUnicode_KIND(query.ptr()) != PyUnicode_1BYTE_KIND ||
+       PyUnicode_KIND(target.ptr()) != PyUnicode_1BYTE_KIND)) {
+    if (!fd::unicode_distinct_count_within(query.ptr(), target.ptr(), 256U)) {
+      if (!fd::unicode_alphabet_within_uint16(query.ptr(), target.ptr())) {
+        auto prep = fd::prepare_farrar_alignment_wide_unicode_uint32(
+            query.ptr(), target.ptr(),
+            match_score, mismatch_score, gap_open_score, gap_extend_score, width);
+        if constexpr (LocalAlignment) {
+          return wide_dispatch_affine_score<OpsTemplate, std::uint32_t>(
+              prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+        } else {
+          return wide_dispatch_global_affine_score<OpsTemplate, std::uint32_t>(
+              prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+        }
+      }
+      auto prep = fd::prepare_farrar_alignment_wide_unicode_uint16(
+          query.ptr(), target.ptr(),
+          match_score, mismatch_score, gap_open_score, gap_extend_score, width);
+      if constexpr (LocalAlignment) {
+        return wide_dispatch_affine_score<OpsTemplate, std::uint16_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      } else {
+        return wide_dispatch_global_affine_score<OpsTemplate, std::uint16_t>(
+            prep, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+template <template <typename, typename> class OpsTemplate, bool LocalAlignment>
+std::optional<std::vector<Score>> try_wide_affine_score_batch(
+    nb::handle query,
+    nb::handle targets,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  namespace fd = ::stride_align::farrar_detail;
+  PyObject* fast_targets =
+      PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
+  if (fast_targets == nullptr) {
+    throw nb::python_error();
+  }
+  nb::object owner = nb::steal<nb::object>(fast_targets);
+  const auto target_count =
+      static_cast<std::size_t>(PySequence_Fast_GET_SIZE(fast_targets));
+  PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
+
+  const auto kind = fd::classify_batch_wide(query, items, target_count);
+  const bool query_is_unicode = PyUnicode_Check(query.ptr()) != 0;
+  switch (kind) {
+    case fd::WideBatchKind::None:
+      return std::nullopt;
+    case fd::WideBatchKind::U16: {
+      if (query_is_unicode) {
+        auto prepared = fd::prepare_farrar_batch_wide_unicode_uint16(
+            query, items, target_count, match_score, mismatch_score,
+            gap_open_score, gap_extend_score, width);
+        return wide_dispatch_affine_score_batch<OpsTemplate, std::uint16_t, LocalAlignment>(
+            prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      }
+      auto prepared = fd::prepare_farrar_batch_wide_ndarray<std::uint16_t>(
+          query, items, target_count, match_score, mismatch_score,
+          gap_open_score, gap_extend_score, width);
+      return wide_dispatch_affine_score_batch<OpsTemplate, std::uint16_t, LocalAlignment>(
+          prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+    }
+    case fd::WideBatchKind::U32: {
+      if (query_is_unicode) {
+        auto prepared = fd::prepare_farrar_batch_wide_unicode_uint32(
+            query, items, target_count, match_score, mismatch_score,
+            gap_open_score, gap_extend_score, width);
+        return wide_dispatch_affine_score_batch<OpsTemplate, std::uint32_t, LocalAlignment>(
+            prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+      }
+      auto prepared = fd::prepare_farrar_batch_wide_ndarray<std::uint32_t>(
+          query, items, target_count, match_score, mismatch_score,
+          gap_open_score, gap_extend_score, width);
+      return wide_dispatch_affine_score_batch<OpsTemplate, std::uint32_t, LocalAlignment>(
+          prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+    }
+    case fd::WideBatchKind::U64: {
+      auto prepared = fd::prepare_farrar_batch_wide_ndarray<std::uint64_t>(
+          query, items, target_count, match_score, mismatch_score,
+          gap_open_score, gap_extend_score, width);
+      return wide_dispatch_affine_score_batch<OpsTemplate, std::uint64_t, LocalAlignment>(
+          prepared, match_score, mismatch_score, gap_open_score, gap_extend_score);
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace detail
 
 }  // namespace stride_align::farrar_fixed_kernel
