@@ -1962,3 +1962,115 @@ def test_zero_score_local_alignment_returns_empty_path() -> None:
     assert result.aligned_query == ""
     assert result.aligned_target == ""
     assert result.operations == ""
+
+
+# ---- Batch-of-1 short-circuits + LevenshteinScorer -------------------------
+#
+# The Python-level _dispatch_many / *_scores entry points short-circuit a
+# single-element ``targets`` list to the singular kernel so callers don't
+# pay the batch dispatch tax (list-to-vector conversion + result-vector-
+# to-ndarray wrap) for a trivial pair. These tests pin the contract:
+# batch-of-1 returns the same value as the singular call, with the
+# right dtype.
+
+
+def test_dispatch_many_smith_waterman_scores_batch_of_1() -> None:
+    import stride_align as sa
+    single = sa.smith_waterman_scores("ACCGT", ["CCG"], match_score=2,
+                                       mismatch_score=-1, gap_score=-1)
+    batch = sa.smith_waterman_scores("ACCGT", ["CCG", "AAAA"], match_score=2,
+                                      mismatch_score=-1, gap_score=-1)
+    assert single.dtype.kind == "i"
+    assert single.tolist() == [batch[0]]
+
+
+def test_dispatch_many_needleman_wunsch_scores_batch_of_1() -> None:
+    import stride_align as sa
+    single = sa.needleman_wunsch_scores("ACGT", ["ACCT"], match_score=2,
+                                          mismatch_score=-1, gap_score=-1)
+    multi = sa.needleman_wunsch_scores("ACGT", ["ACCT", "TGCA"], match_score=2,
+                                         mismatch_score=-1, gap_score=-1)
+    assert single.tolist() == [multi[0]]
+
+
+def test_levenshtein_scores_batch_of_1_matches_singular() -> None:
+    import stride_align as sa
+    batch = sa.levenshtein_scores(b"god", [b"good"])
+    singular = sa.levenshtein_score(b"god", b"good")
+    assert batch.dtype == np.int64
+    assert batch.tolist() == [singular]
+
+
+def test_levenshtein_normalized_scores_batch_of_1_matches_singular() -> None:
+    import stride_align as sa
+    batch = sa.levenshtein_normalized_scores(b"god", [b"good"])
+    singular = sa.levenshtein_normalized_score(b"god", b"good")
+    assert batch.dtype == np.float64
+    assert batch[0] == pytest.approx(singular)
+
+
+def test_damerau_levenshtein_scores_batch_of_1_matches_singular() -> None:
+    import stride_align as sa
+    batch = sa.damerau_levenshtein_scores(b"abcd", [b"acbd"])
+    singular = sa.damerau_levenshtein_score(b"abcd", b"acbd")
+    assert batch.tolist() == [singular]
+    assert singular == 1  # OSA: one transposition.
+
+
+def test_damerau_levenshtein_normalized_scores_batch_of_1_matches_singular() -> None:
+    import stride_align as sa
+    batch = sa.damerau_levenshtein_normalized_scores(b"abcd", [b"acbd"])
+    singular = sa.damerau_levenshtein_normalized_score(b"abcd", b"acbd")
+    assert batch.dtype == np.float64
+    assert batch[0] == pytest.approx(singular)
+
+
+def test_levenshtein_scorer_singular_distance() -> None:
+    import stride_align as sa
+    scorer = sa.LevenshteinScorer(b"god")
+    assert scorer.distance(b"good") == 1
+    assert scorer.distance(b"god") == 0
+    assert scorer.distance(b"abc") == sa.levenshtein_score(b"god", b"abc")
+
+
+def test_levenshtein_scorer_score_cutoff() -> None:
+    import stride_align as sa
+    scorer = sa.LevenshteinScorer(b"god")
+    # Cutoff=0 forces the kernel to bail once the distance must exceed 0;
+    # rapidfuzz convention returns cutoff + 1.
+    assert scorer.distance(b"good", score_cutoff=0) == 1
+
+
+def test_levenshtein_scorer_distances() -> None:
+    import stride_align as sa
+    scorer = sa.LevenshteinScorer(b"god")
+    out = scorer.distances([b"good", b"god", b"god!"])
+    assert out.dtype == np.int64
+    assert out.tolist() == [1, 0, 1]
+    one = scorer.distances([b"good"])
+    assert one.tolist() == [1]
+
+
+def test_levenshtein_scorer_query_attribute() -> None:
+    import stride_align as sa
+    q = b"god"
+    scorer = sa.LevenshteinScorer(q)
+    assert scorer.query is q
+
+
+def test_levenshtein_scorer_normalized() -> None:
+    import stride_align as sa
+    scorer = sa.LevenshteinScorer(b"god")
+    assert scorer.normalized_distance(b"god") == pytest.approx(1.0)
+    sims = scorer.normalized_distances([b"god", b"good"])
+    assert sims.dtype == np.float64
+    assert sims[0] == pytest.approx(1.0)
+
+
+def test_levenshtein_scorer_rejects_str_targets() -> None:
+    import stride_align as sa
+    scorer = sa.LevenshteinScorer(b"god")
+    with pytest.raises(TypeError, match="iterable"):
+        scorer.distances(b"single-target-bytes")
+    with pytest.raises(TypeError, match="iterable"):
+        scorer.normalized_distances("not-a-list")

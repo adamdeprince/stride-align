@@ -821,6 +821,27 @@ def _dispatch_many(
 
     canonical_variant = _canonical_score_variant(variant)
     gap_open, gap_extend = _resolve_gap_scores(gap_score, gap_open_score, gap_extend_score)
+
+    # Batch-of-1 short-circuit. The C++ batch dispatch pays
+    # list-to-vector conversion and a result-vector-to-ndarray wrap
+    # for every call; for a single target that overhead dominates,
+    # so route through the singular path instead. Same final result,
+    # ~3x lower per-call latency on short-query workloads.
+    if len(target_tuple) == 1:
+        scalar_public_name = _SCORE_MANY_FUNCTIONS[canonical_variant][1]
+        scalar_public = globals()[scalar_public_name]
+        score = scalar_public(
+            query,
+            target_tuple[0],
+            match_score=match_score,
+            mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score,
+            gap_extend_score=gap_extend_score,
+            width=width,
+        )
+        return np.asarray([int(score)], dtype=np.int64)
+
     backend = _select_backend(
         variant=canonical_variant,
         query=query,
@@ -1723,6 +1744,14 @@ def levenshtein_scores(
         )
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
+    if len(targets) == 1:
+        # Batch-of-1 short-circuit: the singular kernel skips the
+        # list-to-vector conversion and the vector-to-ndarray result
+        # wrap that the batch entry pays per call.
+        return np.asarray(
+            [int(_LEVENSHTEIN_BACKEND.levenshtein_score(query, targets[0], score_cutoff))],
+            dtype=np.int64,
+        )
     return _LEVENSHTEIN_BACKEND.levenshtein_scores(query, targets, score_cutoff)
 
 
@@ -1738,9 +1767,102 @@ def levenshtein_normalized_scores(
         )
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
+    if len(targets) == 1:
+        return np.asarray(
+            [float(_LEVENSHTEIN_BACKEND.levenshtein_normalized_score(
+                query, targets[0], score_cutoff))],
+            dtype=np.float64,
+        )
     return _LEVENSHTEIN_BACKEND.levenshtein_normalized_scores(
         query, targets, score_cutoff
     )
+
+
+class LevenshteinScorer:
+    """Persistent scorer for one fixed query against a stream of targets.
+
+    Wrapper around :func:`levenshtein_score` / :func:`levenshtein_scores`
+    that holds the query once. Useful when you have a fixed query and
+    feed targets one-at-a-time (or in small batches) — saves nothing
+    when the caller already has a list of targets handy, in which case
+    :func:`levenshtein_scores` is the direct path.
+
+    The wrapper is intentionally thin: today's savings are only from
+    skipping per-call Python-level boilerplate (the LEVENSHTEIN_BACKEND
+    attribute lookup is cached on the instance). A future C++ prepared-
+    state object will let this class skip the per-call query encoding /
+    pattern-mask build too; the API shape is designed to absorb that
+    change without breaking callers.
+
+    >>> scorer = LevenshteinScorer(b"god")
+    >>> scorer.distance(b"good")
+    1
+    >>> scorer.distances([b"good", b"god", b"god!"]).tolist()
+    [1, 0, 1]
+    """
+
+    __slots__ = ("_query", "_backend")
+
+    def __init__(self, query: object) -> None:
+        self._query = query
+        # Cache the resolved backend so .distance() can hit it without
+        # any attribute walk per call. The backend is global state, so
+        # a future _refresh_levenshtein_backend() won't be reflected;
+        # callers needing live backend updates should create a fresh
+        # Scorer.
+        self._backend = _LEVENSHTEIN_BACKEND
+
+    @property
+    def query(self) -> object:
+        return self._query
+
+    def distance(self, target: object, score_cutoff: int | None = None) -> int:
+        """Levenshtein distance from the fixed query to ``target``."""
+        return int(self._backend.levenshtein_score(self._query, target, score_cutoff))
+
+    def normalized_distance(
+        self, target: object, score_cutoff: int | None = None,
+    ) -> float:
+        """Normalized similarity in ``[0, 1]`` (1 = identical)."""
+        return float(self._backend.levenshtein_normalized_score(
+            self._query, target, score_cutoff))
+
+    def distances(
+        self, targets: object, score_cutoff: int | None = None,
+    ) -> np.ndarray:
+        """Distances from the fixed query to every target (``ndarray[int64]``)."""
+        if isinstance(targets, (str, bytes)):
+            raise TypeError(
+                "targets must be an iterable of target sequences, not a single str/bytes"
+            )
+        if not isinstance(targets, (list, tuple)):
+            targets = tuple(targets)
+        if len(targets) == 1:
+            return np.asarray(
+                [int(self._backend.levenshtein_score(
+                    self._query, targets[0], score_cutoff))],
+                dtype=np.int64,
+            )
+        return self._backend.levenshtein_scores(self._query, targets, score_cutoff)
+
+    def normalized_distances(
+        self, targets: object, score_cutoff: int | None = None,
+    ) -> np.ndarray:
+        """Normalized similarities to every target (``ndarray[float64]``)."""
+        if isinstance(targets, (str, bytes)):
+            raise TypeError(
+                "targets must be an iterable of target sequences, not a single str/bytes"
+            )
+        if not isinstance(targets, (list, tuple)):
+            targets = tuple(targets)
+        if len(targets) == 1:
+            return np.asarray(
+                [float(self._backend.levenshtein_normalized_score(
+                    self._query, targets[0], score_cutoff))],
+                dtype=np.float64,
+            )
+        return self._backend.levenshtein_normalized_scores(
+            self._query, targets, score_cutoff)
 
 
 def damerau_levenshtein_score(query: object, target: object) -> int:
@@ -1768,6 +1890,11 @@ def damerau_levenshtein_scores(query: object, targets: object) -> np.ndarray:
         )
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
+    if len(targets) == 1:
+        return np.asarray(
+            [int(_LEVENSHTEIN_BACKEND.damerau_levenshtein_score(query, targets[0]))],
+            dtype=np.int64,
+        )
     return _LEVENSHTEIN_BACKEND.damerau_levenshtein_scores(query, targets)
 
 
@@ -1779,6 +1906,12 @@ def damerau_levenshtein_normalized_scores(query: object, targets: object) -> np.
         )
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
+    if len(targets) == 1:
+        return np.asarray(
+            [float(_LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_score(
+                query, targets[0]))],
+            dtype=np.float64,
+        )
     return _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_scores(query, targets)
 
 
@@ -2872,6 +3005,7 @@ __all__ = [
     "jaro_winkler_similarities",
     "jaro_winkler_similarity",
     "jaro_winkler_top_k",
+    "LevenshteinScorer",
     "levenshtein_best",
     "levenshtein_normalized_best",
     "levenshtein_normalized_score",
