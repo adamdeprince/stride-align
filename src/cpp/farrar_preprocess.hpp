@@ -447,6 +447,110 @@ inline bool ndarray_pair_is_wide_uint16(
          q.dtype == NdarrayDtype::Float16;
 }
 
+// Wide-token Farrar dispatch helper for 4-byte ndarray dtypes
+// (int32 / uint32 / float32). Inputs bitcast to uint32 tokens; the
+// kernel runs at 32-bit Cell width (SimdOps<uint32, int32>).
+inline PreparedFarrarAlignmentWide<std::uint32_t>
+prepare_farrar_alignment_wide_uint32(
+    const ::stride_align::numpy_view::View& query_view,
+    const ::stride_align::numpy_view::View& target_view,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarAlignmentWide<std::uint32_t> prepared;
+  const auto q_count = query_view.element_count();
+  const auto t_count = target_view.element_count();
+  prepared.query_tokens.resize(q_count);
+  prepared.target_tokens.resize(t_count);
+  if (q_count > 0) {
+    std::memcpy(prepared.query_tokens.data(), query_view.data(),
+                q_count * sizeof(std::uint32_t));
+  }
+  if (t_count > 0) {
+    std::memcpy(prepared.target_tokens.data(), target_view.data(),
+                t_count * sizeof(std::uint32_t));
+  }
+  prepared.symbol_count = q_count + t_count;
+  prepared.score_bound = detail::compute_score_bound(
+      q_count, t_count, match_score, mismatch_score,
+      gap_open_score, gap_extend_score);
+  prepared.score_bits = detail::apply_forced_kernel_bits(
+      farrar_detail::select_score_bits(prepared.score_bound),
+      width);
+  // Token=uint32 only pairs with Cell=int32 in the kernel; force bits32.
+  prepared.score_bits = KernelBits::bits32;
+  return prepared;
+}
+
+inline bool ndarray_pair_is_wide_uint32(
+    const ::stride_align::numpy_view::View& q,
+    const ::stride_align::numpy_view::View& t) noexcept {
+  using ::stride_align::numpy_view::NdarrayDtype;
+  if (!q.acquired || !t.acquired) {
+    return false;
+  }
+  if (q.dtype != t.dtype) {
+    return false;
+  }
+  return q.dtype == NdarrayDtype::Int32 ||
+         q.dtype == NdarrayDtype::UInt32 ||
+         q.dtype == NdarrayDtype::Float32;
+}
+
+// Wide-token Farrar dispatch helper for 8-byte ndarray dtypes
+// (int64 / uint64 / float64). Inputs bitcast to uint64 tokens; the
+// kernel runs at 64-bit Cell width (SimdOps<uint64, int64>).
+inline PreparedFarrarAlignmentWide<std::uint64_t>
+prepare_farrar_alignment_wide_uint64(
+    const ::stride_align::numpy_view::View& query_view,
+    const ::stride_align::numpy_view::View& target_view,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarAlignmentWide<std::uint64_t> prepared;
+  const auto q_count = query_view.element_count();
+  const auto t_count = target_view.element_count();
+  prepared.query_tokens.resize(q_count);
+  prepared.target_tokens.resize(t_count);
+  if (q_count > 0) {
+    std::memcpy(prepared.query_tokens.data(), query_view.data(),
+                q_count * sizeof(std::uint64_t));
+  }
+  if (t_count > 0) {
+    std::memcpy(prepared.target_tokens.data(), target_view.data(),
+                t_count * sizeof(std::uint64_t));
+  }
+  prepared.symbol_count = q_count + t_count;
+  prepared.score_bound = detail::compute_score_bound(
+      q_count, t_count, match_score, mismatch_score,
+      gap_open_score, gap_extend_score);
+  prepared.score_bits = detail::apply_forced_kernel_bits(
+      farrar_detail::select_score_bits(prepared.score_bound),
+      width);
+  // Token=uint64 only pairs with Cell=int64; force bits64.
+  prepared.score_bits = KernelBits::bits64;
+  return prepared;
+}
+
+inline bool ndarray_pair_is_wide_uint64(
+    const ::stride_align::numpy_view::View& q,
+    const ::stride_align::numpy_view::View& t) noexcept {
+  using ::stride_align::numpy_view::NdarrayDtype;
+  if (!q.acquired || !t.acquired) {
+    return false;
+  }
+  if (q.dtype != t.dtype) {
+    return false;
+  }
+  return q.dtype == NdarrayDtype::Int64 ||
+         q.dtype == NdarrayDtype::UInt64 ||
+         q.dtype == NdarrayDtype::Float64;
+}
+
 // ndarray tokenisation. For uint8/int8 dtypes the buffer copies through
 // memcpy (the byte storage is the token storage). For wider dtypes, we
 // build a hash-table from native-width keys → compact uint8 tokens. The
@@ -631,6 +735,84 @@ prepare_farrar_alignment_wide_unicode_uint16(
     // If forced wider, degrade gracefully.
     prepared.score_bits = KernelBits::bits16;
   }
+  return prepared;
+}
+
+// Pre-scan checking whether the combined alphabet exceeds the uint16
+// tokeniser cap (65 535 distinct codepoints). Returns true if both
+// strings together fit, false otherwise. Used to decide between
+// tokenise-to-uint16 and raw-UCS-4-codepoints-in-uint32 paths.
+inline bool unicode_alphabet_within_uint16(
+    PyObject* query, PyObject* target) {
+  constexpr std::size_t kCap = 65536U;  // 0..65535
+  std::unordered_map<Py_UCS4, std::uint8_t> seen;
+  seen.reserve(kCap);
+  const auto scan = [&](PyObject* obj) -> bool {
+    const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(obj));
+    const int kind = PyUnicode_KIND(obj);
+    void* data = PyUnicode_DATA(obj);
+    for (std::size_t i = 0; i < size; ++i) {
+      const auto cp = static_cast<Py_UCS4>(
+          PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(i)));
+      auto [iter, inserted] = seen.try_emplace(cp, 0);
+      if (inserted && seen.size() > kCap - 1U) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!scan(query)) return false;
+  return scan(target);
+}
+
+// Wide unicode 32-bit path: copy raw Py_UCS4 codepoints into a uint32
+// token vector — no tokenisation map. The caller chose this path
+// because the combined alphabet exceeds 65 535 distinct codepoints,
+// which is rare enough that paying the per-codepoint hash insert cost
+// would be wasted; the kernel just consumes raw codepoints as tokens.
+inline std::vector<std::uint32_t> copy_unicode_codepoints_uint32(
+    PyObject* unicode_object) {
+  const auto size = static_cast<std::size_t>(PyUnicode_GET_LENGTH(unicode_object));
+  const int kind = PyUnicode_KIND(unicode_object);
+  void* data = PyUnicode_DATA(unicode_object);
+  std::vector<std::uint32_t> tokens;
+  tokens.resize(size);
+  if (kind == PyUnicode_4BYTE_KIND) {
+    // UCS-4: identical storage — direct copy.
+    if (size > 0) {
+      std::memcpy(tokens.data(), data, size * sizeof(std::uint32_t));
+    }
+  } else {
+    for (std::size_t index = 0; index < size; ++index) {
+      tokens[index] = static_cast<std::uint32_t>(
+          PyUnicode_READ(kind, data, static_cast<Py_ssize_t>(index)));
+    }
+  }
+  return tokens;
+}
+
+inline PreparedFarrarAlignmentWide<std::uint32_t>
+prepare_farrar_alignment_wide_unicode_uint32(
+    PyObject* query,
+    PyObject* target,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_open_score,
+    Score gap_extend_score,
+    unsigned int width) {
+  PreparedFarrarAlignmentWide<std::uint32_t> prepared;
+  prepared.query_tokens = copy_unicode_codepoints_uint32(query);
+  prepared.target_tokens = copy_unicode_codepoints_uint32(target);
+  prepared.symbol_count =
+      prepared.query_tokens.size() + prepared.target_tokens.size();
+  prepared.score_bound = detail::compute_score_bound(
+      prepared.query_tokens.size(), prepared.target_tokens.size(),
+      match_score, mismatch_score, gap_open_score, gap_extend_score);
+  prepared.score_bits = detail::apply_forced_kernel_bits(
+      farrar_detail::select_score_bits(prepared.score_bound),
+      width);
+  // Token=uint32 only pairs with Cell=int32.
+  prepared.score_bits = KernelBits::bits32;
   return prepared;
 }
 

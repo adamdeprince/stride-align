@@ -929,6 +929,42 @@ inline Score linear_score(
     Score mismatch_score,
     Score gap_score,
     unsigned int width) {
+  // Wide-uint64 ndarray dispatch: matching 64-bit SIMD dtypes
+  // bypass tokenisation; Cell width is int64 in the kernel.
+  {
+    namespace nv = ::stride_align::numpy_view;
+    auto q_view = nv::try_acquire(query.ptr());
+    auto t_view = nv::try_acquire(target.ptr());
+    if (::stride_align::farrar_detail::ndarray_pair_is_wide_uint64(q_view, t_view)) {
+      const auto wide = ::stride_align::farrar_detail::prepare_farrar_alignment_wide_uint64(
+          q_view, t_view, match_score, mismatch_score, gap_score, gap_score, width);
+      if constexpr (LocalAlignment) {
+        return farrar_fixed_kernel::detail::wide_dispatch_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      } else {
+        return farrar_fixed_kernel::detail::wide_dispatch_global_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      }
+    }
+  }
+  // Wide-uint32 ndarray dispatch: matching 32-bit SIMD dtypes
+  // bypass tokenisation; Cell width is int32 in the kernel.
+  {
+    namespace nv = ::stride_align::numpy_view;
+    auto q_view = nv::try_acquire(query.ptr());
+    auto t_view = nv::try_acquire(target.ptr());
+    if (::stride_align::farrar_detail::ndarray_pair_is_wide_uint32(q_view, t_view)) {
+      const auto wide = ::stride_align::farrar_detail::prepare_farrar_alignment_wide_uint32(
+          q_view, t_view, match_score, mismatch_score, gap_score, gap_score, width);
+      if constexpr (LocalAlignment) {
+        return farrar_fixed_kernel::detail::wide_dispatch_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      } else {
+        return farrar_fixed_kernel::detail::wide_dispatch_global_score<SimdOps>(
+            wide, match_score, mismatch_score, gap_score);
+      }
+    }
+  }
   // Wide-uint16 ndarray dispatch (Phase B parallel path). When both
   // sides are 2-byte SIMD-friendly numpy dtypes (int16/uint16/float16)
   // we skip tokenisation entirely and feed the buffers straight into
@@ -950,13 +986,29 @@ inline Score linear_score(
     }
   }
   // Unicode auto-promote: UCS-2/UCS-4 strings with >256 distinct
-  // codepoints route to the 16-bit Farrar kernel. UCS-1 strings can
-  // have at most 256 distinct codepoints by construction.
+  // codepoints route to the 16-bit Farrar kernel via uint16 tokens.
+  // Above 65 535 distinct, we fall through to the 32-bit Farrar
+  // kernel with raw UCS-4 codepoints as uint32 tokens. UCS-1 strings
+  // can have at most 256 distinct codepoints by construction.
   if (PyUnicode_Check(query.ptr()) && PyUnicode_Check(target.ptr()) &&
       (PyUnicode_KIND(query.ptr()) != PyUnicode_1BYTE_KIND ||
        PyUnicode_KIND(target.ptr()) != PyUnicode_1BYTE_KIND)) {
     if (!::stride_align::farrar_detail::unicode_distinct_count_within(
             query.ptr(), target.ptr(), 256U)) {
+      if (!::stride_align::farrar_detail::unicode_alphabet_within_uint16(
+              query.ptr(), target.ptr())) {
+        const auto wide =
+            ::stride_align::farrar_detail::prepare_farrar_alignment_wide_unicode_uint32(
+                query.ptr(), target.ptr(),
+                match_score, mismatch_score, gap_score, gap_score, width);
+        if constexpr (LocalAlignment) {
+          return farrar_fixed_kernel::detail::wide_dispatch_score<SimdOps>(
+              wide, match_score, mismatch_score, gap_score);
+        } else {
+          return farrar_fixed_kernel::detail::wide_dispatch_global_score<SimdOps>(
+              wide, match_score, mismatch_score, gap_score);
+        }
+      }
       const auto wide =
           ::stride_align::farrar_detail::prepare_farrar_alignment_wide_unicode_uint16(
               query.ptr(), target.ptr(),

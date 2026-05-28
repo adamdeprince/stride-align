@@ -6814,18 +6814,13 @@ inline std::vector<Score> matrix_affine_scores_dispatch_helper(
 template <typename Token>
 inline std::vector<Token> wide_collect_profile_tokens(
     std::span<const Token> target,
-    std::unordered_map<Token, std::uint16_t>& profile_indices) {
+    std::unordered_map<Token, std::size_t>& profile_indices) {
   profile_indices.clear();
   std::vector<Token> profile_tokens;
   for (const auto token : target) {
     auto [iter, inserted] = profile_indices.try_emplace(token, 0);
     if (inserted) {
-      if (profile_indices.size() > std::numeric_limits<std::uint16_t>::max()) {
-        ::stride_align::detail::throw_value_error(
-            "wide Farrar profile supports at most 65 535 distinct tokens "
-            "per call");
-      }
-      iter->second = static_cast<std::uint16_t>(profile_indices.size() - 1U);
+      iter->second = profile_indices.size() - 1U;
       profile_tokens.push_back(token);
     }
   }
@@ -6904,7 +6899,7 @@ PreparedScoreState<Cell> wide_prepare_score_state(
   }
 
   state.segment_count = (query.size() + lane_count - 1U) / lane_count;
-  std::unordered_map<Token, std::uint16_t> wide_indices;
+  std::unordered_map<Token, std::size_t> wide_indices;
   const auto profile_tokens = wide_collect_profile_tokens<Token>(target, wide_indices);
   state.target_profile_offsets.reserve(target.size());
   const auto state_cells = state.segment_count * lane_count;
@@ -6950,7 +6945,7 @@ PreparedScoreState<Cell> wide_prepare_global_score_state(
   }
 
   state.segment_count = (query.size() + lane_count - 1U) / lane_count;
-  std::unordered_map<Token, std::uint16_t> wide_indices;
+  std::unordered_map<Token, std::size_t> wide_indices;
   const auto profile_tokens = wide_collect_profile_tokens<Token>(target, wide_indices);
   state.profile = wide_build_profile<OpsTemplate, Token, Cell>(
       query,

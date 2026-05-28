@@ -72,15 +72,32 @@ def test_ucs2_large_alphabet_random() -> None:
     ) == 200
 
 
-def test_ucs2_alphabet_above_uint16_cap_raises() -> None:
-    # Above 65 535 distinct codepoints, even the wide uint16 tokeniser
-    # gives up. This requires constructing a >65 535-char alphabet,
-    # which we generate from the CJK extension B block (U+20000+).
-    # Allocate a single string with >65 535 distinct codepoints.
+def test_ucs4_alphabet_above_uint16_cap_routes_to_uint32() -> None:
+    # Above 65 535 distinct codepoints we no longer raise — the
+    # auto-promote chain falls through to the 32-bit Farrar kernel
+    # feeding raw UCS-4 codepoints as uint32 tokens.
+    #
+    # The striped profile is keyed by the *target* alphabet, so a huge
+    # query alphabet against a tiny target stays cheap (profile is
+    # |target distinct| x |query|, not |query| x |query|). A 66 000-char
+    # query against a 2-char target exercises the >65 535 distinct
+    # routing without the quadratic O(|q|x|q|) blowup.
     chars = [chr(0x4E00 + i) for i in range(60000)] + [chr(0x20000 + i) for i in range(6000)]
-    q = "".join(chars)
-    with pytest.raises(ValueError, match="65 535"):
-        sa.smith_waterman_score(q, q, match_score=2, mismatch_score=-1, gap_score=-1)
+    q = "".join(chars)              # 66 000 distinct codepoints
+    t = q[:2]                       # first two distinct codepoints
+    # Combined alphabet is 66 000 (>65 535) so this routes to uint32.
+    # Best local alignment: the 2-char target matches the start of the
+    # query contiguously -> 2 matches x 2 = 4.
+    score = sa.smith_waterman_score(q, t, match_score=2, mismatch_score=-1, gap_score=-1)
+    assert score == 4
+
+    # And the mirror: a tiny query against a 66 000-distinct target.
+    # The profile is keyed by the target alphabet (66 000 rows x one
+    # query segment ~= 4 MB), and the DP scans 66 000 target columns,
+    # so this is cheap in both memory and time. Best local alignment is
+    # the 2-char query matching the target's first two codepoints -> 4.
+    score_rev = sa.smith_waterman_score(t, q, match_score=2, mismatch_score=-1, gap_score=-1)
+    assert score_rev == 4
 
 
 def test_mixed_ucs1_ucs2_with_large_target_promotes() -> None:

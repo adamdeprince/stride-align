@@ -81,15 +81,30 @@ def test_path_rejects_ndarray() -> None:
         sa.needleman_wunsch_path(arr, arr, match_score=2, mismatch_score=-1, gap_score=-1)
 
 
-def test_distinct_symbols_capped_at_256_for_int32() -> None:
-    # int32/uint32/int64/uint64/float32/float64 still go through the
-    # Phase A tokenise-to-uint8 path (the wide-uint16 kernel covers
-    # only 2-byte dtypes for now), so the combined-distinct-symbols
-    # cap is 256 for those dtypes.
-    q = np.arange(300, dtype=np.int32)
-    t = np.arange(300, dtype=np.int32)
-    with pytest.raises(ValueError, match="256 distinct symbols"):
-        sa.smith_waterman_score(q, t, match_score=2, mismatch_score=-1, gap_score=-1)
+def test_wide_uint32_lifts_distinct_symbol_cap() -> None:
+    # int32 / uint32 / float32 now route through the wide Farrar kernel
+    # (32-bit cells); identity self-alignment of a 70 000-distinct
+    # vector still works end-to-end.
+    for dtype in [np.int32, np.uint32]:
+        q = np.arange(70_000, dtype=dtype)
+        t = np.arange(70_000, dtype=dtype)
+        score = sa.smith_waterman_score(
+            q, t, match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+        assert score == 140_000, f"{dtype}: got {score}"
+
+
+def test_wide_uint64_lifts_distinct_symbol_cap() -> None:
+    # int64 / uint64 / float64 route through the wide 64-bit Farrar
+    # kernel. Even moderate-size identity alignments work; we keep the
+    # array small because the 64-bit DP is slow per cell.
+    for dtype in [np.int64, np.uint64]:
+        q = np.arange(1000, dtype=dtype)
+        t = np.arange(1000, dtype=dtype)
+        score = sa.smith_waterman_score(
+            q, t, match_score=2, mismatch_score=-1, gap_score=-1,
+        )
+        assert score == 2000, f"{dtype}: got {score}"
 
 
 def test_wide_uint16_path_lifts_256_cap() -> None:
