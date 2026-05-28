@@ -14,10 +14,10 @@ works.
 pip install stride-align
 ```
 
-On Loongson systems, install NumPy from your Linux distribution before
-installing `stride-align`, and grab the LoongArch64 wheel from one of
-the mirrors below — PyPI does not yet accept the `linux_loongarch64`
-or `manylinux_2_38_loongarch64` platform tags, so this is the only
+On Loongson systems, install NumPy from your Linux distribution
+before installing `stride-align`, and grab the LoongArch64 wheel from
+one of the mirrors below — PyPI does not index the
+`linux_loongarch64` platform tag, so a direct download is the only
 binary path.
 
 ```bash
@@ -25,24 +25,76 @@ sudo apt install python3-numpy
 PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
 ```
 
-From GitHub:
+### Pick old-world or new-world
+
+LoongArch has two incompatible binary worlds. They differ in which
+program loader the dynamic linker uses and which glibc ABI is in
+play, and a wheel from one world cannot run on the other.
+
+- **Old-world** — stock Kylin and the original Loongson distributions.
+  Loader at `/lib64/ld.so.1`, glibc 2.28-era.
+- **New-world** — recent LoongArch distros and any box where the new
+  loader `/lib64/ld-linux-loongarch-lp64d.so.1` has been installed.
+  Targets glibc 2.36+.
+
+One-liner check on your machine:
+
+```bash
+test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
+```
+
+We ship one wheel per world. Each is statically linked against
+libstdc++ / libgcc, so the only ABI difference users see is the
+loader / glibc world. Pick the matching URL below.
+
+### Old-world wheel
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
-If `github.com` is inconvenient, the same wheels are mirrored at
-`stride-align.com`:
+Mirror:
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
+
+### New-world wheel
+
+The new-world wheel needs the new loader symlinked into place. One
+sudo step, once per box, leaves old-world binaries unaffected:
+
+```bash
+sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
+            /lib64/ld-linux-loongarch-lp64d.so.1
+```
+
+(Distro packagers usually drop an equivalent symlink as part of the
+new-world transition, in which case you can skip this.)
+
+Then:
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+Mirror:
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### Other notes
 
 Prebuilt LoongArch64 wheels are available for Python 3.9, 3.10,
-3.11, 3.12, 3.13, and 3.14 on both mirrors. If you are on a
-different Python (or just want to build from source),
+3.11, 3.12, 3.13, and 3.14 — in both worlds — on both mirrors.
+The build details (toolchains, RPATH wrapper, static C++ runtime)
+live in [docs/loongson-build.md](docs/loongson-build.md). If you are
+on a different Python (or just want to build from source),
 `pip install stride-align` falls back to the source distribution on
 PyPI, which compiles the LSX/LASX kernels locally.
 
