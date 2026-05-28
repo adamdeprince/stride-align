@@ -1923,6 +1923,70 @@ def damerau_levenshtein_normalized_scores(query: object, targets: object) -> np.
     return _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_scores(query, targets)
 
 
+# ---- Dynamic Time Warping ------------------------------------------------
+#
+# DTW lives on the existing _LEVENSHTEIN_BACKEND module for the same
+# reason the byte-distance kernels do: it's one PYI symbol per backend
+# and lives next to the other numeric / distance APIs. Phase C.1a is the
+# scalar reference; phase C.1b plugs SIMD into the same C++ dispatch
+# without touching this Python surface.
+
+def dtw(
+    query: object,
+    target: object,
+    *,
+    window: int | float | None = None,
+    distance: str | None = None,
+) -> float:
+    """Dynamic Time Warping distance between two numeric ndarrays.
+
+    Arguments
+    ---------
+    query, target
+        ``np.ndarray`` with dtype ``float32``, ``float64``, or ``int16``.
+        Both sides must share dtype. Other dtypes and non-ndarray
+        inputs raise ``TypeError``.
+    window
+        Sakoe-Chiba band radius. ``None`` (default) is unconstrained
+        DTW. An ``int`` is the absolute radius in samples. A ``float``
+        in ``(0, 1]`` is the fraction of ``max(len(query),
+        len(target))``.
+    distance
+        ``"l1"`` for ``|x - y|`` (default for ``int16`` audio), or
+        ``"l2_squared"`` for ``(x - y)^2`` (default for ``float32`` /
+        ``float64``). ``None`` picks the per-dtype default.
+
+    Returns the DTW distance as a Python ``float``. Empty inputs raise
+    ``ValueError``.
+    """
+    return float(_LEVENSHTEIN_BACKEND.dtw(query, target,
+                                          window=window, distance=distance))
+
+
+def dtw_distances(
+    query: object,
+    targets: object,
+    *,
+    window: int | float | None = None,
+    distance: str | None = None,
+) -> np.ndarray:
+    """DTW distance from one query to every target, returned as ``ndarray[float64]``.
+
+    Arguments mirror :func:`dtw`. ``targets`` is an iterable of
+    ndarrays sharing dtype with ``query``. Empty queries or empty
+    targets raise ``ValueError``.
+    """
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target ndarrays, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.dtw_distances(
+        query, targets, window=window, distance=distance,
+    )
+
+
 def hamming_score(query: object, target: object) -> int:
     """Hamming distance between two equal-length sequences.
 
@@ -2987,6 +3051,8 @@ __all__ = [
     "damerau_levenshtein_scores",
     "damerau_levenshtein_top_k",
     "detect_best_backend",
+    "dtw",
+    "dtw_distances",
     "extract",
     "extract_best",
     "hamming_best",

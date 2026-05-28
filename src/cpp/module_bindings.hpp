@@ -26,6 +26,8 @@
 #include "stride_align/jaro.hpp"
 #include "stride_align/levenshtein.hpp"
 #include "stride_align/levenshtein_prepared.hpp"
+#include "stride_align/dtw.hpp"
+#include "dtw_dispatch.hpp"
 #include "byte_view.hpp"
 #include "topk.hpp"
 
@@ -2745,6 +2747,47 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   // byte-lane counters for the batch API (one target per byte lane,
   // up to 16/32/64 targets in parallel depending on ISA). Wider unicode
   // and sequence-of-object inputs fall through to scalar.
+
+  // ---- DTW (scalar reference, phase C.1a) -------------------------------
+  // SIMD batch comes in phase C.1b. The C++ surface here is final; the
+  // SIMD layer plugs into dispatch_dtw / dispatch_dtw_many without
+  // touching the bindings.
+
+  m.def(
+      "dtw",
+      [](nb::handle query, nb::handle target,
+         nb::object window, nb::object distance) {
+        return ::stride_align::dtw::dispatch_dtw(query, target, window, distance);
+      },
+      nb::arg("query"),
+      nb::arg("target"),
+      nb::kw_only(),
+      nb::arg("window") = nb::none(),
+      nb::arg("distance") = nb::none());
+
+  m.def(
+      "dtw_distances",
+      [](nb::handle query, nb::handle targets,
+         nb::object window, nb::object distance) {
+        const auto distances = ::stride_align::dtw::dispatch_dtw_many(
+            query, targets, window, distance);
+        // Return ndarray[float64]. Mirrors as_score_ndarray for the
+        // existing batch APIs but float64-typed since DTW results
+        // aren't int64.
+        const std::size_t n = distances.size();
+        auto* buffer = new double[n];
+        for (std::size_t i = 0; i < n; ++i) buffer[i] = distances[i];
+        nb::capsule owner(buffer, [](void* p) noexcept {
+          delete[] static_cast<double*>(p);
+        });
+        return nb::ndarray<nb::numpy, double, nb::shape<-1>>(
+            buffer, {n}, owner);
+      },
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("window") = nb::none(),
+      nb::arg("distance") = nb::none());
 
   m.def(
       "hamming_score",
