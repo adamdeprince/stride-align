@@ -84,17 +84,19 @@ bugs that the canonical-matrix tests miss.
    kernel backends already cover x86 + ARM NEON + Loongson + power.
 6. **F (fuzzer)** — write once, run on every change.
 
-## Effort estimate
+## Scope notes
 
-* B + C together: ~1 week if the existing prepare_matrix_affine_
-  score_state template covers the kernel work.
-* D: ~3-5 days.
-* E: ~1 hour per matrix added.
-* A: ~1 week per scalable-kernel backend.
-* F: ~2 days.
-
-Total ~3-4 weeks if done sequentially. Items E and F can run in
-parallel with the others.
+* B + C land together since the affine kernels exist; the work is
+  wiring the per-backend dispatch and tests.
+* D follows B because affine matrix traceback depends on B's affine
+  matrix score.
+* E (more bundled matrices) is just data + a metadata test per
+  matrix; can interleave with anything.
+* F (correctness fuzzer) is the small standalone item that pays
+  back forever.
+* A (SVE/SVE2/RVV propagation) is intentionally lowest priority —
+  the fixed-kernel backends already cover x86 + ARM NEON + Loongson +
+  Power.
 
 ## Related
 

@@ -1,6 +1,6 @@
 # TODO: wide-token path for traceback / path / cigar variants
 
-**Status:** parked, large effort (~weeks).
+**Status:** parked.
 **Goal:** lift the hard rejection in `prepare_alignment` and let
 `smith_waterman_path`, `needleman_wunsch_path`, the corresponding
 `_path_info` / `_cigar` entries, and any `_traceback`-style variant
@@ -69,13 +69,13 @@ and a packed-byte trace cell layout. Wide tokens force two changes:
    need N GiB; pass score-only or split your inputs" message rather
    than letting `bad_alloc` happen at depth.
 
-## Effort estimate
+## Scope per slice
 
-~1-2 weeks for a single SIMD backend (sse41) with full test coverage,
-plus another ~1 week to propagate across the remaining 7 fixed-kernel
-backends. The scalable-kernel backends (SVE/SVE2/RVV) can fall back to
-the fixed-kernel wide traceback via the same dispatch trick we use for
-wide score today (`_FIXED_KERNEL_WIDE_PRIORITY` in
+A first slice lands one SIMD backend (sse41) with full test coverage,
+then propagates the same pattern to the remaining 7 fixed-kernel
+backends one at a time. The scalable-kernel backends (SVE/SVE2/RVV)
+fall back to the fixed-kernel wide traceback via the same dispatch
+trick we use for wide score today (`_FIXED_KERNEL_WIDE_PRIORITY` in
 [__init__.py](../src/stride_align/__init__.py)).
 
 ## Related

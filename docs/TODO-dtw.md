@@ -198,14 +198,12 @@ The dispatcher mirrors the existing wide-Farrar routing in
 
 ## Phase split (work breakdown)
 
-| Phase | Deliverable | Files touched | Estimated effort |
-| --- | --- | --- | --- |
-| **C.1a** | Scalar reference, Python API, dispatcher, dtype rejection, full test suite (correctness + Sakoe-Chiba edge cases) | `include/stride_align/dtw.hpp`, `src/cpp/dtw_dispatch.hpp`, `src/stride_align/__init__.py`, `tests/test_dtw.py`, `src/cpp/module_bindings.hpp` | 3-4 days |
-| **C.1b** | x86 SIMD batch kernels (float32 / float64 / int16) on sse41 / avx2 / avx512bwvl / avx10_256 / avx10_512 | `src/cpp/dtw_simd_ops.hpp` (x86 specialisations), `src/cpp/dtw_simd.hpp`, per-backend wiring | 4-5 days |
-| **C.1c** | ARM NEON + Loongson LSX/LASX SIMD batch kernels | additional `dtw_simd_ops.hpp` specialisations, per-backend wiring | 2-3 days |
-| **C.1d** | Benchmarks vs `dtaidistance`, `tslearn.metrics.dtw`, `dtw-python`, audio-domain int16 sanity vs float32 | `tools/refresh_dtw_benchmarks.py`, `benchmarks/intel-dtw-<date>.csv` | 2 days |
-
-Total v1: ~2 weeks of focused work, committable in 4 chunks.
+| Phase | Deliverable | Files touched |
+| --- | --- | --- |
+| **C.1a** | Scalar reference, Python API, dispatcher, dtype rejection, full test suite (correctness + Sakoe-Chiba edge cases) | `include/stride_align/dtw.hpp`, `src/cpp/dtw_dispatch.hpp`, `src/stride_align/__init__.py`, `tests/test_dtw.py`, `src/cpp/module_bindings.hpp` |
+| **C.1b** | x86 SIMD batch kernels (float32 / float64 / int16) on sse41 / avx2 / avx512bwvl / avx10_256 / avx10_512 | `src/cpp/dtw_simd_ops.hpp` (x86 specialisations), `src/cpp/dtw_simd.hpp`, per-backend wiring |
+| **C.1c** | ARM NEON + Loongson LSX/LASX SIMD batch kernels | additional `dtw_simd_ops.hpp` specialisations, per-backend wiring |
+| **C.1d** | Benchmarks vs `dtaidistance`, `tslearn.metrics.dtw`, `dtw-python`, audio-domain int16 sanity vs float32 | `tools/refresh_dtw_benchmarks.py`, `benchmarks/intel-dtw-<date>.csv` |
 
 Subsequent phases (C.2 = LB_Keogh, C.3 = subsequence DTW, C.4 =
 LCSS+ERP, C.5 = warping path, C.6 = Fréchet, C.7 = multidim) each
