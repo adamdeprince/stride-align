@@ -188,26 +188,46 @@ def _v2_lev(args: argparse.Namespace) -> Path:
         for workload, q_len, n_targets, cutoff in _v2_workloads():
             query = _rand_bytes(rng, q_len)
             targets = [_rand_bytes(rng, q_len) for _ in range(n_targets)]
+            single = n_targets == 1
+            t0 = targets[0] if single else None
 
-            # stride_align
-            if cutoff is None:
-                sa_fn = lambda q=query, ts=targets: sa.levenshtein_scores(q, ts)
+            # stride_align — use the singular API when n_targets==1 so we
+            # measure the singular hot path, not the batch dispatch around
+            # a one-element list (which makes the comparator libs look
+            # ~5x faster than they really are).
+            if single:
+                if cutoff is None:
+                    sa_fn = lambda q=query, t=t0: sa.levenshtein_score(q, t)
+                else:
+                    sa_fn = lambda q=query, t=t0, c=cutoff: sa.levenshtein_score(q, t, score_cutoff=c)
             else:
-                sa_fn = lambda q=query, ts=targets, c=cutoff: sa.levenshtein_scores(q, ts, score_cutoff=c)
+                if cutoff is None:
+                    sa_fn = lambda q=query, ts=targets: sa.levenshtein_scores(q, ts)
+                else:
+                    sa_fn = lambda q=query, ts=targets, c=cutoff: sa.levenshtein_scores(q, ts, score_cutoff=c)
             sa_us = _per_batch_us(sa_fn, args.iterations, args.repeat)
 
             row: list[object] = [workload, q_len, n_targets,
                                  "" if cutoff is None else cutoff,
                                  f"{sa_us:.2f}"]
             if Levenshtein is not None:
-                lv_fn = lambda q=query, ts=targets: [Levenshtein.distance(q, t) for t in ts]
+                if single:
+                    lv_fn = lambda q=query, t=t0: Levenshtein.distance(q, t)
+                else:
+                    lv_fn = lambda q=query, ts=targets: [Levenshtein.distance(q, t) for t in ts]
                 row.append(f"{_per_batch_us(lv_fn, args.iterations, args.repeat):.2f}")
             if rf_lev is not None:
-                if cutoff is None:
-                    rf_fn = lambda q=query, ts=targets: [rf_lev.distance(q, t) for t in ts]
+                if single:
+                    if cutoff is None:
+                        rf_fn = lambda q=query, t=t0: rf_lev.distance(q, t)
+                    else:
+                        rf_fn = lambda q=query, t=t0, c=cutoff: rf_lev.distance(q, t, score_cutoff=c)
                 else:
-                    rf_fn = lambda q=query, ts=targets, c=cutoff: [
-                        rf_lev.distance(q, t, score_cutoff=c) for t in ts]
+                    if cutoff is None:
+                        rf_fn = lambda q=query, ts=targets: [rf_lev.distance(q, t) for t in ts]
+                    else:
+                        rf_fn = lambda q=query, ts=targets, c=cutoff: [
+                            rf_lev.distance(q, t, score_cutoff=c) for t in ts]
                 row.append(f"{_per_batch_us(rf_fn, args.iterations, args.repeat):.2f}")
             writer.writerow(row)
             print(",".join(map(str, row)), flush=True)
@@ -232,11 +252,17 @@ def _damerau(args: argparse.Namespace) -> Path:
         for workload, q_len, n_targets in _damerau_workloads():
             query = _rand_bytes(rng, q_len)
             targets = [_rand_bytes(rng, q_len) for _ in range(n_targets)]
+            single = n_targets == 1
+            t0 = targets[0] if single else None
 
-            sa_fn = lambda q=query, ts=targets: sa.damerau_levenshtein_scores(q, ts)
+            # Singular API on 1-vs-1; batch API on multi-target.
+            if single:
+                sa_fn = lambda q=query, t=t0: sa.damerau_levenshtein_score(q, t)
+                rf_fn = lambda q=query, t=t0: rf_osa.distance(q, t)
+            else:
+                sa_fn = lambda q=query, ts=targets: sa.damerau_levenshtein_scores(q, ts)
+                rf_fn = lambda q=query, ts=targets: [rf_osa.distance(q, t) for t in ts]
             sa_us = _per_batch_us(sa_fn, args.iterations, args.repeat)
-
-            rf_fn = lambda q=query, ts=targets: [rf_osa.distance(q, t) for t in ts]
             rf_us = _per_batch_us(rf_fn, args.iterations, args.repeat)
             ratio = f"{(rf_us / sa_us):.2f}x" if sa_us > 0 else "n/a"
 
