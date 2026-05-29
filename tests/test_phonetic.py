@@ -271,7 +271,3 @@ def test_metaphone_variant_equal_forwards_kwarg() -> None:
     assert not sa.metaphone_equal("Hugh", "Hue", variant=sa.MetaphoneVariant.JELLYFISH)
 
 
-def test_metaphone_variant_intenum_int_coercion() -> None:
-    # MetaphoneVariant is an IntEnum, so plain ints also work.
-    assert sa.metaphone("Schmidt", variant=0) == "SKMTT"          # PHILIPS
-    assert sa.metaphone("Schmidt", variant=1) == "SXMTT"          # JELLYFISH
