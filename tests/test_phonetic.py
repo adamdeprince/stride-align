@@ -271,3 +271,90 @@ def test_metaphone_variant_equal_forwards_kwarg() -> None:
     assert not sa.metaphone_equal("Hugh", "Hue", variant=sa.MetaphoneVariant.JELLYFISH)
 
 
+# ---- NYSIIS (Taft 1970, modern non-truncating form) ---------------------
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        # Classic English surnames — pinned against jellyfish.
+        ("Watkins", "WATCAN"),
+        ("Wilkins", "WALCAN"),
+        ("Wilkinson", "WALCANSAN"),
+        ("Robert", "RABAD"),
+        ("Smith", "SNAT"),
+        ("Schmidt", "SNAD"),
+        ("Catherine", "CATARAN"),
+        ("Kathryn", "CATRYN"),
+        ("Knight", "NAGT"),       # KN -> NN prefix; the doubled N dedupes
+        ("Wright", "WRAGT"),
+        ("Caesar", "CASAR"),
+        ("Macarthur", "MCARTAR"),  # MAC -> MCC prefix
+        ("Phillips", "FALAP"),     # PH -> FF prefix
+        ("Pfister", "FASTAR"),     # PF -> FF prefix
+        ("Schwartz", "SWART"),     # SCH -> SSS prefix
+        # Names that probe specific rules.
+        ("Hawthorne", "HATARN"),
+        ("Yarborough", "YARBARAG"),
+        ("Thompson", "TANPSAN"),
+        ("Anderson", "ANDARSAN"),
+        ("Johnson", "JANSAN"),     # H between vowel and consonant drops
+        ("Williams", "WALAN"),
+        ("Hugh", "HAG"),
+        ("Through", "TRAG"),
+        ("Caught", "CAGT"),
+        ("Plough", "PLAG"),
+        ("Lloyd", "LAYD"),
+        ("Honeyman", "HANAYNAN"),
+        ("McDonald", "MCDANALD"),
+        ("Sarah", "SAR"),
+        ("Michael", "MACAL"),
+        ("Hannah", "HAN"),
+        ("Joshua", "JAS"),
+        ("William", "WALAN"),
+    ],
+)
+def test_nysiis_canonical(name: str, expected: str) -> None:
+    assert sa.nysiis(name) == expected
+
+
+def test_nysiis_empty_input() -> None:
+    assert sa.nysiis("") == ""
+
+
+def test_nysiis_no_letters() -> None:
+    assert sa.nysiis("12345") == ""
+
+
+def test_nysiis_bytes_input() -> None:
+    assert sa.nysiis(b"Robert") == "RABAD"
+    assert sa.nysiis(b"") == ""
+
+
+def test_nysiis_case_insensitive() -> None:
+    assert sa.nysiis("ROBERT") == sa.nysiis("robert") == "RABAD"
+
+
+def test_nysiis_non_ascii_skipped() -> None:
+    assert sa.nysiis("café") == sa.nysiis("caf")
+    assert sa.nysiis("你好") == ""
+
+
+def test_nysiis_rejects_non_string() -> None:
+    with pytest.raises(TypeError, match="str or bytes"):
+        sa.nysiis(12345)
+
+
+def test_nysiis_equal() -> None:
+    # Sound-alikes NYSIIS collides intentionally.
+    assert sa.nysiis_equal("Catherine", "Catharine")   # both CATARAN
+    assert sa.nysiis_equal("Watkins", "Watkin")        # both WATCAN (trailing S drops)
+    # Distinct names don't collide.
+    assert not sa.nysiis_equal("Robert", "Smith")
+    assert not sa.nysiis_equal("Robert", "Roberto")    # RABAD vs RABART
+    # Smith / Smyth diverge here (Y is treated as non-vowel by
+    # this NYSIIS variant, so SMYTH -> SNYT vs SMITH -> SNAT).
+    assert not sa.nysiis_equal("Smith", "Smyth")
+    # Both empty -> False (no valid code).
+    assert not sa.nysiis_equal("", "")
+
+

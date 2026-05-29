@@ -17,6 +17,7 @@
 #include "preprocess.hpp"
 #include "stride_align/soundex.hpp"
 #include "stride_align/metaphone.hpp"
+#include "stride_align/nysiis.hpp"
 
 namespace stride_align::phonetic {
 
@@ -64,6 +65,11 @@ inline std::string dispatch_metaphone(
     nb::handle input, MetaphoneVariant variant) {
   return dispatch_ascii_encoder(input,
       [variant](std::string_view sv) { return metaphone(sv, variant); });
+}
+
+inline std::string dispatch_nysiis(nb::handle input) {
+  return dispatch_ascii_encoder(input,
+      [](std::string_view sv) { return nysiis(sv); });
 }
 
 }  // namespace stride_align::phonetic

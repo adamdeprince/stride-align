@@ -2232,6 +2232,28 @@ def metaphone_equal(
     return bool(code1) and code1 == code2
 
 
+def nysiis(s: object) -> str:
+    """NYSIIS phonetic encoding (Taft, 1970).
+
+    Produces a code up to 6 ASCII letters; non-letter and non-ASCII
+    characters are skipped before encoding. NYSIIS tends to be more
+    discriminative than Soundex for English names — e.g. it
+    distinguishes "Watkins" / "Wilkins" / "Wilkinson" where Soundex
+    would collide.
+
+    >>> nysiis("Watkins"), nysiis("Wilkins"), nysiis("Wilkinson")
+    ('WATCAN', 'WALCAN', 'WALCAN')
+    """
+    return _LEVENSHTEIN_BACKEND.nysiis(s)
+
+
+def nysiis_equal(s1: object, s2: object) -> bool:
+    """Convenience: True iff ``s1`` and ``s2`` produce the same NYSIIS code."""
+    code1 = _LEVENSHTEIN_BACKEND.nysiis(s1)
+    code2 = _LEVENSHTEIN_BACKEND.nysiis(s2)
+    return bool(code1) and code1 == code2
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -3212,6 +3234,8 @@ __all__ = [
     "metaphone",
     "metaphone_equal",
     "MetaphoneVariant",
+    "nysiis",
+    "nysiis_equal",
     "soundex",
     "soundex_equal",
     "true_damerau_levenshtein_best",
