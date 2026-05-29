@@ -68,15 +68,56 @@ include/stride_align/ngram_set.hpp
   inline double cosine_multiset(const NgramSetMulti& a, const NgramSetMulti& b);
 ```
 
-The expensive operations are (1) n-gram hashing and (2) sorted-vector
-intersection. For (2), bitset-over-256-byte-values is the natural
-SIMD shape for character bigrams (32 bytes per set, AVX2-friendly
-intersection via `_mm256_and_si256`). For wider n / unicode the
-sorted-merge has a well-known SIMD speedup using "branchless merge"
-techniques.
+The expensive operations are (1) n-gram hashing and (2) sorted-set
+intersection. The dispatcher picks the narrowest representation
+that holds the n-gram key **exactly**. Whenever the n-gram exceeds
+64 bits the kernel stores each n-gram as a packed byte blob of
+width `stride = n * sizeof(Token)` — one code path regardless of
+Token — in a sorted contiguous buffer, intersected by a two-pointer
+scalar `memcmp` merge. Slow per intersection but still correct, no
+answer denied, no silent collisions, no padding waste.
 
-**Notes:** ~50% of the work is the SIMD intersection; ~50% is the
-Python API + tests + batch dispatch.
+**Representation dispatch (exact, no collisions):**
+
+| Input | n-gram bits | n=1 | n=2 | n=3 | n=4 | n=5+ |
+| --- | ---: | --- | --- | --- | --- | --- |
+| **bytes / `uint8` / `int8`** (8 b) | 8n | bitset 32 B | bitset 8 KB | `uint32` SIMD | `uint32` SIMD | `uint64` SIMD through n=8, then packed-byte scalar |
+| **UCS-2 / `uint16` / `int16`** (16 b) | 16n | bitset 8 KB | **`uint32` SIMD (32 b)** | **`uint64` SIMD (48 b)** | **`uint64` SIMD (64 b)** | packed-byte scalar (stride=2n) |
+| **UCS-4 / `uint32` / `int32`** (32 b) | 32n | `uint32` SIMD | `uint64` SIMD (64 b) | packed-byte scalar (stride=4n) | packed-byte scalar | packed-byte scalar |
+| **`int64` / `uint64` / `float*`** (64 b) | 64n | `uint64` SIMD | packed-byte scalar (stride=8n) | packed-byte scalar | packed-byte scalar | packed-byte scalar |
+| **`list` / `tuple` of objects** | — | PyDict-keyed multiset / set | … | … | … | … |
+
+* Bitset rows are one or two AVX2 ANDs plus POPCNT regardless of
+  input length.
+* `uint32` rows use 8-lane AVX2 / 16-lane AVX-512 SIMD intersection
+  (broadcast candidate, `vpcmpeqd`, `vpmovmskd`, `popcnt`) — the
+  fast path for Chinese n=2.
+* `uint64` rows use 4-lane AVX2 / 8-lane AVX-512 SIMD intersection
+  — half the throughput of `uint32`, still SIMD, exact for common
+  UCS-2 n=3 / n=4 and UCS-4 n=2.
+* **Packed-byte scalar** rows store each n-gram as `stride =
+  n * sizeof(Token)` raw bytes in a flat sorted buffer. A UCS-2
+  5-gram is 10 bytes, a bytes 10-gram is 10 bytes, a UCS-4
+  trigram is 12 bytes — natural width, no padding waste.
+  Intersection is a two-pointer scalar `memcmp` merge. One code
+  path for every (Token, n) above the SIMD boundary; the runtime
+  stride parameter is the only thing that changes.
+* List-of-objects falls back further still: a PyDict-keyed
+  multiset / set computed against the Python objects directly.
+  Slowest, necessary for arbitrary hashable token sequences.
+
+**Prepared / streaming variant:**
+
+```python
+scorer = sa.JaccardScorer(query, n=2)
+scorer.similarity(target)
+scorer.similarities(targets)
+```
+
+Mirrors `LevenshteinScorer`. Builds the query representation
+(bitset or sorted hash vector) once; each subsequent call is the
+intersection step only. This is where the win compounds for the
+1-query × many-targets workload.
 
 ## Phase D.2 — phonetic encoders (Soundex, Metaphone, Double Metaphone)
 
