@@ -2135,6 +2135,39 @@ def true_damerau_levenshtein_normalized_scores(
     )
 
 
+# ---- Phonetic encoders -----------------------------------------------------
+#
+# These return an encoded string, not a distance. Compare two encoded
+# strings for equality (or pass through a string-distance metric) to decide
+# similarity. Non-ASCII codepoints are skipped — Soundex is an ASCII
+# algorithm by design. Callers wanting accent folding pre-normalise with
+# ``unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()``.
+
+
+def soundex(s: object) -> str:
+    """American Soundex encoding (Russell & Odell, 1918).
+
+    Returns a 4-character ASCII string when ``s`` contains at least one
+    ASCII letter, else the empty string. Non-letter and non-ASCII
+    characters are skipped before encoding.
+
+    >>> soundex("Robert"), soundex("Rupert")
+    ('R163', 'R163')
+    >>> soundex("Ashcraft")        # tests the H-transparency rule
+    'A261'
+    >>> soundex("")                # empty in, empty out
+    ''
+    """
+    return _LEVENSHTEIN_BACKEND.soundex(s)
+
+
+def soundex_equal(s1: object, s2: object) -> bool:
+    """Convenience: True iff ``s1`` and ``s2`` produce the same Soundex code."""
+    code1 = _LEVENSHTEIN_BACKEND.soundex(s1)
+    code2 = _LEVENSHTEIN_BACKEND.soundex(s2)
+    return bool(code1) and code1 == code2
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -3112,6 +3145,8 @@ __all__ = [
     "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
+    "soundex",
+    "soundex_equal",
     "true_damerau_levenshtein_best",
     "true_damerau_levenshtein_normalized_best",
     "true_damerau_levenshtein_normalized_score",

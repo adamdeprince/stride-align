@@ -28,6 +28,8 @@
 #include "stride_align/levenshtein_prepared.hpp"
 #include "stride_align/dtw.hpp"
 #include "dtw_dispatch.hpp"
+#include "stride_align/soundex.hpp"
+#include "soundex_dispatch.hpp"
 #include "byte_view.hpp"
 #include "topk.hpp"
 
@@ -2796,6 +2798,15 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       },
       nb::arg("query"),
       nb::arg("target"));
+
+  // ---- Phonetic encoders (phase D.2) ------------------------------------
+
+  m.def(
+      "soundex",
+      [](nb::handle s) {
+        return ::stride_align::phonetic::dispatch_soundex(s);
+      },
+      nb::arg("s"));
 
   m.def(
       "hamming_normalized_score",
