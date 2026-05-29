@@ -2168,6 +2168,27 @@ def soundex_equal(s1: object, s2: object) -> bool:
     return bool(code1) and code1 == code2
 
 
+def metaphone(s: object) -> str:
+    """Metaphone phonetic encoding (Lawrence Philips, 1990).
+
+    Returns a variable-length ASCII code using only the letters
+    ``A B F H J K L M N P R S T W X Y`` plus ``0`` for the theta
+    sound (``TH``). Non-letter and non-ASCII characters are skipped
+    before encoding.
+
+    >>> metaphone("Thompson"), metaphone("Catherine"), metaphone("Kathryn")
+    ('TMSN', 'K0RN', 'K0RN')
+    """
+    return _LEVENSHTEIN_BACKEND.metaphone(s)
+
+
+def metaphone_equal(s1: object, s2: object) -> bool:
+    """Convenience: True iff ``s1`` and ``s2`` produce the same Metaphone code."""
+    code1 = _LEVENSHTEIN_BACKEND.metaphone(s1)
+    code2 = _LEVENSHTEIN_BACKEND.metaphone(s2)
+    return bool(code1) and code1 == code2
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -3145,6 +3166,8 @@ __all__ = [
     "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
+    "metaphone",
+    "metaphone_equal",
     "soundex",
     "soundex_equal",
     "true_damerau_levenshtein_best",

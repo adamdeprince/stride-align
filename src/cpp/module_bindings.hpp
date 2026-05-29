@@ -2809,6 +2809,13 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("s"));
 
   m.def(
+      "metaphone",
+      [](nb::handle s) {
+        return ::stride_align::phonetic::dispatch_metaphone(s);
+      },
+      nb::arg("s"));
+
+  m.def(
       "hamming_normalized_score",
       [](nb::handle query, nb::handle target) {
         return ::stride_align::hamming::dispatch_normalized_score(query, target);

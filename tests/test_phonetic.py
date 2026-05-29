@@ -121,3 +121,108 @@ def test_soundex_equal_mismatches() -> None:
 def test_soundex_equal_bytes_and_str() -> None:
     # Caller can mix bytes and str on either side.
     assert sa.soundex_equal(b"Robert", "Rupert")
+
+
+# ---- Metaphone: canonical cases (spec-correct per Philips 1990 /
+#      Apache Commons Codec; differs from jellyfish on CH-after-S
+#      and GH-at-end-of-word — see metaphone.hpp comment block) ---------------
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        # Classic test set.
+        ("Thompson", "0MPSN"),
+        ("Catherine", "K0RN"),
+        ("Kathryn", "K0RN"),     # same Metaphone as Catherine
+        ("Schmidt", "SKMTT"),    # SCH → SK (spec), not SX (jellyfish)
+        ("Robert", "RBRT"),
+        ("Smith", "SM0"),
+        ("Caesar", "KSR"),
+        # The H/W-handling siblings.
+        ("Ashcraft", "AXKRFT"),
+        ("Tymczak", "TMKSK"),
+        ("Pfister", "PFSTR"),
+        ("Honeyman", "HNMN"),
+        ("Lloyd", "LT"),
+        ("McDonald", "MKTNLT"),
+        ("Hwang", "HWNK"),
+        ("Williamson", "WLMSN"),
+        ("Vandyke", "FNTK"),
+        ("Phillips", "FLPS"),
+        ("Xavier", "SFR"),
+        ("Zhang", "SHNK"),
+        ("Yamaguchi", "YMKX"),
+        ("Bobcat", "BBKT"),
+        ("Blackwell", "BLKWL"),
+        # Initial-pair simplifications (AE-, GN-, KN-, PN-, WR-, WH-, X-).
+        ("Aether", "E0R"),
+        ("Gnaeus", "NS"),
+        ("Knight", "NT"),         # GH dropped (not end of word)
+        ("Wright", "RT"),         # GH dropped (not end of word)
+        # B at end after M drops.
+        ("Lamb", "LM"),
+        # T before CH is silent.
+        ("Match", "MX"),
+        # CH emits X (except after S, where SCH → SK above).
+        ("Chess", "XS"),
+        ("Quiche", "KX"),
+        # GH at end of word is silent (spec); not "KH" (jellyfish).
+        ("Hugh", "H"),
+        ("Through", "0R"),
+        ("Tough", "T"),
+        ("Cough", "K"),
+        ("Plough", "PL"),
+        # GH before a vowel falls through: G emits K, H emits H.
+        ("Ghost", "KHST"),
+        # GH not at end drops both.
+        ("Caught", "KT"),
+        # H after vowel and not before vowel drops.
+        ("Hour", "HR"),
+    ],
+)
+def test_metaphone_canonical(name: str, expected: str) -> None:
+    assert sa.metaphone(name) == expected
+
+
+def test_metaphone_empty_input() -> None:
+    assert sa.metaphone("") == ""
+
+
+def test_metaphone_no_letters() -> None:
+    assert sa.metaphone("12345") == ""
+    assert sa.metaphone("   ") == ""
+
+
+def test_metaphone_bytes_input() -> None:
+    assert sa.metaphone(b"Robert") == "RBRT"
+    assert sa.metaphone(b"") == ""
+
+
+def test_metaphone_case_insensitive() -> None:
+    assert sa.metaphone("ROBERT") == sa.metaphone("robert") == "RBRT"
+
+
+def test_metaphone_non_ascii_skipped() -> None:
+    # Non-ASCII codepoints drop out before encoding.
+    assert sa.metaphone("café") == sa.metaphone("cf")
+    assert sa.metaphone("你好") == ""
+
+
+def test_metaphone_rejects_non_string() -> None:
+    with pytest.raises(TypeError, match="str or bytes"):
+        sa.metaphone(12345)
+    with pytest.raises(TypeError):
+        sa.metaphone(None)
+
+
+def test_metaphone_equal() -> None:
+    # Catherine / Kathryn collide.
+    assert sa.metaphone_equal("Catherine", "Kathryn")
+    # Distinct names don't.
+    assert not sa.metaphone_equal("Robert", "Smith")
+    # Both empty → False (no valid code).
+    assert not sa.metaphone_equal("", "")
+
+
+def test_metaphone_equal_case_insensitive() -> None:
+    assert sa.metaphone_equal("ROBERT", "robert")
