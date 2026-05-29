@@ -2254,6 +2254,33 @@ def nysiis_equal(s1: object, s2: object) -> bool:
     return bool(code1) and code1 == code2
 
 
+def match_rating_codex(s: object) -> str:
+    """Match Rating Approach codex (Moore, Western Airlines, 1977).
+
+    Compresses a name by dropping vowels (except the first letter),
+    collapsing consecutive duplicate letters, and keeping at most
+    three letters from each end if the result exceeds six.
+
+    >>> match_rating_codex("Robert"), match_rating_codex("Christopher")
+    ('RBRT', 'CHRPHR')
+    """
+    return _LEVENSHTEIN_BACKEND.match_rating_codex(s)
+
+
+def match_rating_compare(s1: object, s2: object) -> bool:
+    """Match Rating Approach comparison.
+
+    Returns ``True`` when the two names match per MRA's length-difference
+    and minimum-rating rules.
+
+    >>> match_rating_compare("Robert", "Rupert")
+    True
+    >>> match_rating_compare("Robert", "Smith")
+    False
+    """
+    return _LEVENSHTEIN_BACKEND.match_rating_compare(s1, s2)
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -3231,6 +3258,8 @@ __all__ = [
     "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
+    "match_rating_codex",
+    "match_rating_compare",
     "metaphone",
     "metaphone_equal",
     "MetaphoneVariant",

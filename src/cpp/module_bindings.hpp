@@ -2830,6 +2830,21 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("s"));
 
   m.def(
+      "match_rating_codex",
+      [](nb::handle s) {
+        return ::stride_align::phonetic::dispatch_match_rating_codex(s);
+      },
+      nb::arg("s"));
+
+  m.def(
+      "match_rating_compare",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::phonetic::dispatch_match_rating_compare(a, b);
+      },
+      nb::arg("a"),
+      nb::arg("b"));
+
+  m.def(
       "hamming_normalized_score",
       [](nb::handle query, nb::handle target) {
         return ::stride_align::hamming::dispatch_normalized_score(query, target);

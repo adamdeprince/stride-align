@@ -351,6 +351,133 @@ def test_nysiis_equal() -> None:
     # Distinct names don't collide.
     assert not sa.nysiis_equal("Robert", "Smith")
     assert not sa.nysiis_equal("Robert", "Roberto")    # RABAD vs RABART
+
+
+# ---- Match Rating Approach (Moore 1977) -------------------------
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("Robert", "RBRT"),
+        ("Rupert", "RPRT"),
+        ("Smith", "SMTH"),
+        ("Smyth", "SMYTH"),
+        ("Schmidt", "SCHMDT"),
+        ("Catherine", "CTHRN"),
+        ("Kathryn", "KTHRYN"),
+        ("Christopher", "CHRPHR"),    # 8 chars deduped -> first 3 + last 3
+        ("Williams", "WLMS"),
+        ("Williamson", "WLMSN"),
+        ("Jonathan", "JNTHN"),
+        ("John", "JHN"),
+        ("Hannah", "HNH"),
+        ("Sarah", "SRH"),
+        ("Michael", "MCHL"),
+        ("Watkins", "WTKNS"),
+        ("Wilkinson", "WLKNSN"),
+        ("Lloyd", "LYD"),         # consecutive LL collapses
+        ("Honeyman", "HNYMN"),
+        ("McDonald", "MCDNLD"),
+        ("Caesar", "CSR"),
+        ("Aether", "ATHR"),
+        ("Knight", "KNGHT"),
+        ("Wright", "WRGHT"),
+    ],
+)
+def test_match_rating_codex_canonical(name: str, expected: str) -> None:
+    assert sa.match_rating_codex(name) == expected
+
+
+def test_match_rating_codex_empty_input() -> None:
+    assert sa.match_rating_codex("") == ""
+
+
+def test_match_rating_codex_no_letters() -> None:
+    assert sa.match_rating_codex("12345") == ""
+
+
+def test_match_rating_codex_bytes_input() -> None:
+    assert sa.match_rating_codex(b"Robert") == "RBRT"
+    assert sa.match_rating_codex(b"") == ""
+
+
+def test_match_rating_codex_case_insensitive() -> None:
+    assert sa.match_rating_codex("ROBERT") == sa.match_rating_codex("robert") == "RBRT"
+
+
+def test_match_rating_codex_non_ascii_skipped() -> None:
+    assert sa.match_rating_codex("café") == sa.match_rating_codex("caf")
+    assert sa.match_rating_codex("你好") == ""
+
+
+def test_match_rating_codex_rejects_non_string() -> None:
+    with pytest.raises(TypeError, match="str or bytes"):
+        sa.match_rating_codex(12345)
+
+
+def test_match_rating_codex_keeps_first_vowel() -> None:
+    # The first letter is preserved even when it's a vowel.
+    assert sa.match_rating_codex("Aether") == "ATHR"
+    assert sa.match_rating_codex("Oscar") == "OSCR"
+
+
+def test_match_rating_codex_truncation_first_three_last_three() -> None:
+    # Names whose deduped consonant skeleton exceeds 6 chars get
+    # collapsed to "first three + last three".
+    assert sa.match_rating_codex("Christopher") == "CHRPHR"
+    # Same-shape input pinned long enough to exercise truncation.
+    assert len(sa.match_rating_codex("Williamsonburg")) == 6
+
+
+# Comparator: MRA-true match cases (both pairs sound similar).
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ("Robert", "Rupert"),
+        ("Smith", "Smyth"),
+        ("Catherine", "Kathryn"),
+        ("Williams", "Williamson"),
+        ("Knight", "Night"),
+        ("John", "Jon"),
+        ("Sarah", "Sara"),
+        ("Christopher", "Chris"),
+        ("Lloyd", "Floyd"),
+        ("Hannah", "Hana"),
+    ],
+)
+def test_match_rating_compare_match(a: str, b: str) -> None:
+    assert sa.match_rating_compare(a, b)
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ("Robert", "Smith"),
+        ("Catherine", "Robert"),
+        ("Sarah", "Robert"),
+    ],
+)
+def test_match_rating_compare_distinct(a: str, b: str) -> None:
+    assert not sa.match_rating_compare(a, b)
+
+
+def test_match_rating_compare_empty() -> None:
+    # Empty codex on either side yields no match.
+    assert not sa.match_rating_compare("", "Robert")
+    assert not sa.match_rating_compare("Robert", "")
+    assert not sa.match_rating_compare("", "")
+
+
+def test_match_rating_compare_symmetric() -> None:
+    # Compare is symmetric.
+    assert sa.match_rating_compare("Robert", "Rupert") == sa.match_rating_compare("Rupert", "Robert")
+    assert sa.match_rating_compare("Smith", "Schmidt") == sa.match_rating_compare("Schmidt", "Smith")
+
+
+def test_match_rating_compare_bytes_and_str() -> None:
+    # bytes and str interchangeable on either side.
+    assert sa.match_rating_compare(b"Robert", "Rupert")
+    assert sa.match_rating_compare("Catherine", b"Kathryn")
     # Smith / Smyth diverge here (Y is treated as non-vowel by
     # this NYSIIS variant, so SMYTH -> SNYT vs SMITH -> SNAT).
     assert not sa.nysiis_equal("Smith", "Smyth")
