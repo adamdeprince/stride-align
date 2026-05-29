@@ -2168,7 +2168,25 @@ def soundex_equal(s1: object, s2: object) -> bool:
     return bool(code1) and code1 == code2
 
 
-def metaphone(s: object) -> str:
+class MetaphoneVariant(enum.IntEnum):
+    """Selects which Metaphone rule family :func:`metaphone` follows."""
+
+    PHILIPS = 0
+    """Lawrence Philips' 1990 published spec (Apache Commons Codec branch). Default."""
+
+    JELLYFISH = 1
+    """Matches the popular jellyfish Python library's interpretation.
+
+    Differs from the Philips spec on ``SCH`` (Philips: ``SK``; jellyfish: ``SX``)
+    and ``GH`` at end of word (Philips: silent; jellyfish: ``KH``).
+    """
+
+
+def metaphone(
+    s: object,
+    *,
+    variant: MetaphoneVariant = MetaphoneVariant.PHILIPS,
+) -> str:
     """Metaphone phonetic encoding (Lawrence Philips, 1990).
 
     Returns a variable-length ASCII code using only the letters
@@ -2176,16 +2194,41 @@ def metaphone(s: object) -> str:
     sound (``TH``). Non-letter and non-ASCII characters are skipped
     before encoding.
 
-    >>> metaphone("Thompson"), metaphone("Catherine"), metaphone("Kathryn")
-    ('TMSN', 'K0RN', 'K0RN')
+    ``variant`` picks the rule family:
+
+    * :data:`MetaphoneVariant.PHILIPS` (default) — Lawrence Philips'
+      1990 published spec as reproduced in Apache Commons Codec.
+    * :data:`MetaphoneVariant.JELLYFISH` — matches the popular
+      jellyfish Python library's interpretation. Differs from the
+      spec on ``SCH`` (jellyfish emits ``SX``; spec emits ``SK``)
+      and ``GH`` at end of word (jellyfish keeps as ``KH``; spec
+      drops both).
+
+    >>> metaphone("Schmidt")
+    'SKMTT'
+    >>> metaphone("Schmidt", variant=MetaphoneVariant.JELLYFISH)
+    'SXMTT'
+    >>> metaphone("Hugh")
+    'H'
+    >>> metaphone("Hugh", variant=MetaphoneVariant.JELLYFISH)
+    'HKH'
     """
-    return _LEVENSHTEIN_BACKEND.metaphone(s)
+    return _LEVENSHTEIN_BACKEND.metaphone(s, variant=int(variant))
 
 
-def metaphone_equal(s1: object, s2: object) -> bool:
-    """Convenience: True iff ``s1`` and ``s2`` produce the same Metaphone code."""
-    code1 = _LEVENSHTEIN_BACKEND.metaphone(s1)
-    code2 = _LEVENSHTEIN_BACKEND.metaphone(s2)
+def metaphone_equal(
+    s1: object,
+    s2: object,
+    *,
+    variant: MetaphoneVariant = MetaphoneVariant.PHILIPS,
+) -> bool:
+    """Convenience: True iff ``s1`` and ``s2`` produce the same Metaphone code.
+
+    ``variant`` is forwarded to :func:`metaphone` for both inputs.
+    """
+    v = int(variant)
+    code1 = _LEVENSHTEIN_BACKEND.metaphone(s1, variant=v)
+    code2 = _LEVENSHTEIN_BACKEND.metaphone(s2, variant=v)
     return bool(code1) and code1 == code2
 
 
@@ -3168,6 +3211,7 @@ __all__ = [
     "smith_waterman_trade_cigar",
     "metaphone",
     "metaphone_equal",
+    "MetaphoneVariant",
     "soundex",
     "soundex_equal",
     "true_damerau_levenshtein_best",

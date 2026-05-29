@@ -226,3 +226,52 @@ def test_metaphone_equal() -> None:
 
 def test_metaphone_equal_case_insensitive() -> None:
     assert sa.metaphone_equal("ROBERT", "robert")
+
+
+# ---- Metaphone variants ---------------------------------------------------
+
+def test_metaphone_variant_default_is_philips() -> None:
+    # Default and explicit PHILIPS are equivalent.
+    for name in ("Schmidt", "Hugh", "Through", "Wright", "Caught", "Ghost"):
+        assert sa.metaphone(name) == sa.metaphone(name, variant=sa.MetaphoneVariant.PHILIPS)
+
+
+@pytest.mark.parametrize(
+    "name,philips,jellyfish",
+    [
+        # SCH-after-S rule: Philips emits K, jellyfish emits X.
+        ("Schmidt", "SKMTT", "SXMTT"),
+        # GH at end of word: Philips drops both, jellyfish emits K + leaves H.
+        ("Hugh", "H", "HKH"),
+        ("Through", "0R", "0RKH"),
+        ("Tough", "T", "TKH"),
+        ("Cough", "K", "KKH"),
+        ("Plough", "PL", "PLKH"),
+        # Cases where both variants agree (sanity).
+        ("Robert", "RBRT", "RBRT"),
+        ("Catherine", "K0RN", "K0RN"),
+        ("Knight", "NT", "NT"),
+        ("Wright", "RT", "RT"),
+        ("Caught", "KT", "KT"),
+        ("Ghost", "KHST", "KHST"),
+    ],
+)
+def test_metaphone_variant_outputs(name: str, philips: str, jellyfish: str) -> None:
+    assert sa.metaphone(name, variant=sa.MetaphoneVariant.PHILIPS) == philips
+    assert sa.metaphone(name, variant=sa.MetaphoneVariant.JELLYFISH) == jellyfish
+
+
+def test_metaphone_variant_equal_forwards_kwarg() -> None:
+    # Schmidt collides with Smith only under the PHILIPS variant
+    # (SKMTT vs SM0 are different; SXMTT vs SM0 are different too).
+    # Pick a case where the variants actually disagree on a collision.
+    # Hugh and "Hue" — under PHILIPS both encode to "H"; under jellyfish
+    # Hugh is "HKH" and Hue is "H", so they differ.
+    assert sa.metaphone_equal("Hugh", "Hue", variant=sa.MetaphoneVariant.PHILIPS)
+    assert not sa.metaphone_equal("Hugh", "Hue", variant=sa.MetaphoneVariant.JELLYFISH)
+
+
+def test_metaphone_variant_intenum_int_coercion() -> None:
+    # MetaphoneVariant is an IntEnum, so plain ints also work.
+    assert sa.metaphone("Schmidt", variant=0) == "SKMTT"          # PHILIPS
+    assert sa.metaphone("Schmidt", variant=1) == "SXMTT"          # JELLYFISH

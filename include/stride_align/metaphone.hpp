@@ -43,6 +43,17 @@
 
 namespace stride_align::phonetic {
 
+// Metaphone has two long-running flavours in the wild — the published
+// Philips 1990 spec (as reproduced by Apache Commons Codec) and the
+// jellyfish Python library's interpretation, which deviates on two
+// well-known rules (CH-after-S and GH-at-end-of-word). We expose
+// both as an enum so callers porting from jellyfish can stay
+// bit-exact without giving up the spec for everyone else.
+enum class MetaphoneVariant {
+  kPhilips = 0,    // published 1990 spec; default
+  kJellyfish = 1,  // jellyfish-compat (SCH -> SX, GH at end -> KH)
+};
+
 namespace metaphone_detail {
 
 inline constexpr bool is_vowel(char c) noexcept {
@@ -59,8 +70,10 @@ inline constexpr bool is_upper_alpha(char c) noexcept {
 
 }  // namespace metaphone_detail
 
-inline std::string metaphone(std::string_view input) {
+inline std::string metaphone(std::string_view input,
+                             MetaphoneVariant variant = MetaphoneVariant::kPhilips) {
   using namespace metaphone_detail;
+  const bool jellyfish = variant == MetaphoneVariant::kJellyfish;
 
   // Pre-pass: keep ASCII letters only, upper-cased, with
   // adjacent-duplicate collapse (except C — Metaphone deliberately
@@ -124,9 +137,13 @@ inline std::string metaphone(std::string_view input) {
         if (nx == 'I' && nx2 == 'A') {
           out.push_back('X');
         } else if (nx == 'H') {
-          // SCH → SK; CH otherwise → X (per Philips 1990 / Apache
-          // Commons Codec — jellyfish differs here).
-          out.push_back(prev == 'S' ? 'K' : 'X');
+          // SCH → SK in Philips; SX in jellyfish. Plain CH → X
+          // in both.
+          if (prev == 'S' && !jellyfish) {
+            out.push_back('K');
+          } else {
+            out.push_back('X');
+          }
           ++i;  // consume H
         } else if (nx == 'I' || nx == 'E' || nx == 'Y') {
           // SCI / SCE / SCY: drop the C.
@@ -149,17 +166,25 @@ inline std::string metaphone(std::string_view input) {
         break;
       case 'G':
         if (nx == 'H') {
-          // Philips 1990: GH is silent at end of word OR when H is
-          // followed by a consonant. GH followed by a vowel falls
-          // through — G emits K, H is processed by the next
-          // iteration's H rule.
           const bool h_at_end = (i + 1 == n - 1);
           const bool h_before_vowel = (i + 2 < n) && is_vowel(nx2);
-          if (h_at_end || !h_before_vowel) {
-            ++i;  // drop both
+          if (h_at_end) {
+            // jellyfish: GH at end emits K, leaves H to follow.
+            // Philips: GH at end is silent.
+            if (jellyfish) {
+              out.push_back('K');
+              // Don't consume H; H rule handles it next iteration.
+            } else {
+              ++i;  // drop both
+            }
             break;
           }
-          // Fall through: emit K for G, leave H for next iteration.
+          if (!h_before_vowel) {
+            // GH not at end, H before a consonant → silent in both.
+            ++i;
+            break;
+          }
+          // GH before a vowel: G emits K, leave H for next loop.
           out.push_back('K');
         } else if (nx == 'N') {
           // GN at end of word, or GNED at end → drop the G.

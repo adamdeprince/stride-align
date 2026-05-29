@@ -60,9 +60,10 @@ inline std::string dispatch_soundex(nb::handle input) {
       [](std::string_view sv) { return soundex(sv); });
 }
 
-inline std::string dispatch_metaphone(nb::handle input) {
+inline std::string dispatch_metaphone(
+    nb::handle input, MetaphoneVariant variant) {
   return dispatch_ascii_encoder(input,
-      [](std::string_view sv) { return metaphone(sv); });
+      [variant](std::string_view sv) { return metaphone(sv, variant); });
 }
 
 }  // namespace stride_align::phonetic

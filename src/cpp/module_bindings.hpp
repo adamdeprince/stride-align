@@ -2808,12 +2808,19 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       },
       nb::arg("s"));
 
+  // MetaphoneVariant is a Python IntEnum in stride_align/__init__.py;
+  // crossing the binding boundary as a plain int avoids the
+  // per-backend nb::enum_ duplicate-registration trap (same pattern
+  // as the Scorer enum).
   m.def(
       "metaphone",
-      [](nb::handle s) {
-        return ::stride_align::phonetic::dispatch_metaphone(s);
+      [](nb::handle s, int variant) {
+        const auto v = static_cast<::stride_align::phonetic::MetaphoneVariant>(variant);
+        return ::stride_align::phonetic::dispatch_metaphone(s, v);
       },
-      nb::arg("s"));
+      nb::arg("s"),
+      nb::kw_only(),
+      nb::arg("variant") = 0);  // 0 = kPhilips
 
   m.def(
       "hamming_normalized_score",
