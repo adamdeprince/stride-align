@@ -3084,6 +3084,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::jaro::dispatch_similarity(query, target);
       },
+      "Jaro similarity in [0, 1] (1 = identical, 0 = no matches in window).",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -3097,6 +3098,11 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         return ::stride_align::jaro::dispatch_winkler_similarity(
             query, target, prefix_weight, prefix_threshold, prefix_cap);
       },
+      "Jaro-Winkler similarity in [0, 1].\n\n"
+      "Adds ``L * prefix_weight * (1 - jaro)`` to the base Jaro score\n"
+      "when the base score is at least ``prefix_threshold``; ``L`` is the\n"
+      "common-prefix length, capped at ``prefix_cap`` characters.\n"
+      "Defaults match ``rapidfuzz.distance.JaroWinkler``.",
       nb::arg("query"),
       nb::arg("target"),
       nb::kw_only(),

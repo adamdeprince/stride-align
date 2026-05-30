@@ -2206,37 +2206,16 @@ double_metaphone = _LEVENSHTEIN_BACKEND.double_metaphone
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
 # prefix_cap=4 characters of common prefix.
+#
+# The scalar pair-wise functions are re-exports of the C++ bindings —
+# nanobind already returns Python floats, so the old ``float(...)``
+# casts were no-ops, and the bindings carry their own docstrings.
+# The batch variants keep a thin Python wrapper because they normalise
+# ``targets`` into a list/tuple before the binding call (the C++ side
+# expects a real sequence, not just any iterable).
 
-
-def jaro_similarity(query: object, target: object) -> float:
-    """Jaro similarity in [0, 1] (1 = identical, 0 = no matches in window)."""
-    return float(_LEVENSHTEIN_BACKEND.jaro_similarity(query, target))
-
-
-def jaro_winkler_similarity(
-    query: object,
-    target: object,
-    *,
-    prefix_weight: float = 0.1,
-    prefix_threshold: float = 0.7,
-    prefix_cap: int = 4,
-) -> float:
-    """Jaro-Winkler similarity in [0, 1].
-
-    Adds ``L * prefix_weight * (1 - jaro)`` to the base Jaro score
-    when the base score is at least ``prefix_threshold``; ``L`` is the
-    common-prefix length, capped at ``prefix_cap`` characters.
-    Defaults match ``rapidfuzz.distance.JaroWinkler``.
-    """
-    return float(
-        _LEVENSHTEIN_BACKEND.jaro_winkler_similarity(
-            query,
-            target,
-            prefix_weight=prefix_weight,
-            prefix_threshold=prefix_threshold,
-            prefix_cap=prefix_cap,
-        )
-    )
+jaro_similarity = _LEVENSHTEIN_BACKEND.jaro_similarity
+jaro_winkler_similarity = _LEVENSHTEIN_BACKEND.jaro_winkler_similarity
 
 
 def jaro_similarities(query: object, targets: object) -> np.ndarray:
