@@ -71,6 +71,21 @@ namespace detail {
   throw nb::python_error();
 }
 
+// Reject ``str`` / ``bytes`` as a batch ``targets`` argument. Without
+// this, PySequence_Fast happily treats a single string as a sequence
+// of 1-char strings (or single integers, for bytes), which is never
+// what the caller meant. Centralised so every batch binding can call
+// it before falling through to PySequence_Fast — saves the Python-
+// level ``isinstance(targets, (str, bytes))`` guard that used to live
+// in every wrapper.
+inline void reject_str_or_bytes_targets(PyObject* targets) {
+  if (PyUnicode_Check(targets) != 0 || PyBytes_Check(targets) != 0) {
+    throw_type_error(
+        "targets must be an iterable of target sequences, "
+        "not a single str/bytes");
+  }
+}
+
 inline nb::object checked_steal(PyObject* object) {
   if (object == nullptr) {
     throw nb::python_error();

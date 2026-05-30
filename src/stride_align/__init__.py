@@ -2191,156 +2191,28 @@ class Scorer(enum.IntEnum):
     TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED = 11
 
 
-def _coerce_targets(targets: object) -> object:
-    if isinstance(targets, (str, bytes)):
-        raise TypeError(
-            "targets must be an iterable of target sequences, not a single str/bytes"
-        )
-    if not isinstance(targets, (list, tuple)):
-        return tuple(targets)
-    return targets
+# Top-k re-exports. The C++ bindings now do the str/bytes rejection
+# themselves (see ``reject_str_or_bytes_targets`` in preprocess.hpp)
+# and PySequence_Fast materialises any iterable on the C++ side, so
+# the old ``_coerce_targets`` Python helper was pure overhead.
+levenshtein_top_k = _LEVENSHTEIN_BACKEND.levenshtein_top_k
+levenshtein_normalized_top_k = _LEVENSHTEIN_BACKEND.levenshtein_normalized_top_k
+damerau_levenshtein_top_k = _LEVENSHTEIN_BACKEND.damerau_levenshtein_top_k
+damerau_levenshtein_normalized_top_k = (
+    _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_top_k
+)
+hamming_top_k = _LEVENSHTEIN_BACKEND.hamming_top_k
+hamming_normalized_top_k = _LEVENSHTEIN_BACKEND.hamming_normalized_top_k
+indel_top_k = _LEVENSHTEIN_BACKEND.indel_top_k
+indel_normalized_top_k = _LEVENSHTEIN_BACKEND.indel_normalized_top_k
+true_damerau_levenshtein_top_k = _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_top_k
+true_damerau_levenshtein_normalized_top_k = (
+    _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_top_k
+)
+jaro_top_k = _LEVENSHTEIN_BACKEND.jaro_top_k
 
 
-def levenshtein_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, int, int]]:
-    """Top-k targets by lowest Levenshtein distance (ascending).
-
-    Returns ``list[(target, score, index)]`` of at most ``k`` entries.
-    Each tuple gives the target object, its distance, and its position
-    in the input sequence. Distances are int64.
-    """
-    return _LEVENSHTEIN_BACKEND.levenshtein_top_k(query, _coerce_targets(targets), k)
-
-
-def levenshtein_normalized_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest Levenshtein similarity (descending)."""
-    return _LEVENSHTEIN_BACKEND.levenshtein_normalized_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def damerau_levenshtein_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, int, int]]:
-    """Top-k targets by lowest OSA (Damerau-Levenshtein) distance."""
-    return _LEVENSHTEIN_BACKEND.damerau_levenshtein_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def damerau_levenshtein_normalized_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest OSA similarity (descending)."""
-    return _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def hamming_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, int, int]]:
-    """Top-k targets by lowest Hamming distance.
-
-    Raises ``ValueError`` if any target's length differs from the
-    query's; pad inputs yourself if you want length-tolerant behavior.
-    """
-    return _LEVENSHTEIN_BACKEND.hamming_top_k(query, _coerce_targets(targets), k)
-
-
-def hamming_normalized_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest Hamming similarity (descending)."""
-    return _LEVENSHTEIN_BACKEND.hamming_normalized_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def indel_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, int, int]]:
-    """Top-k targets by lowest Indel distance (insertions + deletions only)."""
-    return _LEVENSHTEIN_BACKEND.indel_top_k(query, _coerce_targets(targets), k)
-
-
-def indel_normalized_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest Indel similarity (descending)."""
-    return _LEVENSHTEIN_BACKEND.indel_normalized_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def true_damerau_levenshtein_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, int, int]]:
-    """Top-k targets by lowest true Damerau-Levenshtein distance."""
-    return _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def true_damerau_levenshtein_normalized_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest true Damerau-Levenshtein similarity."""
-    return _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_top_k(
-        query, _coerce_targets(targets), k
-    )
-
-
-def jaro_top_k(
-    query: object,
-    targets: object,
-    k: int = 5,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest Jaro similarity."""
-    return _LEVENSHTEIN_BACKEND.jaro_top_k(query, _coerce_targets(targets), k)
-
-
-def jaro_winkler_top_k(
-    query: object,
-    targets: object,
-    *,
-    k: int = 5,
-    prefix_weight: float = 0.1,
-    prefix_threshold: float = 0.7,
-    prefix_cap: int = 4,
-) -> list[tuple[object, float, int]]:
-    """Top-k targets by highest Jaro-Winkler similarity."""
-    return _LEVENSHTEIN_BACKEND.jaro_winkler_top_k(
-        query,
-        _coerce_targets(targets),
-        k=k,
-        prefix_weight=prefix_weight,
-        prefix_threshold=prefix_threshold,
-        prefix_cap=prefix_cap,
-    )
+jaro_winkler_top_k = _LEVENSHTEIN_BACKEND.jaro_winkler_top_k
 
 
 def smith_waterman_top_k(
@@ -2388,26 +2260,10 @@ def smith_waterman_top_k(
     )
 
 
-def extract(
-    query: object,
-    targets: object,
-    *,
-    scorer: "Scorer",
-    k: int = 5,
-) -> list[tuple[object, int | float, int]]:
-    """Top-k targets ranked by ``scorer`` (a ``Scorer`` enum value).
-
-    Distance-based scorers (``LEVENSHTEIN``, ``DAMERAU_LEVENSHTEIN``,
-    ``HAMMING``) return the k smallest distances; normalized scorers
-    (``*_NORMALIZED``) return the k largest similarities. Order within
-    the returned list is unspecified.
-
-    Smith-Waterman is not in the enum — its score depends on scoring
-    parameters. Call ``smith_waterman_top_k`` directly for that.
-    """
-    return _LEVENSHTEIN_BACKEND.extract(
-        query, _coerce_targets(targets), scorer=int(scorer), k=k
-    )
+# ``extract`` is a direct re-export — the C++ binding does str/bytes
+# rejection itself, accepts any iterable via PySequence_Fast, and
+# accepts the Scorer IntEnum directly (it's an int).
+extract = _LEVENSHTEIN_BACKEND.extract
 
 
 # `_best` is a convenience: top-k with k=1, returning the single match

@@ -107,6 +107,10 @@ inline ScoreNDArray as_score_ndarray(std::vector<Score> scores) {
 
 template <typename Function>
 ScoreNDArray call_score_many(nb::handle targets, Function&& function) {
+  // Centralised str/bytes rejection — without this, PySequence_Fast
+  // would happily treat a single string as a sequence of 1-char
+  // strings, which is never what the caller meant.
+  ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
   PyObject* fast_targets =
       PySequence_Fast(targets.ptr(), "targets must be a sequence of target sequences");
   if (fast_targets == nullptr) {
@@ -3226,6 +3230,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "levenshtein_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3235,15 +3240,18 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<Score> scores;
         if constexpr (requires {
-                        Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+                        Implementation::levenshtein_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
                       }) {
-          scores = Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+          scores = Implementation::levenshtein_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
         } else {
-          scores = ::stride_align::levenshtein::dispatch_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+          scores = ::stride_align::levenshtein::dispatch_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/false);
       },
+      "Top-k targets by lowest Levenshtein distance (ascending).\n\n"
+      "Returns ``list[(target, score, index)]`` of at most ``k`` entries.\n"
+      "Distances are int64.",
       nb::arg("query"),
       nb::arg("targets"),
       nb::arg("k") = std::size_t{5});
@@ -3251,6 +3259,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "levenshtein_normalized_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3260,12 +3269,12 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<double> scores;
         if constexpr (requires {
-                        Implementation::levenshtein_normalized_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+                        Implementation::levenshtein_normalized_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
                       }) {
-          scores = Implementation::levenshtein_normalized_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+          scores = Implementation::levenshtein_normalized_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
         } else {
           scores = ::stride_align::levenshtein::dispatch_normalized_scores(
-              query, targets, ::stride_align::levenshtein::kNoCutoff);
+              query, owner, ::stride_align::levenshtein::kNoCutoff);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
@@ -3277,6 +3286,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "damerau_levenshtein_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3286,11 +3296,11 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<Score> scores;
         if constexpr (requires {
-                        Implementation::damerau_levenshtein_scores(query, targets);
+                        Implementation::damerau_levenshtein_scores(query, owner);
                       }) {
-          scores = Implementation::damerau_levenshtein_scores(query, targets);
+          scores = Implementation::damerau_levenshtein_scores(query, owner);
         } else {
-          scores = ::stride_align::levenshtein::dispatch_osa_scores(query, targets);
+          scores = ::stride_align::levenshtein::dispatch_osa_scores(query, owner);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/false);
@@ -3302,6 +3312,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "damerau_levenshtein_normalized_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3311,12 +3322,12 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<double> scores;
         if constexpr (requires {
-                        Implementation::damerau_levenshtein_normalized_scores(query, targets);
+                        Implementation::damerau_levenshtein_normalized_scores(query, owner);
                       }) {
-          scores = Implementation::damerau_levenshtein_normalized_scores(query, targets);
+          scores = Implementation::damerau_levenshtein_normalized_scores(query, owner);
         } else {
           scores = ::stride_align::levenshtein::dispatch_osa_normalized_scores(
-              query, targets);
+              query, owner);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
@@ -3328,6 +3339,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "hamming_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3335,7 +3347,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         }
         nb::object owner = nb::steal<nb::object>(fast_targets);
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
-        auto scores = ::stride_align::hamming::dispatch_scores(query, targets);
+        auto scores = ::stride_align::hamming::dispatch_scores(query, owner);
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/false);
       },
@@ -3346,6 +3358,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "hamming_normalized_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3353,7 +3366,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         }
         nb::object owner = nb::steal<nb::object>(fast_targets);
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
-        auto scores = ::stride_align::hamming::dispatch_normalized_scores(query, targets);
+        auto scores = ::stride_align::hamming::dispatch_normalized_scores(query, owner);
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
       },
@@ -3364,6 +3377,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "indel_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3373,11 +3387,11 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<Score> scores;
         if constexpr (requires {
-                        Implementation::indel_scores(query, targets);
+                        Implementation::indel_scores(query, owner);
                       }) {
-          scores = Implementation::indel_scores(query, targets);
+          scores = Implementation::indel_scores(query, owner);
         } else {
-          scores = ::stride_align::indel::dispatch_scores(query, targets);
+          scores = ::stride_align::indel::dispatch_scores(query, owner);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/false);
@@ -3389,6 +3403,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "indel_normalized_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3398,12 +3413,12 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<double> scores;
         if constexpr (requires {
-                        Implementation::indel_normalized_scores(query, targets);
+                        Implementation::indel_normalized_scores(query, owner);
                       }) {
-          scores = Implementation::indel_normalized_scores(query, targets);
+          scores = Implementation::indel_normalized_scores(query, owner);
         } else {
           scores = ::stride_align::indel::dispatch_normalized_scores(
-              query, targets);
+              query, owner);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
@@ -3415,6 +3430,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "true_damerau_levenshtein_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(),
             "targets must be a sequence of target sequences");
@@ -3424,7 +3440,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         nb::object owner = nb::steal<nb::object>(fast_targets);
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         auto scores =
-            ::stride_align::true_damerau::dispatch_scores(query, targets);
+            ::stride_align::true_damerau::dispatch_scores(query, owner);
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/false);
       },
@@ -3435,6 +3451,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "true_damerau_levenshtein_normalized_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(),
             "targets must be a sequence of target sequences");
@@ -3445,7 +3462,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         auto scores =
             ::stride_align::true_damerau::dispatch_normalized_scores(
-                query, targets);
+                query, owner);
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
       },
@@ -3456,6 +3473,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def(
       "jaro_top_k",
       [](nb::handle query, nb::handle targets, std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3465,12 +3483,12 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         std::vector<double> scores;
         if constexpr (requires {
-                        Implementation::jaro_similarities(query, targets);
+                        Implementation::jaro_similarities(query, owner);
                       }) {
-          scores = Implementation::jaro_similarities(query, targets);
+          scores = Implementation::jaro_similarities(query, owner);
         }
         if (scores.empty()) {
-          scores = ::stride_align::jaro::dispatch_similarities(query, targets);
+          scores = ::stride_align::jaro::dispatch_similarities(query, owner);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
@@ -3487,6 +3505,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          double prefix_weight,
          double prefix_threshold,
          std::size_t prefix_cap) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3497,15 +3516,15 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         std::vector<double> scores;
         if constexpr (requires {
                         Implementation::jaro_winkler_similarities(
-                            query, targets,
+                            query, owner,
                             prefix_weight, prefix_threshold, prefix_cap);
                       }) {
           scores = Implementation::jaro_winkler_similarities(
-              query, targets, prefix_weight, prefix_threshold, prefix_cap);
+              query, owner, prefix_weight, prefix_threshold, prefix_cap);
         }
         if (scores.empty()) {
           scores = ::stride_align::jaro::dispatch_winkler_similarities(
-              query, targets, prefix_weight, prefix_threshold, prefix_cap);
+              query, owner, prefix_weight, prefix_threshold, prefix_cap);
         }
         return ::stride_align::topk::make_top_k(
             items, scores, k, /*higher_is_better=*/true);
@@ -3529,6 +3548,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          nb::object gap_open_score,
          nb::object gap_extend_score,
          nb::object width) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3632,6 +3652,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          nb::handle targets,
          int scorer_int,
          std::size_t k) {
+        ::stride_align::detail::reject_str_or_bytes_targets(targets.ptr());
         PyObject* fast_targets = PySequence_Fast(
             targets.ptr(), "targets must be a sequence of target sequences");
         if (fast_targets == nullptr) {
@@ -3641,16 +3662,19 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         PyObject* const* items = PySequence_Fast_ITEMS(fast_targets);
         using ::stride_align::topk::Scorer;
         const auto scorer = static_cast<Scorer>(scorer_int);
+        // ``owner`` is the already-materialised list (PySequence_Fast'd
+        // above); pass that to every dispatch call so generator-style
+        // ``targets`` get iterated exactly once.
         switch (scorer) {
           case Scorer::Levenshtein: {
             std::vector<Score> scores;
             if constexpr (requires {
-                            Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+                            Implementation::levenshtein_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
                           }) {
-              scores = Implementation::levenshtein_scores(query, targets, ::stride_align::levenshtein::kNoCutoff);
+              scores = Implementation::levenshtein_scores(query, owner, ::stride_align::levenshtein::kNoCutoff);
             } else {
               scores = ::stride_align::levenshtein::dispatch_scores(
-                  query, targets, ::stride_align::levenshtein::kNoCutoff);
+                  query, owner, ::stride_align::levenshtein::kNoCutoff);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, false);
           }
@@ -3658,24 +3682,24 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             std::vector<double> scores;
             if constexpr (requires {
                             Implementation::levenshtein_normalized_scores(
-                                query, targets, ::stride_align::levenshtein::kNoCutoff);
+                                query, owner, ::stride_align::levenshtein::kNoCutoff);
                           }) {
               scores = Implementation::levenshtein_normalized_scores(
-                  query, targets, ::stride_align::levenshtein::kNoCutoff);
+                  query, owner, ::stride_align::levenshtein::kNoCutoff);
             } else {
               scores = ::stride_align::levenshtein::dispatch_normalized_scores(
-                  query, targets, ::stride_align::levenshtein::kNoCutoff);
+                  query, owner, ::stride_align::levenshtein::kNoCutoff);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::DamerauLevenshtein: {
             std::vector<Score> scores;
             if constexpr (requires {
-                            Implementation::damerau_levenshtein_scores(query, targets);
+                            Implementation::damerau_levenshtein_scores(query, owner);
                           }) {
-              scores = Implementation::damerau_levenshtein_scores(query, targets);
+              scores = Implementation::damerau_levenshtein_scores(query, owner);
             } else {
-              scores = ::stride_align::levenshtein::dispatch_osa_scores(query, targets);
+              scores = ::stride_align::levenshtein::dispatch_osa_scores(query, owner);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, false);
           }
@@ -3683,36 +3707,36 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             std::vector<double> scores;
             if constexpr (requires {
                             Implementation::damerau_levenshtein_normalized_scores(
-                                query, targets);
+                                query, owner);
                           }) {
               scores = Implementation::damerau_levenshtein_normalized_scores(
-                  query, targets);
+                  query, owner);
             } else {
               scores =
                   ::stride_align::levenshtein::dispatch_osa_normalized_scores(
-                      query, targets);
+                      query, owner);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::Hamming: {
             auto scores =
-                ::stride_align::hamming::dispatch_scores(query, targets);
+                ::stride_align::hamming::dispatch_scores(query, owner);
             return ::stride_align::topk::make_top_k(items, scores, k, false);
           }
           case Scorer::HammingNormalized: {
             auto scores = ::stride_align::hamming::dispatch_normalized_scores(
-                query, targets);
+                query, owner);
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::Indel: {
             std::vector<Score> scores;
             if constexpr (requires {
-                            Implementation::indel_scores(query, targets);
+                            Implementation::indel_scores(query, owner);
                           }) {
-              scores = Implementation::indel_scores(query, targets);
+              scores = Implementation::indel_scores(query, owner);
             } else {
               scores =
-                  ::stride_align::indel::dispatch_scores(query, targets);
+                  ::stride_align::indel::dispatch_scores(query, owner);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, false);
           }
@@ -3720,39 +3744,39 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             std::vector<double> scores;
             if constexpr (requires {
                             Implementation::indel_normalized_scores(
-                                query, targets);
+                                query, owner);
                           }) {
               scores =
-                  Implementation::indel_normalized_scores(query, targets);
+                  Implementation::indel_normalized_scores(query, owner);
             } else {
               scores = ::stride_align::indel::dispatch_normalized_scores(
-                  query, targets);
+                  query, owner);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::TrueDamerauLevenshtein: {
             auto scores =
                 ::stride_align::true_damerau::dispatch_scores(
-                    query, targets);
+                    query, owner);
             return ::stride_align::topk::make_top_k(
                 items, scores, k, false);
           }
           case Scorer::TrueDamerauLevenshteinNormalized: {
             auto scores =
                 ::stride_align::true_damerau::dispatch_normalized_scores(
-                    query, targets);
+                    query, owner);
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
           case Scorer::Jaro: {
             std::vector<double> scores;
             if constexpr (requires {
-                            Implementation::jaro_similarities(query, targets);
+                            Implementation::jaro_similarities(query, owner);
                           }) {
-              scores = Implementation::jaro_similarities(query, targets);
+              scores = Implementation::jaro_similarities(query, owner);
             }
             if (scores.empty()) {
               scores = ::stride_align::jaro::dispatch_similarities(
-                  query, targets);
+                  query, owner);
             }
             return ::stride_align::topk::make_top_k(items, scores, k, true);
           }
@@ -3763,13 +3787,13 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             std::vector<double> scores;
             if constexpr (requires {
                             Implementation::jaro_winkler_similarities(
-                                query, targets,
+                                query, owner,
                                 ::stride_align::jaro::kDefaultPrefixWeight,
                                 ::stride_align::jaro::kDefaultPrefixThreshold,
                                 ::stride_align::jaro::kDefaultPrefixCap);
                           }) {
               scores = Implementation::jaro_winkler_similarities(
-                  query, targets,
+                  query, owner,
                   ::stride_align::jaro::kDefaultPrefixWeight,
                   ::stride_align::jaro::kDefaultPrefixThreshold,
                   ::stride_align::jaro::kDefaultPrefixCap);
@@ -3777,7 +3801,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
             if (scores.empty()) {
               scores = ::stride_align::jaro::dispatch_winkler_similarities(
                   query,
-                  targets,
+                  owner,
                   ::stride_align::jaro::kDefaultPrefixWeight,
                   ::stride_align::jaro::kDefaultPrefixThreshold,
                   ::stride_align::jaro::kDefaultPrefixCap);
