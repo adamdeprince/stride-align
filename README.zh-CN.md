@@ -39,7 +39,7 @@ pip install \
 ```
 
 预编译的龙架构（LoongArch64）wheel 在两个镜像上都覆盖 Python
-3.9、3.10、3.11、3.12、3.13 和 3.14。如果你用的是其他 Python 版本
+3.12、3.13 和 3.14。如果你用的是其他 Python 版本
 （或者想从源码构建），`pip install stride-align` 会回退到 PyPI
 上的源码发行版，在本地编译 LSX/LASX 内核。
 

@@ -90,8 +90,8 @@ pip install \
 
 ### Other notes
 
-Prebuilt LoongArch64 wheels are available for Python 3.9, 3.10,
-3.11, 3.12, 3.13, and 3.14 — in both worlds — on both mirrors.
+Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
+and 3.14 — in both worlds — on both mirrors.
 The build details (toolchains, RPATH wrapper, static C++ runtime)
 live in [docs/loongson-build.md](docs/loongson-build.md). If you are
 on a different Python (or just want to build from source),

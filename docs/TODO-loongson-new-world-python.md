@@ -1,9 +1,9 @@
-# TODO: new-world Python builds for LoongArch (CPython 3.9 through 3.14)
+# TODO: new-world Python builds for LoongArch (CPython 3.12 through 3.14)
 
 **Status:** parked, revisit weekend after 2026-05-28.
 **Goal:** make this box capable of building **and** smoke-testing the
-new-world LoongArch wheel for every supported Python version (3.9,
-3.10, 3.11, 3.12, 3.13, 3.14). Today the box is fully old-world; the
+new-world LoongArch wheel for every supported Python version (3.12,
+3.13, 3.14). Today the box is fully old-world; the
 new-world wheel is built blind and uploaded without local validation.
 
 ## Why this is needed
@@ -27,7 +27,7 @@ new-world variant.
 
 ## Plan
 
-### 1. Build CPython 3.9–3.14 with the 16.1.0 wrappers
+### 1. Build CPython 3.12–3.14 with the 16.1.0 wrappers
 
 Native build (the box itself produces new-world binaries), one
 prefix per minor version so they coexist with the old-world pyenv
@@ -50,7 +50,7 @@ export LDFLAGS="-Wl,-rpath,$GCC16/sysroot/lib64 -Wl,-rpath,$GCC16/sysroot/usr/li
 the configure log.)
 
 Per-version build loop. The Python source layout has stabilised
-enough that the same incantation works for 3.9 onward; if a version
+enough that the same incantation works for 3.12 onward; if a version
 fails, drop a per-version note here.
 
 ```bash
@@ -58,7 +58,7 @@ PREFIX_ROOT=/opt/loongson-python-newworld
 mkdir -p ~/src/python-newworld
 cd ~/src/python-newworld
 
-for VER in 3.9.20 3.10.15 3.11.10 3.12.7 3.13.13 3.14.0; do
+for VER in 3.12.7 3.13.13 3.14.0; do
     MAJ_MIN=${VER%.*}
     test -d Python-$VER || (
         curl -L -O https://www.python.org/ftp/python/$VER/Python-$VER.tar.xz
@@ -85,7 +85,7 @@ Pin the exact 3.x.y you want — the list above is "latest stable in
 Verify each interpreter is new-world:
 
 ```bash
-for V in 3.9 3.10 3.11 3.12 3.13 3.14; do
+for V in 3.12 3.13 3.14; do
     p=/opt/loongson-python-newworld/$V/bin/python3
     echo "== $V =="
     file $p | grep -o "interpreter [^,]*"
@@ -101,7 +101,7 @@ PATH at configure time — wipe `build-$VER` and start over.
 ### 2. Per-version new-world venv + numpy
 
 ```bash
-for V in 3.9 3.10 3.11 3.12 3.13 3.14; do
+for V in 3.12 3.13 3.14; do
     /opt/loongson-python-newworld/$V/bin/python3 -m venv \
         ~/venvs/stride-align-newworld-$V
     source ~/venvs/stride-align-newworld-$V/bin/activate
@@ -120,7 +120,7 @@ done
 
 ```bash
 cd ~/dev/stride-align
-for V in 3.9 3.10 3.11 3.12 3.13 3.14; do
+for V in 3.12 3.13 3.14; do
     source ~/venvs/stride-align-newworld-$V/bin/activate
     CC=$GCC16/wrappers/gcc CXX=$GCC16/wrappers/g++ \
         pip wheel . --no-build-isolation --no-deps \
@@ -142,7 +142,7 @@ wheelhouse/newworld/stride_align-0.3.0-1.newworld-cp314-cp314-linux_loongarch64.
 ### 4. Smoke test each new-world wheel
 
 ```bash
-for V in 3.9 3.10 3.11 3.12 3.13 3.14; do
+for V in 3.12 3.13 3.14; do
     PY=cp$(echo $V | tr -d .)
     source ~/venvs/stride-align-newworld-$V/bin/activate
     pip install --force-reinstall \
@@ -192,9 +192,11 @@ promises older-Python support.
   expect this symlink (most new-world distros ship it via their
   glibc package; only the GCC-16.1-only bootstrap setups need the
   manual symlink).
-- **Python EOL.** 3.9 reaches end-of-life 2025-10; by the time this
-  TODO ships, decide whether to drop 3.9 from the support matrix
-  before doing the 3.9 build. Same call for 3.10 in 2026-10.
+- **Python EOL.** The project floor is 3.12 (Python 3.9–3.11 were
+  dropped). 3.12 itself reaches end-of-life 2028-10 — well after the
+  next planned rev — so the matrix should stay 3.12/3.13/3.14 for
+  the foreseeable future. Switching to a single abi3 wheel would
+  collapse this to one build per world; tracked separately.
 
 ## Related
 
