@@ -2800,40 +2800,98 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("target"));
 
   // ---- Phonetic encoders (phase D.2) ------------------------------------
+  //
+  // Each binding carries its full docstring on the C++ side so the
+  // Python ``stride_align`` module can re-export the nb_func object
+  // directly — one fewer Python frame per call than a wrapping
+  // ``def name(...): return backend.name(...)`` would cost.
 
   m.def(
       "soundex",
       [](nb::handle s) {
         return ::stride_align::phonetic::dispatch_soundex(s);
       },
+      "American Soundex encoding (Russell & Odell, 1918).\n\n"
+      "Returns a 4-character ASCII string when ``s`` contains at least\n"
+      "one ASCII letter, else the empty string. Non-letter and\n"
+      "non-ASCII characters are skipped before encoding.",
       nb::arg("s"));
 
-  // MetaphoneVariant is a Python IntEnum in stride_align/__init__.py;
-  // crossing the binding boundary as a plain int avoids the
-  // per-backend nb::enum_ duplicate-registration trap (same pattern
-  // as the Scorer enum).
+  m.def(
+      "soundex_equal",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::phonetic::dispatch_soundex_equal(a, b);
+      },
+      "True iff ``s1`` and ``s2`` produce the same Soundex code.\n"
+      "Inputs that encode to the empty string never match.",
+      nb::arg("s1"),
+      nb::arg("s2"));
+
+  // MetaphoneVariant / DoubleMetaphoneVariant cross the binding
+  // boundary as plain ``int`` so we can dodge the per-backend
+  // ``nb::enum_`` duplicate-registration trap (same pattern as the
+  // Scorer enum). Python-side they're wrapped in ``IntEnum``; nanobind
+  // accepts IntEnum where ``int`` is expected because IntEnum IS-A
+  // int, so callers can pass the symbolic name directly.
   m.def(
       "metaphone",
       [](nb::handle s, int variant) {
         const auto v = static_cast<::stride_align::phonetic::MetaphoneVariant>(variant);
         return ::stride_align::phonetic::dispatch_metaphone(s, v);
       },
+      "Metaphone phonetic encoding (Lawrence Philips, 1990).\n\n"
+      "Returns a variable-length ASCII code using only the letters\n"
+      "``A B F H J K L M N P R S T W X Y`` plus ``0`` for the theta\n"
+      "sound (``TH``). Non-letter and non-ASCII characters are skipped\n"
+      "before encoding.\n\n"
+      "``variant`` picks the rule family — see ``MetaphoneVariant``.",
       nb::arg("s"),
       nb::kw_only(),
       nb::arg("variant") = 0);  // 0 = kPhilips
+
+  m.def(
+      "metaphone_equal",
+      [](nb::handle a, nb::handle b, int variant) {
+        const auto v = static_cast<::stride_align::phonetic::MetaphoneVariant>(variant);
+        return ::stride_align::phonetic::dispatch_metaphone_equal(a, b, v);
+      },
+      "True iff ``s1`` and ``s2`` produce the same Metaphone code.\n"
+      "``variant`` is forwarded to both encodings.",
+      nb::arg("s1"),
+      nb::arg("s2"),
+      nb::kw_only(),
+      nb::arg("variant") = 0);
 
   m.def(
       "nysiis",
       [](nb::handle s) {
         return ::stride_align::phonetic::dispatch_nysiis(s);
       },
+      "NYSIIS phonetic encoding (Taft, 1970).\n\n"
+      "Produces a code up to 6 ASCII letters; non-letter and non-ASCII\n"
+      "characters are skipped before encoding. NYSIIS tends to be more\n"
+      "discriminative than Soundex for English names.",
       nb::arg("s"));
+
+  m.def(
+      "nysiis_equal",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::phonetic::dispatch_nysiis_equal(a, b);
+      },
+      "True iff ``s1`` and ``s2`` produce the same NYSIIS code.\n"
+      "Inputs that encode to the empty string never match.",
+      nb::arg("s1"),
+      nb::arg("s2"));
 
   m.def(
       "match_rating_codex",
       [](nb::handle s) {
         return ::stride_align::phonetic::dispatch_match_rating_codex(s);
       },
+      "Match Rating Approach codex (Moore, Western Airlines, 1977).\n\n"
+      "Compresses a name by dropping vowels (except the first letter),\n"
+      "collapsing consecutive duplicate letters, and keeping at most\n"
+      "three letters from each end if the result exceeds six.",
       nb::arg("s"));
 
   m.def(
@@ -2841,14 +2899,22 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle a, nb::handle b) {
         return ::stride_align::phonetic::dispatch_match_rating_compare(a, b);
       },
-      nb::arg("a"),
-      nb::arg("b"));
+      "Match Rating Approach pairwise comparison (Moore, 1977).\n\n"
+      "Returns True if the pair of names is similar enough per MRA's\n"
+      "rating rules: length-difference gate + a position-stripping\n"
+      "rating threshold that depends on combined codex length.",
+      nb::arg("s1"),
+      nb::arg("s2"));
 
   m.def(
       "caverphone",
       [](nb::handle s) {
         return ::stride_align::phonetic::dispatch_caverphone(s);
       },
+      "Caverphone 2.0 phonetic encoding (Hood, 2004).\n\n"
+      "Produces a fixed-length 10-character code, right-padded with\n"
+      "``1``. Originally designed to match names from late-19th-century\n"
+      "New Zealand electoral rolls.",
       nb::arg("s"));
 
   m.def(
@@ -2861,15 +2927,19 @@ void bind_backend_module(nb::module_& m, const char* doc) {
                     ::stride_align::phonetic::DoubleMetaphoneVariant>(variant));
         return nb::make_tuple(std::move(primary), std::move(alternate));
       },
+      "Double Metaphone phonetic encoding (Lawrence Philips, 2000).\n\n"
+      "Returns a ``(primary, alternate)`` tuple of phonetic codes. The\n"
+      "alternate is the empty string when the name has only one\n"
+      "reasonable encoding.\n\n"
+      "``max_length`` defaults to 64 (effectively unbounded); pass 4\n"
+      "for the classical fixed-length Philips form. ``variant`` —\n"
+      "see ``DoubleMetaphoneVariant``.",
       nb::arg("s"),
       nb::kw_only(),
       // Default matches modern reference implementations: emit the
       // full code, let callers slice. Pass ``max_length=4`` for the
       // classical Philips form.
       nb::arg("max_length") = 64U,
-      // ``variant`` is passed as an int to dodge the same duplicate-
-      // enum-registration issue the MetaphoneVariant binding hit.
-      // Python wraps it in ``DoubleMetaphoneVariant`` (IntEnum).
       nb::arg("variant") = 0);
 
   m.def(

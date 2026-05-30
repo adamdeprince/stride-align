@@ -109,4 +109,34 @@ dispatch_double_metaphone(nb::handle input,
   return {std::move(r.primary), std::move(r.alternate)};
 }
 
+// Two-input "encode both, compare" helpers. Implemented at the
+// dispatch layer rather than as Python wrappers so callers pay one
+// binding-call frame instead of two backend calls + a Python compare.
+// Empty codes (unencodable input) never match anything.
+
+inline bool dispatch_soundex_equal(nb::handle a, nb::handle b) {
+  const std::string sa = peel_to_ascii_string(a);
+  const std::string sb = peel_to_ascii_string(b);
+  const std::string ca = soundex(std::string_view(sa));
+  if (ca.empty()) return false;
+  return ca == soundex(std::string_view(sb));
+}
+
+inline bool dispatch_metaphone_equal(
+    nb::handle a, nb::handle b, MetaphoneVariant variant) {
+  const std::string sa = peel_to_ascii_string(a);
+  const std::string sb = peel_to_ascii_string(b);
+  const std::string ca = metaphone(std::string_view(sa), variant);
+  if (ca.empty()) return false;
+  return ca == metaphone(std::string_view(sb), variant);
+}
+
+inline bool dispatch_nysiis_equal(nb::handle a, nb::handle b) {
+  const std::string sa = peel_to_ascii_string(a);
+  const std::string sb = peel_to_ascii_string(b);
+  const std::string ca = nysiis(std::string_view(sa));
+  if (ca.empty()) return false;
+  return ca == nysiis(std::string_view(sb));
+}
+
 }  // namespace stride_align::phonetic

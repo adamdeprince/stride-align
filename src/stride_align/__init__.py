@@ -2144,28 +2144,12 @@ def true_damerau_levenshtein_normalized_scores(
 # ``unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()``.
 
 
-def soundex(s: object) -> str:
-    """American Soundex encoding (Russell & Odell, 1918).
-
-    Returns a 4-character ASCII string when ``s`` contains at least one
-    ASCII letter, else the empty string. Non-letter and non-ASCII
-    characters are skipped before encoding.
-
-    >>> soundex("Robert"), soundex("Rupert")
-    ('R163', 'R163')
-    >>> soundex("Ashcraft")        # tests the H-transparency rule
-    'A261'
-    >>> soundex("")                # empty in, empty out
-    ''
-    """
-    return _LEVENSHTEIN_BACKEND.soundex(s)
-
-
-def soundex_equal(s1: object, s2: object) -> bool:
-    """Convenience: True iff ``s1`` and ``s2`` produce the same Soundex code."""
-    code1 = _LEVENSHTEIN_BACKEND.soundex(s1)
-    code2 = _LEVENSHTEIN_BACKEND.soundex(s2)
-    return bool(code1) and code1 == code2
+# Phonetic encoders bind their full docstrings on the C++ side and
+# are re-exported here directly to skip a Python wrapper frame on
+# every call — these are the kind of millions-of-calls-per-second
+# fuzzy-match helpers where one extra frame matters.
+soundex = _LEVENSHTEIN_BACKEND.soundex
+soundex_equal = _LEVENSHTEIN_BACKEND.soundex_equal
 
 
 class MetaphoneVariant(enum.IntEnum):
@@ -2182,117 +2166,16 @@ class MetaphoneVariant(enum.IntEnum):
     """
 
 
-def metaphone(
-    s: object,
-    *,
-    variant: MetaphoneVariant = MetaphoneVariant.PHILIPS,
-) -> str:
-    """Metaphone phonetic encoding (Lawrence Philips, 1990).
-
-    Returns a variable-length ASCII code using only the letters
-    ``A B F H J K L M N P R S T W X Y`` plus ``0`` for the theta
-    sound (``TH``). Non-letter and non-ASCII characters are skipped
-    before encoding.
-
-    ``variant`` picks the rule family:
-
-    * :data:`MetaphoneVariant.PHILIPS` (default) — Lawrence Philips'
-      1990 published spec as reproduced in Apache Commons Codec.
-    * :data:`MetaphoneVariant.JELLYFISH` — matches the popular
-      jellyfish Python library's interpretation. Differs from the
-      spec on ``SCH`` (jellyfish emits ``SX``; spec emits ``SK``)
-      and ``GH`` at end of word (jellyfish keeps as ``KH``; spec
-      drops both).
-
-    >>> metaphone("Schmidt")
-    'SKMTT'
-    >>> metaphone("Schmidt", variant=MetaphoneVariant.JELLYFISH)
-    'SXMTT'
-    >>> metaphone("Hugh")
-    'H'
-    >>> metaphone("Hugh", variant=MetaphoneVariant.JELLYFISH)
-    'HKH'
-    """
-    return _LEVENSHTEIN_BACKEND.metaphone(s, variant=int(variant))
-
-
-def metaphone_equal(
-    s1: object,
-    s2: object,
-    *,
-    variant: MetaphoneVariant = MetaphoneVariant.PHILIPS,
-) -> bool:
-    """Convenience: True iff ``s1`` and ``s2`` produce the same Metaphone code.
-
-    ``variant`` is forwarded to :func:`metaphone` for both inputs.
-    """
-    v = int(variant)
-    code1 = _LEVENSHTEIN_BACKEND.metaphone(s1, variant=v)
-    code2 = _LEVENSHTEIN_BACKEND.metaphone(s2, variant=v)
-    return bool(code1) and code1 == code2
-
-
-def nysiis(s: object) -> str:
-    """NYSIIS phonetic encoding (Taft, 1970).
-
-    Produces a code up to 6 ASCII letters; non-letter and non-ASCII
-    characters are skipped before encoding. NYSIIS tends to be more
-    discriminative than Soundex for English names — e.g. it
-    distinguishes "Watkins" / "Wilkins" / "Wilkinson" where Soundex
-    would collide.
-
-    >>> nysiis("Watkins"), nysiis("Wilkins"), nysiis("Wilkinson")
-    ('WATCAN', 'WALCAN', 'WALCAN')
-    """
-    return _LEVENSHTEIN_BACKEND.nysiis(s)
-
-
-def nysiis_equal(s1: object, s2: object) -> bool:
-    """Convenience: True iff ``s1`` and ``s2`` produce the same NYSIIS code."""
-    code1 = _LEVENSHTEIN_BACKEND.nysiis(s1)
-    code2 = _LEVENSHTEIN_BACKEND.nysiis(s2)
-    return bool(code1) and code1 == code2
-
-
-def match_rating_codex(s: object) -> str:
-    """Match Rating Approach codex (Moore, Western Airlines, 1977).
-
-    Compresses a name by dropping vowels (except the first letter),
-    collapsing consecutive duplicate letters, and keeping at most
-    three letters from each end if the result exceeds six.
-
-    >>> match_rating_codex("Robert"), match_rating_codex("Christopher")
-    ('RBRT', 'CHRPHR')
-    """
-    return _LEVENSHTEIN_BACKEND.match_rating_codex(s)
-
-
-def match_rating_compare(s1: object, s2: object) -> bool:
-    """Match Rating Approach comparison.
-
-    Returns ``True`` when the two names match per MRA's length-difference
-    and minimum-rating rules.
-
-    >>> match_rating_compare("Robert", "Rupert")
-    True
-    >>> match_rating_compare("Robert", "Smith")
-    False
-    """
-    return _LEVENSHTEIN_BACKEND.match_rating_compare(s1, s2)
-
-
-def caverphone(s: object) -> str:
-    """Caverphone 2.0 phonetic encoding (David Hood, 2004).
-
-    Returns a fixed-length 10-character code right-padded with ``1``.
-    Designed for matching names in late-19th-century New Zealand
-    electoral rolls but widely applied to general English-language
-    name matching.
-
-    >>> caverphone("Stevenson"), caverphone("Thompson")
-    ('STFNSN1111', 'TMPSN11111')
-    """
-    return _LEVENSHTEIN_BACKEND.caverphone(s)
+# MetaphoneVariant / DoubleMetaphoneVariant are IntEnums; nanobind
+# accepts them as ints directly (IntEnum IS-A int), so we re-export
+# the bindings without a wrapper.
+metaphone = _LEVENSHTEIN_BACKEND.metaphone
+metaphone_equal = _LEVENSHTEIN_BACKEND.metaphone_equal
+nysiis = _LEVENSHTEIN_BACKEND.nysiis
+nysiis_equal = _LEVENSHTEIN_BACKEND.nysiis_equal
+match_rating_codex = _LEVENSHTEIN_BACKEND.match_rating_codex
+match_rating_compare = _LEVENSHTEIN_BACKEND.match_rating_compare
+caverphone = _LEVENSHTEIN_BACKEND.caverphone
 
 
 class DoubleMetaphoneVariant(enum.IntEnum):
@@ -2316,38 +2199,7 @@ class DoubleMetaphoneVariant(enum.IntEnum):
     """``metaphone`` PyPI package bug-compat. ``"Hugh"`` -> ``("HH", "")``."""
 
 
-def double_metaphone(
-    s: object,
-    *,
-    max_length: int = 64,
-    variant: DoubleMetaphoneVariant = DoubleMetaphoneVariant.COMMONS,
-) -> tuple[str, str]:
-    """Double Metaphone phonetic encoding (Lawrence Philips, 2000).
-
-    Returns a ``(primary, alternate)`` tuple of phonetic codes. The
-    alternate captures plausible non-English pronunciations (Italian,
-    Spanish, German, Slavic, Greek patterns) and is the empty string
-    when the name has only one reasonable encoding.
-
-    ``max_length`` defaults to ``64`` — effectively unbounded for
-    real-world names — matching the ``doublemetaphone`` Python
-    package and modern reference implementations. Pass
-    ``max_length=4`` for the classical Philips fixed-length form.
-
-    ``variant`` selects between two ports that disagree on a handful
-    of GH-after-vowel-at-start names. See
-    :class:`DoubleMetaphoneVariant`.
-
-    >>> double_metaphone("Smith")
-    ('SM0', 'XMT')
-    >>> double_metaphone("Hugh")
-    ('H', '')
-    >>> double_metaphone("Hugh", variant=DoubleMetaphoneVariant.PYTHON)
-    ('HH', '')
-    """
-    return _LEVENSHTEIN_BACKEND.double_metaphone(
-        s, max_length=max_length, variant=int(variant)
-    )
+double_metaphone = _LEVENSHTEIN_BACKEND.double_metaphone
 
 
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
