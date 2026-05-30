@@ -2562,6 +2562,12 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         return ::stride_align::levenshtein::dispatch_score(
             query, target, to_cutoff(score_cutoff));
       },
+      "Levenshtein edit distance between two sequences "
+      "(lower is more similar).\n\n"
+      "If ``score_cutoff`` is set, the kernel returns as soon as it can\n"
+      "prove the final distance must exceed it; in that case the\n"
+      "returned score is clamped to ``score_cutoff + 1`` (the\n"
+      "rapidfuzz convention).",
       nb::arg("query"),
       nb::arg("target"),
       nb::arg("score_cutoff") = nb::none());
@@ -2572,6 +2578,8 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         return ::stride_align::levenshtein::dispatch_normalized_score(
             query, target, to_cutoff(score_cutoff));
       },
+      "Length-normalized Levenshtein similarity in [0, 1] "
+      "(1 = identical).",
       nb::arg("query"),
       nb::arg("target"),
       nb::arg("score_cutoff") = nb::none());
@@ -2697,6 +2705,10 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::levenshtein::dispatch_osa_score(query, target);
       },
+      "Optimal String Alignment (OSA) distance between two sequences.\n\n"
+      "Like Levenshtein but adjacent transpositions cost 1 instead of 2\n"
+      "substitutions. Restricted in the OSA sense: each character can\n"
+      "participate in at most one edit. Matches rapidfuzz OSA.distance.",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -2705,6 +2717,7 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::levenshtein::dispatch_osa_normalized_score(query, target);
       },
+      "Length-normalized OSA similarity in [0, 1] (1 = identical).",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -2761,6 +2774,16 @@ void bind_backend_module(nb::module_& m, const char* doc) {
          nb::object window, nb::object distance) {
         return ::stride_align::dtw::dispatch_dtw(query, target, window, distance);
       },
+      "Dynamic Time Warping distance between two numeric ndarrays.\n\n"
+      "``query``, ``target`` are ``np.ndarray`` with dtype ``float32``,\n"
+      "``float64``, or ``int16``; both sides must share dtype.\n\n"
+      "``window`` is the Sakoe-Chiba band radius. ``None`` (default) is\n"
+      "unconstrained. An ``int`` is the absolute radius; a ``float`` in\n"
+      "``(0, 1]`` is the fraction of ``max(len(query), len(target))``.\n\n"
+      "``distance`` is ``\"l1\"`` for ``|x - y|`` (default for int16) or\n"
+      "``\"l2_squared\"`` for ``(x - y)^2`` (default for float32/float64).\n"
+      "``None`` picks the per-dtype default. Empty inputs raise\n"
+      "``ValueError``.",
       nb::arg("query"),
       nb::arg("target"),
       nb::kw_only(),
@@ -2796,6 +2819,9 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::hamming::dispatch_score(query, target);
       },
+      "Hamming distance between two equal-length sequences.\n\n"
+      "Raises ``ValueError`` when ``len(query) != len(target)``. Pad\n"
+      "inputs yourself if you want length-tolerant behavior.",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -2983,6 +3009,9 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::indel::dispatch_score(query, target);
       },
+      "Indel distance (insertions + deletions only, no substitutions).\n\n"
+      "Equals ``|query| + |target| - 2 * LCS(query, target)``. Lower is\n"
+      "more similar; 0 means identical.",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -2991,6 +3020,9 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::indel::dispatch_normalized_score(query, target);
       },
+      "Indel similarity in [0, 1] (1 = identical).\n\n"
+      "``1 - indel_score / (|query| + |target|)``. Bounded above by\n"
+      "``2 * min(|q|, |t|) / (|q| + |t|)`` for any pair.",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -3040,6 +3072,9 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       [](nb::handle query, nb::handle target) {
         return ::stride_align::true_damerau::dispatch_score(query, target);
       },
+      "True Damerau-Levenshtein edit distance (unrestricted).\n\n"
+      "Allows insertion, deletion, substitution, and transposition of\n"
+      "adjacent characters; characters may participate in multiple edits.",
       nb::arg("query"),
       nb::arg("target"));
 
@@ -3049,6 +3084,9 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         return ::stride_align::true_damerau::dispatch_normalized_score(
             query, target);
       },
+      "True Damerau-Levenshtein similarity in [0, 1] (1 = identical).\n\n"
+      "Normalized as ``1 - distance / max(|query|, |target|)``, same\n"
+      "shape as Levenshtein.",
       nb::arg("query"),
       nb::arg("target"));
 

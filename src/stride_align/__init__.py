@@ -1698,29 +1698,12 @@ def _refresh_levenshtein_backend() -> None:
     )
 
 
-def levenshtein_score(
-    query: object,
-    target: object,
-    score_cutoff: int | None = None,
-) -> int:
-    """Levenshtein edit distance between two sequences (lower is more similar).
-
-    If ``score_cutoff`` is set, the kernel returns as soon as it can prove the
-    final distance must exceed it; in that case the returned score is clamped
-    to ``score_cutoff + 1`` (the rapidfuzz convention).
-    """
-    return int(_LEVENSHTEIN_BACKEND.levenshtein_score(query, target, score_cutoff))
-
-
-def levenshtein_normalized_score(
-    query: object,
-    target: object,
-    score_cutoff: int | None = None,
-) -> float:
-    """Length-normalized Levenshtein similarity in [0, 1] (1 = identical)."""
-    return float(
-        _LEVENSHTEIN_BACKEND.levenshtein_normalized_score(query, target, score_cutoff)
-    )
+# Scalar Levenshtein entrypoints — the binding returns Python int /
+# float already, so the old ``int(...)`` / ``float(...)`` casts were
+# no-ops and the wrappers were pure overhead. Docstrings live on the
+# C++ binding side.
+levenshtein_score = _LEVENSHTEIN_BACKEND.levenshtein_score
+levenshtein_normalized_score = _LEVENSHTEIN_BACKEND.levenshtein_normalized_score
 
 
 def levenshtein_scores(
@@ -1873,21 +1856,14 @@ class LevenshteinScorer:
             self._query, targets, score_cutoff)
 
 
-def damerau_levenshtein_score(query: object, target: object) -> int:
-    """Optimal String Alignment (OSA) distance between two sequences.
-
-    Like Levenshtein but adjacent transpositions ("ab" → "ba") cost 1
-    instead of 2 substitutions. Restricted in the OSA sense: each
-    character can participate in at most one edit operation, so a
-    transposition can't be combined with another edit on the same chars.
-    This is what rapidfuzz exposes as ``OSA.distance``.
-    """
-    return int(_LEVENSHTEIN_BACKEND.damerau_levenshtein_score(query, target))
-
-
-def damerau_levenshtein_normalized_score(query: object, target: object) -> float:
-    """Length-normalized OSA similarity in [0, 1] (1 = identical)."""
-    return float(_LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_score(query, target))
+# Scalar OSA (damerau_levenshtein_*) and Hamming entrypoints —
+# direct re-exports for the same reason as Levenshtein: the binding
+# already returns the right Python scalar type and carries the
+# docstring on the C++ side.
+damerau_levenshtein_score = _LEVENSHTEIN_BACKEND.damerau_levenshtein_score
+damerau_levenshtein_normalized_score = (
+    _LEVENSHTEIN_BACKEND.damerau_levenshtein_normalized_score
+)
 
 
 def damerau_levenshtein_scores(query: object, targets: object) -> np.ndarray:
@@ -1931,36 +1907,7 @@ def damerau_levenshtein_normalized_scores(query: object, targets: object) -> np.
 # scalar reference; phase C.1b plugs SIMD into the same C++ dispatch
 # without touching this Python surface.
 
-def dtw(
-    query: object,
-    target: object,
-    *,
-    window: int | float | None = None,
-    distance: str | None = None,
-) -> float:
-    """Dynamic Time Warping distance between two numeric ndarrays.
-
-    Arguments
-    ---------
-    query, target
-        ``np.ndarray`` with dtype ``float32``, ``float64``, or ``int16``.
-        Both sides must share dtype. Other dtypes and non-ndarray
-        inputs raise ``TypeError``.
-    window
-        Sakoe-Chiba band radius. ``None`` (default) is unconstrained
-        DTW. An ``int`` is the absolute radius in samples. A ``float``
-        in ``(0, 1]`` is the fraction of ``max(len(query),
-        len(target))``.
-    distance
-        ``"l1"`` for ``|x - y|`` (default for ``int16`` audio), or
-        ``"l2_squared"`` for ``(x - y)^2`` (default for ``float32`` /
-        ``float64``). ``None`` picks the per-dtype default.
-
-    Returns the DTW distance as a Python ``float``. Empty inputs raise
-    ``ValueError``.
-    """
-    return float(_LEVENSHTEIN_BACKEND.dtw(query, target,
-                                          window=window, distance=distance))
+dtw = _LEVENSHTEIN_BACKEND.dtw
 
 
 def dtw_distances(
@@ -1987,18 +1934,8 @@ def dtw_distances(
     )
 
 
-def hamming_score(query: object, target: object) -> int:
-    """Hamming distance between two equal-length sequences.
-
-    Raises ``ValueError`` when ``len(query) != len(target)``. Pad inputs
-    yourself if you want length-tolerant behavior.
-    """
-    return int(_LEVENSHTEIN_BACKEND.hamming_score(query, target))
-
-
-def hamming_normalized_score(query: object, target: object) -> float:
-    """Hamming similarity in [0, 1] (1 = identical). Raises ValueError on length mismatch."""
-    return float(_LEVENSHTEIN_BACKEND.hamming_normalized_score(query, target))
+hamming_score = _LEVENSHTEIN_BACKEND.hamming_score
+hamming_normalized_score = _LEVENSHTEIN_BACKEND.hamming_normalized_score
 
 
 def hamming_scores(query: object, targets: object) -> np.ndarray:
@@ -2035,22 +1972,8 @@ def hamming_normalized_scores(query: object, targets: object) -> np.ndarray:
 # similarity is always in [0, 1].
 
 
-def indel_score(query: object, target: object) -> int:
-    """Indel distance (insertions + deletions only, no substitutions).
-
-    Equals ``|query| + |target| - 2 * LCS(query, target)``. Lower is more
-    similar; 0 means identical.
-    """
-    return int(_LEVENSHTEIN_BACKEND.indel_score(query, target))
-
-
-def indel_normalized_score(query: object, target: object) -> float:
-    """Indel similarity in [0, 1] (1 = identical).
-
-    ``1 - indel_score / (|query| + |target|)``. Bounded above by
-    ``2 * min(|q|, |t|) / (|q| + |t|)`` for any pair.
-    """
-    return float(_LEVENSHTEIN_BACKEND.indel_normalized_score(query, target))
+indel_score = _LEVENSHTEIN_BACKEND.indel_score
+indel_normalized_score = _LEVENSHTEIN_BACKEND.indel_normalized_score
 
 
 def indel_scores(query: object, targets: object) -> np.ndarray:
@@ -2083,28 +2006,12 @@ def indel_normalized_scores(query: object, targets: object) -> np.ndarray:
 # kernel yet; scalar DP per pair.
 
 
-def true_damerau_levenshtein_score(query: object, target: object) -> int:
-    """True Damerau-Levenshtein edit distance (unrestricted).
-
-    Allows insertion, deletion, substitution, and transposition of
-    adjacent characters; characters may participate in multiple edits.
-    """
-    return int(_LEVENSHTEIN_BACKEND.true_damerau_levenshtein_score(query, target))
-
-
-def true_damerau_levenshtein_normalized_score(
-    query: object, target: object
-) -> float:
-    """True Damerau-Levenshtein similarity in [0, 1] (1 = identical).
-
-    Normalized as ``1 - distance / max(|query|, |target|)``, same shape
-    as Levenshtein.
-    """
-    return float(
-        _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_score(
-            query, target
-        )
-    )
+true_damerau_levenshtein_score = (
+    _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_score
+)
+true_damerau_levenshtein_normalized_score = (
+    _LEVENSHTEIN_BACKEND.true_damerau_levenshtein_normalized_score
+)
 
 
 def true_damerau_levenshtein_scores(
