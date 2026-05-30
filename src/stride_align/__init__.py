@@ -2281,6 +2281,20 @@ def match_rating_compare(s1: object, s2: object) -> bool:
     return _LEVENSHTEIN_BACKEND.match_rating_compare(s1, s2)
 
 
+def caverphone(s: object) -> str:
+    """Caverphone 2.0 phonetic encoding (David Hood, 2004).
+
+    Returns a fixed-length 10-character code right-padded with ``1``.
+    Designed for matching names in late-19th-century New Zealand
+    electoral rolls but widely applied to general English-language
+    name matching.
+
+    >>> caverphone("Stevenson"), caverphone("Thompson")
+    ('STFNSN1111', 'TMPSN11111')
+    """
+    return _LEVENSHTEIN_BACKEND.caverphone(s)
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -3258,6 +3272,7 @@ __all__ = [
     "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
+    "caverphone",
     "match_rating_codex",
     "match_rating_compare",
     "metaphone",

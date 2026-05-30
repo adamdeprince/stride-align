@@ -19,6 +19,7 @@
 #include "stride_align/metaphone.hpp"
 #include "stride_align/nysiis.hpp"
 #include "stride_align/match_rating.hpp"
+#include "stride_align/caverphone.hpp"
 
 namespace stride_align::phonetic {
 
@@ -90,6 +91,11 @@ inline bool dispatch_match_rating_compare(nb::handle a, nb::handle b) {
   const std::string sa = peel_to_ascii_string(a);
   const std::string sb = peel_to_ascii_string(b);
   return match_rating_compare(std::string_view(sa), std::string_view(sb));
+}
+
+inline std::string dispatch_caverphone(nb::handle input) {
+  return dispatch_ascii_encoder(input,
+      [](std::string_view sv) { return caverphone(sv); });
 }
 
 }  // namespace stride_align::phonetic

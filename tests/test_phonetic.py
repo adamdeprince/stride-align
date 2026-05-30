@@ -478,6 +478,91 @@ def test_match_rating_compare_bytes_and_str() -> None:
     # bytes and str interchangeable on either side.
     assert sa.match_rating_compare(b"Robert", "Rupert")
     assert sa.match_rating_compare("Catherine", b"Kathryn")
+
+
+# ---- Caverphone 2 (Hood 2004) --------------------------------------------
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        # All from the Apache Commons Codec Caverphone2Test reference set.
+        ("Stevenson", "STFNSN1111"),
+        ("Peter", "PTA1111111"),
+        ("Peady", "PTA1111111"),
+        ("Thompson", "TMPSN11111"),
+        ("Smith", "SMT1111111"),
+        ("Schmidt", "SKMT111111"),
+        # All of these encode to "AT11111111" per the published spec.
+        ("add", "AT11111111"),
+        ("aid", "AT11111111"),
+        ("at", "AT11111111"),
+        ("art", "AT11111111"),
+        ("eat", "AT11111111"),
+        ("earth", "AT11111111"),
+        ("head", "AT11111111"),
+        ("hit", "AT11111111"),
+        ("hot", "AT11111111"),
+        ("hold", "AT11111111"),
+        ("hard", "AT11111111"),
+        ("heart", "AT11111111"),
+        ("it", "AT11111111"),
+        ("out", "AT11111111"),
+        ("old", "AT11111111"),
+        # Final-mb rule + double-mb sanity.
+        ("mb", "M111111111"),
+        ("mbmb", "MPM1111111"),
+        # The RTA family.
+        ("rather", "RTA1111111"),
+        ("ready", "RTA1111111"),
+        ("writer", "RTA1111111"),
+        # The SSA family.
+        ("social", "SSA1111111"),
+        # The APA family — exercises the "L between vowels" rule
+        # subtly: "able" drops L (l-3 at end, not 3-l-3); "appear"
+        # has no L.
+        ("able", "APA1111111"),
+        ("appear", "APA1111111"),
+        # KLN family member where L is preserved between vowel markers.
+        ("Cailean", "KLN1111111"),
+    ],
+)
+def test_caverphone_canonical(name: str, expected: str) -> None:
+    assert sa.caverphone(name) == expected
+
+
+def test_caverphone_empty_input() -> None:
+    # Empty input still produces a 10-character pad code.
+    assert sa.caverphone("") == "1111111111"
+
+
+def test_caverphone_no_letters() -> None:
+    # Non-letter input behaves like empty.
+    assert sa.caverphone("12345") == "1111111111"
+
+
+def test_caverphone_bytes_input() -> None:
+    assert sa.caverphone(b"Stevenson") == "STFNSN1111"
+    assert sa.caverphone(b"") == "1111111111"
+
+
+def test_caverphone_case_insensitive() -> None:
+    assert sa.caverphone("STEVENSON") == sa.caverphone("stevenson") == "STFNSN1111"
+
+
+def test_caverphone_non_ascii_skipped() -> None:
+    assert sa.caverphone("café") == sa.caverphone("caf")
+    assert sa.caverphone("你好") == "1111111111"
+
+
+def test_caverphone_rejects_non_string() -> None:
+    with pytest.raises(TypeError, match="str or bytes"):
+        sa.caverphone(12345)
+
+
+def test_caverphone_fixed_length_10() -> None:
+    # Every output is exactly 10 characters; long inputs truncate.
+    for name in ("a", "Stevenson", "Christopher", "Antidisestablishmentarianism"):
+        assert len(sa.caverphone(name)) == 10
     # Smith / Smyth diverge here (Y is treated as non-vowel by
     # this NYSIIS variant, so SMYTH -> SNYT vs SMITH -> SNAT).
     assert not sa.nysiis_equal("Smith", "Smyth")
