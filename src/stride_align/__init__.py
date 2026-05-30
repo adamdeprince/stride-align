@@ -2295,6 +2295,61 @@ def caverphone(s: object) -> str:
     return _LEVENSHTEIN_BACKEND.caverphone(s)
 
 
+class DoubleMetaphoneVariant(enum.IntEnum):
+    """Selects which port :func:`double_metaphone` follows.
+
+    The two values are not equal-weight algorithmic variations.
+    :attr:`COMMONS` is the faithful Lawrence Philips port (Apache
+    Commons Codec and the ``doublemetaphone`` PyPI package, which
+    mirrors it). :attr:`PYTHON` reproduces a known bug in the
+    ``metaphone`` PyPI package: a missing ``else`` in its
+    ``process_g`` GH branch lets the previous character's emission
+    leak into the next iteration, so names like "Hugh" and "High"
+    come out ``HH`` instead of ``H``. Use :attr:`PYTHON` only when
+    you need byte-for-byte agreement with that library.
+    """
+
+    COMMONS = 0
+    """Apache Commons Codec semantics. Correct per the Philips spec. Default."""
+
+    PYTHON = 1
+    """``metaphone`` PyPI package bug-compat. ``"Hugh"`` -> ``("HH", "")``."""
+
+
+def double_metaphone(
+    s: object,
+    *,
+    max_length: int = 64,
+    variant: DoubleMetaphoneVariant = DoubleMetaphoneVariant.COMMONS,
+) -> tuple[str, str]:
+    """Double Metaphone phonetic encoding (Lawrence Philips, 2000).
+
+    Returns a ``(primary, alternate)`` tuple of phonetic codes. The
+    alternate captures plausible non-English pronunciations (Italian,
+    Spanish, German, Slavic, Greek patterns) and is the empty string
+    when the name has only one reasonable encoding.
+
+    ``max_length`` defaults to ``64`` — effectively unbounded for
+    real-world names — matching the ``doublemetaphone`` Python
+    package and modern reference implementations. Pass
+    ``max_length=4`` for the classical Philips fixed-length form.
+
+    ``variant`` selects between two ports that disagree on a handful
+    of GH-after-vowel-at-start names. See
+    :class:`DoubleMetaphoneVariant`.
+
+    >>> double_metaphone("Smith")
+    ('SM0', 'XMT')
+    >>> double_metaphone("Hugh")
+    ('H', '')
+    >>> double_metaphone("Hugh", variant=DoubleMetaphoneVariant.PYTHON)
+    ('HH', '')
+    """
+    return _LEVENSHTEIN_BACKEND.double_metaphone(
+        s, max_length=max_length, variant=int(variant)
+    )
+
+
 # Jaro / Jaro-Winkler. Both are similarity in [0, 1]; there is no
 # matching distance form. Defaults match rapidfuzz: prefix_weight=0.1,
 # prefix_threshold=0.7 (no Winkler bonus below 0.7 base similarity),
@@ -3273,6 +3328,8 @@ __all__ = [
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
     "caverphone",
+    "double_metaphone",
+    "DoubleMetaphoneVariant",
     "match_rating_codex",
     "match_rating_compare",
     "metaphone",

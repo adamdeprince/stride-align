@@ -20,6 +20,7 @@
 #include "stride_align/nysiis.hpp"
 #include "stride_align/match_rating.hpp"
 #include "stride_align/caverphone.hpp"
+#include "stride_align/double_metaphone.hpp"
 
 namespace stride_align::phonetic {
 
@@ -96,6 +97,16 @@ inline bool dispatch_match_rating_compare(nb::handle a, nb::handle b) {
 inline std::string dispatch_caverphone(nb::handle input) {
   return dispatch_ascii_encoder(input,
       [](std::string_view sv) { return caverphone(sv); });
+}
+
+inline std::pair<std::string, std::string>
+dispatch_double_metaphone(nb::handle input,
+                          std::size_t max_length,
+                          DoubleMetaphoneVariant variant) {
+  const std::string s = peel_to_ascii_string(input);
+  DoubleMetaphoneResult r =
+      double_metaphone(std::string_view(s), max_length, variant);
+  return {std::move(r.primary), std::move(r.alternate)};
 }
 
 }  // namespace stride_align::phonetic

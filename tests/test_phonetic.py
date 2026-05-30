@@ -570,3 +570,131 @@ def test_caverphone_fixed_length_10() -> None:
     assert not sa.nysiis_equal("", "")
 
 
+# ---------------------------------------------------------------------------
+# Double Metaphone
+# ---------------------------------------------------------------------------
+
+# Reference data: cross-checked against the ``doublemetaphone`` PyPI
+# package (a direct port of Apache Commons Codec's DoubleMetaphone)
+# and against published Apache Commons Codec test vectors. Where the
+# ``metaphone`` PyPI package disagrees, we exercise both variants
+# explicitly under DoubleMetaphoneVariant.PYTHON.
+
+
+@pytest.mark.parametrize(
+    "name,primary,alternate",
+    [
+        # Single-encoding names — alternate is empty.
+        ("Smith",    "SM0",  "XMT"),
+        ("Robert",   "RPRT", ""),
+        ("Knight",   "NT",   ""),
+        ("Wright",   "RT",   ""),
+        ("Caesar",   "SSR",  ""),
+        ("Lloyd",    "LT",   ""),
+        ("Lamb",     "LMP",  ""),
+        ("Match",    "MX",   ""),
+        ("Chess",    "XS",   ""),
+        ("Honeyman", "HNMN", ""),
+        # Names with a second pronunciation: alternate diverges.
+        ("Schmidt",  "XMT",  "SMT"),
+        ("Schwartz", "XRTS", "XFRTS"),
+        ("Pawlowski","PLSK", "PLFSK"),
+        # GH-after-vowel cases where Apache Commons / DoubleMetaphone
+        # PyPI agree that GH is silent. The ``metaphone`` PyPI port
+        # disagrees and gets covered by the variant test below.
+        ("Hugh",     "H",    ""),
+        ("High",     "H",    ""),
+        # GH that ends a -OUGH/-AUGH word emits 'F'.
+        ("Tough",    "TF",   ""),
+        ("Cough",    "KF",   ""),
+        # Silent-start: silent-K, silent-W, silent-G.
+        ("Gnaeus",   "NS",   ""),
+        # Slavic / Germanic ending TZ -> "S"/"TS" was the bug we
+        # caught — primary should be a single S, not doubled.
+        ("Tymczak",  "TMSK", "TMXK"),
+    ],
+)
+def test_double_metaphone_canonical(
+    name: str, primary: str, alternate: str
+) -> None:
+    assert sa.double_metaphone(name) == (primary, alternate)
+
+
+def test_double_metaphone_empty_input() -> None:
+    assert sa.double_metaphone("") == ("", "")
+
+
+def test_double_metaphone_no_letters() -> None:
+    assert sa.double_metaphone("12345") == ("", "")
+
+
+def test_double_metaphone_bytes_input() -> None:
+    assert sa.double_metaphone(b"Smith") == ("SM0", "XMT")
+
+
+def test_double_metaphone_case_insensitive() -> None:
+    assert sa.double_metaphone("SMITH") == sa.double_metaphone("smith")
+
+
+def test_double_metaphone_non_ascii_skipped() -> None:
+    # Non-ASCII codepoints are stripped before encoding.
+    assert sa.double_metaphone("Müller") == sa.double_metaphone("Mller")
+
+
+def test_double_metaphone_rejects_non_string() -> None:
+    with pytest.raises(TypeError, match="str or bytes"):
+        sa.double_metaphone(12345)
+
+
+def test_double_metaphone_max_length_truncates() -> None:
+    # The classical Philips form caps both codes at 4.
+    primary, alternate = sa.double_metaphone("Christopher", max_length=4)
+    assert len(primary) <= 4
+    assert len(alternate) <= 4
+    # The default cap (64) leaves the full code intact.
+    primary_full, _ = sa.double_metaphone("Christopher")
+    assert len(primary_full) > 4
+    assert primary_full.startswith(primary)
+
+
+def test_double_metaphone_alternate_empty_when_same_as_primary() -> None:
+    # Names with no second pronunciation have an empty alternate
+    # rather than a duplicate of primary — callers can use truthy
+    # tests like ``if alt:``.
+    _, alt = sa.double_metaphone("Robert")
+    assert alt == ""
+
+
+def test_double_metaphone_variant_python_bug_compat() -> None:
+    # The ``metaphone`` PyPI package has a missing-else bug in its
+    # GH branch that doubles the prior letter for "Hugh"/"High".
+    # DoubleMetaphoneVariant.PYTHON reproduces that exactly for
+    # callers cross-checking against that library.
+    assert sa.double_metaphone(
+        "Hugh", variant=sa.DoubleMetaphoneVariant.PYTHON
+    ) == ("HH", "")
+    assert sa.double_metaphone(
+        "High", variant=sa.DoubleMetaphoneVariant.PYTHON
+    ) == ("HH", "")
+    # Names without the GH-after-vowel-at-start pattern are
+    # unaffected by the variant flag.
+    assert sa.double_metaphone(
+        "Smith", variant=sa.DoubleMetaphoneVariant.PYTHON
+    ) == sa.double_metaphone("Smith")
+
+
+def test_double_metaphone_variant_default_is_commons() -> None:
+    # Default behaviour matches DoubleMetaphoneVariant.COMMONS.
+    assert sa.double_metaphone("Hugh") == sa.double_metaphone(
+        "Hugh", variant=sa.DoubleMetaphoneVariant.COMMONS
+    )
+    assert sa.DoubleMetaphoneVariant.COMMONS == 0
+
+
+def test_double_metaphone_variant_intenum() -> None:
+    # The enum exposes COMMONS=0 and PYTHON=1 as int-coercible
+    # values — matches the MetaphoneVariant pattern.
+    assert int(sa.DoubleMetaphoneVariant.COMMONS) == 0
+    assert int(sa.DoubleMetaphoneVariant.PYTHON) == 1
+
+

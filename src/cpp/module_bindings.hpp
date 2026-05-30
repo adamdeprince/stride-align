@@ -2852,6 +2852,27 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("s"));
 
   m.def(
+      "double_metaphone",
+      [](nb::handle s, std::size_t max_length, int variant) {
+        auto [primary, alternate] =
+            ::stride_align::phonetic::dispatch_double_metaphone(
+                s, max_length,
+                static_cast<
+                    ::stride_align::phonetic::DoubleMetaphoneVariant>(variant));
+        return nb::make_tuple(std::move(primary), std::move(alternate));
+      },
+      nb::arg("s"),
+      nb::kw_only(),
+      // Default matches modern reference implementations: emit the
+      // full code, let callers slice. Pass ``max_length=4`` for the
+      // classical Philips form.
+      nb::arg("max_length") = 64U,
+      // ``variant`` is passed as an int to dodge the same duplicate-
+      // enum-registration issue the MetaphoneVariant binding hit.
+      // Python wraps it in ``DoubleMetaphoneVariant`` (IntEnum).
+      nb::arg("variant") = 0);
+
+  m.def(
       "hamming_normalized_score",
       [](nb::handle query, nb::handle target) {
         return ::stride_align::hamming::dispatch_normalized_score(query, target);
