@@ -2,11 +2,43 @@
 
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
-`stride-align` is a [blazing fast library](BENCHMARK.md) to tell you
-how "similar" two strings are.  It does this by implementing the
-Smith-Waterman and Needleman-Wunsch algorithms. Instead of giving you
-a lecture, we're going to learn by doing. Let's dive right into how it
-works.
+`stride-align` is a SIMD-accelerated Python library for fuzzy string
+matching, sequence alignment, phonetic encoding, and time-series
+distance. It implements Smith-Waterman and Needleman-Wunsch (local
+and global alignment), Levenshtein and Damerau-Levenshtein edit
+distance, Jaro and Jaro-Winkler similarity, Hamming and Indel
+distance, Dynamic Time Warping for `int16`/`float32`/`float64`
+numeric sequences, and the standard phonetic-encoder family —
+Soundex, Metaphone (Philips and jellyfish variants), Double Metaphone
+(Apache Commons and Python-package variants), NYSIIS, the Match
+Rating Approach codex and comparator, and Caverphone 2. All scoring
+kernels are hand-vectorised behind a runtime CPU dispatcher: x86
+SSE4.1, AVX2, AVX-512BW+VL, AVX10/256 and AVX10/512; ARM NEON and
+SVE/SVE2; LoongArch LSX and LASX; PowerPC VSX; with a portable scalar
+fallback. The library binds to Python through nanobind (vectorcall on
+every entry point), targets Python 3.12+, and accepts `bytes`,
+`str` (UCS-1/UCS-2/UCS-4 via zero-copy), and NumPy `ndarray` inputs.
+
+The library is built for high-throughput fuzzy-match workloads —
+record linkage, deduplication, search-as-you-type, NLP token
+similarity, and bioinformatics-style local alignment — with first-
+class support for CJK text: UCS-2 inputs route to a 16-bit-token
+Farrar kernel rather than being downconverted to bytes, and Chinese,
+Japanese and Korean strings exercise the same SIMD path as ASCII.
+The all-pairs surface (`cdist`, `cdist_above_threshold`,
+`cdist_top_k`, `cdist_top_k_per_query`) combines per-target SIMD
+scoring with closed-form length-difference pruning that skips
+scoring work when a target's max possible similarity provably can't
+clear a running heap minimum or threshold. Substitution matrices
+(BLOSUM, PAM) and affine gap penalties are supported on the
+alignment path. Cross-architecture correctness is validated on real
+hardware (no emulators) — Intel/AMD x86, Apple Silicon and Graviton
+ARM, Loongson LoongArch, and IBM POWER8 — with benchmarks tracked at
+[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html)
+and the project home at [stride-align.com](https://stride-align.com).
+
+Instead of giving you a lecture, we're going to learn by doing.
+Let's dive right into how it works.
 
 ## Installation
 
@@ -487,7 +519,97 @@ For Lev / OSA, patterns up to 64 chars run a single-word Myers;
 fall back to scalar bit-parallel for patterns >64 (multi-word
 generalization deferred); true-DL is scalar DP only.
 
-### `cdist`, `cdist_above_threshold`, `cdist_top_k`
+### Phonetic encoders
+
+For name matching, deduplication, and search-as-you-type, `stride-align`
+ships the full standard phonetic-encoder family. Each encoder maps a
+string to a short code such that names that *sound* similar share a
+code, regardless of spelling:
+
+```python
+import stride_align as sa
+
+# American Soundex (Russell & Odell, 1918). 4-character code.
+sa.soundex("Robert")                                     # -> "R163"
+sa.soundex("Rupert")                                     # -> "R163"
+sa.soundex_equal("Robert", "Rupert")                     # -> True
+
+# Metaphone (Lawrence Philips, 1990) — two-letter and longer
+# spec-correct variants. The published 1990 spec and the popular
+# jellyfish library disagree on a handful of edge cases; the variant
+# kwarg picks the rule family.
+sa.metaphone("Schmidt")                                  # -> "SKMTT"  (PHILIPS, spec)
+sa.metaphone("Schmidt", variant=sa.MetaphoneVariant.JELLYFISH)  # -> "SXMTT"
+sa.metaphone_equal("Schmidt", "Smith")                   # -> False
+
+# Double Metaphone (Lawrence Philips, 2000) — primary and alternate
+# codes; the alternate captures plausible non-English pronunciations.
+# COMMONS is the faithful Apache Commons Codec port; PYTHON is bug-
+# compat with the metaphone PyPI package.
+sa.double_metaphone("Schwartz")                          # -> ("XRTS", "XFRTS")
+sa.double_metaphone("Hugh")                              # -> ("H", "")
+sa.double_metaphone("Hugh",
+    variant=sa.DoubleMetaphoneVariant.PYTHON)            # -> ("HH", "")
+
+# NYSIIS (Taft, 1970). More discriminative than Soundex for English
+# names — "Watkins" / "Wilkins" / "Wilkinson" don't collide.
+sa.nysiis("Watkins"), sa.nysiis("Wilkins")               # -> ("WATCAN", "WALCAN")
+
+# Match Rating Approach (Moore, Western Airlines, 1977). A codex plus
+# a pairwise comparator with length-difference + rating-threshold rules.
+sa.match_rating_codex("Christopher")                     # -> "CHRPHR"
+sa.match_rating_compare("Robert", "Rupert")              # -> True
+
+# Caverphone 2.0 (Hood, 2004). Fixed-length 10-character code,
+# right-padded with '1'. Designed for late-19th-century New Zealand
+# electoral rolls but widely applied to general English-language
+# name matching.
+sa.caverphone("Stevenson")                               # -> "STFNSN1111"
+```
+
+All seven encoders are dispatched through the same byte-extraction
+helper, accept `str` and `bytes` inputs interchangeably, and skip
+non-letter / non-ASCII codepoints before encoding — pre-normalise
+with `unicodedata.normalize("NFKD", s)` if you want accent folding.
+Cross-checked against the canonical Apache Commons Codec reference
+data and the `jellyfish`, `metaphone`, and `doublemetaphone` PyPI
+packages.
+
+### Dynamic Time Warping
+
+For aligning numeric sequences whose timing or speed varies — audio
+signals, gesture / sensor traces, financial time series —
+`stride-align` exposes Dynamic Time Warping with optional Sakoe-Chiba
+band:
+
+```python
+import numpy as np
+import stride_align as sa
+
+q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+t = np.array([1.0, 2.0, 2.5, 4.0, 5.0])
+
+# Default distance follows the dtype:
+#   float32 / float64 -> L2-squared, (x - y)^2
+#   int16             -> L1, |x - y|  (audio convention)
+sa.dtw(q, t)                                              # -> 0.25
+
+# Sakoe-Chiba band: int radius or fraction of max(|q|, |t|).
+sa.dtw(q, t, window=2)
+sa.dtw(q, t, window=0.2)
+
+# Explicit distance.
+sa.dtw(q.astype(np.int16), t.astype(np.int16), distance="l1")
+
+# Batch.
+sa.dtw_distances(q, [t, t * 2, t + 0.5], window=2)
+```
+
+Inputs must be NumPy `ndarray` with matching dtype (`float32`,
+`float64`, or `int16` — the natural audio dtype). Other dtypes and
+non-ndarray inputs raise `TypeError`.
+
+### `cdist`, `cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`
 
 For all-pairs scoring across two lists of strings, `stride-align`
 ships three matrix-style entry points:
@@ -514,15 +636,28 @@ for score, q, t in sa.cdist_above_threshold(
 # per-thread; a shared atomic global-min bound lets the per-pair
 # cutoff push-down lift the prune threshold as work progresses.
 sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+
+# Top-k targets PER QUERY, yielded as a generator. Differs from
+# cdist_top_k (which returns the k highest pairs globally) by keeping
+# a separate top-k heap per query. With pruning=True, the worst-in-
+# heap score adapts as scoring progresses and targets whose closed-
+# form length-difference upper bound on similarity can't beat it
+# are skipped before the kernel runs — a big win on workloads with
+# wide length variation.
+for query, top in sa.cdist_top_k_per_query(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=True,
+):
+    # top is [(score, target), ...] sorted descending
+    ...
 ```
 
 At high thresholds the pruning is dramatic — see the cross-arch
-table in [BENCHMARK.md](BENCHMARK.md) (the `cdist pruning` rows).
+table in [BENCHMARK.md](https://stride-align.com/BENCHMARK.html) (the `cdist pruning` rows).
 Loongson LASX in particular flips the expected ranking against
 Tiger Lake AVX-512 at T=0.99; the comparison report lives at
 [docs/loongson-vs-tiger-lake-cdist-2026-05-24.md](docs/loongson-vs-tiger-lake-cdist-2026-05-24.md).
 
-See [BENCHMARK.md](BENCHMARK.md) for full cross-architecture numbers.
+See [BENCHMARK.md](https://stride-align.com/BENCHMARK.html) for full cross-architecture numbers.
 
 ## Optimizations and Benchmarks
 
@@ -542,7 +677,7 @@ Chinese knot charms, panda keychains, and small dragon desk objects are all
 welcome. Please do not send anything expensive or anything that requires
 customs paperwork.
 
-See [complete benchmarks](BENCHMARK.md).
+See [complete benchmarks](https://stride-align.com/BENCHMARK.html).
 
 ## Native Microbench
 

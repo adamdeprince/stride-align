@@ -2,7 +2,7 @@
 
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
-`stride-align` 是一个[极速库](BENCHMARK.md)，用来判断两个字符串的
+`stride-align` 是一个[极速库](https://stride-align.com/BENCHMARK.html)，用来判断两个字符串的
 “相似程度”。它通过实现 Smith-Waterman 和 Needleman-Wunsch 算法来完成
 这件事。这里不讲理论，直接动手——边做边学。
 
@@ -432,13 +432,13 @@ for score, q, t in sa.cdist_above_threshold(
 sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
 ```
 
-在高阈值下剪枝的效果非常夸张——见 [BENCHMARK.md](BENCHMARK.md)
+在高阈值下剪枝的效果非常夸张——见 [BENCHMARK.md](https://stride-align.com/BENCHMARK.html)
 中的跨架构表（`cdist pruning` 那几行）。特别是龙芯（Loongson）的
 LASX 后端在 T=0.99 下，让通常预期会领先的 Tiger Lake AVX-512
 反而落后；对比报告见
 [docs/loongson-vs-tiger-lake-cdist-2026-05-24.md](docs/loongson-vs-tiger-lake-cdist-2026-05-24.md)。
 
-完整的跨架构数据见 [BENCHMARK.md](BENCHMARK.md)。
+完整的跨架构数据见 [BENCHMARK.md](https://stride-align.com/BENCHMARK.html)。
 
 ## 优化和基准测试
 
@@ -455,7 +455,7 @@ Smith-Waterman），LASX backend 比 generic backend 快 16 倍，
 茶叶、书法书签、剪纸、中国结、熊猫钥匙扣、小龙摆件之类都很好。
 请不要寄贵重物品或需要报关的东西。
 
-完整基准测试见 [BENCHMARK.md](BENCHMARK.md)。
+完整基准测试见 [BENCHMARK.md](https://stride-align.com/BENCHMARK.html)。
 
 ## 原生微基准
 

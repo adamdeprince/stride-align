@@ -54,6 +54,19 @@ if(NOT STRIDE_ALIGN_PGO_MODE_NORMALIZED MATCHES "^(OFF|GENERATE|USE)$")
   message(FATAL_ERROR "STRIDE_ALIGN_PGO_MODE must be OFF, GENERATE, or USE")
 endif()
 
+# stride-align builds per-CPython-version wheels rather than a single
+# abi3 wheel. The Stable ABI (Py_LIMITED_API) hides the fast Unicode
+# accessors we rely on — PyUnicode_KIND, PyUnicode_*_DATA,
+# PyUnicode_GET_LENGTH, PyList_GET_SIZE, PyTuple_GET_SIZE — because
+# they live in cpython/unicodeobject.h, which is excluded when
+# Py_LIMITED_API is set. Their function-form equivalents work but
+# either copy the string (PyUnicode_AsUCS4Copy) or are one C call per
+# codepoint (PyUnicode_ReadChar), which defeats the zero-copy SIMD
+# path that's the whole point of routing UCS-2/UCS-4 inputs to wider
+# lanes for CJK. So we don't request Development.SABIModule, nanobind's
+# STABLE_ABI silently falls back to per-version tagging, and we ship
+# one wheel per minor Python version. ``requires-python = ">=3.12"`` in
+# pyproject.toml still bounds the matrix to 3.12 / 3.13 / 3.14.
 set(STRIDE_ALIGN_PYTHON_COMPONENTS Interpreter Development.Module)
 if(STRIDE_ALIGN_BUILD_MICROBENCH)
   list(APPEND STRIDE_ALIGN_PYTHON_COMPONENTS Development.Embed)

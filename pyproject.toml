@@ -8,25 +8,69 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "stride-align"
 version = "0.3.0"
-description = "Smith-Waterman and Needleman-Wunsch alignments with a nanobind C++20 backend."
+description = "SIMD-accelerated fuzzy string matching, sequence alignment (Smith-Waterman / Needleman-Wunsch), edit distance (Levenshtein / OSA / Indel / Jaro-Winkler), phonetic encoders (Soundex / Metaphone / NYSIIS / Caverphone), and Dynamic Time Warping — x86 / ARM / LoongArch / POWER kernels with first-class CJK."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-authors = [{ name = "Adam" }]
+authors = [{ name = "Adam DePrince", email = "adam.deprince@gmail.com" }]
+keywords = [
+  "fuzzy-matching",
+  "string-similarity",
+  "string-distance",
+  "edit-distance",
+  "sequence-alignment",
+  "smith-waterman",
+  "needleman-wunsch",
+  "levenshtein",
+  "damerau-levenshtein",
+  "jaro-winkler",
+  "hamming",
+  "dtw",
+  "dynamic-time-warping",
+  "phonetic",
+  "soundex",
+  "metaphone",
+  "double-metaphone",
+  "nysiis",
+  "caverphone",
+  "simd",
+  "avx2",
+  "avx512",
+  "avx10",
+  "neon",
+  "sve",
+  "vsx",
+  "lsx",
+  "lasx",
+  "bioinformatics",
+  "cjk",
+  "unicode",
+  "rapidfuzz-alternative",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: C++",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Text Processing :: General",
+  "Topic :: Text Processing :: Linguistic",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
   "numpy>=1.22",
 ]
+
+[project.urls]
+Homepage = "https://stride-align.com"
+Repository = "https://github.com/adamdeprince/stride-align"
+Issues = "https://github.com/adamdeprince/stride-align/issues"
+Changelog = "https://github.com/adamdeprince/stride-align/blob/main/CHANGELOG.md"
+Benchmarks = "https://stride-align.com/BENCHMARK.html"
 
 [project.scripts]
 stride-align-benchmark = "stride_align.benchmark:main"
@@ -61,6 +105,10 @@ build-dir = "build/{wheel_tag}"
 cmake.build-type = "Release"
 editable.mode = "redirect"
 wheel.packages = ["src/stride_align"]
+# We don't set ``wheel.py-api = "cp312"`` (abi3) because our C++
+# extensions need the cpython/unicodeobject.h fast macros for zero-
+# copy UCS-1/UCS-2/UCS-4 access — see the SABIModule comment in
+# CMakeLists.txt for the full rationale. Per-version wheels it is.
 
 [tool.pytest.ini_options]
 minversion = "8.0"
