@@ -7,6 +7,7 @@ import importlib
 import os
 import warnings
 from types import ModuleType
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -2774,6 +2775,83 @@ def cdist_top_k(
     )
 
 
+def cdist_top_k_per_query(
+    queries: object,
+    targets: object,
+    *,
+    scorer: "Scorer",
+    k: int = 5,
+    pruning: bool = False,
+    prefix_weight: float = 0.1,
+    prefix_threshold: float = 0.7,
+    prefix_cap: int = 4,
+) -> Iterator[tuple[object, list[tuple[float, object]]]]:
+    """Yield ``(query, [(score, target), ...])`` for each query.
+
+    The k highest-similarity targets *per query*, one query at a time.
+    Differs from :func:`cdist_top_k` (which returns the k highest pairs
+    globally across the whole query × target matrix) by keeping a
+    separate top-k heap per query.
+
+    Set ``pruning=True`` to enable adaptive length-difference pruning:
+    as targets are scored for each query, the worst-in-heap score is
+    tracked and targets whose closed-form upper bound on similarity
+    can't beat it are skipped before the scoring kernel runs. The
+    bound tightens as the heap fills, so per-query cost drops as more
+    of the heap is locked in. It's a big win on workloads with wide
+    length variation; on tight-length workloads it adds a small
+    constant per pair, so leave it off (the default) unless you've
+    measured.
+
+    ``targets`` is materialised into a list once and re-iterated for
+    every query — generator inputs become a stored list.
+
+    ``scorer`` must be a normalised-similarity scorer:
+    ``LEVENSHTEIN_NORMALIZED``, ``DAMERAU_LEVENSHTEIN_NORMALIZED``,
+    ``HAMMING_NORMALIZED``, ``INDEL_NORMALIZED``,
+    ``TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED``, ``JARO``, or
+    ``JARO_WINKLER``. Distance scorers aren't supported here — use
+    :func:`cdist_top_k` or invert the score manually.
+
+    Each emitted list is sorted descending by score.
+    """
+    if isinstance(queries, (str, bytes)):
+        raise TypeError(
+            "queries must be an iterable of queries, not a single str/bytes"
+        )
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    # Materialise once. We iterate it per query, so generator inputs
+    # have to become a real sequence here.
+    if not isinstance(targets, (list, tuple)):
+        targets = list(targets)
+    scorer_int = int(scorer)
+    k_int = int(k)
+    prefix_weight_f = float(prefix_weight)
+    prefix_threshold_f = float(prefix_threshold)
+    prefix_cap_i = int(prefix_cap)
+    pruning_b = bool(pruning)
+    one_query = _LEVENSHTEIN_BACKEND.cdist_top_k_one_query
+    # Generator body lives in a nested function so the str/bytes
+    # rejections above fire eagerly at call time rather than on first
+    # consumption.
+    def _iter() -> Iterator[tuple[object, list[tuple[float, object]]]]:
+        for query in queries:
+            result = one_query(
+                query, targets,
+                scorer=scorer_int, k=k_int,
+                prefix_weight=prefix_weight_f,
+                prefix_threshold=prefix_threshold_f,
+                prefix_cap=prefix_cap_i,
+                pruning=pruning_b,
+            )
+            yield query, result
+
+    return _iter()
+
+
 def _cdist_top_k_matrix(
     queries: object,
     targets: object,
@@ -2851,6 +2929,7 @@ __all__ = [
     "cdist",
     "cdist_above_threshold",
     "cdist_top_k",
+    "cdist_top_k_per_query",
     "damerau_levenshtein_best",
     "damerau_levenshtein_normalized_best",
     "damerau_levenshtein_normalized_score",

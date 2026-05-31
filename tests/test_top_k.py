@@ -342,3 +342,246 @@ def test_extract_best_normalized_returns_float():
 
 def test_extract_best_returns_none_for_empty():
     assert extract_best("abc", [], scorer=Scorer.LEVENSHTEIN) is None
+
+
+# ---------------------------------------------------------------------------
+# cdist_top_k_per_query: top-k targets per query, yielded as a generator.
+# Differs from cdist_top_k (which returns the k highest pairs globally
+# across the whole queries x targets matrix).
+# ---------------------------------------------------------------------------
+
+
+from stride_align import (
+    cdist_top_k_per_query,
+    levenshtein_normalized_score,
+    jaro_similarity,
+)
+
+
+def test_cdist_top_k_per_query_yields_per_query():
+    queries = ["hello", "world", "pyth"]
+    targets = ["hellp", "help", "world", "pythn", "apple", "wrld"]
+    results = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=2
+        )
+    )
+    assert len(results) == len(queries)
+    seen_queries = [q for q, _ in results]
+    assert seen_queries == queries  # preserves input order
+
+
+def test_cdist_top_k_per_query_returns_top_by_score():
+    queries = ["hello"]
+    targets = ["hellp", "help", "world", "wrld", "yo", "helloworld"]
+    [(query, top)] = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=3
+        )
+    )
+    assert query == "hello"
+    # Each entry is (score, target). Sorted descending.
+    scores = [score for score, _ in top]
+    assert scores == sorted(scores, reverse=True)
+    # Top-3 must match the true top-3 by score (set comparison).
+    expected_top3 = _expected_highest(
+        [levenshtein_normalized_score("hello", t) for t in targets], 3
+    )
+    assert [pytest.approx(s) for s in scores] == [pytest.approx(s) for s in expected_top3]
+
+
+def test_cdist_top_k_per_query_matches_brute_force():
+    """Score-only correctness vs a Python brute-force loop across a
+    range of query/target lengths. Ties at the boundary mean the
+    *set of targets* picked can vary, but the sorted scores must
+    agree exactly with the brute-force result."""
+    queries = ["a", "ab", "abc", "fuzzy", "longerquery", "x" * 40]
+    targets = [
+        "a", "ab", "abc", "abcd",
+        "fuzzz", "fuzy", "fuzzyy",
+        "longerquery", "shortquery", "x" * 40, "x" * 80,
+        "wholly unrelated string", "y" * 25,
+    ]
+    for query, top in cdist_top_k_per_query(
+        queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=5
+    ):
+        impl_scores = sorted([round(s, 9) for s, _ in top], reverse=True)
+        brute_scores = sorted(
+            (round(levenshtein_normalized_score(query, t), 9) for t in targets),
+            reverse=True,
+        )[:5]
+        assert impl_scores == brute_scores, (
+            f"query={query!r}: {impl_scores} != {brute_scores}"
+        )
+
+
+def test_cdist_top_k_per_query_jaro_scorer():
+    queries = ["martha"]
+    targets = ["marhta", "marta", "matra", "marble", "wholly different"]
+    [(_, top)] = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.JARO, k=3
+        )
+    )
+    scores = [round(s, 9) for s, _ in top]
+    brute = sorted(
+        (round(jaro_similarity("martha", t), 9) for t in targets), reverse=True
+    )[:3]
+    assert scores == brute
+
+
+def test_cdist_top_k_per_query_accepts_generator_queries():
+    targets = ["hellp", "help", "world", "wrld"]
+
+    def gen():
+        yield "hello"
+        yield "world"
+
+    results = list(
+        cdist_top_k_per_query(
+            gen(), targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=2
+        )
+    )
+    assert [q for q, _ in results] == ["hello", "world"]
+
+
+def test_cdist_top_k_per_query_accepts_generator_targets():
+    """``targets`` is materialised once and re-iterated per query.
+    Passing a generator must work (it's allowed to be slow, just not wrong)."""
+    queries = ["hello", "world"]
+
+    def gen():
+        yield "hellp"
+        yield "help"
+        yield "world"
+
+    results = list(
+        cdist_top_k_per_query(
+            queries, gen(), scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=2
+        )
+    )
+    # Each query sees the same materialised target set.
+    assert len(results) == 2
+    assert ("hello", [(0.8, "hellp"), (0.6, "help")]) == (
+        results[0][0],
+        [(round(s, 9), t) for s, t in results[0][1]],
+    )
+
+
+def test_cdist_top_k_per_query_rejects_string_queries():
+    with pytest.raises(TypeError, match="queries"):
+        # The bad call must raise eagerly, not on first consumption.
+        cdist_top_k_per_query(
+            "hello", ["targets"], scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=3
+        )
+
+
+def test_cdist_top_k_per_query_rejects_string_targets():
+    with pytest.raises(TypeError, match="targets"):
+        cdist_top_k_per_query(
+            ["hello"], "targets_as_str", scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=3
+        )
+
+
+def test_cdist_top_k_per_query_rejects_distance_scorer():
+    """Distance scorers (lower-is-better) aren't supported in this first
+    cut — the length bound function is similarity-only and the heap
+    invariant flips. Raise a clear TypeError naming the supported set."""
+    with pytest.raises(TypeError, match="normalised-similarity"):
+        list(
+            cdist_top_k_per_query(
+                ["hello"], ["world"],
+                scorer=Scorer.LEVENSHTEIN, k=2,
+            )
+        )
+
+
+def test_cdist_top_k_per_query_k_larger_than_targets():
+    queries = ["hello"]
+    targets = ["world", "wrld"]
+    [(_, top)] = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=10
+        )
+    )
+    # Only as many entries as there are scorable targets.
+    assert len(top) == 2
+
+
+def test_cdist_top_k_per_query_empty_targets():
+    [(_, top)] = list(
+        cdist_top_k_per_query(
+            ["hello"], [], scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=5
+        )
+    )
+    assert top == []
+
+
+def test_cdist_top_k_per_query_empty_queries():
+    results = list(
+        cdist_top_k_per_query(
+            [], ["a", "b"], scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=5
+        )
+    )
+    assert results == []
+
+
+def test_cdist_top_k_per_query_hamming_length_mismatch_skipped():
+    """HAMMING_NORMALIZED with unequal-length targets: the length-bound
+    function returns 0 for those pairs, so they get pruned before
+    the kernel runs (which would otherwise raise ValueError). Only
+    equal-length targets enter the heap."""
+    queries = ["hello"]
+    targets = ["world", "hellp", "longerthing", "h", "wrld"]
+    # Equal-length to "hello" (5): "world", "hellp"
+    [(_, top)] = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.HAMMING_NORMALIZED, k=10
+        )
+    )
+    chosen = {t for _, t in top}
+    assert chosen == {"world", "hellp"}
+
+
+def test_cdist_top_k_per_query_pruning_matches_unpruned_scores():
+    """The closed-form length bound is provably tight, so enabling
+    pruning must never change the SET of top-k SCORES. (The chosen
+    targets at tied-score boundaries can differ — that's an arbitrary
+    heap tie-break — but the sorted scores must agree exactly.)"""
+    import random
+    import string
+
+    rng = random.Random(7)
+    targets = [
+        "".join(rng.choice(string.ascii_lowercase) for _ in range(rng.randint(2, 60)))
+        for _ in range(500)
+    ]
+    queries = ["abc", "hello", "fuzzymatch", "x" * 30]
+
+    for q, unpruned in cdist_top_k_per_query(
+        queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=False,
+    ):
+        [(q2, pruned)] = list(
+            cdist_top_k_per_query(
+                [q], targets,
+                scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=True,
+            )
+        )
+        assert q == q2
+        unpruned_scores = sorted([round(s, 9) for s, _ in unpruned], reverse=True)
+        pruned_scores = sorted([round(s, 9) for s, _ in pruned], reverse=True)
+        assert unpruned_scores == pruned_scores, (
+            f"query={q!r}: unpruned {unpruned_scores} != pruned {pruned_scores}"
+        )
+
+
+def test_cdist_top_k_per_query_zero_k_returns_empty_lists():
+    queries = ["hello", "world"]
+    targets = ["hellp", "help"]
+    results = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED, k=0
+        )
+    )
+    assert [q for q, _ in results] == queries
+    assert all(top == [] for _, top in results)

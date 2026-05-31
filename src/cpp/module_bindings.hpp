@@ -15,6 +15,7 @@
 #include "backends/generic.hpp"
 #include "backends/profile_traceback.hpp"
 #include "cdist_threshold.hpp"
+#include "cdist_top_k_per_query.hpp"
 #include "cdist_topk.hpp"
 #include "hamming_dispatch.hpp"
 #include "indel_dispatch.hpp"
@@ -4005,6 +4006,55 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
       nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
       nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
+
+  // ----------------------------------------------------------------
+  // cdist_top_k_one_query: adaptive per-query top-k. Powers the
+  // ``cdist_top_k_per_query`` Python generator. Takes one query and
+  // a materialised target list; returns the k highest-similarity
+  // targets as ``[(score, target), ...]`` (descending). Length-
+  // pruning tightens as the heap fills, so streaming through many
+  // queries amortises the per-query cost.
+  // ----------------------------------------------------------------
+
+  m.def(
+      "cdist_top_k_one_query",
+      [](nb::handle query,
+         nb::handle targets,
+         int scorer_int,
+         std::size_t k,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap,
+         bool pruning) {
+        auto pairs =
+            ::stride_align::cdist_top_k_per_query::top_k_one_query(
+                query, targets, scorer_int, k,
+                prefix_weight, prefix_threshold, prefix_cap,
+                pruning);
+        nb::list out;
+        for (const auto& [score, target_obj] : pairs) {
+          out.append(nb::make_tuple(score, nb::handle(target_obj)));
+        }
+        return out;
+      },
+      "Top-k targets for one query.\n\n"
+      "Returns ``list[(score, target)]`` sorted descending by score.\n"
+      "Set ``pruning=True`` to enable adaptive length-difference\n"
+      "pruning: as targets are processed, the worst-in-heap score is\n"
+      "tracked and targets whose closed-form length-based upper bound\n"
+      "on similarity can't beat it are skipped before the scoring\n"
+      "kernel runs. Off by default (every pair is scored).\n\n"
+      "Scorer must be a normalised-similarity scorer.",
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("scorer"),
+      nb::arg("k"),
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") =
+          ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap,
+      nb::arg("pruning") = false);
 
   // ----------------------------------------------------------------
   // cdist_top_k: heap-based variant of the streaming filtered cdist.
