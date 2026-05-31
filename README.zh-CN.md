@@ -2,9 +2,36 @@
 
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
-`stride-align` 是一个[极速库](https://stride-align.com/BENCHMARK.html)，用来判断两个字符串的
-“相似程度”。它通过实现 Smith-Waterman 和 Needleman-Wunsch 算法来完成
-这件事。这里不讲理论，直接动手——边做边学。
+`stride-align` 是一个 SIMD 加速的 Python 库，专注于模糊字符串匹配、
+序列比对、语音编码与时间序列距离。它实现了 Smith-Waterman 与
+Needleman-Wunsch（局部与全局比对）、Levenshtein 与 Damerau-Levenshtein
+编辑距离、Jaro 与 Jaro-Winkler 相似度、Hamming 与 Indel 距离、面向
+`int16`/`float32`/`float64` 数值序列的动态时间规整（DTW），以及一整套
+标准语音编码器——Soundex、Metaphone（Philips 规范与 jellyfish 兼容
+两种变体）、Double Metaphone（Apache Commons 与 Python 包两种变体）、
+NYSIIS、Match Rating Approach 的 codex 与比较器、Caverphone 2。所有
+评分内核都是手写矢量化，由运行时 CPU dispatch 调度：x86 SSE4.1、
+AVX2、AVX-512BW+VL、AVX10/256 与 AVX10/512；ARM NEON 与 SVE/SVE2；
+龙架构 LSX 与 LASX；PowerPC VSX；并配有可移植的标量回退实现。库通过
+nanobind 绑定到 Python（每个入口都走 vectorcall），目标 Python 3.12+，
+输入支持 `bytes`、`str`（UCS-1/UCS-2/UCS-4 零拷贝）以及 NumPy
+`ndarray`。
+
+本库面向高吞吐量的模糊匹配场景——记录链接、去重、即时搜索、NLP
+词项相似度，以及生物信息学风格的局部比对——并把 CJK 文本作为
+一等公民：UCS-2 输入会被路由到 16 位 token 的 Farrar 内核，而不是
+被降级为字节，所以中文、日文、韩文字符串走的是和 ASCII 同一条 SIMD
+路径。全配对接口（`cdist`、`cdist_above_threshold`、`cdist_top_k`、
+`cdist_top_k_per_query`）把每个 target 的 SIMD 评分和长度差闭式
+剪枝结合起来：当一个 target 可能达到的最大相似度证明无法越过当前
+堆最小值或阈值时，直接跳过评分工作。替换矩阵（BLOSUM、PAM）和
+仿射 gap 罚分在比对路径上都已支持。跨架构正确性都在真实硬件上
+验证（不用模拟器）——Intel/AMD x86、Apple Silicon 与 Graviton ARM、
+龙芯 LoongArch、IBM POWER8——基准跟踪在
+[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html)，
+项目主页是 [stride-align.com](https://stride-align.com)。
+
+这里不讲理论，直接动手——边做边学。
 
 ## 安装
 
@@ -404,7 +431,92 @@ stride_align.jaro_winkler_similarity("martha", "marhta")          # -> 0.961...
 内核（W=2/3/4）。Indel 在模式长度 > 64 时回退到标量位并行
 （多字推广暂未实现）；true-DL 目前只有标量 DP。
 
-### `cdist`、`cdist_above_threshold`、`cdist_top_k`
+### 语音编码器（Phonetic encoders）
+
+对于姓名匹配、去重和即时搜索这类场景，`stride-align` 提供完整的
+标准语音编码器家族。每个编码器把字符串映射成一个短代码，发音
+相近的名字共享同一个代码，与拼写差异无关：
+
+```python
+import stride_align as sa
+
+# American Soundex（Russell & Odell, 1918）。4 字符代码。
+sa.soundex("Robert")                                     # -> "R163"
+sa.soundex("Rupert")                                     # -> "R163"
+sa.soundex_equal("Robert", "Rupert")                     # -> True
+
+# Metaphone（Lawrence Philips, 1990）——两个版本：1990 规范本身
+# 和广为使用的 jellyfish 库在少数边界情况上有分歧，variant 参数
+# 选择对应的规则家族。
+sa.metaphone("Schmidt")                                  # -> "SKMTT"  (PHILIPS, 规范)
+sa.metaphone("Schmidt", variant=sa.MetaphoneVariant.JELLYFISH)  # -> "SXMTT"
+sa.metaphone_equal("Schmidt", "Smith")                   # -> False
+
+# Double Metaphone（Lawrence Philips, 2000）——返回 primary 与
+# alternate 两个代码；alternate 捕捉合理的非英语发音变体。
+# COMMONS 忠实复刻 Apache Commons Codec；PYTHON 与 PyPI 的
+# metaphone 包按位兼容。
+sa.double_metaphone("Schwartz")                          # -> ("XRTS", "XFRTS")
+sa.double_metaphone("Hugh")                              # -> ("H", "")
+sa.double_metaphone("Hugh",
+    variant=sa.DoubleMetaphoneVariant.PYTHON)            # -> ("HH", "")
+
+# NYSIIS（Taft, 1970）。对英文人名比 Soundex 更具区分度——
+# "Watkins" / "Wilkins" / "Wilkinson" 不会冲突。
+sa.nysiis("Watkins"), sa.nysiis("Wilkins")               # -> ("WATCAN", "WALCAN")
+
+# Match Rating Approach（Moore, Western Airlines, 1977）。
+# 包含一个 codex 和一个配对比较器；后者用长度差和评分阈值
+# 两条规则判定是否匹配。
+sa.match_rating_codex("Christopher")                     # -> "CHRPHR"
+sa.match_rating_compare("Robert", "Rupert")              # -> True
+
+# Caverphone 2.0（Hood, 2004）。固定长度 10 字符代码，
+# 不足时用 '1' 右填充。最初是为 19 世纪末新西兰选民名册设计的，
+# 现广泛用于一般英语姓名匹配。
+sa.caverphone("Stevenson")                               # -> "STFNSN1111"
+```
+
+这七个编码器共享同一套字节提取助手，`str` 与 `bytes` 输入可以
+互换，编码前会跳过非字母 / 非 ASCII 码点——如果需要去掉重音
+符号，请先用 `unicodedata.normalize("NFKD", s)` 预处理。所有结果
+都与 Apache Commons Codec 的规范参考数据，以及 `jellyfish`、
+`metaphone`、`doublemetaphone` 这几个 PyPI 包做了交叉验证。
+
+### 动态时间规整（Dynamic Time Warping）
+
+对于时序速度不一致的数值序列比对——音频信号、手势 / 传感器轨迹、
+金融时间序列——`stride-align` 提供带 Sakoe-Chiba 窗口的动态时间
+规整：
+
+```python
+import numpy as np
+import stride_align as sa
+
+q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+t = np.array([1.0, 2.0, 2.5, 4.0, 5.0])
+
+# 默认距离按 dtype 选择：
+#   float32 / float64 -> L2 平方，(x - y)^2
+#   int16             -> L1，|x - y|（音频约定）
+sa.dtw(q, t)                                              # -> 0.25
+
+# Sakoe-Chiba 窗口：整数半径，或 max(|q|, |t|) 的小数比例。
+sa.dtw(q, t, window=2)
+sa.dtw(q, t, window=0.2)
+
+# 显式指定距离。
+sa.dtw(q.astype(np.int16), t.astype(np.int16), distance="l1")
+
+# 批处理。
+sa.dtw_distances(q, [t, t * 2, t + 0.5], window=2)
+```
+
+输入必须是 dtype 相同的 NumPy `ndarray`（`float32`、`float64` 或
+`int16`——`int16` 是天然的音频 dtype）。其它 dtype 与非 ndarray
+输入会抛出 `TypeError`。
+
+### `cdist`、`cdist_above_threshold`、`cdist_top_k`、`cdist_top_k_per_query`
 
 针对两份字符串列表的全配对评分场景，`stride-align` 提供三个
 矩阵风格的入口：
@@ -428,8 +540,20 @@ for score, q, t in sa.cdist_above_threshold(
 # 按得分取 top-k ——返回最多 k 个最高得分（对距离评分器则是
 # 最低）的 (score, query, target) 三元组。每个线程一个堆；
 # 一个共享的原子全局最小值边界，让每对的 cutoff 下推
-# 随着工作推进抬高剪枝阈值。
+# 在工作推进时不断抬高剪枝阈值。
 sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+
+# 每个 query 取 top-k ——以生成器形式 yield。与 cdist_top_k
+# 不同（后者返回 query × target 矩阵中全局得分最高的 k 对），
+# 本函数为每个 query 各自维护一个 top-k 堆。设置 pruning=True
+# 后，会跟踪当前堆中最差的得分；当一个 target 的长度差闭式
+# 相似度上界证明无法越过该得分时，跳过评分内核——在长度差
+# 较大的工作负载上能带来显著加速。
+for query, top in sa.cdist_top_k_per_query(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=True,
+):
+    # top 是 [(score, target), ...]，按得分降序排好
+    ...
 ```
 
 在高阈值下剪枝的效果非常夸张——见 [BENCHMARK.md](https://stride-align.com/BENCHMARK.html)
