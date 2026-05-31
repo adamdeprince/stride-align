@@ -4,6 +4,115 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-06-01
+
+### Added
+
+* **Phonetic encoders (Phase D.2).** Full standard family with the
+  same byte-extraction + variant pattern as the rest of the library:
+  * **Soundex** (Russell & Odell, 1918). `soundex`, `soundex_equal`.
+  * **Metaphone** (Lawrence Philips, 1990) with `MetaphoneVariant`
+    enum — `PHILIPS` (spec-correct, Apache Commons Codec branch)
+    and `JELLYFISH` (matches the popular Python library). `metaphone`,
+    `metaphone_equal`.
+  * **Double Metaphone** (Lawrence Philips, 2000) with
+    `DoubleMetaphoneVariant` enum — `COMMONS` (faithful Apache
+    Commons Codec / `doublemetaphone` PyPI port) and `PYTHON`
+    (bug-compat with the `metaphone` PyPI package's missing-else GH
+    leak). Returns `(primary, alternate)`. `double_metaphone`.
+  * **NYSIIS** (Taft, 1970). `nysiis`, `nysiis_equal`.
+  * **Match Rating Approach** (Moore, Western Airlines, 1977).
+    `match_rating_codex`, `match_rating_compare`.
+  * **Caverphone 2.0** (Hood, 2004). `caverphone`.
+
+  All encoders dispatch through the same `peel_to_ascii_string`
+  helper, accept `str`/`bytes` interchangeably, and skip non-letter /
+  non-ASCII codepoints. Cross-checked against Apache Commons Codec
+  reference data and the `jellyfish`, `metaphone`, `doublemetaphone`,
+  and `pyphonetics` PyPI packages.
+
+* **Dynamic Time Warping** (`dtw`, `dtw_distances`). Sakoe-Chiba band
+  via `window=` (absolute integer radius or fractional `0 < r <= 1`);
+  L1 vs L2-squared distance auto-picked by dtype (`int16` -> L1,
+  `float32`/`float64` -> L2-squared) with explicit `distance=`
+  override. Inputs are NumPy `ndarray`; matching dtype enforced.
+
+* **`cdist_top_k_per_query`.** Generator API:
+  `for query, [(score, target), ...] in cdist_top_k_per_query(...)`.
+  Per-query top-k heap rather than the global top-k that
+  `cdist_top_k` returns. `pruning=False` by default; `pruning=True`
+  enables adaptive length-difference pruning using the same
+  `max_normalized_similarity` closed-form bound as
+  `cdist_above_threshold`. Worst-in-heap tightens as scoring
+  progresses, so targets whose bound can't beat the current heap
+  minimum skip the kernel entirely. ~12× faster than the unpruned
+  baseline on wide-length workloads in benchmarks; flat on tight-
+  length workloads. Hamming length-mismatch pairs are skipped via
+  the bound rather than raising `ValueError`.
+
+* **Wide-token Farrar batch (Phase B.2.x).** Full SW + NW Farrar
+  dispatch through the wide-token kernel for NumPy `ndarray` with
+  `uint16` dtype and `str` inputs with codepoints > 255 (UCS-2).
+  Auto-promotes at the binding layer; 8-bit byte kernel stays
+  byte-stable for ASCII / Latin-1 / bytes workloads.
+
+* **Wider PyPI metadata.** `[project.urls]` (Homepage / Documentation /
+  Repository / Source / Download / Issues / Changelog / Benchmarks),
+  `maintainers`, `license-files = ["LICENSE"]` (PEP 639),
+  `Typing :: Typed` classifier, Natural Language classifiers for
+  English and Chinese (Simplified), Operating System classifiers for
+  Linux and macOS, and named extras for `bench` (`rapidfuzz`,
+  `Levenshtein`, `editdistance`, `parasail`) and `phonetic-compat`
+  (`jellyfish`, `metaphone`, `doublemetaphone`, `pyphonetics`).
+
+### Changed
+
+* **Python 3.12+ floor.** `requires-python = ">=3.12"`, dropping
+  3.9 / 3.10 / 3.11. The nanobind 2.x vectorcall fast path is
+  unconditional from this version; the dispatch layer no longer
+  needs the dict-lookup workarounds that replaced 3.10's `match`
+  statements.
+
+* **Vectorcall: skip the Python wrapper frame for every cheap
+  function.** Phonetic encoders, Jaro / Jaro-Winkler scalar entry
+  points, the scalar Levenshtein / OSA / Hamming / Indel / true-DL /
+  DTW entry points, `*_top_k`, `extract`, and `extract_best` are now
+  direct re-exports of the C++ binding rather than Python forwarder
+  wrappers. Tight-loop savings measured at 22-54% per call on the
+  encoders and 22-26% on Levenshtein-family scoring. Docstrings
+  moved to the C++ binding side so `help(sa.soundex)` etc. still
+  works.
+
+* **`str` / `bytes` rejection on batch inputs moved to C++.** The
+  `reject_str_or_bytes_targets` helper fires from a single shared
+  point in `preprocess.hpp`; the per-binding `_coerce_targets` Python
+  helper is gone. Same `TypeError`, fewer Python frames.
+
+### Fixed
+
+* **Generator double-iteration in `*_top_k` and `extract`.** The
+  bindings called `PySequence_Fast` to grab `items` for `make_top_k`,
+  then passed the original handle to the score dispatcher — which
+  re-materialised it. Generators were getting consumed by the first
+  pass and the second returned empty. The dispatch calls now take
+  the already-materialised `owner`. Surfaced by the wrapper-removal
+  pass that exposed the underlying behaviour.
+
+* **Double Metaphone alternate cleanup.** Empty alternate (matching
+  the `metaphone` and `doublemetaphone` PyPI conventions) when the
+  primary and alternate codes are identical, so `if alt:` works.
+
+### Notes
+
+* **No abi3 wheel.** The Stable ABI excludes the
+  `cpython/unicodeobject.h` fast macros (`PyUnicode_KIND`,
+  `PyUnicode_*_DATA`, `PyUnicode_GET_LENGTH`) that the zero-copy
+  UCS-1/UCS-2/UCS-4 path relies on for the CJK / wide-token SIMD
+  kernels. Their function-form equivalents either allocate a copy or
+  are one call per codepoint, both fatal to the SIMD path. We ship
+  one wheel per minor Python version (3.12 / 3.13 / 3.14) instead.
+  Rationale recorded in `CMakeLists.txt`.
+
 ## [0.3.0] - 2026-05-24
 
 ### Added
