@@ -12,7 +12,14 @@ description = "SIMD-accelerated fuzzy string matching, sequence alignment (Smith
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
+# license-files surfaces the LICENSE text in the installed-package
+# metadata (PEP 639), not just the SPDX identifier. SBOM scanners
+# (Snyk, Sonatype, GitHub's dependency graph, vendor risk-assessment
+# tools) parse this to confirm Apache-2.0 compatibility before
+# letting the package into a dependency tree.
+license-files = ["LICENSE"]
 authors = [{ name = "Adam DePrince", email = "adam.deprince@gmail.com" }]
+maintainers = [{ name = "Adam DePrince", email = "adam.deprince@gmail.com" }]
 keywords = [
   "fuzzy-matching",
   "string-similarity",
@@ -51,15 +58,22 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: C++",
+  "Natural Language :: English",
+  "Natural Language :: Chinese (Simplified)",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Scientific/Engineering :: Information Analysis",
   "Topic :: Text Processing :: General",
   "Topic :: Text Processing :: Linguistic",
   "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
 ]
 dependencies = [
   "numpy>=1.22",
@@ -67,7 +81,10 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://stride-align.com"
+Documentation = "https://stride-align.com"
 Repository = "https://github.com/adamdeprince/stride-align"
+Source = "https://github.com/adamdeprince/stride-align"
+Download = "https://github.com/adamdeprince/stride-align/releases"
 Issues = "https://github.com/adamdeprince/stride-align/issues"
 Changelog = "https://github.com/adamdeprince/stride-align/blob/main/CHANGELOG.md"
 Benchmarks = "https://stride-align.com/BENCHMARK.html"
@@ -84,6 +101,24 @@ dev = [
   "ninja>=1.11",
   "pytest>=8.0",
   "ruff>=0.5",
+]
+# The peer libraries we benchmark against. ``pip install stride-align[bench]``
+# pulls the comparison universe so the scripts in tools/ reproduce
+# the published numbers. Listing them here also tells PyPI / AI
+# scrapers what stride-align is comparable to.
+bench = [
+  "rapidfuzz>=3.0",
+  "Levenshtein>=0.25",
+  "editdistance>=0.6",
+  "parasail>=1.3",
+]
+# Phonetic oracles. Cross-check soundex / metaphone / double metaphone
+# / nysiis output against the de-facto Python implementations.
+phonetic-compat = [
+  "jellyfish>=1.0",
+  "metaphone>=0.6",
+  "doublemetaphone>=1.0",
+  "pyphonetics>=0.5",
 ]
 
 [tool.poetry]
