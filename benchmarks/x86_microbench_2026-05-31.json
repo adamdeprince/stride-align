@@ -1,0 +1,166 @@
+{
+  "lower_is_better": true,
+  "metric": "ns_per_target",
+  "results": [
+    {
+      "backend": "avx2",
+      "benchmark_pass": "english",
+      "cells_per_s": 7884931410.0,
+      "key": "avx2:1:1:english:width16",
+      "ns_per_target": 132984.797,
+      "score": 1985,
+      "shape": "1:1",
+      "width": 16
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "english",
+      "cells_per_s": 4246402780.0,
+      "key": "avx2:1:1:english:width32",
+      "ns_per_target": 246932.77,
+      "score": 1985,
+      "shape": "1:1",
+      "width": 32
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 7895001950.0,
+      "key": "avx2:1:1:chinese:width16",
+      "ns_per_target": 132815.167,
+      "score": 1982,
+      "shape": "1:1",
+      "width": 16
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 4250081790.0,
+      "key": "avx2:1:1:chinese:width32",
+      "ns_per_target": 246719.017,
+      "score": 1982,
+      "shape": "1:1",
+      "width": 32
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "english",
+      "cells_per_s": 7885459590.0,
+      "key": "avx2:1:many:english:width16",
+      "ns_per_target": 132975.889,
+      "score": 1919,
+      "shape": "1:many",
+      "width": 16
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "english",
+      "cells_per_s": 4244752040.0,
+      "key": "avx2:1:many:english:width32",
+      "ns_per_target": 247028.8,
+      "score": 1919,
+      "shape": "1:many",
+      "width": 32
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 7884731970.0,
+      "key": "avx2:1:many:chinese:width16",
+      "ns_per_target": 132988.16,
+      "score": 1525,
+      "shape": "1:many",
+      "width": 16
+    },
+    {
+      "backend": "avx2",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 4248162050.0,
+      "key": "avx2:1:many:chinese:width32",
+      "ns_per_target": 246830.509,
+      "score": 1525,
+      "shape": "1:many",
+      "width": 32
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "english",
+      "cells_per_s": 11053907300.0,
+      "key": "avx512bwvl:1:1:english:width16",
+      "ns_per_target": 94860.2133,
+      "score": 1985,
+      "shape": "1:1",
+      "width": 16
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "english",
+      "cells_per_s": 6328137430.0,
+      "key": "avx512bwvl:1:1:english:width32",
+      "ns_per_target": 165700.573,
+      "score": 1985,
+      "shape": "1:1",
+      "width": 32
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 11110397300.0,
+      "key": "avx512bwvl:1:1:chinese:width16",
+      "ns_per_target": 94377.9033,
+      "score": 1982,
+      "shape": "1:1",
+      "width": 16
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 6413580970.0,
+      "key": "avx512bwvl:1:1:chinese:width32",
+      "ns_per_target": 163493.063,
+      "score": 1982,
+      "shape": "1:1",
+      "width": 32
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "english",
+      "cells_per_s": 11126966100.0,
+      "key": "avx512bwvl:1:many:english:width16",
+      "ns_per_target": 94237.3683,
+      "score": 1919,
+      "shape": "1:many",
+      "width": 16
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "english",
+      "cells_per_s": 6351249520.0,
+      "key": "avx512bwvl:1:many:english:width32",
+      "ns_per_target": 165097.592,
+      "score": 1919,
+      "shape": "1:many",
+      "width": 32
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 11109349200.0,
+      "key": "avx512bwvl:1:many:chinese:width16",
+      "ns_per_target": 94386.8075,
+      "score": 1525,
+      "shape": "1:many",
+      "width": 16
+    },
+    {
+      "backend": "avx512bwvl",
+      "benchmark_pass": "chinese",
+      "cells_per_s": 6343182560.0,
+      "key": "avx512bwvl:1:many:chinese:width32",
+      "ns_per_target": 165307.555,
+      "score": 1525,
+      "shape": "1:many",
+      "width": 32
+    }
+  ]
+}
