@@ -1717,6 +1717,18 @@ struct Implementation {
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
+  static nb::object cdist_top_k_per_query_threaded(
+      nb::handle queries, nb::handle targets, int scorer,
+      std::size_t k, bool pruning, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_top_k_per_query_threaded::
+        cdist_top_k_per_query_threaded_impl<
+            ::stride_align::levenshtein_simd::SseOps>(
+        queries, targets, scorer, k, pruning, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
   // ----- Matrix-mode entry points -------------------------------------
   // SSE4.1 has no runtime CPU-feature gate (every x86_64 CPU supports
   // SSE4.1), so there's no TargetImplementation/Implementation split —

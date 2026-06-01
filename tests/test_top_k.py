@@ -585,3 +585,90 @@ def test_cdist_top_k_per_query_zero_k_returns_empty_lists():
     )
     assert [q for q, _ in results] == queries
     assert all(top == [] for _, top in results)
+
+
+def test_cdist_top_k_per_query_threaded_matches_single_threaded_scores():
+    """The threaded path runs the same compute_row_double<Ops> SIMD
+    kernel as cdist_top_k, just one query per worker. The sorted
+    score sets per query must match the single-threaded per-pair
+    path exactly. Ties at the boundary can pick different targets;
+    only the scores are compared."""
+    import random
+    import string
+
+    rng = random.Random(11)
+    targets = [
+        "".join(rng.choice(string.ascii_lowercase) for _ in range(rng.randint(3, 50)))
+        for _ in range(400)
+    ]
+    queries = ["hello", "goodbye", "fuzzy", "pythonlibrary"]
+
+    single = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED,
+            k=5, cpu_count=1,
+        )
+    )
+    threaded = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED,
+            k=5, cpu_count=2,
+        )
+    )
+
+    def scores_only(results):
+        return [
+            (q, sorted([round(s, 9) for s, _ in top], reverse=True))
+            for q, top in results
+        ]
+
+    assert scores_only(single) == scores_only(threaded)
+
+
+def test_cdist_top_k_per_query_threaded_preserves_input_order():
+    """The threaded path returns results in input query order, not
+    completion order. Important for callers consuming the generator
+    in lockstep with their own per-query state."""
+    queries = ["alpha", "bravo", "charlie", "delta", "echo"]
+    targets = ["alpa", "bravs", "charli", "delt", "ech"]
+    results = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED,
+            k=1, cpu_count=4,
+        )
+    )
+    assert [q for q, _ in results] == queries
+
+
+def test_cdist_top_k_per_query_threaded_falls_back_on_wide_unicode():
+    """Wide-unicode (CJK > 255 codepoint) input can't go through the
+    byte-snapshot path. The Python wrapper must catch the binding's
+    NotImplementedError and drop into the single-threaded per-pair
+    path silently."""
+    queries = ["你好"]
+    targets = ["你好", "你好世界", "世界你好"]
+    [(_, top)] = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED,
+            k=3, cpu_count=4,
+        )
+    )
+    # Top hit is the exact match; the others must score < 1.
+    scores = [s for s, _ in top]
+    assert scores[0] == pytest.approx(1.0)
+    assert all(s < 1.0 for s in scores[1:])
+
+
+def test_cdist_top_k_per_query_cpu_count_zero_auto_detects():
+    """cpu_count=0 means 'pick os.cpu_count()'. We just need to confirm
+    the call doesn't raise and produces a sensible result."""
+    queries = ["hello", "world"]
+    targets = ["hellp", "wrld", "help"]
+    results = list(
+        cdist_top_k_per_query(
+            queries, targets, scorer=Scorer.LEVENSHTEIN_NORMALIZED,
+            k=2, cpu_count=0,
+        )
+    )
+    assert len(results) == 2
+    assert [q for q, _ in results] == queries

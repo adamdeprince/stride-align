@@ -2782,26 +2782,41 @@ def cdist_top_k_per_query(
     scorer: "Scorer",
     k: int = 5,
     pruning: bool = False,
+    cpu_count: int = 0,
     prefix_weight: float = 0.1,
     prefix_threshold: float = 0.7,
     prefix_cap: int = 4,
 ) -> Iterator[tuple[object, list[tuple[float, object]]]]:
     """Yield ``(query, [(score, target), ...])`` for each query.
 
-    The k highest-similarity targets *per query*, one query at a time.
-    Differs from :func:`cdist_top_k` (which returns the k highest pairs
-    globally across the whole query × target matrix) by keeping a
-    separate top-k heap per query.
+    The k highest-similarity targets *per query*. Differs from
+    :func:`cdist_top_k` (which returns the k highest pairs globally
+    across the whole query × target matrix) by keeping a separate
+    top-k heap per query.
 
-    Set ``pruning=True`` to enable adaptive length-difference pruning:
-    as targets are scored for each query, the worst-in-heap score is
-    tracked and targets whose closed-form upper bound on similarity
-    can't beat it are skipped before the scoring kernel runs. The
-    bound tightens as the heap fills, so per-query cost drops as more
-    of the heap is locked in. It's a big win on workloads with wide
-    length variation; on tight-length workloads it adds a small
-    constant per pair, so leave it off (the default) unless you've
-    measured.
+    Two execution paths:
+
+    * **Threaded** (``cpu_count != 1``): runs a worker pool over the
+      queries — same threading model as :func:`cdist_top_k` — with the
+      SIMD batch scoring kernel processing each query's whole row
+      against all targets. Requires byte-compatible inputs (bytes or
+      1-byte unicode). On wider unicode inputs the binding raises
+      ``NotImplementedError`` and we silently fall back to the
+      single-threaded path. ``cpu_count = 0`` auto-detects via
+      ``os.cpu_count() or 1``; ``cpu_count = 1`` opts out of threading.
+
+    * **Single-threaded** (``cpu_count == 1`` or threaded fallback):
+      per-pair dispatch through the same scoring kernels the singular
+      ``*_normalized_score`` functions use. Supports arbitrary input
+      kinds (bytes, 1-byte and wider unicode). Honours
+      ``pruning=True`` for adaptive heap-min cutoff — as targets are
+      scored, the worst-in-heap score is tracked and targets whose
+      closed-form upper bound on similarity can't beat it are skipped
+      before the scoring kernel runs.
+
+    The threaded path always applies the closed-form length-bound
+    prune (``max_normalized_similarity == 0`` → drop), even if
+    ``pruning=False``; that's a correctness gate, not an opt-in.
 
     ``targets`` is materialised into a list once and re-iterated for
     every query — generator inputs become a stored list.
@@ -2823,6 +2838,26 @@ def cdist_top_k_per_query(
         raise TypeError(
             "targets must be an iterable of target sequences, not a single str/bytes"
         )
+    # Scorer must be one of the normalised-similarity scorers. Both
+    # the threaded and single-threaded paths share this constraint;
+    # check once here so the message is identical regardless of which
+    # path we'd dispatch to.
+    _supported_normalized = {
+        int(Scorer.LEVENSHTEIN_NORMALIZED),
+        int(Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED),
+        int(Scorer.HAMMING_NORMALIZED),
+        int(Scorer.INDEL_NORMALIZED),
+        int(Scorer.TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED),
+        int(Scorer.JARO),
+        int(Scorer.JARO_WINKLER),
+    }
+    if int(scorer) not in _supported_normalized:
+        raise TypeError(
+            "cdist_top_k_per_query: scorer must be a normalised-similarity "
+            "scorer (LEVENSHTEIN_NORMALIZED, DAMERAU_LEVENSHTEIN_NORMALIZED, "
+            "HAMMING_NORMALIZED, INDEL_NORMALIZED, "
+            "TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED, JARO, or JARO_WINKLER)"
+        )
     # Materialise once. We iterate it per query, so generator inputs
     # have to become a real sequence here.
     if not isinstance(targets, (list, tuple)):
@@ -2833,6 +2868,35 @@ def cdist_top_k_per_query(
     prefix_threshold_f = float(prefix_threshold)
     prefix_cap_i = int(prefix_cap)
     pruning_b = bool(pruning)
+    resolved_cpu_count = int(cpu_count)
+    if resolved_cpu_count <= 0:
+        resolved_cpu_count = os.cpu_count() or 1
+
+    # Threaded path: materialise queries too (it iterates them), call
+    # the C++ binding, then yield the results. If the binding raises
+    # NotImplementedError (wide unicode) we drop into the per-pair
+    # path below.
+    if resolved_cpu_count > 1:
+        if not isinstance(queries, (list, tuple)):
+            queries = list(queries)
+        try:
+            results = _LEVENSHTEIN_BACKEND.cdist_top_k_per_query_threaded(
+                queries, targets,
+                scorer=scorer_int, k=k_int, pruning=pruning_b,
+                cpu_count=resolved_cpu_count,
+                prefix_weight=prefix_weight_f,
+                prefix_threshold=prefix_threshold_f,
+                prefix_cap=prefix_cap_i,
+            )
+        except NotImplementedError:
+            # Wide-unicode input: fall through to single-threaded.
+            results = None
+        if results is not None:
+            return iter(results)
+
+    # Single-threaded path (default for cpu_count == 1, fallback
+    # otherwise). Yields lazily, supports arbitrary input kinds, and
+    # honours the adaptive heap-min cutoff when ``pruning=True``.
     one_query = _LEVENSHTEIN_BACKEND.cdist_top_k_one_query
     # Generator body lives in a nested function so the str/bytes
     # rejections above fire eagerly at call time rather than on first

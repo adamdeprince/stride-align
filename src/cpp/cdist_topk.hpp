@@ -42,6 +42,7 @@
 
 #include "cdist_simd.hpp"
 #include "cdist_threshold.hpp"  // snapshot helper, scorer_is_normalized
+#include "cdist_top_k_per_query_threaded.hpp"  // cdist_top_k_per_query_threaded_impl
 #include "stride_align/jaro.hpp"
 #include "topk.hpp"
 

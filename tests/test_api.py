@@ -1163,9 +1163,21 @@ def test_benchmark_parasail_adapter_uses_safe_translated_inputs() -> None:
 
 
 def test_pyproject_does_not_depend_on_parasail() -> None:
-    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    """parasail is a SIMD-alignment library we benchmark against and
+    cite, but it must never end up in the runtime dependency list —
+    pip installing stride-align should pull NumPy and nothing else.
+    Listing it under [project.optional-dependencies.bench] is fine
+    (users opt in for reproducing benchmarks); the runtime
+    ``dependencies`` array is what we lock down here."""
+    import tomllib
 
-    assert "parasail" not in pyproject
+    with open("pyproject.toml", "rb") as f:
+        cfg = tomllib.load(f)
+    runtime_deps = cfg["project"].get("dependencies", [])
+    joined = " ".join(runtime_deps).lower()
+    assert "parasail" not in joined, (
+        f"parasail found in runtime dependencies: {runtime_deps!r}"
+    )
 
 
 def test_file_compare_cli_validates_score_width_after_decoding(tmp_path, capsys) -> None:

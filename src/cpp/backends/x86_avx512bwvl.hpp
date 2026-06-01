@@ -1952,6 +1952,18 @@ struct TargetImplementation {
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
+  static nb::object cdist_top_k_per_query_threaded(
+      nb::handle queries, nb::handle targets, int scorer,
+      std::size_t k, bool pruning, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_top_k_per_query_threaded::
+        cdist_top_k_per_query_threaded_impl<
+            ::stride_align::levenshtein_simd::Avx512Ops>(
+        queries, targets, scorer, k, pruning, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
   // Matrix-mode entry points. Inputs are already alphabet indices
   // (bytes / 1-byte unicode) and a contiguous row-major (stride × stride)
   // int8 substitution matrix; the SubstitutionMatrix Python wrapper does
@@ -2816,6 +2828,16 @@ struct Implementation {
     return TargetImplementation::cdist_top_k(
         queries, targets, scorer, k, tqdm_factory, cpu_count,
         reject_duplicates,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
+  static nb::object cdist_top_k_per_query_threaded(
+      nb::handle queries, nb::handle targets, int scorer,
+      std::size_t k, bool pruning, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return TargetImplementation::cdist_top_k_per_query_threaded(
+        queries, targets, scorer, k, pruning, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 

@@ -2519,6 +2519,18 @@ struct Implementation {
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
   }
 
+  static nb::object cdist_top_k_per_query_threaded(
+      nb::handle queries, nb::handle targets, int scorer,
+      std::size_t k, bool pruning, std::size_t cpu_count,
+      double jw_prefix_weight, double jw_prefix_threshold,
+      std::size_t jw_prefix_cap) {
+    return ::stride_align::cdist_top_k_per_query_threaded::
+        cdist_top_k_per_query_threaded_impl<
+            ::stride_align::levenshtein_simd::LasxOps>(
+        queries, targets, scorer, k, pruning, cpu_count,
+        jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
   // ----- Matrix-mode entry points (public wrapper) --------------------
   static Score smith_waterman_score_matrix(
       nb::handle query_indices, nb::handle target_indices,

@@ -4117,6 +4117,56 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
       nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
       nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
+
+  // ----------------------------------------------------------------
+  // cdist_top_k_per_query_threaded: per-query top-k with a worker
+  // pool. Same byte-compatible input contract as cdist_top_k; wide
+  // unicode falls back on the Python side to the single-threaded
+  // cdist_top_k_one_query path. The pruning kwarg is forwarded but
+  // currently only the length-bound prune is exercised in the
+  // threaded path (every pair gets a closed-form max-similarity
+  // check before the SIMD batch runs); the adaptive heap-min prune
+  // is single-threaded-only.
+  // ----------------------------------------------------------------
+
+  m.def(
+      "cdist_top_k_per_query_threaded",
+      [](nb::handle queries,
+         nb::handle targets,
+         int scorer_int,
+         std::size_t k,
+         bool pruning,
+         std::size_t cpu_count,
+         double prefix_weight,
+         double prefix_threshold,
+         std::size_t prefix_cap) {
+        if constexpr (requires {
+                        Implementation::cdist_top_k_per_query_threaded(
+                            queries, targets, scorer_int, k, pruning,
+                            cpu_count, prefix_weight, prefix_threshold,
+                            prefix_cap);
+                      }) {
+          return Implementation::cdist_top_k_per_query_threaded(
+              queries, targets, scorer_int, k, pruning, cpu_count,
+              prefix_weight, prefix_threshold, prefix_cap);
+        } else {
+          PyErr_SetString(
+              PyExc_NotImplementedError,
+              "cdist_top_k_per_query_threaded is not implemented for this "
+              "backend; use a SIMD-capable backend (any non-generic).");
+          throw nb::python_error();
+        }
+      },
+      nb::arg("queries"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("scorer"),
+      nb::arg("k"),
+      nb::arg("pruning") = false,
+      nb::arg("cpu_count") = std::size_t{1},
+      nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight,
+      nb::arg("prefix_threshold") = ::stride_align::jaro::kDefaultPrefixThreshold,
+      nb::arg("prefix_cap") = ::stride_align::jaro::kDefaultPrefixCap);
 }
 
 }  // namespace stride_align::bindings
