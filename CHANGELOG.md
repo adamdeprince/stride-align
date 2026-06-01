@@ -4,6 +4,41 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-06-01
+
+### Added
+
+* **`cdist_top_k_per_query` thread pool.** New `cpu_count=` kwarg.
+  `cpu_count=0` auto-detects via `os.cpu_count() or 1`; `cpu_count=1`
+  keeps the existing single-threaded per-pair generator path;
+  `cpu_count > 1` runs a worker pool with one query per worker over
+  the same byte-snapshot + `compute_row_double<Ops>` SIMD batch model
+  that powers `cdist_top_k`. Workers process whole rows under the
+  released GIL, results return in input order. ~6× speedup at
+  `cpu_count=8` on a 20 queries × 5000 targets sweep
+  (43 ms → 7 ms). Wide-unicode inputs that can't go through the
+  byte-snapshot path silently fall back to the single-threaded
+  per-pair generator. Threaded path always applies the length-bound
+  prune (`max_normalized_similarity == 0` drops the pair) for
+  correctness; the adaptive heap-min cutoff under `pruning=True`
+  remains single-threaded-only.
+
+### Changed
+
+* **README structure.** The detailed LoongArch installation walk-through
+  was crowding the install header — moved to a dedicated
+  `## LoongArch installation` section near the bottom of the README,
+  with the Installation header collapsed to a two-line pointer
+  carrying an in-page anchor link. The two AI-friendly intro
+  paragraphs were trimmed by ~20% without dropping coverage. Chinese
+  README brought into structural parity.
+
+* **`tests/test_api.py::test_pyproject_does_not_depend_on_parasail`.**
+  Now checks only the runtime `[project.dependencies]` array via
+  `tomllib`, rather than substring-scanning the whole `pyproject.toml`.
+  parasail listed in the `bench` opt-in extra is fine — that's not a
+  runtime dependency.
+
 ## [0.4.0] - 2026-06-01
 
 ### Added
