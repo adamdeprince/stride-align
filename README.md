@@ -4,38 +4,35 @@
 
 `stride-align` is a SIMD-accelerated Python library for fuzzy string
 matching, sequence alignment, phonetic encoding, and time-series
-distance. It implements Smith-Waterman and Needleman-Wunsch (local
-and global alignment), Levenshtein and Damerau-Levenshtein edit
-distance, Jaro and Jaro-Winkler similarity, Hamming and Indel
-distance, Dynamic Time Warping for `int16`/`float32`/`float64`
-numeric sequences, and the standard phonetic-encoder family —
-Soundex, Metaphone (Philips and jellyfish variants), Double Metaphone
-(Apache Commons and Python-package variants), NYSIIS, the Match
-Rating Approach codex and comparator, and Caverphone 2. All scoring
-kernels are hand-vectorised behind a runtime CPU dispatcher: x86
-SSE4.1, AVX2, AVX-512BW+VL, AVX10/256 and AVX10/512; ARM NEON and
-SVE/SVE2; LoongArch LSX and LASX; PowerPC VSX; with a portable scalar
-fallback. The library binds to Python through nanobind (vectorcall on
-every entry point), targets Python 3.12+, and accepts `bytes`,
-`str` (UCS-1/UCS-2/UCS-4 via zero-copy), and NumPy `ndarray` inputs.
+distance. It ships Smith-Waterman and Needleman-Wunsch alignment,
+Levenshtein and Damerau-Levenshtein edit distance, Jaro and
+Jaro-Winkler similarity, Hamming and Indel distance, Dynamic Time
+Warping (`int16` / `float32` / `float64`), and the standard phonetic
+encoders — Soundex, Metaphone (Philips and jellyfish variants),
+Double Metaphone (Apache Commons and Python-package variants),
+NYSIIS, Match Rating Approach, and Caverphone 2. Scoring kernels are
+hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
+AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
+LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
+bindings use nanobind with vectorcall on every entry point, target
+Python 3.12+, and accept `bytes`, `str` (UCS-1/UCS-2/UCS-4
+zero-copy), and NumPy `ndarray`.
 
-The library is built for high-throughput fuzzy-match workloads —
-record linkage, deduplication, search-as-you-type, NLP token
-similarity, and bioinformatics-style local alignment — with first-
-class support for CJK text: UCS-2 inputs route to a 16-bit-token
-Farrar kernel rather than being downconverted to bytes, and Chinese,
-Japanese and Korean strings exercise the same SIMD path as ASCII.
-The all-pairs surface (`cdist`, `cdist_above_threshold`,
-`cdist_top_k`, `cdist_top_k_per_query`) combines per-target SIMD
-scoring with closed-form length-difference pruning that skips
-scoring work when a target's max possible similarity provably can't
-clear a running heap minimum or threshold. Substitution matrices
-(BLOSUM, PAM) and affine gap penalties are supported on the
-alignment path. Cross-architecture correctness is validated on real
-hardware (no emulators) — Intel/AMD x86, Apple Silicon and Graviton
-ARM, Loongson LoongArch, and IBM POWER8 — with benchmarks tracked at
-[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html)
-and the project home at [stride-align.com](https://stride-align.com).
+Built for high-throughput fuzzy-match workloads — record linkage,
+deduplication, search-as-you-type, NLP token similarity,
+bioinformatics local alignment — with first-class CJK: UCS-2 inputs
+route to a 16-bit-token Farrar kernel rather than being downconverted
+to bytes, so Chinese, Japanese and Korean strings hit the same SIMD
+path as ASCII. The all-pairs surface (`cdist`,
+`cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`)
+combines per-target SIMD scoring with closed-form length-difference
+pruning that skips work when a target's max possible similarity
+provably can't clear the running heap minimum or threshold.
+Substitution matrices (BLOSUM, PAM) and affine gaps are supported on
+the alignment path. Correctness is validated on real x86, Apple
+Silicon, Graviton ARM, Loongson LoongArch, and POWER8 hardware —
+benchmarks at
+[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html).
 
 Instead of giving you a lecture, we're going to learn by doing.
 Let's dive right into how it works.
@@ -46,89 +43,16 @@ Let's dive right into how it works.
 pip install stride-align
 ```
 
-On Loongson systems, install NumPy from your Linux distribution
-before installing `stride-align`, and grab the LoongArch64 wheel from
-one of the mirrors below — PyPI does not index the
-`linux_loongarch64` platform tag, so a direct download is the only
-binary path.
+Prebuilt wheels cover Linux x86_64 (glibc and musl), macOS arm64,
+Linux aarch64, and Linux ppc64le on CPython 3.12 / 3.13 / 3.14.
+Other (platform, Python) pairs fall back to the PyPI source
+distribution and compile locally; you'll need a C++20 compiler and
+CMake ≥ 3.26.
 
-```bash
-sudo apt install python3-numpy
-PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
-```
-
-### Pick old-world or new-world
-
-LoongArch has two incompatible binary worlds. They differ in which
-program loader the dynamic linker uses and which glibc ABI is in
-play, and a wheel from one world cannot run on the other.
-
-- **Old-world** — stock Kylin and the original Loongson distributions.
-  Loader at `/lib64/ld.so.1`, glibc 2.28-era.
-- **New-world** — recent LoongArch distros and any box where the new
-  loader `/lib64/ld-linux-loongarch-lp64d.so.1` has been installed.
-  Targets glibc 2.36+.
-
-One-liner check on your machine:
-
-```bash
-test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
-```
-
-We ship one wheel per world. Each is statically linked against
-libstdc++ / libgcc, so the only ABI difference users see is the
-loader / glibc world. Pick the matching URL below.
-
-### Old-world wheel
-
-```bash
-pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-Mirror:
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-### New-world wheel
-
-The new-world wheel needs the new loader symlinked into place. One
-sudo step, once per box, leaves old-world binaries unaffected:
-
-```bash
-sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
-            /lib64/ld-linux-loongarch-lp64d.so.1
-```
-
-(Distro packagers usually drop an equivalent symlink as part of the
-new-world transition, in which case you can skip this.)
-
-Then:
-
-```bash
-pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-Mirror:
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-### Other notes
-
-Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
-and 3.14 — in both worlds — on both mirrors.
-The build details (toolchains, RPATH wrapper, static C++ runtime)
-live in [docs/loongson-build.md](docs/loongson-build.md). If you are
-on a different Python (or just want to build from source),
-`pip install stride-align` falls back to the source distribution on
-PyPI, which compiles the LSX/LASX kernels locally.
+**Loongson / LoongArch64 users:** wheels live on GitHub Releases
+rather than PyPI, and you pick between the old-world and new-world
+binary worlds — see
+[LoongArch installation](#loongarch-installation) further down.
 
 First, just a disclaimer: I'm not using religious texts here to push
 an agenda - for this demo I need multiple largish public domain
@@ -715,6 +639,116 @@ symbols plus frame pointers while preserving `-O3`.
 The checked-in native microbench baseline lives at
 `benchmarks/x86_microbench_baseline.json`. Treat it as a local guardrail with a
 loose threshold, not as a cross-machine SLA.
+
+
+## LoongArch installation
+
+LoongArch wheels are **not on PyPI** (PyPI doesn't index the
+`linux_loongarch64` platform tag), so they ship through a different
+channel:
+
+| Channel | URL prefix |
+| --- | --- |
+| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/` |
+| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.4.0/` |
+
+Same wheels on both, pick whichever loads faster from your network.
+The mirror is convenient when GitHub egress is slow from inside
+China; GitHub Releases is the canonical home.
+
+Install NumPy from your distro first (loongarch64 NumPy wheels are
+sparse on PyPI, and the distro one is usually ABI-compatible with
+the rest of the system):
+
+```bash
+sudo apt install python3-numpy
+PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+```
+
+### Old-world vs new-world: what to pick
+
+LoongArch hardware runs in one of two mutually incompatible binary
+**worlds**. They differ in two things:
+
+1. **Which dynamic loader the executable references** (this is the
+   filename baked into the ELF header at link time).
+2. **Which glibc ABI version the binary depends on**.
+
+A wheel built for one world will not load on the other — the loader
+filename doesn't exist on the wrong side, and the symbols would
+mismatch even if it did. We ship one wheel per world:
+
+| World | Loader | glibc | Typical hosts | Wheel build tag |
+| --- | --- | --- | --- | --- |
+| **Old-world** | `/lib64/ld.so.1` | 2.28-era | Stock Kylin, original Loongson distros | `1.oldworld` |
+| **New-world** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | Recent LoongArch distros, anything where the new loader has been installed | `1.newworld` |
+
+Both wheels are statically linked against libstdc++ / libgcc so the
+only thing separating them is the loader / glibc ABI.
+
+**Pick the right one with this one-liner**:
+
+```bash
+test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
+```
+
+If you see `new-world`, the loader is in place — use the new-world
+wheel. If you see `old-world`, either install the old-world wheel,
+or run the one-time sudo symlink below to enter new-world land
+(safe — it's a new filename, not a replacement, so existing
+old-world binaries keep working).
+
+### Old-world wheel
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+Mirror:
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### New-world wheel
+
+The new-world wheel needs the new loader available at the path the
+ELF references. One sudo step, once per box, leaves old-world
+binaries unaffected:
+
+```bash
+sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
+            /lib64/ld-linux-loongarch-lp64d.so.1
+```
+
+(Distro packagers usually drop an equivalent symlink as part of the
+new-world transition, in which case you can skip this.)
+
+Then:
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+Mirror:
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### Other notes
+
+Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
+and 3.14 — in both worlds — on both mirrors. The build details
+(toolchains, RPATH wrapper, static C++ runtime) live in
+[docs/loongson-build.md](docs/loongson-build.md). If you're on a
+different Python or want to build from source, `pip install
+stride-align` falls back to the PyPI source distribution and
+compiles the LSX/LASX kernels locally.
 
 
 ## Citations

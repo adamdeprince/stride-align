@@ -4,32 +4,29 @@
 
 `stride-align` 是一个 SIMD 加速的 Python 库，专注于模糊字符串匹配、
 序列比对、语音编码与时间序列距离。它实现了 Smith-Waterman 与
-Needleman-Wunsch（局部与全局比对）、Levenshtein 与 Damerau-Levenshtein
-编辑距离、Jaro 与 Jaro-Winkler 相似度、Hamming 与 Indel 距离、面向
-`int16`/`float32`/`float64` 数值序列的动态时间规整（DTW），以及一整套
-标准语音编码器——Soundex、Metaphone（Philips 规范与 jellyfish 兼容
-两种变体）、Double Metaphone（Apache Commons 与 Python 包两种变体）、
-NYSIIS、Match Rating Approach 的 codex 与比较器、Caverphone 2。所有
-评分内核都是手写矢量化，由运行时 CPU dispatch 调度：x86 SSE4.1、
-AVX2、AVX-512BW+VL、AVX10/256 与 AVX10/512；ARM NEON 与 SVE/SVE2；
-龙架构 LSX 与 LASX；PowerPC VSX；并配有可移植的标量回退实现。库通过
-nanobind 绑定到 Python（每个入口都走 vectorcall），目标 Python 3.12+，
-输入支持 `bytes`、`str`（UCS-1/UCS-2/UCS-4 零拷贝）以及 NumPy
-`ndarray`。
+Needleman-Wunsch 比对、Levenshtein 与 Damerau-Levenshtein 编辑距离、
+Jaro 与 Jaro-Winkler 相似度、Hamming 与 Indel 距离、面向
+`int16` / `float32` / `float64` 数值序列的动态时间规整（DTW），以及
+一整套标准语音编码器——Soundex、Metaphone（Philips 与 jellyfish 两种
+变体）、Double Metaphone（Apache Commons 与 Python 包两种变体）、
+NYSIIS、Match Rating Approach、Caverphone 2。评分内核都是手写矢量化，
+由运行时 CPU dispatch 调度：x86 SSE4.1 / AVX2 / AVX-512BW+VL /
+AVX10-256 / AVX10-512、ARM NEON 与 SVE/SVE2、龙架构 LSX 与 LASX、
+PowerPC VSX，外加标量回退。Python 绑定通过 nanobind，每个入口都走
+vectorcall，目标 Python 3.12+，输入支持 `bytes`、`str`（UCS-1/UCS-2/
+UCS-4 零拷贝）以及 NumPy `ndarray`。
 
 本库面向高吞吐量的模糊匹配场景——记录链接、去重、即时搜索、NLP
-词项相似度，以及生物信息学风格的局部比对——并把 CJK 文本作为
-一等公民：UCS-2 输入会被路由到 16 位 token 的 Farrar 内核，而不是
-被降级为字节，所以中文、日文、韩文字符串走的是和 ASCII 同一条 SIMD
-路径。全配对接口（`cdist`、`cdist_above_threshold`、`cdist_top_k`、
+词项相似度、生物信息学局部比对——并把 CJK 文本作为一等公民：UCS-2
+输入会被路由到 16 位 token 的 Farrar 内核，而不是被降级为字节，
+所以中文、日文、韩文字符串走的是和 ASCII 同一条 SIMD 路径。全配对
+接口（`cdist`、`cdist_above_threshold`、`cdist_top_k`、
 `cdist_top_k_per_query`）把每个 target 的 SIMD 评分和长度差闭式
 剪枝结合起来：当一个 target 可能达到的最大相似度证明无法越过当前
 堆最小值或阈值时，直接跳过评分工作。替换矩阵（BLOSUM、PAM）和
-仿射 gap 罚分在比对路径上都已支持。跨架构正确性都在真实硬件上
-验证（不用模拟器）——Intel/AMD x86、Apple Silicon 与 Graviton ARM、
-龙芯 LoongArch、IBM POWER8——基准跟踪在
-[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html)，
-项目主页是 [stride-align.com](https://stride-align.com)。
+仿射 gap 罚分在比对路径上都已支持。正确性在真实 x86、Apple Silicon、
+Graviton ARM、龙芯 LoongArch、POWER8 硬件上验证——基准在
+[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html)。
 
 这里不讲理论，直接动手——边做边学。
 
@@ -39,36 +36,15 @@ nanobind 绑定到 Python（每个入口都走 vectorcall），目标 Python 3.1
 pip install stride-align
 ```
 
-在龙芯（Loongson）系统上，请先从你的 Linux 发行版安装 NumPy，再
-安装 `stride-align`；龙架构（LoongArch64）的 wheel 需要从下面任一
-镜像获取 —— PyPI 暂不接受 `linux_loongarch64` 或
-`manylinux_2_38_loongarch64` 平台标签，所以二进制安装目前只有这
-一条路径。
+预编译 wheel 覆盖 Linux x86_64（glibc 与 musl）、macOS arm64、
+Linux aarch64、Linux ppc64le 在 CPython 3.12 / 3.13 / 3.14 上的
+组合。其他（平台，Python）组合会回退到 PyPI 上的源码发行版并在
+本地编译，这需要支持 C++20 的编译器和 CMake ≥ 3.26。
 
-```bash
-sudo apt install python3-numpy
-PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
-```
-
-从 GitHub 安装：
-
-```bash
-pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
-```
-
-如果从 GitHub 下载不方便，可以改用 `stride-align.com` 上的镜像；
-这里提供的是同一份 wheel：
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
-```
-
-预编译的龙架构（LoongArch64）wheel 在两个镜像上都覆盖 Python
-3.12、3.13 和 3.14。如果你用的是其他 Python 版本
-（或者想从源码构建），`pip install stride-align` 会回退到 PyPI
-上的源码发行版，在本地编译 LSX/LASX 内核。
+**龙芯 / 龙架构（LoongArch64）用户：** wheel 不在 PyPI 上，发布
+渠道是 GitHub Releases，安装时还需要在老世界与新世界两套二进制
+世界之间二选一——详见后面的
+[龙架构 LoongArch 安装](#龙架构-loongarch-安装)。
 
 先声明一下：这里用宗教文本不是要带任何立场——这个 demo 需要几份
 比较大的、含义相同但表达不同的公共领域文档，圣经恰好极其符合这个
@@ -617,6 +593,110 @@ python tools/x86_microbench_regression.py \
 签入仓库的原生 microbench 基线在
 `benchmarks/x86_microbench_baseline.json`。把它当作一个宽松阈值的
 本地兜底，不要当成跨机器的 SLA。
+
+
+## 龙架构 LoongArch 安装
+
+龙架构的 wheel **不在 PyPI 上**（PyPI 暂不索引
+`linux_loongarch64` 平台标签），所以走的是另一条发布通道：
+
+| 渠道 | URL 前缀 |
+| --- | --- |
+| GitHub Releases（主渠道） | `https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/` |
+| `stride-align.com` 镜像 | `https://stride-align.com/wheels/v0.4.0/` |
+
+两个渠道提供完全相同的 wheel，挑访问更快的那个用。在国内访问
+GitHub 较慢时，镜像比较方便；GitHub Releases 是规范主页。
+
+先用发行版安装 NumPy（PyPI 上的 loongarch64 NumPy wheel 还很
+稀疏，发行版的版本通常和系统其他组件 ABI 兼容）：
+
+```bash
+sudo apt install python3-numpy
+PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+```
+
+### 老世界 vs 新世界：怎么选
+
+龙架构硬件运行在两套互不兼容的二进制**世界**之一。两者在两个地方
+不一样：
+
+1. **可执行文件引用的动态加载器**（这个文件名是链接时固化进
+   ELF 头里的）。
+2. **二进制依赖的 glibc ABI 版本**。
+
+一个世界编译出的 wheel 无法在另一个世界加载——加载器文件名在
+对面那边根本不存在，就算存在符号也会对不上。我们为每个世界提供
+一份独立的 wheel：
+
+| 世界 | 加载器 | glibc | 典型机器 | wheel build 标签 |
+| --- | --- | --- | --- | --- |
+| **老世界** | `/lib64/ld.so.1` | 2.28 时代 | 出厂 Kylin、原版龙芯发行版 | `1.oldworld` |
+| **新世界** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | 较新的龙架构发行版，或者任何安装了新加载器的机器 | `1.newworld` |
+
+两份 wheel 都静态链接了 libstdc++ / libgcc，唯一的差别就是
+加载器和 glibc ABI 世界。
+
+**用下面这一行命令判断**：
+
+```bash
+test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
+```
+
+如果输出 `new-world`，说明加载器已就位——直接用新世界的 wheel。
+如果输出 `old-world`，要么装老世界的 wheel，要么跑下面那条
+一次性的 sudo 软链接命令进入新世界（安全——它是新增一个文件名而
+不是替换，老世界的二进制照样正常）。
+
+### 老世界 wheel
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+镜像：
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### 新世界 wheel
+
+新世界 wheel 需要新的加载器出现在 ELF 引用的那个路径上。每台
+机器一次性 sudo 即可，不影响已有的老世界二进制：
+
+```bash
+sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
+            /lib64/ld-linux-loongarch-lp64d.so.1
+```
+
+（发行版打包者通常会把同等的软链接随新世界一起放进来，那种情况下
+可以跳过这一步。）
+
+然后：
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+镜像：
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### 其他说明
+
+预编译的龙架构（LoongArch64）wheel 在两个镜像上都覆盖 Python
+3.12、3.13 和 3.14——两个世界都有。如果你用的是其他 Python
+版本，或者想从源码构建，`pip install stride-align` 会回退到
+PyPI 上的源码发行版，在本地编译 LSX/LASX 内核。构建细节
+（工具链、RPATH wrapper、静态 C++ 运行时）见
+[docs/loongson-build.md](docs/loongson-build.md)。
 
 
 ## 引用
