@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TODO: wide-token path for traceback / path / cigar variants — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>TODO: wide-token path for traceback / path / cigar variants</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="../index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p><strong>Status:</strong> parked.
+<strong>Goal:</strong> lift the hard rejection in <code>prepare_alignment</code> and let
+<code>smith_waterman_path</code>, <code>needleman_wunsch_path</code>, the corresponding
+<code>_path_info</code> / <code>_cigar</code> entries, and any <code>_traceback</code>-style variant
+accept the same wide-token inputs (ndarray itemsize ≥ 2 byte; unicode
+with &gt;256 distinct codepoints) that the score-only path handles today.</p>
+<h2 id="why-this-is-hard">Why this is hard</h2>
+<p>The score-only path was tractable for Phase B because:</p>
+<ul>
+<li>The Farrar SW/NW kernel reduces to scoring; only the final cell
+  value matters, so the inner DP stays unchanged and we just swap
+  in a wider <code>Cell</code> type (<code>int16/int32/int64</code>).</li>
+<li>The query profile is keyed by the <em>target</em> alphabet, so the
+  wide-token preprocess just needs to enumerate distinct target
+  values — which the Phase B <code>wide_*</code> builders already do.</li>
+</ul>
+<p>Traceback adds two things the score-only path doesn't have:</p>
+<ol>
+<li><strong>A trace table</strong> the size of <code>query_size * target_size</code> (one
+   entry per DP cell), recording the direction the cell came from
+   (diagonal / up / left). The score-only kernels deliberately
+   discard this.</li>
+<li><strong>A backtrack pass</strong> that walks from the max-score cell (SW) or
+   bottom-right (NW) back to the origin, emitting CIGAR ops.</li>
+</ol>
+<p>Both pieces are written today against <code>std::uint8_t</code> token streams
+and a packed-byte trace cell layout. Wide tokens force two changes:</p>
+<ul>
+<li>The trace cell layout has to choose between staying packed (lose
+  some token info we may need on tie-breaks) or widening to match
+  the cell type (4x memory at int32, 8x at int64). For large wide
+  inputs the trace table dominates memory; a 70 000 × 70 000
+  int64-cell trace table is 39 GB.</li>
+<li>The backtrack reads <code>query[i]</code> / <code>target[j]</code> against the wide
+  token vector to decide match-vs-mismatch on diagonal moves. That
+  read is templated against <code>std::uint8_t</code> today (<code>std::span&lt;const
+  std::uint8_t&gt;</code>) and has to switch to <code>std::span&lt;const Token&gt;</code>
+  with the same shape we already use in the score-only <code>wide_*</code>
+  kernels.</li>
+</ul>
+<h2 id="plan-one-possible-slice">Plan (one possible slice)</h2>
+<ol>
+<li><strong>Audit</strong> <code>src/cpp/preprocess.hpp</code> <code>prepare_alignment</code> for ndarray
+   rejection sites; lift them in favor of a new
+   <code>prepare_traceback_alignment_wide&lt;Token&gt;</code> that mirrors the wide
+   score preprocess.</li>
+<li><strong>Wide trace cell layout.</strong> Pick a packing — proposal: keep the
+   trace cell as <code>uint8_t</code> (3 bits direction + 5 bits flags), since
+   the cell type (<code>int16/32/64</code>) drives only the score buffers, not
+   the trace.</li>
+<li><strong>Templatize the traceback kernels.</strong> <code>profile_traceback::linear_path</code>
+   et al. currently assume <code>std::uint8_t</code> tokens. Hoist the token type
+   to a template parameter and instantiate for <code>uint8/16/32/64</code>.</li>
+<li><strong>Wire through the 9 fixed-kernel backends.</strong> Same pattern as
+   Phase B 2.7 / 2.8: per-backend <code>smith_waterman_path</code> etc. detect
+   ndarray ≥ 2 byte / unicode &gt; 256 distinct and dispatch to the
+   wide traceback. Power/VSX is still skipped pending the RAM
+   replacement.</li>
+<li><strong>Drop or invert <code>test_path_rejects_ndarray</code>.</strong> It currently
+   pins the reject; once wide traceback lands, replace it with
+   parametrized tests that exercise the new path on uint16 / uint32 /
+   uint64 ndarrays and large-alphabet unicode.</li>
+<li><strong>Memory guard.</strong> Reject inputs whose trace table would exceed a
+   user-configurable cap (default 1 GiB?) with a clear "this would
+   need N GiB; pass score-only or split your inputs" message rather
+   than letting <code>bad_alloc</code> happen at depth.</li>
+</ol>
+<h2 id="scope-per-slice">Scope per slice</h2>
+<p>A first slice lands one SIMD backend (sse41) with full test coverage,
+then propagates the same pattern to the remaining 7 fixed-kernel
+backends one at a time. The scalable-kernel backends (SVE/SVE2/RVV)
+fall back to the fixed-kernel wide traceback via the same dispatch
+trick we use for wide score today (<code>_FIXED_KERNEL_WIDE_PRIORITY</code> in
+<a href="../src/stride_align/__init__.py"><strong>init</strong>.py</a>).</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="../memory">project_wide_token_farrar.md</a> — parallel score-only wide
+  plan that landed as Phase B 2.1 → 2.10.</li>
+<li><a href="../src/cpp/preprocess.hpp">src/cpp/preprocess.hpp</a> -- current
+  rejection point.</li>
+<li><a href="../tests/test_ndarray.py">tests/test_ndarray.py::test_path_rejects_ndarray</a>
+  -- the rejection guard to invert when this lands.</li>
+</ul>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

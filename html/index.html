@@ -29,29 +29,50 @@
 </div>
 </nav>
 <main class="content">
-<p><code>stride-align</code> is a <a href="BENCHMARK.html">blazing fast library</a> to tell you
-how "similar" two strings are.  It does this by implementing the
-Smith-Waterman and Needleman-Wunsch algorithms. Instead of giving you
-a lecture, we're going to learn by doing. Let's dive right into how it
-works.</p>
+<p><code>stride-align</code> is a SIMD-accelerated Python library for fuzzy string
+matching, sequence alignment, phonetic encoding, and time-series
+distance. It ships Smith-Waterman and Needleman-Wunsch alignment,
+Levenshtein and Damerau-Levenshtein edit distance, Jaro and
+Jaro-Winkler similarity, Hamming and Indel distance, Dynamic Time
+Warping (<code>int16</code> / <code>float32</code> / <code>float64</code>), and the standard phonetic
+encoders — Soundex, Metaphone (Philips and jellyfish variants),
+Double Metaphone (Apache Commons and Python-package variants),
+NYSIIS, Match Rating Approach, and Caverphone 2. Scoring kernels are
+hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
+AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
+LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
+bindings use nanobind with vectorcall on every entry point, target
+Python 3.12+, and accept <code>bytes</code>, <code>str</code> (UCS-1/UCS-2/UCS-4
+zero-copy), and NumPy <code>ndarray</code>.</p>
+<p>Built for high-throughput fuzzy-match workloads — record linkage,
+deduplication, search-as-you-type, NLP token similarity,
+bioinformatics local alignment — with first-class CJK: UCS-2 inputs
+route to a 16-bit-token Farrar kernel rather than being downconverted
+to bytes, so Chinese, Japanese and Korean strings hit the same SIMD
+path as ASCII. The all-pairs surface (<code>cdist</code>,
+<code>cdist_above_threshold</code>, <code>cdist_top_k</code>, <code>cdist_top_k_per_query</code>)
+combines per-target SIMD scoring with closed-form length-difference
+pruning that skips work when a target's max possible similarity
+provably can't clear the running heap minimum or threshold.
+Substitution matrices (BLOSUM, PAM) and affine gaps are supported on
+the alignment path. Correctness is validated on real x86, Apple
+Silicon, Graviton ARM, Loongson LoongArch, and POWER8 hardware —
+benchmarks at
+<a href="https://stride-align.com/BENCHMARK.html">stride-align.com/BENCHMARK.html</a>.</p>
+<p>Instead of giving you a lecture, we're going to learn by doing.
+Let's dive right into how it works.</p>
 <h2 id="installation">Installation</h2>
 <pre><code class="language-bash">pip install stride-align
 </code></pre>
-<p>On Loongson systems, install NumPy from your Linux distribution before
-installing <code>stride-align</code>, and grab the LoongArch64 wheel from the
-GitHub release instead of PyPI (PyPI does not yet accept the
-<code>linux_loongarch64</code> or <code>manylinux_2_38_loongarch64</code> platform tags):</p>
-<pre><code class="language-bash">sudo apt install python3-numpy
-
-PY=$(python3 -c 'import sys; print(f&quot;cp{sys.version_info.major}{sys.version_info.minor}&quot;)')
-pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
-</code></pre>
-<p>Prebuilt LoongArch64 wheels are available for Python 3.9, 3.10,
-3.11, 3.12, 3.13, and 3.14. If you are on a different Python (or
-just want to build from source), <code>pip install stride-align</code> falls
-back to the source distribution on PyPI, which compiles the
-LSX/LASX kernels locally.</p>
+<p>Prebuilt wheels cover Linux x86_64 (glibc and musl), macOS arm64,
+Linux aarch64, and Linux ppc64le on CPython 3.12 / 3.13 / 3.14.
+Other (platform, Python) pairs fall back to the PyPI source
+distribution and compile locally; you'll need a C++20 compiler and
+CMake ≥ 3.26.</p>
+<p><strong>Loongson / LoongArch64 users:</strong> wheels live on GitHub Releases
+rather than PyPI, and you pick between the old-world and new-world
+binary worlds — see
+<a href="#loongarch-installation">LoongArch installation</a> further down.</p>
 <p>First, just a disclaimer: I'm not using religious texts here to push
 an agenda - for this demo I need multiple largish public domain
 documents that have the same meaning but are phrased differently. The
@@ -267,6 +288,63 @@ instead of using automatic selection.</p>
 Gapped Alignment Report". CIGAR is the compact alignment-operation notation
 used by SAM/BAM tooling. If you want the full formal version, see the
 <a href="https://samtools.github.io/hts-specs/SAMv1.pdf">SAM specification</a>.</p>
+<h3 id="substitution-matrices-blosum-pam">Substitution matrices (BLOSUM, PAM)</h3>
+<p>For protein alignment, <code>stride_align.matrices</code> ships the canonical
+BLOSUM and PAM substitution matrices. Pass any of them via the
+<code>matrix=</code> kwarg on <code>smith_waterman_score</code>, <code>needleman_wunsch_score</code>,
+or their <code>_scores</code> batch counterparts:</p>
+<pre><code class="language-python">import stride_align
+from stride_align.matrices import blosum62, pam250
+
+# Local alignment, NCBI standard BLOSUM62 with affine gaps (open=-11,
+# extend=-1). matrix= is mutually exclusive with match_score / mismatch_score.
+stride_align.smith_waterman_score(
+    &quot;HEAGAWGHEE&quot;, &quot;PAWHEAE&quot;,
+    matrix=blosum62,
+    gap_open_score=-11, gap_extend_score=-1,
+)
+
+# Batch (1 query × N targets) with profile reuse — the recommended
+# path for &quot;score one query against a library&quot;.
+stride_align.smith_waterman_scores(
+    &quot;HEAGAWGHEE&quot;,
+    [&quot;PAWHEAE&quot;, &quot;HEAGAWGHEE&quot;, &quot;MEEPS&quot;],
+    matrix=pam250, gap_open_score=-14, gap_extend_score=-2,
+)
+
+# Custom matrices: parse any NCBI-format text file
+custom = stride_align.matrices.SubstitutionMatrix.from_ncbi_text(
+    open(&quot;/path/to/BLOSUM62&quot;).read(),
+    name=&quot;BLOSUM62&quot;,
+    gap_open=-11, gap_extend=-1,
+)
+</code></pre>
+<p>Each built-in <code>SubstitutionMatrix</code> exposes its alphabet, matrix data
+(<code>int8</code> ndarray), and recommended gap defaults via <code>.gap_score</code>
+(linear), <code>.gap_open</code>, and <code>.gap_extend</code>. Both linear gaps (<code>gap_score=</code>)
+and affine gaps (<code>gap_open_score=</code> + <code>gap_extend_score=</code>) are
+supported on the AVX-512 backend; other SIMD backends currently fall
+back to the scalar generic kernel for matrix-mode.</p>
+<p>The shipped matrix values come from the NCBI BLAST distribution
+<a href="https://ftp.ncbi.nih.gov/blast/matrices/"><code>ftp.ncbi.nih.gov/blast/matrices/</code></a>,
+which carries the canonical reference scores. The original
+publications are:</p>
+<ul>
+<li><strong>BLOSUM45 / 50 / 62 / 80 / 90</strong> — Henikoff S., Henikoff J.G. (1992).
+  <em>Amino acid substitution matrices from protein blocks</em>. PNAS
+  89(22):10915–10919.
+  <a href="https://doi.org/10.1073/pnas.89.22.10915">doi:10.1073/pnas.89.22.10915</a>
+  &nbsp;·&nbsp;
+  <a href="https://www.pnas.org/doi/pdf/10.1073/pnas.89.22.10915">PDF (open access)</a></li>
+<li><strong>PAM30 / 70 / 250</strong> — Dayhoff M.O., Schwartz R.M., Orcutt B.C.
+  (1978). <em>A model of evolutionary change in proteins</em>. In <em>Atlas of
+  Protein Sequence and Structure</em>, vol. 5, supplement 3, pages 345–352.
+  National Biomedical Research Foundation, Washington, D.C. (Book
+  chapter; not available online as an open PDF. A widely cited
+  follow-on derivation appears in Schwartz R.M., Dayhoff M.O. (1978),
+  <em>Matrices for detecting distant relationships</em>, same volume,
+  pages 353–358.)</li>
+</ul>
 <h3 id="edit-distance-scorers">Edit-distance scorers</h3>
 <p>Beyond Smith-Waterman and Needleman-Wunsch, <code>stride-align</code> exposes
 six unit-cost edit-distance and similarity metrics — each with its
@@ -321,7 +399,87 @@ per SIMD lane on every supported backend:</p>
 65–256 chars use the multi-word kernel (W=2/3/4). Indel and OSA
 fall back to scalar bit-parallel for patterns &gt;64 (multi-word
 generalization deferred); true-DL is scalar DP only.</p>
-<h3 id="cdist-cdist_above_threshold-cdist_top_k"><code>cdist</code>, <code>cdist_above_threshold</code>, <code>cdist_top_k</code></h3>
+<h3 id="phonetic-encoders">Phonetic encoders</h3>
+<p>For name matching, deduplication, and search-as-you-type, <code>stride-align</code>
+ships the full standard phonetic-encoder family. Each encoder maps a
+string to a short code such that names that <em>sound</em> similar share a
+code, regardless of spelling:</p>
+<pre><code class="language-python">import stride_align as sa
+
+# American Soundex (Russell &amp; Odell, 1918). 4-character code.
+sa.soundex(&quot;Robert&quot;)                                     # -&gt; &quot;R163&quot;
+sa.soundex(&quot;Rupert&quot;)                                     # -&gt; &quot;R163&quot;
+sa.soundex_equal(&quot;Robert&quot;, &quot;Rupert&quot;)                     # -&gt; True
+
+# Metaphone (Lawrence Philips, 1990) — two-letter and longer
+# spec-correct variants. The published 1990 spec and the popular
+# jellyfish library disagree on a handful of edge cases; the variant
+# kwarg picks the rule family.
+sa.metaphone(&quot;Schmidt&quot;)                                  # -&gt; &quot;SKMTT&quot;  (PHILIPS, spec)
+sa.metaphone(&quot;Schmidt&quot;, variant=sa.MetaphoneVariant.JELLYFISH)  # -&gt; &quot;SXMTT&quot;
+sa.metaphone_equal(&quot;Schmidt&quot;, &quot;Smith&quot;)                   # -&gt; False
+
+# Double Metaphone (Lawrence Philips, 2000) — primary and alternate
+# codes; the alternate captures plausible non-English pronunciations.
+# COMMONS is the faithful Apache Commons Codec port; PYTHON is bug-
+# compat with the metaphone PyPI package.
+sa.double_metaphone(&quot;Schwartz&quot;)                          # -&gt; (&quot;XRTS&quot;, &quot;XFRTS&quot;)
+sa.double_metaphone(&quot;Hugh&quot;)                              # -&gt; (&quot;H&quot;, &quot;&quot;)
+sa.double_metaphone(&quot;Hugh&quot;,
+    variant=sa.DoubleMetaphoneVariant.PYTHON)            # -&gt; (&quot;HH&quot;, &quot;&quot;)
+
+# NYSIIS (Taft, 1970). More discriminative than Soundex for English
+# names — &quot;Watkins&quot; / &quot;Wilkins&quot; / &quot;Wilkinson&quot; don't collide.
+sa.nysiis(&quot;Watkins&quot;), sa.nysiis(&quot;Wilkins&quot;)               # -&gt; (&quot;WATCAN&quot;, &quot;WALCAN&quot;)
+
+# Match Rating Approach (Moore, Western Airlines, 1977). A codex plus
+# a pairwise comparator with length-difference + rating-threshold rules.
+sa.match_rating_codex(&quot;Christopher&quot;)                     # -&gt; &quot;CHRPHR&quot;
+sa.match_rating_compare(&quot;Robert&quot;, &quot;Rupert&quot;)              # -&gt; True
+
+# Caverphone 2.0 (Hood, 2004). Fixed-length 10-character code,
+# right-padded with '1'. Designed for late-19th-century New Zealand
+# electoral rolls but widely applied to general English-language
+# name matching.
+sa.caverphone(&quot;Stevenson&quot;)                               # -&gt; &quot;STFNSN1111&quot;
+</code></pre>
+<p>All seven encoders are dispatched through the same byte-extraction
+helper, accept <code>str</code> and <code>bytes</code> inputs interchangeably, and skip
+non-letter / non-ASCII codepoints before encoding — pre-normalise
+with <code>unicodedata.normalize("NFKD", s)</code> if you want accent folding.
+Cross-checked against the canonical Apache Commons Codec reference
+data and the <code>jellyfish</code>, <code>metaphone</code>, and <code>doublemetaphone</code> PyPI
+packages.</p>
+<h3 id="dynamic-time-warping">Dynamic Time Warping</h3>
+<p>For aligning numeric sequences whose timing or speed varies — audio
+signals, gesture / sensor traces, financial time series —
+<code>stride-align</code> exposes Dynamic Time Warping with optional Sakoe-Chiba
+band:</p>
+<pre><code class="language-python">import numpy as np
+import stride_align as sa
+
+q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+t = np.array([1.0, 2.0, 2.5, 4.0, 5.0])
+
+# Default distance follows the dtype:
+#   float32 / float64 -&gt; L2-squared, (x - y)^2
+#   int16             -&gt; L1, |x - y|  (audio convention)
+sa.dtw(q, t)                                              # -&gt; 0.25
+
+# Sakoe-Chiba band: int radius or fraction of max(|q|, |t|).
+sa.dtw(q, t, window=2)
+sa.dtw(q, t, window=0.2)
+
+# Explicit distance.
+sa.dtw(q.astype(np.int16), t.astype(np.int16), distance=&quot;l1&quot;)
+
+# Batch.
+sa.dtw_distances(q, [t, t * 2, t + 0.5], window=2)
+</code></pre>
+<p>Inputs must be NumPy <code>ndarray</code> with matching dtype (<code>float32</code>,
+<code>float64</code>, or <code>int16</code> — the natural audio dtype). Other dtypes and
+non-ndarray inputs raise <code>TypeError</code>.</p>
+<h3 id="cdist-cdist_above_threshold-cdist_top_k-cdist_top_k_per_query"><code>cdist</code>, <code>cdist_above_threshold</code>, <code>cdist_top_k</code>, <code>cdist_top_k_per_query</code></h3>
 <p>For all-pairs scoring across two lists of strings, <code>stride-align</code>
 ships three matrix-style entry points:</p>
 <pre><code class="language-python">qs = [&quot;kitten&quot;, &quot;sitting&quot;, &quot;kit&quot;]
@@ -345,13 +503,26 @@ for score, q, t in sa.cdist_above_threshold(
 # per-thread; a shared atomic global-min bound lets the per-pair
 # cutoff push-down lift the prune threshold as work progresses.
 sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+
+# Top-k targets PER QUERY, yielded as a generator. Differs from
+# cdist_top_k (which returns the k highest pairs globally) by keeping
+# a separate top-k heap per query. With pruning=True, the worst-in-
+# heap score adapts as scoring progresses and targets whose closed-
+# form length-difference upper bound on similarity can't beat it
+# are skipped before the kernel runs — a big win on workloads with
+# wide length variation.
+for query, top in sa.cdist_top_k_per_query(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=True,
+):
+    # top is [(score, target), ...] sorted descending
+    ...
 </code></pre>
 <p>At high thresholds the pruning is dramatic — see the cross-arch
-table in <a href="BENCHMARK.html">BENCHMARK.md</a> (the <code>cdist pruning</code> rows).
+table in <a href="https://stride-align.com/BENCHMARK.html">BENCHMARK.md</a> (the <code>cdist pruning</code> rows).
 Loongson LASX in particular flips the expected ranking against
 Tiger Lake AVX-512 at T=0.99; the comparison report lives at
 <a href="docs/loongson-vs-tiger-lake-cdist-2026-05-24.html">docs/loongson-vs-tiger-lake-cdist-2026-05-24.md</a>.</p>
-<p>See <a href="BENCHMARK.html">BENCHMARK.md</a> for full cross-architecture numbers.</p>
+<p>See <a href="https://stride-align.com/BENCHMARK.html">BENCHMARK.md</a> for full cross-architecture numbers.</p>
 <h2 id="optimizations-and-benchmarks">Optimizations and Benchmarks</h2>
 <p>Careful attention has been, and continues to be, paid to <code>stride-align</code>'s
 performance story. The library includes SIMD optimization for a variety of
@@ -366,7 +537,7 @@ souvenirs are appreciated. Tea, calligraphy bookmarks, paper-cut ornaments,
 Chinese knot charms, panda keychains, and small dragon desk objects are all
 welcome. Please do not send anything expensive or anything that requires
 customs paperwork.</p>
-<p>See <a href="BENCHMARK.html">complete benchmarks</a>.</p>
+<p>See <a href="https://stride-align.com/BENCHMARK.html">complete benchmarks</a>.</p>
 <h2 id="native-microbench">Native Microbench</h2>
 <p>For perf profiling without Python frames or benchmark orchestration, configure a
 native x86 microbench build:</p>
@@ -398,6 +569,118 @@ symbols plus frame pointers while preserving <code>-O3</code>.</p>
 <p>The checked-in native microbench baseline lives at
 <code>benchmarks/x86_microbench_baseline.json</code>. Treat it as a local guardrail with a
 loose threshold, not as a cross-machine SLA.</p>
+<h2 id="loongarch-installation">LoongArch installation</h2>
+<p>LoongArch wheels are <strong>not on PyPI</strong> (PyPI doesn't index the
+<code>linux_loongarch64</code> platform tag), so they ship through a different
+channel:</p>
+<table>
+<thead>
+<tr>
+<th>Channel</th>
+<th>URL prefix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GitHub Releases (primary)</td>
+<td><code>https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/</code></td>
+</tr>
+<tr>
+<td><code>stride-align.com</code> mirror</td>
+<td><code>https://stride-align.com/wheels/v0.4.0/</code></td>
+</tr>
+</tbody>
+</table>
+<p>Same wheels on both, pick whichever loads faster from your network.
+The mirror is convenient when GitHub egress is slow from inside
+China; GitHub Releases is the canonical home.</p>
+<p>Install NumPy from your distro first (loongarch64 NumPy wheels are
+sparse on PyPI, and the distro one is usually ABI-compatible with
+the rest of the system):</p>
+<pre><code class="language-bash">sudo apt install python3-numpy
+PY=$(python3 -c 'import sys; print(f&quot;cp{sys.version_info.major}{sys.version_info.minor}&quot;)')
+</code></pre>
+<h3 id="old-world-vs-new-world-what-to-pick">Old-world vs new-world: what to pick</h3>
+<p>LoongArch hardware runs in one of two mutually incompatible binary
+<strong>worlds</strong>. They differ in two things:</p>
+<ol>
+<li><strong>Which dynamic loader the executable references</strong> (this is the
+   filename baked into the ELF header at link time).</li>
+<li><strong>Which glibc ABI version the binary depends on</strong>.</li>
+</ol>
+<p>A wheel built for one world will not load on the other — the loader
+filename doesn't exist on the wrong side, and the symbols would
+mismatch even if it did. We ship one wheel per world:</p>
+<table>
+<thead>
+<tr>
+<th>World</th>
+<th>Loader</th>
+<th>glibc</th>
+<th>Typical hosts</th>
+<th>Wheel build tag</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Old-world</strong></td>
+<td><code>/lib64/ld.so.1</code></td>
+<td>2.28-era</td>
+<td>Stock Kylin, original Loongson distros</td>
+<td><code>1.oldworld</code></td>
+</tr>
+<tr>
+<td><strong>New-world</strong></td>
+<td><code>/lib64/ld-linux-loongarch-lp64d.so.1</code></td>
+<td>≥ 2.36</td>
+<td>Recent LoongArch distros, anything where the new loader has been installed</td>
+<td><code>1.newworld</code></td>
+</tr>
+</tbody>
+</table>
+<p>Both wheels are statically linked against libstdc++ / libgcc so the
+only thing separating them is the loader / glibc ABI.</p>
+<p><strong>Pick the right one with this one-liner</strong>:</p>
+<pre><code class="language-bash">test -e /lib64/ld-linux-loongarch-lp64d.so.1 &amp;&amp; echo new-world || echo old-world
+</code></pre>
+<p>If you see <code>new-world</code>, the loader is in place — use the new-world
+wheel. If you see <code>old-world</code>, either install the old-world wheel,
+or run the one-time sudo symlink below to enter new-world land
+(safe — it's a new filename, not a replacement, so existing
+old-world binaries keep working).</p>
+<h3 id="old-world-wheel">Old-world wheel</h3>
+<pre><code class="language-bash">pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<p>Mirror:</p>
+<pre><code class="language-bash">pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<h3 id="new-world-wheel">New-world wheel</h3>
+<p>The new-world wheel needs the new loader available at the path the
+ELF references. One sudo step, once per box, leaves old-world
+binaries unaffected:</p>
+<pre><code class="language-bash">sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
+            /lib64/ld-linux-loongarch-lp64d.so.1
+</code></pre>
+<p>(Distro packagers usually drop an equivalent symlink as part of the
+new-world transition, in which case you can skip this.)</p>
+<p>Then:</p>
+<pre><code class="language-bash">pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<p>Mirror:</p>
+<pre><code class="language-bash">pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<h3 id="other-notes">Other notes</h3>
+<p>Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
+and 3.14 — in both worlds — on both mirrors. The build details
+(toolchains, RPATH wrapper, static C++ runtime) live in
+<a href="docs/loongson-build.html">docs/loongson-build.md</a>. If you're on a
+different Python or want to build from source, <code>pip install
+stride-align</code> falls back to the PyPI source distribution and
+compiles the LSX/LASX kernels locally.</p>
 <h2 id="citations">Citations</h2>
 <p>If you use my software in your research, please cite me.</p>
 <pre><code class="language-bibtex">@software{deprince_stride_align,

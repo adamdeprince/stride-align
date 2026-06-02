@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TODO: Dynamic Time Warping (DTW) and adjacent numeric-sequence kernels — stride-align</title>
+<meta name="description" content="stride-align — Smith-Waterman and Needleman-Wunsch with a fast SIMD backend.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+<link rel="icon" type="image/png" href="favicon-16.png" sizes="16x16">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<header class="masthead">
+<h1>TODO: Dynamic Time Warping (DTW) and adjacent numeric-sequence kernels</h1>
+<p class="tagline">stride-align documentation</p>
+</header>
+<nav class="nav">
+<a class="home" href="../index.html">README</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+
+</nav>
+<main class="content">
+<p><strong>Status:</strong> approved scope, ready to implement in phases.
+<strong>Goal:</strong> add SIMD-accelerated numeric-sequence distance kernels — DTW
+first, then subsequence DTW, LCSS, ERP, Fréchet — to stride-align,
+sharing the existing Python dispatch / backend selection / numpy
+ndarray validation infrastructure.</p>
+<h2 id="scope-v1-phase-c1">Scope (v1 = phase C.1)</h2>
+<ul>
+<li><strong>Algorithm</strong>: full DTW, score-only (no warping path yet).</li>
+<li><strong>Constraints</strong>: Sakoe-Chiba band as a <code>window</code> kwarg
+  (<code>r</code>-fraction of <code>max(|q|, |t|)</code>); unconstrained DTW when <code>window</code>
+  is <code>None</code>.</li>
+<li><strong>Distance functions</strong>:</li>
+<li><code>"l1"</code> — <code>|x - y|</code> (default; safest for int16).</li>
+<li><code>"l2_squared"</code> — <code>(x - y)^2</code> (returns squared DTW; user can
+    <code>sqrt()</code> the result if they need a metric).</li>
+<li><strong>Token / Cell types</strong>:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Token (input dtype)</th>
+<th>Cell (DP accumulator)</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>np.float32</code></td>
+<td><code>float</code></td>
+<td>scientific / ML default</td>
+</tr>
+<tr>
+<td><code>np.float64</code></td>
+<td><code>double</code></td>
+<td>high precision, sensor calibration</td>
+</tr>
+<tr>
+<td><code>np.int16</code></td>
+<td><code>std::int32_t</code></td>
+<td>audio (PCM), ADC sensors</td>
+</tr>
+</tbody>
+</table>
+<p>Cell widens from int16 → int32 so the DP accumulator can't
+  overflow on reasonable-length sequences (worst case
+  <code>65535 * len &lt; 2^31</code> so <code>len &lt; ~33 000</code>; beyond that we'd add a
+  saturating-int32 variant or reject).</p>
+<ul>
+<li>
+<p><strong>Multidimensional</strong>: 1D only in v1. d-dim is phase C.7 — leave
+  the API door open via <code>query: np.ndarray</code> (2-D allowed at the
+  signature level, but raises NotImplementedError until C.7).</p>
+</li>
+<li>
+<p><strong>Excluded from v1</strong>: int8, int32, int64, float16; warping path;
+  multi-channel; FastDTW; PrunedDTW; LB_Keogh (phase C.2).</p>
+</li>
+</ul>
+<h2 id="python-api-v1">Python API (v1)</h2>
+<pre><code class="language-python">import stride_align as sa
+
+# Singular: 1 query vs 1 target.
+sa.dtw(query, target, *, window=None, distance=&quot;l1&quot;) -&gt; float
+sa.dtw_subsequence(query, target, *, ...) -&gt; tuple[float, int]  # phase C.3
+sa.lcss(query, target, *, epsilon, delta=None) -&gt; float          # phase C.4
+sa.erp(query, target, *, g, distance=&quot;l1&quot;) -&gt; float              # phase C.4
+sa.frechet(query, target) -&gt; float                                # phase C.6
+
+# Batch: 1 query vs N targets.
+sa.dtw_distances(query, targets, *, window=None, distance=&quot;l1&quot;) -&gt; np.ndarray
+</code></pre>
+<p><code>query</code> and each target are <code>np.ndarray</code> of dtype <code>float32</code>,
+<code>float64</code>, or <code>int16</code> (sequences / bytes / str are rejected — DTW
+isn't defined on tokens). All elements of a batch must share dtype
+(mirrors the existing wide-Farrar rule). <code>window</code> accepts <code>None</code>,
+an integer (absolute Sakoe-Chiba radius), or a float in <code>(0, 1]</code>
+(fraction of <code>max(|q|, |t|)</code>).</p>
+<h3 id="errors">Errors</h3>
+<ul>
+<li>Wrong dtype → <code>TypeError("dtw requires float32, float64, or int16 ndarray; got &lt;dtype&gt;")</code>.</li>
+<li>Mixed dtypes in batch → <code>TypeError</code> (same as existing wide batch).</li>
+<li>2-D query/target in v1 → <code>NotImplementedError("multidimensional DTW arrives in phase C.7; flatten or wait")</code>.</li>
+<li><code>window</code> ≤ 0 → <code>ValueError</code>.</li>
+</ul>
+<h2 id="c-surface">C++ surface</h2>
+<pre><code>include/stride_align/dtw.hpp
+    namespace stride_align::dtw {
+      enum class DistanceKind { kL1, kL2Squared };
+
+      // Scalar reference: correctness oracle + fallback when SIMD
+      // backend isn't available.
+      template &lt;typename Cell&gt;
+      Score dtw_score_scalar(std::span&lt;const Cell&gt; query,
+                             std::span&lt;const Cell&gt; target,
+                             DistanceKind dist,
+                             std::optional&lt;std::size_t&gt; window);
+
+      // Same shape, parameterised on the Token type used to read
+      // the input buffer (so int16 inputs widen to int32 cells
+      // inside the kernel).
+      template &lt;typename Token, typename Cell&gt;
+      Score dtw_score_scalar_widening(std::span&lt;const Token&gt; query,
+                                      std::span&lt;const Token&gt; target,
+                                      DistanceKind dist,
+                                      std::optional&lt;std::size_t&gt; window);
+    }
+
+src/cpp/dtw_simd_ops.hpp
+    namespace stride_align::dtw {
+      // Mirrors the existing farrar_fixed_kernel SimdOps shape so
+      // future Token/Cell pairs slot in without restructuring.
+      // v1 instantiations:
+      //   SimdOps&lt;float32, float32&gt;
+      //   SimdOps&lt;float64, float64&gt;
+      //   SimdOps&lt;int16,   int32&gt;     // widening for overflow safety
+      //
+      // Each specialisation exposes:
+      //   vector_type, lane_count
+      //   Ops::load / store / loadu_token (token-width load that
+      //     promotes to Cell on the int16 path)
+      //   Ops::min(a, b)            // float min / int32 min
+      //   Ops::add(a, b)            // float add / int32 add
+      //   Ops::abs_diff(a, b)       // |a - b| for L1
+      //   Ops::diff_squared(a, b)   // (a-b)^2 for L2_squared
+      //   Ops::infinity()           // FLT_MAX / DBL_MAX / INT32_MAX
+      //   Ops::reduce_min(vec)
+      template &lt;typename Token, typename Cell&gt;
+      struct SimdOps;  // primary template, undefined; specialisations follow
+    }
+
+src/cpp/dtw_simd.hpp
+    template &lt;template &lt;typename, typename&gt; class OpsTemplate,
+              typename Token, typename Cell&gt;
+    std::vector&lt;Score&gt; dtw_batch_simd(
+        std::span&lt;const Token&gt; query,
+        std::span&lt;const std::span&lt;const Token&gt;&gt; targets,
+        DistanceKind dist,
+        std::optional&lt;std::size_t&gt; window);
+
+src/cpp/dtw_dispatch.hpp
+    inline Score dispatch_dtw(nb::handle query, nb::handle target,
+                              DistanceKind dist,
+                              std::optional&lt;std::size_t&gt; window);
+    inline std::vector&lt;Score&gt; dispatch_dtw_many(nb::handle query,
+                                                nb::handle targets,
+                                                DistanceKind dist,
+                                                std::optional&lt;std::size_t&gt; window);
+</code></pre>
+<p><code>Score</code> is <code>double</code> end-to-end (the C++ DP runs in <code>Cell</code>, but the
+Python-facing result widens to <code>double</code> so the int16 kernel can
+return distances larger than <code>INT32_MAX</code> without a separate
+return-type path).</p>
+<h2 id="simd-batch-shape">SIMD batch shape</h2>
+<p>DTW's natural batch lane assignment is <strong>one target per SIMD lane</strong>,
+the same shape stride-align already uses for the Levenshtein SIMD
+batch (<code>levenshtein_simd.hpp</code>):</p>
+<ul>
+<li>The DP column for query position <code>i</code> reads <code>query[i]</code> (scalar,
+  broadcast to all lanes) and the per-lane current target sample.</li>
+<li>Each lane runs its own DP row in lockstep with the others.</li>
+<li>Lanes finish in lockstep (no early-exit per lane in v1; the
+  cutoff / <code>LB_Keogh</code> early-exit is phase C.2).</li>
+</ul>
+<p>Lane counts (Token width):</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th style="text-align: right;">float32</th>
+<th style="text-align: right;">float64</th>
+<th style="text-align: right;">int16 (Cell=int32)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SSE4.1</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>AVX2</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>AVX-512BWVL / AVX10/512</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">16</td>
+</tr>
+<tr>
+<td>AVX10/256</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>ARM NEON 128</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>Loongson LSX</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>Loongson LASX</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">8</td>
+</tr>
+</tbody>
+</table>
+<p>(The int16-cells-stay-int16 throughput-maximal variant — 16-lane
+int16 / 32-lane in AVX-512 — is a phase C.N optimisation, not v1.
+v1 widens to int32 for overflow safety.)</p>
+<h2 id="audio-specifics-why-int16-v1-is-non-negotiable">Audio specifics (why int16 v1 is non-negotiable)</h2>
+<ul>
+<li>PCM audio is int16 native (44.1 kHz × 16-bit mono = ~88 KB/s).</li>
+<li>Reading audio frames through numpy gives int16 ndarrays for
+  free; converting to float32 for DTW costs a cache-pass + a
+  type-cast pipeline at the boundary.</li>
+<li>Per-cell distance on int16 PCM: max <code>|q - t|</code> is 65535. For an
+  L1 DTW with query length ~1000 (≈23 ms at 44.1 kHz), max
+  accumulated distance is ~6.5×10^7, comfortably in int32.</li>
+<li>L2-squared is risky for raw PCM (65535² × 1000 = 4.3×10^12,
+  overflows int32 around length ~470). v1 supports L2-squared on
+  int16 only when <code>window</code> + length combinations stay safe — the
+  dispatcher computes the worst-case accumulator and rejects with
+  a clear "use L1 or float32" message.</li>
+</ul>
+<h2 id="python-dispatch">Python dispatch</h2>
+<p>The dispatcher mirrors the existing wide-Farrar routing in
+<code>src/stride_align/__init__.py</code>:</p>
+<ul>
+<li>If query/target are ndarray with dtype in <code>{float32, float64,
+  int16}</code> → DTW SIMD batch on the best available x86 / NEON / LSX /
+  LASX backend.</li>
+<li>Other dtypes → <code>TypeError</code>.</li>
+<li>Sequence / bytes / str → <code>TypeError</code> (not a numeric domain).</li>
+<li>SVE / SVE2 / RVV / Power VSX backends are not wired in v1; on
+  those platforms the Python dispatcher prefers the NEON / VSX
+  fallback if available, else the scalar reference. (Same
+  <code>_FIXED_KERNEL_WIDE_PRIORITY</code> trick.)</li>
+</ul>
+<h2 id="phase-split-work-breakdown">Phase split (work breakdown)</h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Deliverable</th>
+<th>Files touched</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>C.1a</strong></td>
+<td>Scalar reference, Python API, dispatcher, dtype rejection, full test suite (correctness + Sakoe-Chiba edge cases)</td>
+<td><code>include/stride_align/dtw.hpp</code>, <code>src/cpp/dtw_dispatch.hpp</code>, <code>src/stride_align/__init__.py</code>, <code>tests/test_dtw.py</code>, <code>src/cpp/module_bindings.hpp</code></td>
+</tr>
+<tr>
+<td><strong>C.1b</strong></td>
+<td>x86 SIMD batch kernels (float32 / float64 / int16) on sse41 / avx2 / avx512bwvl / avx10_256 / avx10_512</td>
+<td><code>src/cpp/dtw_simd_ops.hpp</code> (x86 specialisations), <code>src/cpp/dtw_simd.hpp</code>, per-backend wiring</td>
+</tr>
+<tr>
+<td><strong>C.1c</strong></td>
+<td>ARM NEON + Loongson LSX/LASX SIMD batch kernels</td>
+<td>additional <code>dtw_simd_ops.hpp</code> specialisations, per-backend wiring</td>
+</tr>
+<tr>
+<td><strong>C.1d</strong></td>
+<td>Benchmarks vs <code>dtaidistance</code>, <code>tslearn.metrics.dtw</code>, <code>dtw-python</code>, audio-domain int16 sanity vs float32</td>
+<td><code>tools/refresh_dtw_benchmarks.py</code>, <code>benchmarks/intel-dtw-&lt;date&gt;.csv</code></td>
+</tr>
+</tbody>
+</table>
+<p>Subsequent phases (C.2 = LB_Keogh, C.3 = subsequence DTW, C.4 =
+LCSS+ERP, C.5 = warping path, C.6 = Fréchet, C.7 = multidim) each
+sit on top of C.1 without needing kernel rewrites.</p>
+<h2 id="open-api-decisions-to-settle-before-c1a-starts">Open API decisions to settle before C.1a starts</h2>
+<ol>
+<li>
+<p><strong>Function naming</strong>: <code>sa.dtw()</code> vs <code>sa.dtw_distance()</code>. The
+   existing string surface uses <code>levenshtein_score</code> /
+   <code>levenshtein_distance</code> interchangeably. I'd lean <code>sa.dtw()</code> for
+   the singular and <code>sa.dtw_distances()</code> for the batch to match the
+   <code>levenshtein_score</code> / <code>levenshtein_scores</code> convention, even
+   though "score" is a misnomer here (lower is better, no "score"
+   semantic). Open to bikeshedding.</p>
+</li>
+<li>
+<p><strong><code>window</code> units</strong>: integer = absolute radius in samples, float
+   = fraction of <code>max(|q|, |t|)</code>. Or rename to two kwargs
+   (<code>window_samples</code> / <code>window_ratio</code>) for clarity? Existing
+   convention in the field is the single <code>window</code> kwarg with
+   overload.</p>
+</li>
+<li>
+<p><strong><code>distance</code> defaults</strong>: <code>"l1"</code> is safe for int16; <code>"l2_squared"</code>
+   is conventional for float DTW. Pick a per-dtype default
+   (<code>"l1"</code> for int16, <code>"l2_squared"</code> for float) or one universal
+   default (<code>"l1"</code> everywhere, requiring float users to opt into
+   <code>"l2_squared"</code>)? I'd lean per-dtype default — matches what
+   users on each domain expect — but happy to standardise on
+   <code>"l1"</code> if you'd rather.</p>
+</li>
+<li>
+<p><strong>Empty-sequence semantics</strong>: <code>dtw([], [])</code> = 0?
+   <code>dtw([], non_empty)</code> = <code>+inf</code>? Or raise? Convention is
+   inconsistent across libraries; pick one and document.</p>
+</li>
+</ol>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="TODO-wide-traceback.html">docs/TODO-wide-traceback.md</a> — adjacent
+  effort on the string-alignment side.</li>
+<li><a href="TODO-matrix-roadmap.html">docs/TODO-matrix-roadmap.md</a> — same
+  shape for the substitution-matrix work.</li>
+<li><a href="../memory">memory/feedback_short_strings_priority.md</a> — DTW is
+  a different priority lane from the short-string fuzzy matching
+  hot path; v1 should not regress short-string Levenshtein
+  throughput.</li>
+</ul>
+</main>
+<footer class="footer">
+stride-align · open source on
+<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+</footer>
+</div>
+</body>
+</html>

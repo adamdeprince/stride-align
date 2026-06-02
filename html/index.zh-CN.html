@@ -29,26 +29,42 @@
 </div>
 </nav>
 <main class="content">
-<p><code>stride-align</code> 是一个<a href="BENCHMARK.html">极速库</a>，用来判断两个字符串的
-“相似程度”。它通过实现 Smith-Waterman 和 Needleman-Wunsch 算法来完成
-这件事。这里不讲理论，直接动手——边做边学。</p>
+<p><code>stride-align</code> 是一个 SIMD 加速的 Python 库，专注于模糊字符串匹配、
+序列比对、语音编码与时间序列距离。它实现了 Smith-Waterman 与
+Needleman-Wunsch 比对、Levenshtein 与 Damerau-Levenshtein 编辑距离、
+Jaro 与 Jaro-Winkler 相似度、Hamming 与 Indel 距离、面向
+<code>int16</code> / <code>float32</code> / <code>float64</code> 数值序列的动态时间规整（DTW），以及
+一整套标准语音编码器——Soundex、Metaphone（Philips 与 jellyfish 两种
+变体）、Double Metaphone（Apache Commons 与 Python 包两种变体）、
+NYSIIS、Match Rating Approach、Caverphone 2。评分内核都是手写矢量化，
+由运行时 CPU dispatch 调度：x86 SSE4.1 / AVX2 / AVX-512BW+VL /
+AVX10-256 / AVX10-512、ARM NEON 与 SVE/SVE2、龙架构 LSX 与 LASX、
+PowerPC VSX，外加标量回退。Python 绑定通过 nanobind，每个入口都走
+vectorcall，目标 Python 3.12+，输入支持 <code>bytes</code>、<code>str</code>（UCS-1/UCS-2/
+UCS-4 零拷贝）以及 NumPy <code>ndarray</code>。</p>
+<p>本库面向高吞吐量的模糊匹配场景——记录链接、去重、即时搜索、NLP
+词项相似度、生物信息学局部比对——并把 CJK 文本作为一等公民：UCS-2
+输入会被路由到 16 位 token 的 Farrar 内核，而不是被降级为字节，
+所以中文、日文、韩文字符串走的是和 ASCII 同一条 SIMD 路径。全配对
+接口（<code>cdist</code>、<code>cdist_above_threshold</code>、<code>cdist_top_k</code>、
+<code>cdist_top_k_per_query</code>）把每个 target 的 SIMD 评分和长度差闭式
+剪枝结合起来：当一个 target 可能达到的最大相似度证明无法越过当前
+堆最小值或阈值时，直接跳过评分工作。替换矩阵（BLOSUM、PAM）和
+仿射 gap 罚分在比对路径上都已支持。正确性在真实 x86、Apple Silicon、
+Graviton ARM、龙芯 LoongArch、POWER8 硬件上验证——基准在
+<a href="https://stride-align.com/BENCHMARK.html">stride-align.com/BENCHMARK.html</a>。</p>
+<p>这里不讲理论，直接动手——边做边学。</p>
 <h2 id="_1">安装</h2>
 <pre><code class="language-bash">pip install stride-align
 </code></pre>
-<p>在龙芯（Loongson）系统上，请先从你的 Linux 发行版安装 NumPy，再
-安装 <code>stride-align</code>；龙架构（LoongArch64）的 wheel 要从 GitHub
-release 获取，而不是 PyPI（PyPI 暂不接受 <code>linux_loongarch64</code> 或
-<code>manylinux_2_38_loongarch64</code> 平台标签）：</p>
-<pre><code class="language-bash">sudo apt install python3-numpy
-
-PY=$(python3 -c 'import sys; print(f&quot;cp{sys.version_info.major}{sys.version_info.minor}&quot;)')
-pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.3.0/stride_align-0.3.0-${PY}-${PY}-linux_loongarch64.whl
-</code></pre>
-<p>预编译的龙架构（LoongArch64）wheel 覆盖 Python 3.9、3.10、3.11、
-3.12、3.13 和 3.14。如果你用的是其他 Python 版本（或者想从源码
-构建），<code>pip install stride-align</code> 会回退到 PyPI 上的源码发行版，
-在本地编译 LSX/LASX 内核。</p>
+<p>预编译 wheel 覆盖 Linux x86_64（glibc 与 musl）、macOS arm64、
+Linux aarch64、Linux ppc64le 在 CPython 3.12 / 3.13 / 3.14 上的
+组合。其他（平台，Python）组合会回退到 PyPI 上的源码发行版并在
+本地编译，这需要支持 C++20 的编译器和 CMake ≥ 3.26。</p>
+<p><strong>龙芯 / 龙架构（LoongArch64）用户：</strong> wheel 不在 PyPI 上，发布
+渠道是 GitHub Releases，安装时还需要在老世界与新世界两套二进制
+世界之间二选一——详见后面的
+<a href="#龙架构-loongarch-安装">龙架构 LoongArch 安装</a>。</p>
 <p>先声明一下：这里用宗教文本不是要带任何立场——这个 demo 需要几份
 比较大的、含义相同但表达不同的公共领域文档，圣经恰好极其符合这个
 要求。</p>
@@ -244,10 +260,63 @@ print(object_result.aligned_query, object_result.aligned_target)
 Gapped Alignment Report” 的缩写，是 SAM/BAM 工具链使用的紧凑
 对齐操作记法。如果想看完整规范，见
 <a href="https://samtools.github.io/hts-specs/SAMv1.pdf">SAM specification</a>。</p>
+<h3 id="blosumpam">替换矩阵（BLOSUM、PAM）</h3>
+<p>针对蛋白质比对，<code>stride_align.matrices</code> 提供了规范的 BLOSUM
+与 PAM 替换矩阵。可通过 <code>smith_waterman_score</code>、
+<code>needleman_wunsch_score</code> 及其 <code>_scores</code> 批量版本上的 <code>matrix=</code>
+关键字传入：</p>
+<pre><code class="language-python">import stride_align
+from stride_align.matrices import blosum62, pam250
+
+# 局部比对，NCBI 标准 BLOSUM62 + 仿射空位（open=-11, extend=-1）。
+# matrix= 与 match_score / mismatch_score 互斥。
+stride_align.smith_waterman_score(
+    &quot;HEAGAWGHEE&quot;, &quot;PAWHEAE&quot;,
+    matrix=blosum62,
+    gap_open_score=-11, gap_extend_score=-1,
+)
+
+# 批量（1 条查询 × N 条目标），共用一次构建好的剖面 —— 推荐用法。
+stride_align.smith_waterman_scores(
+    &quot;HEAGAWGHEE&quot;,
+    [&quot;PAWHEAE&quot;, &quot;HEAGAWGHEE&quot;, &quot;MEEPS&quot;],
+    matrix=pam250, gap_open_score=-14, gap_extend_score=-2,
+)
+
+# 自定义矩阵：直接解析 NCBI 文本格式
+custom = stride_align.matrices.SubstitutionMatrix.from_ncbi_text(
+    open(&quot;/path/to/BLOSUM62&quot;).read(),
+    name=&quot;BLOSUM62&quot;,
+    gap_open=-11, gap_extend=-1,
+)
+</code></pre>
+<p>每个内置 <code>SubstitutionMatrix</code> 都暴露字母表、矩阵数据
+（<code>int8</code> ndarray）以及推荐的空位默认值 <code>.gap_score</code>（线性）、
+<code>.gap_open</code>、<code>.gap_extend</code>。线性空位（<code>gap_score=</code>）与仿射空位
+（<code>gap_open_score=</code> + <code>gap_extend_score=</code>）在 AVX-512 后端都受支持；
+其它 SIMD 后端目前对矩阵模式会回退到标量通用内核。</p>
+<p>矩阵数值来自 NCBI BLAST 发行版
+<a href="https://ftp.ncbi.nih.gov/blast/matrices/"><code>ftp.ncbi.nih.gov/blast/matrices/</code></a>，
+即规范的参考分值。原始文献为：</p>
+<ul>
+<li><strong>BLOSUM45 / 50 / 62 / 80 / 90</strong> —— Henikoff S.、Henikoff J.G.（1992）。
+  <em>Amino acid substitution matrices from protein blocks</em>。PNAS
+  89(22):10915–10919。
+  <a href="https://doi.org/10.1073/pnas.89.22.10915">doi:10.1073/pnas.89.22.10915</a>
+  &nbsp;·&nbsp;
+  <a href="https://www.pnas.org/doi/pdf/10.1073/pnas.89.22.10915">PDF（开放获取）</a></li>
+<li><strong>PAM30 / 70 / 250</strong> —— Dayhoff M.O.、Schwartz R.M.、Orcutt B.C.
+  （1978）。<em>A model of evolutionary change in proteins</em>。收于
+  <em>Atlas of Protein Sequence and Structure</em>，第 5 卷，补遗 3，
+  第 345–352 页。美国国家生物医学研究基金会（NBRF），华盛顿特区。
+  （书籍章节，无开放 PDF。常引用的后续推导见
+  Schwartz R.M.、Dayhoff M.O.（1978），<em>Matrices for detecting distant
+  relationships</em>，同卷第 353–358 页。）</li>
+</ul>
 <h3 id="_3">编辑距离评分器</h3>
 <p>除了 Smith-Waterman 和 Needleman-Wunsch，<code>stride-align</code> 还提供六种
-单位代价的编辑距离/相似度度量——每一种都有自己的 SIMD 批处理代码
-路径：</p>
+单位代价的编辑距离/相似度度量。其中大多数都有 SIMD 批处理代码
+路径；true-DL 目前是例外，仍然走标量 DP：</p>
 <pre><code class="language-python">import stride_align
 
 # Levenshtein（Myers 1999 位并行）——插入、删除、替换
@@ -293,9 +362,84 @@ stride_align.jaro_winkler_similarity(&quot;martha&quot;, &quot;marhta&quot;)    
 <li>PowerPC：VSX</li>
 </ul>
 <p>对 Lev / OSA 而言，长度 ≤ 64 的模式走单字 Myers；65–256 走多字
-内核（W=2/3/4）。Indel 和 OSA 在模式长度 &gt; 64 时回退到标量
-位并行（多字推广暂未实现）；true-DL 目前只有标量 DP。</p>
-<h3 id="cdistcdist_above_thresholdcdist_top_k"><code>cdist</code>、<code>cdist_above_threshold</code>、<code>cdist_top_k</code></h3>
+内核（W=2/3/4）。Indel 在模式长度 &gt; 64 时回退到标量位并行
+（多字推广暂未实现）；true-DL 目前只有标量 DP。</p>
+<h3 id="phonetic-encoders">语音编码器（Phonetic encoders）</h3>
+<p>对于姓名匹配、去重和即时搜索这类场景，<code>stride-align</code> 提供完整的
+标准语音编码器家族。每个编码器把字符串映射成一个短代码，发音
+相近的名字共享同一个代码，与拼写差异无关：</p>
+<pre><code class="language-python">import stride_align as sa
+
+# American Soundex（Russell &amp; Odell, 1918）。4 字符代码。
+sa.soundex(&quot;Robert&quot;)                                     # -&gt; &quot;R163&quot;
+sa.soundex(&quot;Rupert&quot;)                                     # -&gt; &quot;R163&quot;
+sa.soundex_equal(&quot;Robert&quot;, &quot;Rupert&quot;)                     # -&gt; True
+
+# Metaphone（Lawrence Philips, 1990）——两个版本：1990 规范本身
+# 和广为使用的 jellyfish 库在少数边界情况上有分歧，variant 参数
+# 选择对应的规则家族。
+sa.metaphone(&quot;Schmidt&quot;)                                  # -&gt; &quot;SKMTT&quot;  (PHILIPS, 规范)
+sa.metaphone(&quot;Schmidt&quot;, variant=sa.MetaphoneVariant.JELLYFISH)  # -&gt; &quot;SXMTT&quot;
+sa.metaphone_equal(&quot;Schmidt&quot;, &quot;Smith&quot;)                   # -&gt; False
+
+# Double Metaphone（Lawrence Philips, 2000）——返回 primary 与
+# alternate 两个代码；alternate 捕捉合理的非英语发音变体。
+# COMMONS 忠实复刻 Apache Commons Codec；PYTHON 与 PyPI 的
+# metaphone 包按位兼容。
+sa.double_metaphone(&quot;Schwartz&quot;)                          # -&gt; (&quot;XRTS&quot;, &quot;XFRTS&quot;)
+sa.double_metaphone(&quot;Hugh&quot;)                              # -&gt; (&quot;H&quot;, &quot;&quot;)
+sa.double_metaphone(&quot;Hugh&quot;,
+    variant=sa.DoubleMetaphoneVariant.PYTHON)            # -&gt; (&quot;HH&quot;, &quot;&quot;)
+
+# NYSIIS（Taft, 1970）。对英文人名比 Soundex 更具区分度——
+# &quot;Watkins&quot; / &quot;Wilkins&quot; / &quot;Wilkinson&quot; 不会冲突。
+sa.nysiis(&quot;Watkins&quot;), sa.nysiis(&quot;Wilkins&quot;)               # -&gt; (&quot;WATCAN&quot;, &quot;WALCAN&quot;)
+
+# Match Rating Approach（Moore, Western Airlines, 1977）。
+# 包含一个 codex 和一个配对比较器；后者用长度差和评分阈值
+# 两条规则判定是否匹配。
+sa.match_rating_codex(&quot;Christopher&quot;)                     # -&gt; &quot;CHRPHR&quot;
+sa.match_rating_compare(&quot;Robert&quot;, &quot;Rupert&quot;)              # -&gt; True
+
+# Caverphone 2.0（Hood, 2004）。固定长度 10 字符代码，
+# 不足时用 '1' 右填充。最初是为 19 世纪末新西兰选民名册设计的，
+# 现广泛用于一般英语姓名匹配。
+sa.caverphone(&quot;Stevenson&quot;)                               # -&gt; &quot;STFNSN1111&quot;
+</code></pre>
+<p>这七个编码器共享同一套字节提取助手，<code>str</code> 与 <code>bytes</code> 输入可以
+互换，编码前会跳过非字母 / 非 ASCII 码点——如果需要去掉重音
+符号，请先用 <code>unicodedata.normalize("NFKD", s)</code> 预处理。所有结果
+都与 Apache Commons Codec 的规范参考数据，以及 <code>jellyfish</code>、
+<code>metaphone</code>、<code>doublemetaphone</code> 这几个 PyPI 包做了交叉验证。</p>
+<h3 id="dynamic-time-warping">动态时间规整（Dynamic Time Warping）</h3>
+<p>对于时序速度不一致的数值序列比对——音频信号、手势 / 传感器轨迹、
+金融时间序列——<code>stride-align</code> 提供带 Sakoe-Chiba 窗口的动态时间
+规整：</p>
+<pre><code class="language-python">import numpy as np
+import stride_align as sa
+
+q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+t = np.array([1.0, 2.0, 2.5, 4.0, 5.0])
+
+# 默认距离按 dtype 选择：
+#   float32 / float64 -&gt; L2 平方，(x - y)^2
+#   int16             -&gt; L1，|x - y|（音频约定）
+sa.dtw(q, t)                                              # -&gt; 0.25
+
+# Sakoe-Chiba 窗口：整数半径，或 max(|q|, |t|) 的小数比例。
+sa.dtw(q, t, window=2)
+sa.dtw(q, t, window=0.2)
+
+# 显式指定距离。
+sa.dtw(q.astype(np.int16), t.astype(np.int16), distance=&quot;l1&quot;)
+
+# 批处理。
+sa.dtw_distances(q, [t, t * 2, t + 0.5], window=2)
+</code></pre>
+<p>输入必须是 dtype 相同的 NumPy <code>ndarray</code>（<code>float32</code>、<code>float64</code> 或
+<code>int16</code>——<code>int16</code> 是天然的音频 dtype）。其它 dtype 与非 ndarray
+输入会抛出 <code>TypeError</code>。</p>
+<h3 id="cdistcdist_above_thresholdcdist_top_kcdist_top_k_per_query"><code>cdist</code>、<code>cdist_above_threshold</code>、<code>cdist_top_k</code>、<code>cdist_top_k_per_query</code></h3>
 <p>针对两份字符串列表的全配对评分场景，<code>stride-align</code> 提供三个
 矩阵风格的入口：</p>
 <pre><code class="language-python">qs = [&quot;kitten&quot;, &quot;sitting&quot;, &quot;kit&quot;]
@@ -316,15 +460,27 @@ for score, q, t in sa.cdist_above_threshold(
 # 按得分取 top-k ——返回最多 k 个最高得分（对距离评分器则是
 # 最低）的 (score, query, target) 三元组。每个线程一个堆；
 # 一个共享的原子全局最小值边界，让每对的 cutoff 下推
-# 随着工作推进抬高剪枝阈值。
+# 在工作推进时不断抬高剪枝阈值。
 sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+
+# 每个 query 取 top-k ——以生成器形式 yield。与 cdist_top_k
+# 不同（后者返回 query × target 矩阵中全局得分最高的 k 对），
+# 本函数为每个 query 各自维护一个 top-k 堆。设置 pruning=True
+# 后，会跟踪当前堆中最差的得分；当一个 target 的长度差闭式
+# 相似度上界证明无法越过该得分时，跳过评分内核——在长度差
+# 较大的工作负载上能带来显著加速。
+for query, top in sa.cdist_top_k_per_query(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=True,
+):
+    # top 是 [(score, target), ...]，按得分降序排好
+    ...
 </code></pre>
-<p>在高阈值下剪枝的效果非常夸张——见 <a href="BENCHMARK.html">BENCHMARK.md</a>
+<p>在高阈值下剪枝的效果非常夸张——见 <a href="https://stride-align.com/BENCHMARK.html">BENCHMARK.md</a>
 中的跨架构表（<code>cdist pruning</code> 那几行）。特别是龙芯（Loongson）的
 LASX 后端在 T=0.99 下，让通常预期会领先的 Tiger Lake AVX-512
 反而落后；对比报告见
 <a href="docs/loongson-vs-tiger-lake-cdist-2026-05-24.html">docs/loongson-vs-tiger-lake-cdist-2026-05-24.md</a>。</p>
-<p>完整的跨架构数据见 <a href="BENCHMARK.html">BENCHMARK.md</a>。</p>
+<p>完整的跨架构数据见 <a href="https://stride-align.com/BENCHMARK.html">BENCHMARK.md</a>。</p>
 <h2 id="_4">优化和基准测试</h2>
 <p><code>stride-align</code> 的性能一直被认真对待，而且仍在持续优化。这个库为
 x86、Arm、龙架构（LoongArch）等多个常见目标做了 SIMD 优化。</p>
@@ -333,11 +489,11 @@ x86、Arm、龙架构（LoongArch）等多个常见目标做了 SIMD 优化。</
 Smith-Waterman），LASX backend 比 generic backend 快 16 倍，
 比 Parasail 快 <strong>22.4 倍</strong>。</p>
 <p>如果你是在龙芯服务器上做研究，并且从这份提速里得到好处的研究者，
-欢迎引用、提交 bug、贡献基准用例；我也很乐意收到一些不贵的中国
-小纪念品——茶叶、书法书签、剪纸、中国结、熊猫钥匙扣、小龙摆件
-之类都很好。请不要寄贵重物品或需要报关的东西。</p>
-<p>完整基准测试见 <a href="BENCHMARK.html">BENCHMARK.md</a>。</p>
-<h2 id="microbench">原生 microbench</h2>
+欢迎引用、提交 bug、贡献基准用例；如果你愿意表达一点心意，我也很喜欢收到一些不贵的中国小纪念品——
+茶叶、书法书签、剪纸、中国结、熊猫钥匙扣、小龙摆件之类都很好。
+请不要寄贵重物品或需要报关的东西。</p>
+<p>完整基准测试见 <a href="https://stride-align.com/BENCHMARK.html">BENCHMARK.md</a>。</p>
+<h2 id="_5">原生微基准</h2>
 <p>如果想在不经 Python 帧、不走基准编排的情况下做性能分析，可以配置
 一份原生 x86 microbench 构建：</p>
 <pre><code class="language-bash">nanobind_dir=&quot;$(.venv/bin/python -m nanobind --cmake_dir)&quot;
@@ -368,7 +524,113 @@ python tools/x86_microbench_regression.py \
 <p>签入仓库的原生 microbench 基线在
 <code>benchmarks/x86_microbench_baseline.json</code>。把它当作一个宽松阈值的
 本地兜底，不要当成跨机器的 SLA。</p>
-<h2 id="_5">引用</h2>
+<h2 id="loongarch">龙架构 LoongArch 安装</h2>
+<p>龙架构的 wheel <strong>不在 PyPI 上</strong>（PyPI 暂不索引
+<code>linux_loongarch64</code> 平台标签），所以走的是另一条发布通道：</p>
+<table>
+<thead>
+<tr>
+<th>渠道</th>
+<th>URL 前缀</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GitHub Releases（主渠道）</td>
+<td><code>https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/</code></td>
+</tr>
+<tr>
+<td><code>stride-align.com</code> 镜像</td>
+<td><code>https://stride-align.com/wheels/v0.4.0/</code></td>
+</tr>
+</tbody>
+</table>
+<p>两个渠道提供完全相同的 wheel，挑访问更快的那个用。在国内访问
+GitHub 较慢时，镜像比较方便；GitHub Releases 是规范主页。</p>
+<p>先用发行版安装 NumPy（PyPI 上的 loongarch64 NumPy wheel 还很
+稀疏，发行版的版本通常和系统其他组件 ABI 兼容）：</p>
+<pre><code class="language-bash">sudo apt install python3-numpy
+PY=$(python3 -c 'import sys; print(f&quot;cp{sys.version_info.major}{sys.version_info.minor}&quot;)')
+</code></pre>
+<h3 id="vs">老世界 vs 新世界：怎么选</h3>
+<p>龙架构硬件运行在两套互不兼容的二进制<strong>世界</strong>之一。两者在两个地方
+不一样：</p>
+<ol>
+<li><strong>可执行文件引用的动态加载器</strong>（这个文件名是链接时固化进
+   ELF 头里的）。</li>
+<li><strong>二进制依赖的 glibc ABI 版本</strong>。</li>
+</ol>
+<p>一个世界编译出的 wheel 无法在另一个世界加载——加载器文件名在
+对面那边根本不存在，就算存在符号也会对不上。我们为每个世界提供
+一份独立的 wheel：</p>
+<table>
+<thead>
+<tr>
+<th>世界</th>
+<th>加载器</th>
+<th>glibc</th>
+<th>典型机器</th>
+<th>wheel build 标签</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>老世界</strong></td>
+<td><code>/lib64/ld.so.1</code></td>
+<td>2.28 时代</td>
+<td>出厂 Kylin、原版龙芯发行版</td>
+<td><code>1.oldworld</code></td>
+</tr>
+<tr>
+<td><strong>新世界</strong></td>
+<td><code>/lib64/ld-linux-loongarch-lp64d.so.1</code></td>
+<td>≥ 2.36</td>
+<td>较新的龙架构发行版，或者任何安装了新加载器的机器</td>
+<td><code>1.newworld</code></td>
+</tr>
+</tbody>
+</table>
+<p>两份 wheel 都静态链接了 libstdc++ / libgcc，唯一的差别就是
+加载器和 glibc ABI 世界。</p>
+<p><strong>用下面这一行命令判断</strong>：</p>
+<pre><code class="language-bash">test -e /lib64/ld-linux-loongarch-lp64d.so.1 &amp;&amp; echo new-world || echo old-world
+</code></pre>
+<p>如果输出 <code>new-world</code>，说明加载器已就位——直接用新世界的 wheel。
+如果输出 <code>old-world</code>，要么装老世界的 wheel，要么跑下面那条
+一次性的 sudo 软链接命令进入新世界（安全——它是新增一个文件名而
+不是替换，老世界的二进制照样正常）。</p>
+<h3 id="wheel">老世界 wheel</h3>
+<pre><code class="language-bash">pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<p>镜像：</p>
+<pre><code class="language-bash">pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<h3 id="wheel_1">新世界 wheel</h3>
+<p>新世界 wheel 需要新的加载器出现在 ELF 引用的那个路径上。每台
+机器一次性 sudo 即可，不影响已有的老世界二进制：</p>
+<pre><code class="language-bash">sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
+            /lib64/ld-linux-loongarch-lp64d.so.1
+</code></pre>
+<p>（发行版打包者通常会把同等的软链接随新世界一起放进来，那种情况下
+可以跳过这一步。）</p>
+<p>然后：</p>
+<pre><code class="language-bash">pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<p>镜像：</p>
+<pre><code class="language-bash">pip install \
+  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+</code></pre>
+<h3 id="_6">其他说明</h3>
+<p>预编译的龙架构（LoongArch64）wheel 在两个镜像上都覆盖 Python
+3.12、3.13 和 3.14——两个世界都有。如果你用的是其他 Python
+版本，或者想从源码构建，<code>pip install stride-align</code> 会回退到
+PyPI 上的源码发行版，在本地编译 LSX/LASX 内核。构建细节
+（工具链、RPATH wrapper、静态 C++ 运行时）见
+<a href="docs/loongson-build.html">docs/loongson-build.md</a>。</p>
+<h2 id="_7">引用</h2>
 <p>如果你在研究中用到了我的软件，请引用我。</p>
 <pre><code class="language-bibtex">@software{deprince_stride_align,
   author       = {DePrince, Adam},
