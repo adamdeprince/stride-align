@@ -2949,6 +2949,21 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("s"));
 
   m.def(
+      "cologne_phonetic",
+      [](nb::handle s) {
+        return ::stride_align::phonetic::dispatch_cologne_phonetic(s);
+      },
+      "Cologne Phonetic (Kölner Phonetik) — Postel, 1969.\n\n"
+      "German-language phonetic encoder. Maps letters to digits 0-8\n"
+      "with context-sensitive rules for C, X, D, T, P, then collapses\n"
+      "adjacent duplicate digits and drops internal zeros. Result is\n"
+      "a digit string of variable length.\n\n"
+      "Accepts ``str`` and ``bytes``. German umlauts (Ä, Ö, Ü) and ß\n"
+      "are preprocessed to their Latin-letter equivalents (A, O, U,\n"
+      "SS) before encoding — callers don't need to NFKD-fold.",
+      nb::arg("s"));
+
+  m.def(
       "double_metaphone",
       [](nb::handle s, std::size_t max_length, int variant) {
         auto [primary, alternate] =

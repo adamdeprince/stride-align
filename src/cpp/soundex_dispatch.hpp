@@ -20,6 +20,7 @@
 #include "stride_align/nysiis.hpp"
 #include "stride_align/match_rating.hpp"
 #include "stride_align/caverphone.hpp"
+#include "stride_align/cologne_phonetic.hpp"
 #include "stride_align/double_metaphone.hpp"
 
 namespace stride_align::phonetic {
@@ -97,6 +98,43 @@ inline bool dispatch_match_rating_compare(nb::handle a, nb::handle b) {
 inline std::string dispatch_caverphone(nb::handle input) {
   return dispatch_ascii_encoder(input,
       [](std::string_view sv) { return caverphone(sv); });
+}
+
+// Cologne wants the German umlauts and ß preserved so they preprocess
+// to their Latin-letter equivalents — the ASCII-strip peel that the
+// other encoders share would drop them silently. Always feed the
+// algorithm UTF-8: for Python ``str`` re-encode via
+// ``PyUnicode_AsUTF8String`` (any UCS-1/2/4 storage normalises), for
+// Python ``bytes`` pass through (caller responsible for the encoding).
+// UCS-1 str (which includes Latin-1 ``ä`` as the single byte 0xE4)
+// would NOT match the UTF-8 two-byte sequences the algorithm looks
+// for, so the bytes path can't be used for Python str — that was the
+// original bug.
+inline std::string dispatch_cologne_phonetic(nb::handle input) {
+  if (PyUnicode_Check(input.ptr())) {
+    PyObject* utf8 = PyUnicode_AsUTF8String(input.ptr());
+    if (utf8 == nullptr) throw nb::python_error();
+    nb::object owner = nb::steal<nb::object>(utf8);
+    char* data = nullptr;
+    Py_ssize_t len = 0;
+    if (PyBytes_AsStringAndSize(utf8, &data, &len) < 0) {
+      throw nb::python_error();
+    }
+    return cologne_phonetic(
+        std::string_view(data, static_cast<std::size_t>(len)));
+  }
+  namespace bv = ::stride_align::byte_view;
+  const bv::ByteCompatKind kind = bv::classify(input.ptr());
+  if (kind == bv::ByteCompatKind::Bytes) {
+    const std::uint8_t* ptr = nullptr;
+    std::size_t len = 0;
+    bv::view(input.ptr(), kind, ptr, len);
+    return cologne_phonetic(
+        std::string_view(reinterpret_cast<const char*>(ptr), len));
+  }
+  ::stride_align::detail::throw_type_error(
+      "phonetic encoder requires a str or bytes-like input");
+  return {};
 }
 
 inline std::pair<std::string, std::string>

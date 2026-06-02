@@ -2084,6 +2084,7 @@ nysiis_equal = _LEVENSHTEIN_BACKEND.nysiis_equal
 match_rating_codex = _LEVENSHTEIN_BACKEND.match_rating_codex
 match_rating_compare = _LEVENSHTEIN_BACKEND.match_rating_compare
 caverphone = _LEVENSHTEIN_BACKEND.caverphone
+cologne_phonetic = _LEVENSHTEIN_BACKEND.cologne_phonetic
 
 
 class DoubleMetaphoneVariant(enum.IntEnum):
@@ -3065,6 +3066,7 @@ __all__ = [
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
     "caverphone",
+    "cologne_phonetic",
     "double_metaphone",
     "DoubleMetaphoneVariant",
     "match_rating_codex",

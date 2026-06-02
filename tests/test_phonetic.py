@@ -698,3 +698,83 @@ def test_double_metaphone_variant_intenum() -> None:
     assert int(sa.DoubleMetaphoneVariant.PYTHON) == 1
 
 
+
+
+# ---------------------------------------------------------------------------
+# Cologne Phonetic (Kölner Phonetik)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        # German Wikipedia + Apache Commons Codec reference vectors.
+        ("Wikipedia",  "3412"),
+        ("Breschnew",  "17863"),
+        ("Müller",     "657"),
+        ("Mueller",    "657"),    # umlaut-expanded form matches encoded form
+        ("Schmidt",    "862"),
+        ("Schneider",  "8627"),
+        ("Fischer",    "387"),
+        ("Weber",      "317"),
+        ("Meyer",      "67"),
+        ("Mayer",      "67"),
+        ("Maier",      "67"),
+        ("Meier",      "67"),
+        ("Wagner",     "3467"),
+        ("Becker",     "147"),
+        ("Schulz",     "858"),
+        ("Hoffmann",   "0366"),
+        ("Heinz",      "068"),
+        ("Müllers",    "6578"),
+        ("Köln",       "456"),
+        ("Großmann",   "47866"),
+    ],
+)
+def test_cologne_phonetic_canonical(name: str, expected: str) -> None:
+    assert sa.cologne_phonetic(name) == expected
+
+
+def test_cologne_phonetic_empty_input() -> None:
+    assert sa.cologne_phonetic("") == ""
+
+
+def test_cologne_phonetic_no_letters() -> None:
+    assert sa.cologne_phonetic("12345") == ""
+
+
+def test_cologne_phonetic_bytes_input() -> None:
+    # Bytes input is taken as-is; ASCII test names match str ones.
+    assert sa.cologne_phonetic(b"Schmidt") == "862"
+
+
+def test_cologne_phonetic_case_insensitive() -> None:
+    assert sa.cologne_phonetic("MÜLLER") == sa.cologne_phonetic("müller") == "657"
+
+
+def test_cologne_phonetic_umlaut_equals_expansion() -> None:
+    # The encoder folds ä/ö/ü to A/O/U and ß to SS, so spelling
+    # variants collapse to the same code (the whole point of a
+    # phonetic encoder for German).
+    assert sa.cologne_phonetic("Müller") == sa.cologne_phonetic("Mueller")
+    assert sa.cologne_phonetic("Köln")   == sa.cologne_phonetic("Koeln")
+    assert sa.cologne_phonetic("Süß")    == sa.cologne_phonetic("Suess")
+
+
+def test_cologne_phonetic_drops_leading_zero_correctly() -> None:
+    # When the first emitted digit is a 0 (vowel-initial input), the
+    # leading 0 is preserved; subsequent zeros are dropped.
+    assert sa.cologne_phonetic("Aaron") == "076"
+    # When the first emitted digit isn't 0, ALL zeros drop.
+    assert sa.cologne_phonetic("Wikipedia") == "3412"
+
+
+def test_cologne_phonetic_collapses_adjacent_duplicates() -> None:
+    # "Müller" -> MULLER -> 6,0,5,5,0,7 -> collapse the 55 -> 60507
+    #   -> drop internal zeros -> 657.
+    assert sa.cologne_phonetic("Müller") == "657"
+
+
+def test_cologne_phonetic_rejects_non_string() -> None:
+    with pytest.raises(TypeError, match="str or bytes"):
+        sa.cologne_phonetic(12345)
