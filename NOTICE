@@ -1,0 +1,58 @@
+stride-align
+Copyright 2025-2026 Adam DePrince
+
+This product includes software developed by The Apache Software Foundation
+(http://www.apache.org/).
+
+----------------------------------------------------------------------
+
+Phonetic encoder ports
+======================
+
+The following phonetic encoder implementations are derivative works of
+Apache Commons Codec (https://commons.apache.org/proper/commons-codec/),
+licensed under the Apache License, Version 2.0. The algorithmic
+structure of the ports follows the corresponding Apache Commons Codec
+classes; the C++ port is original code.
+
+  * include/stride_align/soundex.hpp
+    Reference: org.apache.commons.codec.language.Soundex
+
+  * include/stride_align/metaphone.hpp
+    Reference: org.apache.commons.codec.language.Metaphone
+
+  * include/stride_align/double_metaphone.hpp
+    Reference: org.apache.commons.codec.language.DoubleMetaphone
+
+  * include/stride_align/nysiis.hpp
+    Reference: org.apache.commons.codec.language.Nysiis
+
+  * include/stride_align/match_rating.hpp
+    Reference: org.apache.commons.codec.language.MatchRatingApproachEncoder
+
+  * include/stride_align/caverphone.hpp
+    Reference: org.apache.commons.codec.language.Caverphone2
+
+  * include/stride_align/cologne_phonetic.hpp
+    Reference: org.apache.commons.codec.language.ColognePhonetic
+
+  * include/stride_align/daitch_mokotoff.hpp
+    Reference: org.apache.commons.codec.language.DaitchMokotoffSoundex
+    The rule table is derived directly from the Apache Commons Codec
+    resource file ``dmrules.txt`` (see
+    ``docs/upstream/apache-commons-codec-dmrules.txt``).
+
+Cross-checked against jellyfish (BSD-2-Clause), the ``metaphone`` and
+``doublemetaphone`` PyPI packages, and pyphonetics — these are used as
+test oracles only; no code is incorporated into stride-align.
+
+----------------------------------------------------------------------
+
+Test oracles
+============
+
+The cross-check tests in tests/test_phonetic.py compare stride-align's
+output to several third-party phonetic libraries. These libraries are
+runtime test dependencies only, declared under
+``[project.optional-dependencies].phonetic-compat`` — none of their
+source is included in or distributed with stride-align.
