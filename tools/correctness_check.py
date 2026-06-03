@@ -5,7 +5,7 @@ For each line on stdin, run the line as a query against every line in
 
   --smith-waterman    : parasail.sw_*
   --needleman-wunsch  : parasail.nw_*
-  --levenshtein       : Levenshtein.distance (the python-Levenshtein package)
+  --levenshtein       : rapidfuzz.distance.Levenshtein.distance
 
 Edit weights for the SW / NW comparison are pinned so the two libraries
 produce comparable integer scores:
@@ -72,10 +72,23 @@ def _import_parasail():
 
 
 def _import_levenshtein():
-    lev = _try_import("Levenshtein", "pip install Levenshtein")
-    if lev is None:
+    """Return rapidfuzz's MIT-licensed Levenshtein class.
+
+    The earlier reference was the ``python-Levenshtein`` PyPI package,
+    which is GPL-2.0-or-later. ``rapidfuzz.distance.Levenshtein.distance``
+    gives the same integer edit distance under an MIT licence.
+    """
+    try:
+        from rapidfuzz.distance import Levenshtein  # noqa: PLC0415
+    except ImportError as exc:
+        print(
+            f"# rapidfuzz.distance.Levenshtein: import failed "
+            f"({exc.__class__.__name__}: {exc}).\n"
+            f"#   install with: pip install rapidfuzz",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    return lev
+    return Levenshtein
 
 
 def _build_full_byte_matrix(parasail):
@@ -154,7 +167,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--needleman-wunsch", action="store_true",
                       help="compare needleman_wunsch_scores against parasail.nw_striped_16.")
     mode.add_argument("--levenshtein", action="store_true",
-                      help="compare levenshtein_scores against Levenshtein.distance.")
+                      help="compare levenshtein_scores against rapidfuzz.distance.Levenshtein.distance.")
     parser.add_argument(
         "--max-diff-rows",
         type=int,
@@ -185,7 +198,7 @@ def main() -> int:
         reference_name = "parasail"
     else:
         lev_lib = _import_levenshtein()
-        reference_name = "Levenshtein"
+        reference_name = "rapidfuzz"
 
     # We operate at the byte level: stride-align and parasail's matrix
     # both index by byte value, so encoding str inputs to UTF-8 bytes
@@ -200,7 +213,7 @@ def main() -> int:
     # and the mapper is read-only at the Python layer). To make
     # stride-align's byte-sensitive scoring comparable, we lowercase
     # everything in SW/NW mode so neither side sees a case difference.
-    # Levenshtein mode (stringzilla reference) is case-sensitive on both
+    # Levenshtein mode (rapidfuzz reference) is case-sensitive on both
     # sides, so we keep the bytes as-is.
     case_fold = mode in {"sw", "nw"}
 

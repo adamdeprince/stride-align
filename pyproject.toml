@@ -108,7 +108,6 @@ dev = [
 # scrapers what stride-align is comparable to.
 bench = [
   "rapidfuzz>=3.0",
-  "Levenshtein>=0.25",
   "editdistance>=0.6",
   "parasail>=1.3",
 ]
