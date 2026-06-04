@@ -513,11 +513,14 @@ bool ContextPred::match(const CodepointVec& input,
              std::equal(literal.begin(), literal.end(), input.begin() + pos);
     }
     case Kind::kRegex: {
+      // Range overload of ``regex_search`` avoids the std::string
+      // copy a ``substr``-and-construct used to pay for every call.
       if (!regex) return false;
-      std::string slice = is_left
-          ? std::string(raw_byte_input.substr(0, raw_byte_pos))
-          : std::string(raw_byte_input.substr(raw_byte_pos));
-      return std::regex_search(slice, *regex);
+      const auto* base = raw_byte_input.data();
+      const auto* begin = is_left ? base : base + raw_byte_pos;
+      const auto* end   = is_left ? base + raw_byte_pos
+                                  : base + raw_byte_input.size();
+      return std::regex_search(begin, end, *regex);
     }
   }
   return false;
@@ -1205,6 +1208,25 @@ std::string encode_one_word(std::string_view input,
   // pass takes each live phoneme's TEXT as the new input and re-encodes
   // it through the final-rule bucket set. Phonemes with empty language
   // sets drop. Within each pass, we rebuild the live set.
+  // Scratch state hoisted out of the per-phoneme loop. ``next_arena``,
+  // ``local``, ``sub``, ``sub_bytes``, and ``sub_cp_to_byte`` are
+  // reused across iterations — each per-phoneme step just clears them
+  // back to empty, keeping their already-allocated capacity. The
+  // byte-count for a codepoint is computed without allocating a
+  // temporary string.
+  PhonemeArena next_arena;
+  PhonemeArena local;
+  CodepointVec sub;
+  std::string sub_bytes;
+  std::vector<std::size_t> sub_cp_to_byte;
+
+  auto cp_utf8_size = [](Codepoint cp) -> std::size_t {
+    if (cp < 0x80)   return 1;
+    if (cp < 0x800)  return 2;
+    if (cp < 0x10000) return 3;
+    return 4;
+  };
+
   auto apply_final = [&](const std::string& lang_label) {
     const auto& bucket_map = (rule_type == BmpmRuleType::kApprox)
                                   ? cache.approx
@@ -1214,36 +1236,36 @@ std::string encode_one_word(std::string_view input,
     const RuleBuckets& b = it->second;
     if (b.rules.empty() && b.by_first.empty()) return;
 
-    PhonemeArena next_arena;
     next_arena.reset();
     for (const auto& ph : arena.phonemes) {
-      CodepointVec sub(arena.buffer.begin() + ph.offset,
-                       arena.buffer.begin() + ph.offset + ph.length);
-      std::string sub_bytes = codepoints_to_utf8(sub);
-      std::vector<std::size_t> sub_cp_to_byte(sub.size() + 1, 0);
+      sub.assign(arena.buffer.begin() + ph.offset,
+                 arena.buffer.begin() + ph.offset + ph.length);
+      sub_bytes.clear();
+      sub_bytes.reserve(sub.size());
+      for (auto cp : sub) encode_utf8(sub_bytes, cp);
+      sub_cp_to_byte.assign(sub.size() + 1, 0);
       {
         std::size_t bb = 0;
         for (std::size_t k = 0; k < sub.size(); ++k) {
           sub_cp_to_byte[k] = bb;
-          std::string tmp;
-          encode_utf8(tmp, sub[k]);
-          bb += tmp.size();
+          bb += cp_utf8_size(sub[k]);
         }
         sub_cp_to_byte[sub.size()] = bb;
       }
 
-      PhonemeArena local;
       local.reset();
       local.start_with_languages(ph.langs);
       std::size_t k = 0;
+      CodepointVec one_buf;
+      one_buf.reserve(1);
       while (k < sub.size()) {
         auto hit = find_rule(b, sub, k, sub_bytes, sub_cp_to_byte);
         if (hit.found) {
           local.apply(*hit.expr, max_phonemes);
           k += hit.pattern_length;
         } else {
-          CodepointVec one{sub[k]};
-          local.append_literal(one);
+          one_buf.assign(1, sub[k]);
+          local.append_literal(one_buf);
           ++k;
         }
       }
