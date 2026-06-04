@@ -22,6 +22,7 @@
 #include "stride_align/caverphone.hpp"
 #include "stride_align/cologne_phonetic.hpp"
 #include "stride_align/double_metaphone.hpp"
+#include "stride_align/daitch_mokotoff.hpp"
 
 namespace stride_align::phonetic {
 
@@ -145,6 +146,40 @@ dispatch_double_metaphone(nb::handle input,
   DoubleMetaphoneResult r =
       double_metaphone(std::string_view(s), max_length, variant);
   return {std::move(r.primary), std::move(r.alternate)};
+}
+
+// Daitch-Mokotoff takes UTF-8 in / 6-digit ASCII out. The folding
+// table is keyed on UTF-8 byte sequences, so we re-encode Python
+// ``str`` through ``PyUnicode_AsUTF8String`` — same handling as
+// Cologne and BMPM.
+inline std::string dispatch_daitch_mokotoff(nb::handle input,
+                                             bool branching,
+                                             bool folding) {
+  std::string utf8;
+  if (PyUnicode_Check(input.ptr())) {
+    PyObject* enc = PyUnicode_AsUTF8String(input.ptr());
+    if (enc == nullptr) throw nb::python_error();
+    nb::object owner = nb::steal<nb::object>(enc);
+    char* data = nullptr;
+    Py_ssize_t len = 0;
+    if (PyBytes_AsStringAndSize(enc, &data, &len) < 0) {
+      throw nb::python_error();
+    }
+    utf8.assign(data, static_cast<std::size_t>(len));
+  } else {
+    namespace bv = ::stride_align::byte_view;
+    const bv::ByteCompatKind kind = bv::classify(input.ptr());
+    if (kind != bv::ByteCompatKind::Bytes) {
+      ::stride_align::detail::throw_type_error(
+          "daitch_mokotoff() requires a str or bytes-like input");
+      return {};
+    }
+    const std::uint8_t* ptr = nullptr;
+    std::size_t len = 0;
+    bv::view(input.ptr(), kind, ptr, len);
+    utf8.assign(reinterpret_cast<const char*>(ptr), len);
+  }
+  return daitch_mokotoff(std::string_view(utf8), branching, folding);
 }
 
 // Two-input "encode both, compare" helpers. Implemented at the

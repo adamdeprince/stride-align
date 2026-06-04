@@ -778,3 +778,86 @@ def test_cologne_phonetic_collapses_adjacent_duplicates() -> None:
 def test_cologne_phonetic_rejects_non_string() -> None:
     with pytest.raises(TypeError, match="str or bytes"):
         sa.cologne_phonetic(12345)
+
+
+# ---- Daitch-Mokotoff Soundex ------------------------------------
+#
+# Daitch & Mokotoff, 1985. Six-digit Soundex tuned for Slavic /
+# Yiddish surnames. Returns ``|``-separated alternative codes when
+# a rule branches. The fixtures below are taken verbatim from
+# ``DaitchMokotoffSoundexTest`` in Apache Commons Codec 1.18 — they
+# pin the encoder against the upstream-canonical behaviour for
+# strict / soundex (branching) mode.
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        # Folding + multi-char clusters (ß -> ss; sch + tr).
+        ("Straßburg",   "294795"),
+        ("Strasburg",   "294795"),
+        # Vowel-initial: leading 0 emitted.
+        ("Éregon",      "095600"),
+        ("Eregon",      "095600"),
+        # Double-letter compression with vowel separation.
+        ("AKSSOL",      "054800"),
+        # Heavy branching case (4 alternatives).
+        ("GERSCHFELD",  "547830|545783|594783|594578"),
+        # Two-branch CH cluster (4 vs 5).
+        ("AUERBACH",    "097400|097500"),
+        ("OHRBACH",     "097400|097500"),
+        # Branching from -SH vs -TZ clusters.
+        ("LIPSHITZ",    "874400"),
+        ("LIPPSZYC",    "874400|874500"),
+        # Slavic name spelling variants collapsing to the same code.
+        ("LEWINSKY",    "876450"),
+        ("LEVINSKI",    "876450"),
+        ("SZLAMAWICZ",  "486740"),
+        ("SHLAMOVITZ",  "486740"),
+        # Non-Slavic but standard surname.
+        ("Washington",  "746536"),
+        ("GOLDEN",      "583600"),
+        ("Alpert",      "087930"),
+        ("Breuer",      "791900"),
+    ],
+)
+def test_daitch_mokotoff_canonical(name: str, expected: str) -> None:
+    assert sa.daitch_mokotoff(name) == expected
+
+
+def test_daitch_mokotoff_branching_false_keeps_first_only() -> None:
+    # ``branching=False`` returns only the first code path; for
+    # ``GERSCHFELD`` that's the head of the branching alternatives.
+    actual = sa.daitch_mokotoff("GERSCHFELD", branching=False)
+    assert "|" not in actual
+    assert len(actual) == 6
+
+
+def test_daitch_mokotoff_whitespace_stripped() -> None:
+    # Whitespace is part of cleanup, so wrapping with surrounding
+    # whitespace and tabs has no effect.
+    assert sa.daitch_mokotoff(" \t\n\r Washington \t\n\r ") == \
+           sa.daitch_mokotoff("Washington")
+
+
+def test_daitch_mokotoff_folding_default_on() -> None:
+    # ASCII folding is the default; the accented form folds to the
+    # un-accented one. Set ``folding=False`` to compare the raw form.
+    assert sa.daitch_mokotoff("Éregon") == sa.daitch_mokotoff("Eregon")
+
+
+def test_daitch_mokotoff_padded_to_six_digits() -> None:
+    # All output codes are exactly six digits long (each branch).
+    for branch in sa.daitch_mokotoff("Lee").split("|"):
+        assert len(branch) == 6
+
+
+def test_daitch_mokotoff_empty_input() -> None:
+    # Empty input collapses to a single all-zero branch (the empty
+    # branch is padded with '0's to ``MAX_LENGTH``).
+    assert sa.daitch_mokotoff("") == "000000"
+
+
+def test_daitch_mokotoff_bytes_input() -> None:
+    # Bytes accepted; for ASCII input the result is the same as str.
+    assert sa.daitch_mokotoff(b"Strasburg") == \
+           sa.daitch_mokotoff("Strasburg")
