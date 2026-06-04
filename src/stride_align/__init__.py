@@ -2086,6 +2086,16 @@ match_rating_compare = _LEVENSHTEIN_BACKEND.match_rating_compare
 caverphone = _LEVENSHTEIN_BACKEND.caverphone
 cologne_phonetic = _LEVENSHTEIN_BACKEND.cologne_phonetic
 
+# Beider-Morse Phonetic Matching is compiled only into the ``_generic``
+# backend to avoid duplicating the 280 KB rule set across every SIMD
+# ``.so``. The wrapper in :mod:`stride_align._bmpm` lazy-loads the rule
+# files via :mod:`importlib.resources` on the first call.
+from . import _bmpm as _bmpm_mod  # noqa: E402
+
+_bmpm_mod._set_backend(_BACKENDS[BackendKind.GENERIC])
+beider_morse = _bmpm_mod.beider_morse
+BmpmRuleType = _bmpm_mod.BmpmRuleType
+
 
 class DoubleMetaphoneVariant(enum.IntEnum):
     """Selects which port :func:`double_metaphone` follows.
@@ -3065,6 +3075,8 @@ __all__ = [
     "smith_waterman_top_k",
     "smith_waterman_trace_cigar",
     "smith_waterman_trade_cigar",
+    "beider_morse",
+    "BmpmRuleType",
     "caverphone",
     "cologne_phonetic",
     "double_metaphone",

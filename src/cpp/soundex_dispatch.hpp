@@ -22,6 +22,7 @@
 #include "stride_align/caverphone.hpp"
 #include "stride_align/cologne_phonetic.hpp"
 #include "stride_align/double_metaphone.hpp"
+#include "stride_align/beider_morse.hpp"
 
 namespace stride_align::phonetic {
 
@@ -145,6 +146,70 @@ dispatch_double_metaphone(nb::handle input,
   DoubleMetaphoneResult r =
       double_metaphone(std::string_view(s), max_length, variant);
   return {std::move(r.primary), std::move(r.alternate)};
+}
+
+// BMPM takes UTF-8 in / UTF-8 out (rule data is UTF-8, output codes
+// contain Cyrillic / Greek / Polish glyphs depending on language).
+// Force-encode Python ``str`` through ``PyUnicode_AsUTF8String``, same
+// reasoning as ``dispatch_cologne_phonetic``.
+inline std::string dispatch_beider_morse(nb::handle input,
+                                          int rule_type_int,
+                                          bool concat,
+                                          std::size_t max_phonemes) {
+  std::string utf8;
+  if (PyUnicode_Check(input.ptr())) {
+    PyObject* enc = PyUnicode_AsUTF8String(input.ptr());
+    if (enc == nullptr) throw nb::python_error();
+    nb::object owner = nb::steal<nb::object>(enc);
+    char* data = nullptr;
+    Py_ssize_t len = 0;
+    if (PyBytes_AsStringAndSize(enc, &data, &len) < 0) {
+      throw nb::python_error();
+    }
+    utf8.assign(data, static_cast<std::size_t>(len));
+  } else {
+    namespace bv = ::stride_align::byte_view;
+    const bv::ByteCompatKind kind = bv::classify(input.ptr());
+    if (kind != bv::ByteCompatKind::Bytes) {
+      ::stride_align::detail::throw_type_error(
+          "beider_morse() requires a str or bytes-like input");
+      return {};
+    }
+    const std::uint8_t* ptr = nullptr;
+    std::size_t len = 0;
+    bv::view(input.ptr(), kind, ptr, len);
+    utf8.assign(reinterpret_cast<const char*>(ptr), len);
+  }
+  return beider_morse(std::string_view(utf8),
+                      static_cast<BmpmRuleType>(rule_type_int),
+                      concat, max_phonemes);
+}
+
+inline void dispatch_bmpm_register_resources(nb::handle py_dict) {
+  std::unordered_map<std::string, std::string> m;
+  if (!PyDict_Check(py_dict.ptr())) {
+    ::stride_align::detail::throw_type_error(
+        "bmpm_register_resources() requires a dict[str, str]");
+    return;
+  }
+  PyObject* k = nullptr;
+  PyObject* v = nullptr;
+  Py_ssize_t pos = 0;
+  while (PyDict_Next(py_dict.ptr(), &pos, &k, &v)) {
+    if (!PyUnicode_Check(k) || !PyUnicode_Check(v)) {
+      ::stride_align::detail::throw_type_error(
+          "bmpm_register_resources() dict keys/values must be str");
+      return;
+    }
+    Py_ssize_t klen = 0;
+    const char* kdata = PyUnicode_AsUTF8AndSize(k, &klen);
+    Py_ssize_t vlen = 0;
+    const char* vdata = PyUnicode_AsUTF8AndSize(v, &vlen);
+    if (kdata == nullptr || vdata == nullptr) throw nb::python_error();
+    m.emplace(std::string(kdata, static_cast<std::size_t>(klen)),
+              std::string(vdata, static_cast<std::size_t>(vlen)));
+  }
+  bmpm_register_resources(m);
 }
 
 // Two-input "encode both, compare" helpers. Implemented at the

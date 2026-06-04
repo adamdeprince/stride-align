@@ -42,6 +42,16 @@ classes; the C++ port is original code.
     resource file ``dmrules.txt`` (see
     ``docs/upstream/apache-commons-codec-dmrules.txt``).
 
+  * include/stride_align/beider_morse.hpp
+    src/cpp/beider_morse_impl.cpp
+    Reference: org.apache.commons.codec.language.bm.*
+    Stride-align ships the GENERIC name-type rules only. The vendored
+    rule files live in ``src/stride_align/bmpm_data/`` (loaded at
+    runtime via ``importlib.resources``); each file preserves its
+    original ASF Apache 2.0 header. The first-codepoint-bucket rule
+    lookup, predicate classifier, arena allocator, and parser in
+    ``beider_morse_impl.cpp`` are original C++.
+
 Cross-checked against jellyfish (BSD-2-Clause), the ``metaphone`` and
 ``doublemetaphone`` PyPI packages, and pyphonetics — these are used as
 test oracles only; no code is incorporated into stride-align.
