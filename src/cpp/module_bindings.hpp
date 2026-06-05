@@ -20,6 +20,7 @@
 #include "hamming_dispatch.hpp"
 #include "indel_dispatch.hpp"
 #include "jaro_dispatch.hpp"
+#include "lcs_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
 #include "stride_align/alignment.hpp"
@@ -3078,6 +3079,50 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       },
       nb::arg("query"),
       nb::arg("targets"));
+
+  // --- Longest Common Subsequence + Substring ------------------------
+  //
+  // Subsequence: characters need not be contiguous. Substring:
+  // characters must be contiguous. Two distinct DPs sharing only the
+  // shape ``O(m·n)`` time with rolling two-row tables. The substring
+  // length / itself are returned without a separate traceback table
+  // by tracking the running maximum and its end position on ``a``.
+
+  m.def(
+      "lcs_length",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::lcs::dispatch_lcs_length(a, b);
+      },
+      "Length of the longest common subsequence (not necessarily\n"
+      "contiguous) of ``a`` and ``b``. ``ABCBDAB`` and ``BDCAB`` have\n"
+      "LCS ``BCAB`` (length 4). Related to ``indel_score`` by\n"
+      "``indel = |a| + |b| - 2 * lcs_length``.",
+      nb::arg("a"),
+      nb::arg("b"));
+
+  m.def(
+      "lcs_substring_length",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::lcs::dispatch_lcs_substring_length(a, b);
+      },
+      "Length of the longest common substring (contiguous) of ``a``\n"
+      "and ``b``. ``ABCBDAB`` and ``BDCAB`` have longest common\n"
+      "substring ``AB`` (length 2).",
+      nb::arg("a"),
+      nb::arg("b"));
+
+  m.def(
+      "lcs_substring",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::lcs::dispatch_lcs_substring(a, b);
+      },
+      "The longest common substring itself, sliced from ``a``. When\n"
+      "both inputs are ``str`` the result is ``str``; when both are\n"
+      "``bytes`` the result is ``bytes``. When multiple substrings\n"
+      "tie at the maximum length, the first occurrence in ``a`` is\n"
+      "returned (matches ``str.find`` convention).",
+      nb::arg("a"),
+      nb::arg("b"));
 
   // --- True Damerau-Levenshtein ---------------------------------------
   //

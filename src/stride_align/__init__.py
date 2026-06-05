@@ -1999,6 +1999,15 @@ def indel_normalized_scores(query: object, targets: object) -> np.ndarray:
     return _LEVENSHTEIN_BACKEND.indel_normalized_scores(query, targets)
 
 
+# Longest Common Subsequence / Substring. ``lcs_length`` is the
+# subsequence form (characters need not be contiguous); the substring
+# pair is the contiguous form. ``lcs_substring`` returns the substring
+# itself (``str`` or ``bytes`` matching the input type).
+lcs_length = _LEVENSHTEIN_BACKEND.lcs_length
+lcs_substring_length = _LEVENSHTEIN_BACKEND.lcs_substring_length
+lcs_substring = _LEVENSHTEIN_BACKEND.lcs_substring
+
+
 # True Damerau-Levenshtein — unrestricted form. Each character may
 # participate in multiple edits, unlike the OSA variant we ship under
 # ``damerau_levenshtein_*`` (which restricts each character to at most
@@ -3032,6 +3041,9 @@ __all__ = [
     "jaro_winkler_similarities",
     "jaro_winkler_similarity",
     "jaro_winkler_top_k",
+    "lcs_length",
+    "lcs_substring",
+    "lcs_substring_length",
     "LevenshteinScorer",
     "levenshtein_best",
     "levenshtein_normalized_best",
