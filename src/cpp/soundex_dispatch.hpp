@@ -102,39 +102,47 @@ inline std::string dispatch_caverphone(nb::handle input) {
 
 // Cologne wants the German umlauts and ß preserved so they preprocess
 // to their Latin-letter equivalents — the ASCII-strip peel that the
-// other encoders share would drop them silently. Always feed the
-// algorithm UTF-8: for Python ``str`` re-encode via
-// ``PyUnicode_AsUTF8String`` (any UCS-1/2/4 storage normalises), for
-// Python ``bytes`` pass through (caller responsible for the encoding).
-// UCS-1 str (which includes Latin-1 ``ä`` as the single byte 0xE4)
-// would NOT match the UTF-8 two-byte sequences the algorithm looks
-// for, so the bytes path can't be used for Python str — that was the
-// original bug.
+// other encoders share would drop them silently. The engine now runs
+// in codepoint space: Python ``str`` storage (``PyUnicode_KIND`` is
+// 1/2/4 bytes per codepoint) widens straight into a
+// ``vector<Codepoint>`` here, and the codepoint-keyed umlaut fold
+// (Ä = U+00C4, ä = U+00E4, ß = U+00DF, ...) picks it up directly.
+// ``bytes`` input is interpreted as Latin-1 codepoints (each byte is
+// its own codepoint), which means ``b"M\xfcller"`` folds correctly
+// but ``"Müller".encode("utf-8")`` (two bytes 0xC3 0xBC) does not —
+// pass ``str`` for UTF-8 input.
 inline std::string dispatch_cologne_phonetic(nb::handle input) {
+  std::vector<Codepoint> codepoints;
   if (PyUnicode_Check(input.ptr())) {
-    PyObject* utf8 = PyUnicode_AsUTF8String(input.ptr());
-    if (utf8 == nullptr) throw nb::python_error();
-    nb::object owner = nb::steal<nb::object>(utf8);
-    char* data = nullptr;
-    Py_ssize_t len = 0;
-    if (PyBytes_AsStringAndSize(utf8, &data, &len) < 0) {
-      throw nb::python_error();
+    const auto length =
+        static_cast<std::size_t>(PyUnicode_GET_LENGTH(input.ptr()));
+    const int py_kind = PyUnicode_KIND(input.ptr());
+    void* data = PyUnicode_DATA(input.ptr());
+    codepoints.resize(length);
+    if (py_kind == PyUnicode_1BYTE_KIND) {
+      const auto* p = static_cast<const std::uint8_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else if (py_kind == PyUnicode_2BYTE_KIND) {
+      const auto* p = static_cast<const std::uint16_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else {
+      const auto* p = static_cast<const std::uint32_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
     }
-    return cologne_phonetic(
-        std::string_view(data, static_cast<std::size_t>(len)));
-  }
-  namespace bv = ::stride_align::byte_view;
-  const bv::ByteCompatKind kind = bv::classify(input.ptr());
-  if (kind == bv::ByteCompatKind::Bytes) {
+  } else {
+    namespace bv = ::stride_align::byte_view;
+    const bv::ByteCompatKind kind = bv::classify(input.ptr());
+    if (kind != bv::ByteCompatKind::Bytes) {
+      ::stride_align::detail::throw_type_error(
+          "phonetic encoder requires a str or bytes-like input");
+      return {};
+    }
     const std::uint8_t* ptr = nullptr;
     std::size_t len = 0;
     bv::view(input.ptr(), kind, ptr, len);
-    return cologne_phonetic(
-        std::string_view(reinterpret_cast<const char*>(ptr), len));
+    codepoints.assign(ptr, ptr + len);
   }
-  ::stride_align::detail::throw_type_error(
-      "phonetic encoder requires a str or bytes-like input");
-  return {};
+  return cologne_phonetic(codepoints);
 }
 
 inline std::pair<std::string, std::string>

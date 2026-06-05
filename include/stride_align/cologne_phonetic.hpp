@@ -22,10 +22,18 @@
 // Müller → 657).
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
-#include <string_view>
+#include <vector>
 
 namespace stride_align::phonetic {
+
+// The engine runs in codepoint space. Python ``str`` storage is
+// fixed-width per string (``PyUnicode_KIND`` is 1/2/4 bytes per
+// codepoint, ``PyUnicode_DATA`` is the raw codepoint array); the
+// dispatch wrapper widens that storage straight into
+// ``std::vector<Codepoint>`` without UTF-8 round-tripping.
+using Codepoint = std::uint32_t;
 
 namespace cologne_detail {
 
@@ -40,28 +48,26 @@ inline constexpr bool is_upper_alpha(char c) noexcept {
 // Apache Commons Codec preprocesses the German umlauts and ß into
 // their Latin-letter equivalents before running the digit table; we
 // follow that so callers don't have to NFKD-fold themselves. The
-// codepoints arrive as bytes via UTF-8, so we look at the two-byte
-// sequences directly:
-//   Ä  C3 84   ä  C3 A4   ->  A
-//   Ö  C3 96   ö  C3 B6   ->  O
-//   Ü  C3 9C   ü  C3 BC   ->  U
-//   ß  C3 9F            ->  SS
-inline std::string preprocess_to_ascii_letters(std::string_view input) {
+// fold is now keyed on the codepoint (the natural Unicode value)
+// rather than on UTF-8 byte pairs:
+//   Ä U+00C4 / ä U+00E4 -> A
+//   Ö U+00D6 / ö U+00F6 -> O
+//   Ü U+00DC / ü U+00FC -> U
+//   ß U+00DF            -> SS
+inline std::string preprocess_to_ascii_letters(
+    const std::vector<Codepoint>& input) {
   std::string out;
   out.reserve(input.size());
-  for (std::size_t i = 0; i < input.size(); ++i) {
-    const auto b = static_cast<unsigned char>(input[i]);
-    if (b == 0xC3 && i + 1 < input.size()) {
-      const auto b2 = static_cast<unsigned char>(input[i + 1]);
-      switch (b2) {
-        case 0x84: case 0xA4: out.push_back('A'); ++i; continue;  // Ä / ä
-        case 0x96: case 0xB6: out.push_back('O'); ++i; continue;  // Ö / ö
-        case 0x9C: case 0xBC: out.push_back('U'); ++i; continue;  // Ü / ü
-        case 0x9F: out.append("SS"); ++i; continue;               // ß
-        default: break;
-      }
+  for (const auto cp : input) {
+    switch (cp) {
+      case 0x00C4: case 0x00E4: out.push_back('A');     continue;  // Ä / ä
+      case 0x00D6: case 0x00F6: out.push_back('O');     continue;  // Ö / ö
+      case 0x00DC: case 0x00FC: out.push_back('U');     continue;  // Ü / ü
+      case 0x00DF:              out.append("SS");       continue;  // ß
+      default: break;
     }
-    const char uc = to_upper_ascii(static_cast<char>(b));
+    if (cp >= 128U) continue;  // any other non-ASCII codepoint is dropped
+    const char uc = to_upper_ascii(static_cast<char>(cp));
     if (is_upper_alpha(uc)) out.push_back(uc);
   }
   return out;
@@ -69,7 +75,7 @@ inline std::string preprocess_to_ascii_letters(std::string_view input) {
 
 }  // namespace cologne_detail
 
-inline std::string cologne_phonetic(std::string_view input) {
+inline std::string cologne_phonetic(const std::vector<Codepoint>& input) {
   using namespace cologne_detail;
 
   const std::string w = preprocess_to_ascii_letters(input);
