@@ -4,6 +4,29 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+* **Longest Common Subsequence + Substring (Phase D.4).** Two
+  related but distinct dynamic programs:
+  * `sa.lcs_length(a, b)` — length of the longest common
+    subsequence (characters need not be contiguous). Cross-checked
+    via the closed-form relation
+    `indel = |a| + |b| - 2 * lcs_length`.
+  * `sa.lcs_substring_length(a, b)` — length of the longest common
+    substring (contiguous).
+  * `sa.lcs_substring(a, b)` — the substring itself, sliced from
+    `a`. Returns `bytes` when both inputs are `bytes`; otherwise
+    `str`. First-occurrence-in-`a` tiebreak (matches `str.find`
+    convention).
+
+  Both DPs are scalar `O(m·n)` time with two rolling rows for
+  `O(min(m,n))` (subsequence) or `O(|b|)` (substring) space. Engine
+  runs in codepoint space — dispatch widens `PyUnicode_DATA`
+  straight into `std::vector<Codepoint>`; non-ASCII codepoints are
+  first-class.
+
 ## [0.4.1] - 2026-06-01
 
 ### Added

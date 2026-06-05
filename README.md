@@ -443,6 +443,38 @@ For Lev / OSA, patterns up to 64 chars run a single-word Myers;
 fall back to scalar bit-parallel for patterns >64 (multi-word
 generalization deferred); true-DL is scalar DP only.
 
+### Longest Common Subsequence + Substring
+
+Two related but distinct dynamic programs, both shipped:
+
+```python
+import stride_align as sa
+
+# Longest Common Subsequence — characters need not be contiguous.
+# "ABCBDAB" and "BDCAB" share "BCAB" (length 4).
+sa.lcs_length("ABCBDAB", "BDCAB")                    # -> 4
+
+# Closed-form relation to Indel distance: indel = |a| + |b| - 2·LCS.
+sa.indel_score("kitten", "sitting") == \
+    len("kitten") + len("sitting") - 2 * sa.lcs_length("kitten", "sitting")
+# -> True
+
+# Longest Common Substring — characters MUST be contiguous.
+sa.lcs_substring_length("ABCBDAB", "BDCAB")          # -> 2
+sa.lcs_substring("ABCBDAB", "BDCAB")                 # -> "AB"
+
+# Result type matches inputs: bytes in, bytes out.
+sa.lcs_substring(b"hello world", b"world hello")     # -> b"hello"
+
+# Codepoint engine — non-ASCII is first-class.
+sa.lcs_substring("Müller", "Mueller")                # -> "ller"
+```
+
+Both DPs are scalar `O(m·n)` time with two rolling rows for
+`O(min(m,n))` (subsequence) or `O(|b|)` (substring) space. When
+multiple substrings tie at the maximum length, the first occurrence
+in `a` is returned (matches `str.find` convention).
+
 ### Phonetic encoders
 
 For name matching, deduplication, and search-as-you-type, `stride-align`
