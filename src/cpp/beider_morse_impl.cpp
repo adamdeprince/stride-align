@@ -591,64 +591,6 @@ PhonemeExpr parse_phoneme_expr(std::string_view src, const LangRegistry& reg) {
 
 // ----- Aho-Corasick trie ---------------------------------------------------
 
-// One trie per rule list. Each rule sits at a terminal node; multiple
-// rules with the same pattern chain into a per-node list. At lookup we
-// walk the trie at the input position taking the LONGEST match whose
-// context predicates also fire.
-struct AhoNode {
-  std::unordered_map<Codepoint, std::uint32_t> next;  // transitions
-  std::uint32_t fail = 0;                              // failure link
-  std::vector<std::uint32_t> rule_ids;                 // rules ending here
-};
-
-struct AhoTrie {
-  std::vector<AhoNode> nodes{1};      // node 0 is the root
-  std::vector<Rule> rules;
-
-  void add_rule(Rule rule) {
-    std::uint32_t cur = 0;
-    for (const auto cp : rule.pattern) {
-      auto it = nodes[cur].next.find(cp);
-      if (it == nodes[cur].next.end()) {
-        nodes.push_back({});
-        const auto new_idx = static_cast<std::uint32_t>(nodes.size() - 1);
-        nodes[cur].next.emplace(cp, new_idx);
-        cur = new_idx;
-      } else {
-        cur = it->second;
-      }
-    }
-    const auto rule_id = static_cast<std::uint32_t>(rules.size());
-    nodes[cur].rule_ids.push_back(rule_id);
-    rules.push_back(std::move(rule));
-  }
-
-  // BFS to populate fail links. After this, ``next`` is patched into a
-  // goto-with-failure form so the lookup loop can move forward without
-  // walking failure links explicitly.
-  void build_failures() {
-    std::vector<std::uint32_t> queue;
-    for (auto& [_, child] : nodes[0].next) {
-      nodes[child].fail = 0;
-      queue.push_back(child);
-    }
-    for (std::size_t qi = 0; qi < queue.size(); ++qi) {
-      const auto u = queue[qi];
-      for (auto& [cp, v] : nodes[u].next) {
-        std::uint32_t f = nodes[u].fail;
-        while (f != 0 && nodes[f].next.find(cp) == nodes[f].next.end()) {
-          f = nodes[f].fail;
-        }
-        auto it = nodes[f].next.find(cp);
-        nodes[v].fail = (it != nodes[f].next.end() && it->second != v)
-                            ? it->second
-                            : 0;
-        queue.push_back(v);
-      }
-    }
-  }
-};
-
 // ----- Resource parser: ``parseRules`` equivalent -------------------------
 
 struct ParsedRules {
@@ -922,11 +864,28 @@ struct PhonemeArena {
   }
 
   // Apply a phoneme expression to every live phoneme: Cartesian product
-  // restricted by language-set intersection. Java's behaviour exactly.
+  // restricted by language-set intersection.
+  //
+  // The buffer is grown once up-front to the worst-case combined size
+  // so the per-rule-fire ``buffer.insert(buffer.end(), buffer.begin()+x,
+  // buffer.begin()+y)`` self-insert no longer needs the temporary
+  // ``left_copy`` it used to allocate to dodge iterator invalidation
+  // — after the reserve there is no realloc, so source iterators stay
+  // valid.
   void apply(const PhonemeExpr& expr, std::size_t max_phonemes) {
     scratch.clear();
     scratch.reserve(std::min(phonemes.size() * expr.phonemes.size(),
                              max_phonemes));
+    std::size_t worst_case_growth = 0;
+    for (const auto& left : phonemes) {
+      for (const auto& right : expr.phonemes) {
+        if (right.text.empty()) continue;  // shares left's offset
+        worst_case_growth += left.length + right.text.size();
+      }
+    }
+    if (worst_case_growth != 0) {
+      buffer.reserve(buffer.size() + worst_case_growth);
+    }
     for (const auto& left : phonemes) {
       for (const auto& right : expr.phonemes) {
         const LangSet joined = left.langs.restrict_to(right.languages);
@@ -937,15 +896,10 @@ struct PhonemeArena {
           combined.offset = left.offset;
           combined.length = left.length;
         } else {
-          // Copy the left slice out FIRST: ``buffer.insert(buffer.end(),
-          // buffer.begin()+x, buffer.begin()+y)`` is UB when the inserts
-          // trigger a reallocation — the source iterators then refer to
-          // freed storage.
-          const CodepointVec left_copy(
-              buffer.begin() + left.offset,
-              buffer.begin() + left.offset + left.length);
           combined.offset = static_cast<std::uint32_t>(buffer.size());
-          buffer.insert(buffer.end(), left_copy.begin(), left_copy.end());
+          buffer.insert(buffer.end(),
+                        buffer.begin() + left.offset,
+                        buffer.begin() + left.offset + left.length);
           buffer.insert(buffer.end(), right.text.begin(), right.text.end());
           combined.length = left.length + static_cast<std::uint32_t>(right.text.size());
         }
@@ -960,14 +914,18 @@ struct PhonemeArena {
     phonemes.swap(scratch);
   }
 
+  // Append ``tail`` to every live phoneme. Same pre-reserve idiom as
+  // ``apply`` so the per-phoneme self-insert avoids the slice copy.
   void append_literal(const CodepointVec& tail) {
     if (tail.empty()) return;
+    std::size_t growth = 0;
+    for (const auto& ph : phonemes) growth += ph.length + tail.size();
+    buffer.reserve(buffer.size() + growth);
     for (auto& ph : phonemes) {
-      // Self-insert UB guard — same as ``apply``.
-      const CodepointVec slice(buffer.begin() + ph.offset,
-                                buffer.begin() + ph.offset + ph.length);
       const auto new_off = static_cast<std::uint32_t>(buffer.size());
-      buffer.insert(buffer.end(), slice.begin(), slice.end());
+      buffer.insert(buffer.end(),
+                    buffer.begin() + ph.offset,
+                    buffer.begin() + ph.offset + ph.length);
       buffer.insert(buffer.end(), tail.begin(), tail.end());
       ph.offset = new_off;
       ph.length += static_cast<std::uint32_t>(tail.size());
@@ -1010,80 +968,179 @@ std::string render_arena(const PhonemeArena& a) {
 }
 
 // ----- Rule lookup at a position ------------------------------------------
+//
+// Aho-Corasick trie over the per-(name-type, rule-type, language) rule
+// pattern set. The trie is built once at static-init via ``build_trie``;
+// failure links are computed by a single BFS sweep so the data
+// structure is a proper Aho-Corasick automaton, not just a longest-
+// prefix trie. BMPM's per-call ``find_rule`` walks the trie from root
+// for the input at ``pos`` (since the surrounding loop advances by the
+// matched pattern's length each step, a continuous failure-link scan
+// across positions does not apply). The failure links are still
+// available for callers that want classic AC continuous-scan
+// semantics.
+//
+// The algorithm description is from Aho, A.V. & Corasick, M.J. (1975),
+// "Efficient string matching: An aid to bibliographic search",
+// Communications of the ACM 18(6) — the implementation below is
+// original C++.
 
-// Linear scan with first-codepoint hash bucketing. Aho-Corasick was the
-// initial plan but a per-position one-shot lookup against ~200 rules
-// where the typical match is a 1-2 cp pattern is dominated by the
-// context-predicate check, not the trie walk. We still bucket by first
-// codepoint and pick the longest-pattern winner.
-struct RuleBuckets {
-  std::unordered_map<Codepoint, std::vector<std::uint32_t>> by_first;
-  std::vector<Rule> rules;
+struct AhoNode {
+  // Children indexed by codepoint. ``unordered_map`` rather than a
+  // dense array because the alphabet is the full Unicode range used by
+  // the GENERIC BMPM rule files (Latin + Cyrillic + Greek + Polish
+  // diacritics); a dense [0, 256) table would not cover it.
+  std::unordered_map<Codepoint, std::uint32_t> children;
+  // Failure link — 0 means root. Set during ``build_failures``.
+  std::uint32_t failure = 0;
+  // Rules whose pattern ends at this node, in file-of-rules order.
+  // Multiple rules can share a pattern (different lcontext / rcontext
+  // / phoneme expression); they appear here in insertion order.
+  std::vector<std::uint32_t> rule_ids;
 };
 
-RuleBuckets bucketise(std::vector<Rule>&& rules) {
-  RuleBuckets b;
-  b.rules = std::move(rules);
-  // Sort within each bucket by descending pattern length, then by
-  // ascending insertion order — so when two rules share both the
-  // first codepoint and the pattern length, the upstream file-order
-  // tiebreak wins. ``Rule.parseRules`` in Apache Commons Codec relies
-  // on this for the GENERIC ``"v" "^" "" "(v|f[german]|b[spanish])"``
-  // rule to fire before the unconditional ``"v" "" "" "V"`` fallback
-  // at the start of a word; without the file-order tiebreak, the
-  // language-restricted alternation never reaches the encode loop.
-  std::vector<std::pair<Codepoint, std::uint32_t>> seq;
-  seq.reserve(b.rules.size());
-  for (std::uint32_t i = 0; i < b.rules.size(); ++i) {
-    if (b.rules[i].pattern.empty()) continue;
-    seq.emplace_back(b.rules[i].pattern.front(), i);
+struct RuleTrie {
+  std::vector<AhoNode> nodes;            // nodes[0] is the root
+  std::vector<Rule> rules;
+  std::size_t max_pattern_length = 0;
+  bool empty = true;
+};
+
+void trie_add_rule(RuleTrie& t, Rule r) {
+  if (t.nodes.empty()) t.nodes.emplace_back();  // root
+  std::uint32_t cur = 0;
+  for (const Codepoint cp : r.pattern) {
+    auto it = t.nodes[cur].children.find(cp);
+    if (it == t.nodes[cur].children.end()) {
+      t.nodes.emplace_back();
+      const auto next = static_cast<std::uint32_t>(t.nodes.size() - 1);
+      t.nodes[cur].children.emplace(cp, next);
+      cur = next;
+    } else {
+      cur = it->second;
+    }
   }
-  std::stable_sort(seq.begin(), seq.end(),
-                   [&](const auto& a, const auto& c) {
-                     if (a.first != c.first) return a.first < c.first;
-                     return b.rules[a.second].pattern.size() >
-                            b.rules[c.second].pattern.size();
-                   });
-  for (auto& [cp, idx] : seq) b.by_first[cp].push_back(idx);
-  return b;
+  const auto rule_id = static_cast<std::uint32_t>(t.rules.size());
+  t.nodes[cur].rule_ids.push_back(rule_id);
+  if (r.pattern.size() > t.max_pattern_length) {
+    t.max_pattern_length = r.pattern.size();
+  }
+  t.rules.push_back(std::move(r));
+  t.empty = false;
 }
 
-// Returns (matched, pattern_length, phoneme_expr_index_in_rules) for the
-// best rule at position ``pos``. ``pattern_length`` is 0 if no rule
-// matched.
+// Set every node's ``failure`` to the index of the deepest proper
+// suffix of its path that is itself a prefix of some pattern. Root's
+// failure is itself (encoded as 0). Children of root all fail to root.
+// Standard BFS construction.
+void build_failures(RuleTrie& t) {
+  if (t.nodes.empty()) return;
+  std::vector<std::uint32_t> queue;
+  queue.reserve(t.nodes.size());
+  for (auto& [cp, child] : t.nodes[0].children) {
+    t.nodes[child].failure = 0;
+    queue.push_back(child);
+  }
+  for (std::size_t qi = 0; qi < queue.size(); ++qi) {
+    const auto u = queue[qi];
+    for (auto& [cp, v] : t.nodes[u].children) {
+      // Walk failure links from u's failure looking for a node with
+      // an edge labelled ``cp``.
+      std::uint32_t f = t.nodes[u].failure;
+      while (true) {
+        auto fit = t.nodes[f].children.find(cp);
+        if (fit != t.nodes[f].children.end() && fit->second != v) {
+          t.nodes[v].failure = fit->second;
+          break;
+        }
+        if (f == 0) {
+          t.nodes[v].failure = 0;
+          break;
+        }
+        f = t.nodes[f].failure;
+      }
+      queue.push_back(v);
+    }
+  }
+}
+
+RuleTrie build_trie(std::vector<Rule>&& rules) {
+  RuleTrie t;
+  t.nodes.emplace_back();  // root
+  for (auto& r : rules) {
+    if (!r.pattern.empty()) trie_add_rule(t, std::move(r));
+  }
+  build_failures(t);
+  return t;
+}
+
 struct RuleHit {
   bool found;
   std::size_t pattern_length;
   const PhonemeExpr* expr;
 };
 
-RuleHit find_rule(const RuleBuckets& buckets,
+// Per-thread scratch for ``find_rule`` — the trie walk collects
+// candidate rule IDs grouped by depth so the longest-pattern winner
+// can be picked with the file-order tiebreak intact.
+struct FindScratch {
+  static constexpr std::size_t kCap = 16;  // > observed max pattern length
+  std::array<std::vector<std::uint32_t>, kCap> by_depth;
+  std::size_t depth_used = 0;
+  void reset() {
+    for (std::size_t i = 0; i < depth_used; ++i) by_depth[i].clear();
+    depth_used = 0;
+  }
+};
+
+inline FindScratch& find_scratch() {
+  thread_local FindScratch s;
+  return s;
+}
+
+RuleHit find_rule(const RuleTrie& trie,
                   const CodepointVec& input,
                   std::size_t pos,
                   std::string_view raw_byte_input,
                   const std::vector<std::size_t>& cp_to_byte) {
-  if (pos >= input.size()) return {false, 0, nullptr};
-  auto it = buckets.by_first.find(input[pos]);
-  if (it == buckets.by_first.end()) return {false, 0, nullptr};
-  for (auto rule_idx : it->second) {
-    const Rule& r = buckets.rules[rule_idx];
-    const std::size_t plen = r.pattern.size();
-    if (pos + plen > input.size()) continue;
-    bool eq = true;
-    for (std::size_t k = 0; k < plen; ++k) {
-      if (input[pos + k] != r.pattern[k]) { eq = false; break; }
+  if (trie.empty || pos >= input.size()) return {false, 0, nullptr};
+
+  auto& scratch = find_scratch();
+  scratch.reset();
+
+  // Walk the trie from root, advancing through input[pos], input[pos+1],
+  // ..., collecting rule IDs that end at each visited node by depth.
+  std::uint32_t node = 0;
+  std::size_t remaining = std::min(trie.max_pattern_length,
+                                    input.size() - pos);
+  if (remaining >= FindScratch::kCap) remaining = FindScratch::kCap - 1;
+  for (std::size_t k = 0; k < remaining; ++k) {
+    auto it = trie.nodes[node].children.find(input[pos + k]);
+    if (it == trie.nodes[node].children.end()) break;
+    node = it->second;
+    const auto& rids = trie.nodes[node].rule_ids;
+    if (!rids.empty()) {
+      scratch.by_depth[k] = rids;  // depth d=k+1, indexed at k
+      if (k + 1 > scratch.depth_used) scratch.depth_used = k + 1;
     }
-    if (!eq) continue;
-    // lcontext applies to ``input[0..pos)``: byte slice is
-    // ``raw_byte_input[0..cp_to_byte[pos])``.
-    if (!r.lcontext.match(input, pos, raw_byte_input, cp_to_byte[pos])) continue;
-    // rcontext applies to ``input[pos+plen..)``: byte slice starts at
-    // ``cp_to_byte[pos+plen]``.
-    if (!r.rcontext.match(input, pos + plen, raw_byte_input,
-                           cp_to_byte[pos + plen])) {
-      continue;
+  }
+
+  // Iterate by descending depth (longest pattern first); within each
+  // depth iterate in file order (the order the rules were inserted),
+  // matching ``Rule.parseRules`` in the upstream port.
+  for (std::size_t d = scratch.depth_used; d > 0; --d) {
+    const auto& rids = scratch.by_depth[d - 1];
+    for (const auto rid : rids) {
+      const Rule& r = trie.rules[rid];
+      if (!r.lcontext.match(input, pos, raw_byte_input, cp_to_byte[pos])) {
+        continue;
+      }
+      if (!r.rcontext.match(input, pos + d, raw_byte_input,
+                             cp_to_byte[pos + d])) {
+        continue;
+      }
+      return {true, d, &r.phoneme_expr};
     }
-    return {true, plen, &r.phoneme_expr};
   }
   return {false, 0, nullptr};
 }
@@ -1095,35 +1152,36 @@ PhonemeArena& thread_arena() {
   return a;
 }
 
-// Live RuleBuckets caches built lazily from BmpmTables.
-struct BucketCache {
-  std::unordered_map<std::string, RuleBuckets> main;
-  std::unordered_map<std::string, RuleBuckets> approx;
-  std::unordered_map<std::string, RuleBuckets> exact;
+// Live RuleTrie caches built lazily from BmpmTables. One trie per
+// (rule role × language) tuple; built once on first encode call.
+struct TrieCache {
+  std::unordered_map<std::string, RuleTrie> main;
+  std::unordered_map<std::string, RuleTrie> approx;
+  std::unordered_map<std::string, RuleTrie> exact;
   std::once_flag once;
 };
 
-BucketCache& buckets_cache() {
-  static BucketCache c;
+TrieCache& tries_cache() {
+  static TrieCache c;
   return c;
 }
 
 void init_buckets_if_needed() {
-  auto& c = buckets_cache();
+  auto& c = tries_cache();
   std::call_once(c.once, []() {
     auto& tables = *g_tables;
-    auto& cache = buckets_cache();
+    auto& cache = tries_cache();
     for (auto& [lang, rules] : tables.main_rules) {
       std::vector<Rule> copy = rules;
-      cache.main.emplace(lang, bucketise(std::move(copy)));
+      cache.main.emplace(lang, build_trie(std::move(copy)));
     }
     for (auto& [lang, rules] : tables.approx_rules) {
       std::vector<Rule> copy = rules;
-      cache.approx.emplace(lang, bucketise(std::move(copy)));
+      cache.approx.emplace(lang, build_trie(std::move(copy)));
     }
     for (auto& [lang, rules] : tables.exact_rules) {
       std::vector<Rule> copy = rules;
-      cache.exact.emplace(lang, bucketise(std::move(copy)));
+      cache.exact.emplace(lang, build_trie(std::move(copy)));
     }
   });
 }
@@ -1175,22 +1233,22 @@ std::string encode_one_word(std::string_view input,
     cp_to_byte[cps.size()] = b;
   }
 
-  const auto& cache = buckets_cache();
-  auto bucket_for = [&](const std::string& lang) -> const RuleBuckets* {
+  const auto& cache = tries_cache();
+  auto trie_for = [&](const std::string& lang) -> const RuleTrie* {
     auto it = cache.main.find(lang);
     if (it == cache.main.end()) return nullptr;
     return &it->second;
   };
 
   // Pick the rule set: singleton language uses its own; otherwise "any".
-  const RuleBuckets* main_b = nullptr;
+  const RuleTrie* main_b = nullptr;
   if (languages.singleton()) {
     const int idx = languages.first_index();
     if (idx >= 0 && idx < static_cast<int>(g_tables->registry.names.size())) {
-      main_b = bucket_for(g_tables->registry.names[idx]);
+      main_b = trie_for(g_tables->registry.names[idx]);
     }
   }
-  if (main_b == nullptr) main_b = bucket_for("any");
+  if (main_b == nullptr) main_b = trie_for("any");
   if (main_b == nullptr) return {};
 
   std::size_t i = 0;
@@ -1233,8 +1291,8 @@ std::string encode_one_word(std::string_view input,
                                   : cache.exact;
     auto it = bucket_map.find(lang_label);
     if (it == bucket_map.end()) return;
-    const RuleBuckets& b = it->second;
-    if (b.rules.empty() && b.by_first.empty()) return;
+    const RuleTrie& b = it->second;
+    if (b.empty) return;
 
     next_arena.reset();
     for (const auto& ph : arena.phonemes) {
