@@ -105,15 +105,9 @@ std::string codepoints_to_utf8(const CodepointVec& v) {
   return out;
 }
 
-// ASCII-only lower-case fold, mirroring Java's ``Locale.ENGLISH``.
-// Non-ASCII codepoints pass through unchanged.
-Codepoint to_lower_ascii(Codepoint cp) {
-  return (cp >= 'A' && cp <= 'Z') ? cp + ('a' - 'A') : cp;
-}
-
-void to_lower_in_place(CodepointVec& v) {
-  for (auto& cp : v) cp = to_lower_ascii(cp);
-}
+// ASCII lower-case fold is open-coded directly at the call sites
+// (public ``beider_morse`` entry and the ``Lang::guess`` per-cp loop)
+// — the function was only ever called from those two places.
 
 // ----- Language set --------------------------------------------------------
 
@@ -318,11 +312,11 @@ struct ContextPred {
 
   // Match against ``input[0..pos)`` (lcontext) or ``input[pos..)``
   // (rcontext, where ``pos`` is already advanced past the matched
-  // pattern).
-  bool match(const CodepointVec& input,
-             std::size_t pos,
-             std::string_view raw_byte_input,
-             std::size_t raw_byte_pos) const;
+  // pattern). All matching happens in codepoint space; the ``kRegex``
+  // fallback lazy-encodes the relevant codepoint slice to UTF-8 only
+  // when it is actually invoked (a small minority of context
+  // predicates after classification).
+  bool match(const CodepointVec& input, std::size_t pos) const;
 };
 
 // Parse a ``[...]`` char-class body (after the ``[``, before the ``]``).
@@ -448,9 +442,7 @@ ContextPred classify_context(std::string_view raw, bool is_left) {
 }
 
 bool ContextPred::match(const CodepointVec& input,
-                        std::size_t pos,
-                        std::string_view raw_byte_input,
-                        std::size_t raw_byte_pos) const {
+                        std::size_t pos) const {
   switch (kind) {
     case Kind::kAlways:
       return true;
@@ -513,14 +505,23 @@ bool ContextPred::match(const CodepointVec& input,
              std::equal(literal.begin(), literal.end(), input.begin() + pos);
     }
     case Kind::kRegex: {
-      // Range overload of ``regex_search`` avoids the std::string
-      // copy a ``substr``-and-construct used to pay for every call.
+      // Lazy-encode the relevant codepoint slice to UTF-8 — std::regex
+      // is byte-only, and the upstream lang.txt / context regex
+      // patterns are written in UTF-8. The classifier routes the vast
+      // majority of context predicates to the constant-time kinds
+      // above, so this allocation is rare in practice.
       if (!regex) return false;
-      const auto* base = raw_byte_input.data();
-      const auto* begin = is_left ? base : base + raw_byte_pos;
-      const auto* end   = is_left ? base + raw_byte_pos
-                                  : base + raw_byte_input.size();
-      return std::regex_search(begin, end, *regex);
+      std::string slice;
+      if (is_left) {
+        slice.reserve(pos * 2);
+        for (std::size_t i = 0; i < pos; ++i) encode_utf8(slice, input[i]);
+      } else {
+        slice.reserve((input.size() - pos) * 2);
+        for (std::size_t i = pos; i < input.size(); ++i) {
+          encode_utf8(slice, input[i]);
+        }
+      }
+      return std::regex_search(slice, *regex);
     }
   }
   return false;
@@ -689,11 +690,18 @@ struct Lang {
   std::vector<LangRule> rules;
   std::uint32_t all_bits = 0;  // all real languages in the registry
 
-  LangSet guess(std::string_view input_utf8) const {
-    // Match against the lowercased UTF-8 input. Java does the same.
-    std::string lowered(input_utf8);
-    for (auto& c : lowered) {
-      if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - ('A' - 'a'));
+  // The lang.txt patterns are written in UTF-8 (Romanian / Polish
+  // diacritics, Greek letters, smart quotes), so the regex match
+  // is done against a one-off UTF-8 encoding of the codepoint slice.
+  // This runs at most once per top-level encode call plus once per
+  // recursive prefix split, so the allocation is not in the per-rule
+  // hot path.
+  LangSet guess(const CodepointVec& input) const {
+    std::string lowered;
+    lowered.reserve(input.size() * 2);
+    for (auto cp : input) {
+      const Codepoint lc = (cp >= 'A' && cp <= 'Z') ? cp + 32 : cp;
+      encode_utf8(lowered, lc);
     }
     std::uint32_t live = all_bits;
     for (const auto& r : rules) {
@@ -1100,9 +1108,7 @@ inline FindScratch& find_scratch() {
 
 RuleHit find_rule(const RuleTrie& trie,
                   const CodepointVec& input,
-                  std::size_t pos,
-                  std::string_view raw_byte_input,
-                  const std::vector<std::size_t>& cp_to_byte) {
+                  std::size_t pos) {
   if (trie.empty || pos >= input.size()) return {false, 0, nullptr};
 
   auto& scratch = find_scratch();
@@ -1132,13 +1138,8 @@ RuleHit find_rule(const RuleTrie& trie,
     const auto& rids = scratch.by_depth[d - 1];
     for (const auto rid : rids) {
       const Rule& r = trie.rules[rid];
-      if (!r.lcontext.match(input, pos, raw_byte_input, cp_to_byte[pos])) {
-        continue;
-      }
-      if (!r.rcontext.match(input, pos + d, raw_byte_input,
-                             cp_to_byte[pos + d])) {
-        continue;
-      }
+      if (!r.lcontext.match(input, pos)) continue;
+      if (!r.rcontext.match(input, pos + d)) continue;
       return {true, d, &r.phoneme_expr};
     }
   }
@@ -1189,24 +1190,38 @@ void init_buckets_if_needed() {
 // ----- Prefix handling ----------------------------------------------------
 
 // GENERIC prefixes from upstream PhoneticEngine.NAME_PREFIXES (GENERIC).
-static const std::vector<std::string>& generic_prefixes() {
-  static const std::vector<std::string> p = {
-      "da", "dal", "de", "del", "dela", "de la", "della",
-      "des", "di", "do", "dos", "du", "van", "von",
-  };
+// Stored as codepoint vectors so the engine can compare against the
+// codepoint input without going through bytes. All prefixes are ASCII
+// so widening each char to ``Codepoint`` is the identity.
+static const std::vector<CodepointVec>& generic_prefixes() {
+  static const std::vector<CodepointVec> p = [] {
+    static const char* kLiterals[] = {
+        "da", "dal", "de", "del", "dela", "de la", "della",
+        "des", "di", "do", "dos", "du", "van", "von",
+    };
+    std::vector<CodepointVec> out;
+    out.reserve(sizeof(kLiterals) / sizeof(kLiterals[0]));
+    for (const char* s : kLiterals) {
+      CodepointVec v;
+      for (; *s; ++s) v.push_back(static_cast<Codepoint>(
+                                       static_cast<unsigned char>(*s)));
+      out.push_back(std::move(v));
+    }
+    return out;
+  }();
   return p;
 }
 
 // ----- Encoding -----------------------------------------------------------
 
 // Forward decl for d'/prefix recursion.
-std::string encode_impl(const std::string& input,
+std::string encode_impl(const CodepointVec& input,
                         BmpmRuleType rule_type,
                         bool concat,
                         std::size_t max_phonemes,
                         const LangSet& languages);
 
-std::string encode_one_word(std::string_view input,
+std::string encode_one_word(const CodepointVec& input,
                             BmpmRuleType rule_type,
                             std::size_t max_phonemes,
                             const LangSet& languages) {
@@ -1214,24 +1229,12 @@ std::string encode_one_word(std::string_view input,
   arena.reset();
   arena.start_with_languages(languages);
 
-  CodepointVec cps = decode_utf8(input);
-  to_lower_in_place(cps);
-
-  // We need byte offsets aligned to codepoint indices for the regex
-  // fallback. Build a lookup of cp_index -> byte_offset for the
-  // pre-lowered (codepoint) form re-encoded.
-  std::string lowered_bytes = codepoints_to_utf8(cps);
-  std::vector<std::size_t> cp_to_byte(cps.size() + 1, 0);
-  {
-    std::size_t b = 0;
-    for (std::size_t i = 0; i < cps.size(); ++i) {
-      cp_to_byte[i] = b;
-      std::string tmp;
-      encode_utf8(tmp, cps[i]);
-      b += tmp.size();
-    }
-    cp_to_byte[cps.size()] = b;
-  }
+  // ``input`` is already ASCII-lowercased (the public ``beider_morse``
+  // entry normalises before the prefix split). No UTF-8 decode, no
+  // byte offset table — the engine runs on codepoints throughout and
+  // the ``kRegex`` predicate fallback lazy-encodes its slice on
+  // demand.
+  const CodepointVec& cps = input;
 
   const auto& cache = tries_cache();
   auto trie_for = [&](const std::string& lang) -> const RuleTrie* {
@@ -1253,7 +1256,7 @@ std::string encode_one_word(std::string_view input,
 
   std::size_t i = 0;
   while (i < cps.size()) {
-    auto hit = find_rule(*main_b, cps, i, lowered_bytes, cp_to_byte);
+    auto hit = find_rule(*main_b, cps, i);
     if (!hit.found) {
       ++i;
       continue;
@@ -1263,27 +1266,14 @@ std::string encode_one_word(std::string_view input,
   }
 
   // Final rules: apply common then language-specific. Each final-rule
-  // pass takes each live phoneme's TEXT as the new input and re-encodes
-  // it through the final-rule bucket set. Phonemes with empty language
-  // sets drop. Within each pass, we rebuild the live set.
-  // Scratch state hoisted out of the per-phoneme loop. ``next_arena``,
-  // ``local``, ``sub``, ``sub_bytes``, and ``sub_cp_to_byte`` are
-  // reused across iterations — each per-phoneme step just clears them
-  // back to empty, keeping their already-allocated capacity. The
-  // byte-count for a codepoint is computed without allocating a
-  // temporary string.
+  // pass takes each live phoneme's codepoint text as the new input
+  // and re-encodes it through the final-rule trie. Phonemes with empty
+  // language sets drop. ``next_arena``, ``local``, and ``sub`` are
+  // hoisted out of the per-phoneme loop; each iteration just clears
+  // them back to empty, keeping their already-allocated capacity.
   PhonemeArena next_arena;
   PhonemeArena local;
   CodepointVec sub;
-  std::string sub_bytes;
-  std::vector<std::size_t> sub_cp_to_byte;
-
-  auto cp_utf8_size = [](Codepoint cp) -> std::size_t {
-    if (cp < 0x80)   return 1;
-    if (cp < 0x800)  return 2;
-    if (cp < 0x10000) return 3;
-    return 4;
-  };
 
   auto apply_final = [&](const std::string& lang_label) {
     const auto& bucket_map = (rule_type == BmpmRuleType::kApprox)
@@ -1298,18 +1288,6 @@ std::string encode_one_word(std::string_view input,
     for (const auto& ph : arena.phonemes) {
       sub.assign(arena.buffer.begin() + ph.offset,
                  arena.buffer.begin() + ph.offset + ph.length);
-      sub_bytes.clear();
-      sub_bytes.reserve(sub.size());
-      for (auto cp : sub) encode_utf8(sub_bytes, cp);
-      sub_cp_to_byte.assign(sub.size() + 1, 0);
-      {
-        std::size_t bb = 0;
-        for (std::size_t k = 0; k < sub.size(); ++k) {
-          sub_cp_to_byte[k] = bb;
-          bb += cp_utf8_size(sub[k]);
-        }
-        sub_cp_to_byte[sub.size()] = bb;
-      }
 
       local.reset();
       local.start_with_languages(ph.langs);
@@ -1317,7 +1295,7 @@ std::string encode_one_word(std::string_view input,
       CodepointVec one_buf;
       one_buf.reserve(1);
       while (k < sub.size()) {
-        auto hit = find_rule(b, sub, k, sub_bytes, sub_cp_to_byte);
+        auto hit = find_rule(b, sub, k);
         if (hit.found) {
           local.apply(*hit.expr, max_phonemes);
           k += hit.pattern_length;
@@ -1356,15 +1334,27 @@ std::string encode_one_word(std::string_view input,
   return render_arena(arena);
 }
 
-std::string encode_impl(const std::string& input,
+// Helper: does ``input[0..prefix.size()]`` equal ``prefix``?
+inline bool starts_with(const CodepointVec& input, const CodepointVec& prefix) {
+  if (input.size() < prefix.size()) return false;
+  for (std::size_t i = 0; i < prefix.size(); ++i) {
+    if (input[i] != prefix[i]) return false;
+  }
+  return true;
+}
+
+std::string encode_impl(const CodepointVec& input,
                         BmpmRuleType rule_type,
                         bool concat,
                         std::size_t max_phonemes,
                         const LangSet& languages) {
-  // Generic d' prefix handling.
+  // Generic ``d'`` prefix handling (the apostrophe is ASCII 0x27).
   if (input.size() >= 2 && input[0] == 'd' && input[1] == '\'') {
-    const std::string remainder = input.substr(2);
-    const std::string combined = "d" + remainder;
+    CodepointVec remainder(input.begin() + 2, input.end());
+    CodepointVec combined;
+    combined.reserve(1 + remainder.size());
+    combined.push_back('d');
+    combined.insert(combined.end(), remainder.begin(), remainder.end());
     return "(" + encode_impl(remainder, rule_type, concat, max_phonemes,
                               g_tables->lang.guess(remainder)) +
            ")-(" + encode_impl(combined, rule_type, concat, max_phonemes,
@@ -1372,47 +1362,57 @@ std::string encode_impl(const std::string& input,
            ")";
   }
   for (const auto& prefix : generic_prefixes()) {
-    const std::string with_space = prefix + " ";
-    if (input.size() >= with_space.size() &&
-        input.compare(0, with_space.size(), with_space) == 0) {
-      const std::string remainder = input.substr(with_space.size());
-      const std::string combined = prefix + remainder;
-      return "(" + encode_impl(remainder, rule_type, concat, max_phonemes,
-                                g_tables->lang.guess(remainder)) +
-             ")-(" + encode_impl(combined, rule_type, concat, max_phonemes,
-                                  g_tables->lang.guess(combined)) +
-             ")";
-    }
+    if (input.size() < prefix.size() + 1) continue;
+    if (!starts_with(input, prefix)) continue;
+    if (input[prefix.size()] != ' ') continue;
+    CodepointVec remainder(input.begin() + prefix.size() + 1, input.end());
+    CodepointVec combined;
+    combined.reserve(prefix.size() + remainder.size());
+    combined.insert(combined.end(), prefix.begin(), prefix.end());
+    combined.insert(combined.end(), remainder.begin(), remainder.end());
+    return "(" + encode_impl(remainder, rule_type, concat, max_phonemes,
+                              g_tables->lang.guess(remainder)) +
+           ")-(" + encode_impl(combined, rule_type, concat, max_phonemes,
+                                g_tables->lang.guess(combined)) +
+           ")";
   }
 
-  // Split on whitespace; GENERIC does not strip prefix words.
-  std::vector<std::string_view> words;
+  // Split on space; GENERIC does not strip prefix words. Word ranges
+  // are half-open ``[begin, end)`` indices into ``input``.
+  std::vector<std::pair<std::size_t, std::size_t>> ranges;
   std::size_t s = 0;
   for (std::size_t k = 0; k <= input.size(); ++k) {
     if (k == input.size() || input[k] == ' ') {
-      if (k > s) words.emplace_back(std::string_view(input).substr(s, k - s));
+      if (k > s) ranges.emplace_back(s, k);
       s = k + 1;
     }
   }
-  if (words.empty()) return {};
+  if (ranges.empty()) return {};
 
   if (concat) {
-    std::string joined;
-    for (std::size_t k = 0; k < words.size(); ++k) {
+    CodepointVec joined;
+    joined.reserve(input.size());
+    for (std::size_t k = 0; k < ranges.size(); ++k) {
       if (k != 0) joined.push_back(' ');
-      joined.append(words[k]);
+      joined.insert(joined.end(),
+                    input.begin() + ranges[k].first,
+                    input.begin() + ranges[k].second);
     }
     return encode_one_word(joined, rule_type, max_phonemes, languages);
   }
 
-  if (words.size() == 1) {
-    return encode_one_word(words[0], rule_type, max_phonemes, languages);
+  if (ranges.size() == 1) {
+    CodepointVec word(input.begin() + ranges[0].first,
+                      input.begin() + ranges[0].second);
+    return encode_one_word(word, rule_type, max_phonemes, languages);
   }
   std::string out;
-  for (std::size_t k = 0; k < words.size(); ++k) {
+  for (std::size_t k = 0; k < ranges.size(); ++k) {
     if (k != 0) out.push_back('-');
-    out.append(encode_one_word(words[k], rule_type, max_phonemes,
-                                g_tables->lang.guess(words[k])));
+    CodepointVec word(input.begin() + ranges[k].first,
+                      input.begin() + ranges[k].second);
+    out.append(encode_one_word(word, rule_type, max_phonemes,
+                                g_tables->lang.guess(word)));
   }
   return out;
 }
@@ -1437,7 +1437,7 @@ void bmpm_register_resources(
   init_buckets_if_needed();
 }
 
-std::string beider_morse(std::string_view input,
+std::string beider_morse(const std::vector<Codepoint>& input,
                          BmpmRuleType rule_type,
                          bool concat,
                          std::size_t max_phonemes) {
@@ -1445,16 +1445,19 @@ std::string beider_morse(std::string_view input,
   init_buckets_if_needed();
   if (input.empty()) return {};
 
-  // Normalise: lowercase ASCII, ``-`` -> ``' '``, trim.
-  std::string norm(input);
-  for (auto& c : norm) {
-    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - ('A' - 'a'));
-    else if (c == '-') c = ' ';
+  // Normalise in codepoint space: ASCII-lowercase, ``-`` -> ``' '``,
+  // trim leading/trailing spaces.
+  CodepointVec norm = input;
+  for (auto& cp : norm) {
+    if (cp >= 'A' && cp <= 'Z') cp += 32;
+    else if (cp == '-') cp = ' ';
   }
   std::size_t l = 0, r = norm.size();
   while (l < r && norm[l] == ' ') ++l;
   while (r > l && norm[r - 1] == ' ') --r;
-  norm = norm.substr(l, r - l);
+  if (l != 0 || r != norm.size()) {
+    norm = CodepointVec(norm.begin() + l, norm.begin() + r);
+  }
   if (norm.empty()) return {};
 
   const LangSet languages = g_tables->lang.guess(norm);

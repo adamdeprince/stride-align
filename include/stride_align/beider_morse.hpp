@@ -18,12 +18,14 @@
 // Pipeline (per Beider-Morse, ported from the algorithm description in
 // the upstream Apache Commons Codec 1.18 BMPM classes):
 //
-//   1. Lower-case input (ASCII-only fold), replace ``-`` with space,
+//   1. The dispatch wrapper hands the engine a ``vector<Codepoint>``
+//      widened straight out of ``PyUnicode_DATA`` (zero UTF-8 round-
+//      trip on the input side).
+//   2. Lower-case input (ASCII-only fold), replace ``-`` with space,
 //      trim.
-//   2. Handle generic name prefixes (``d'``, ``van``, ``von``, ``de``,
+//   3. Handle generic name prefixes (``d'``, ``van``, ``von``, ``de``,
 //      etc.): for each recognised prefix, emit ``(encoded_remainder)-
 //      (encoded_combined)`` and stop.
-//   3. Decode UTF-8 to a codepoint stream.
 //   4. Walk the input. At each position, the rule set's Aho-Corasick
 //      trie finds the longest-prefix-matching pattern whose left and
 //      right context predicates also fire. Apply that rule's
@@ -32,7 +34,8 @@
 //   5. Apply ``common`` final rules then language-specific final rules
 //      to convert language-conditional phonemes into a language-
 //      independent representation.
-//   6. Emit ``|``-joined unique phonemes.
+//   6. Emit ``|``-joined unique phonemes as UTF-8 (the BMPM phoneme
+//      alphabet contains Cyrillic / Greek / Polish glyphs).
 //
 // Performance:
 //   * One Aho-Corasick trie per ``(RuleType, language)`` shares a single
@@ -64,10 +67,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace stride_align::phonetic {
+
+// The engine works in codepoint space end-to-end. Python ``str`` storage
+// is fixed-width per string (``PyUnicode_KIND`` returns 1/2/4 bytes per
+// codepoint, ``PyUnicode_DATA`` is the raw codepoint array); the
+// dispatch wrapper widens that storage straight into
+// ``std::vector<Codepoint>`` without UTF-8 round-tripping on the input
+// side. UTF-8 only appears on the output side (the returned phonetic
+// codes) and inside the ``std::regex`` predicate fallback, which
+// lazy-encodes the codepoint slice only when a regex predicate is
+// about to fire.
+using Codepoint = std::uint32_t;
 
 enum class BmpmRuleType : int {
   kApprox = 0,
@@ -99,7 +113,7 @@ void bmpm_register_resources(
 // ``max_phonemes`` caps the PhonemeBuilder set size (default 20,
 // matching the upstream Commons Codec default).
 std::string beider_morse(
-    std::string_view input,
+    const std::vector<Codepoint>& input,
     BmpmRuleType rule_type = BmpmRuleType::kApprox,
     bool concat = true,
     std::size_t max_phonemes = 20);

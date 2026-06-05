@@ -148,25 +148,34 @@ dispatch_double_metaphone(nb::handle input,
   return {std::move(r.primary), std::move(r.alternate)};
 }
 
-// BMPM takes UTF-8 in / UTF-8 out (rule data is UTF-8, output codes
-// contain Cyrillic / Greek / Polish glyphs depending on language).
-// Force-encode Python ``str`` through ``PyUnicode_AsUTF8String``, same
-// reasoning as ``dispatch_cologne_phonetic``.
+// BMPM works in codepoint space end-to-end. Python ``str`` storage is
+// already fixed-width per string (``PyUnicode_KIND`` returns 1/2/4
+// bytes per codepoint, ``PyUnicode_DATA`` is the raw codepoint array),
+// so we widen that storage straight into a ``vector<Codepoint>`` —
+// no UTF-8 re-encode on the input side. For ``bytes`` input each byte
+// is taken as a Latin-1 codepoint (the engine then ASCII-lowercases
+// during normalisation).
 inline std::string dispatch_beider_morse(nb::handle input,
                                           int rule_type_int,
                                           bool concat,
                                           std::size_t max_phonemes) {
-  std::string utf8;
+  std::vector<Codepoint> codepoints;
   if (PyUnicode_Check(input.ptr())) {
-    PyObject* enc = PyUnicode_AsUTF8String(input.ptr());
-    if (enc == nullptr) throw nb::python_error();
-    nb::object owner = nb::steal<nb::object>(enc);
-    char* data = nullptr;
-    Py_ssize_t len = 0;
-    if (PyBytes_AsStringAndSize(enc, &data, &len) < 0) {
-      throw nb::python_error();
+    const auto length =
+        static_cast<std::size_t>(PyUnicode_GET_LENGTH(input.ptr()));
+    const int py_kind = PyUnicode_KIND(input.ptr());
+    void* data = PyUnicode_DATA(input.ptr());
+    codepoints.resize(length);
+    if (py_kind == PyUnicode_1BYTE_KIND) {
+      const auto* p = static_cast<const std::uint8_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else if (py_kind == PyUnicode_2BYTE_KIND) {
+      const auto* p = static_cast<const std::uint16_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else {
+      const auto* p = static_cast<const std::uint32_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
     }
-    utf8.assign(data, static_cast<std::size_t>(len));
   } else {
     namespace bv = ::stride_align::byte_view;
     const bv::ByteCompatKind kind = bv::classify(input.ptr());
@@ -178,9 +187,9 @@ inline std::string dispatch_beider_morse(nb::handle input,
     const std::uint8_t* ptr = nullptr;
     std::size_t len = 0;
     bv::view(input.ptr(), kind, ptr, len);
-    utf8.assign(reinterpret_cast<const char*>(ptr), len);
+    codepoints.assign(ptr, ptr + len);
   }
-  return beider_morse(std::string_view(utf8),
+  return beider_morse(codepoints,
                       static_cast<BmpmRuleType>(rule_type_int),
                       concat, max_phonemes);
 }

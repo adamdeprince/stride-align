@@ -37,24 +37,28 @@ landed and the ones still outstanding.
   dodge mid-loop ``std::vector`` reallocation goes away — after the
   pre-reserve the source iterators remain valid for the whole loop.
 
+* **Codepoint-end-to-end engine; no UTF-8 round-trip on the input
+  side.** ``dispatch_beider_morse`` reads codepoints straight out of
+  ``PyUnicode_DATA`` (widening 1/2/4-byte storage into
+  ``std::vector<Codepoint>``) and hands them to the engine. The
+  public ``beider_morse`` entry takes ``const std::vector<Codepoint>&``.
+  ``encode_one_word`` and ``apply_final`` no longer build the
+  ``lowered_bytes`` UTF-8 buffer or the parallel ``cp_to_byte``
+  offset table. ``ContextPred::match`` runs in codepoint space; the
+  ``kRegex`` fallback lazy-encodes its slice to UTF-8 only when a
+  regex predicate is about to fire (a small minority of context
+  predicates after classification). ``Lang::guess`` accepts a
+  codepoint vector and encodes once for its UTF-8-pattern regex
+  search.
+
 ## Outstanding
 
-The AC trie + bump arena changes preserve correctness exactly but did
-not noticeably move the end-to-end ``sa.beider_morse(name)`` wall
-clock on a 14-name mix (the previous ~184 µs/call held within
-measurement noise). Profiling shows the remaining time is dominated
-by allocations and UTF-8 decoding inside ``apply_final``, not by the
-inner-loop pattern lookup the AC change targets. The list below ranks
-the remaining wins by expected impact.
-
-* **Strip the per-phoneme ``decode_utf8`` round-trip.** The final-
-  rules pass takes each live phoneme's codepoint vector, re-encodes
-  it to UTF-8 only to hand the byte view to the regex-fallback
-  predicate, then decodes nothing back. The regex fallback is the
-  only consumer of the UTF-8 form; classifying the predicate at
-  parse time and skipping the byte buffer entirely when no regex
-  fires would save the encode + the ``sub_cp_to_byte`` rebuild for
-  most phonemes.
+The AC trie + bump arena changes plus the codepoint-end-to-end
+rewrite preserve correctness exactly and remove the input-side and
+per-phoneme UTF-8 traffic. The end-to-end ``sa.beider_morse(name)``
+wall clock on a 14-name mix moved from ~184 µs/call to ~177 µs/call
+— small because most of the remaining cost is per-phoneme allocation
+in the final-rules pass that no per-cycle micro-fix touches.
 
 * **Pre-decoded LangSet bit tables for ``[lang1+lang2+...]`` literals.**
   ``parse_lang_set`` does a per-call linear scan plus per-name
