@@ -475,6 +475,40 @@ Both DPs are scalar `O(m·n)` time with two rolling rows for
 multiple substrings tie at the maximum length, the first occurrence
 in `a` is returned (matches `str.find` convention).
 
+### Ratcliff-Obershelp similarity
+
+The algorithm Python's `difflib.SequenceMatcher().ratio()` ships,
+which `rapidfuzz` does not — recursive longest-matching-substring
+split, summed match lengths divided by total length:
+
+```python
+import stride_align as sa
+
+sa.ratcliff_obershelp_similarity("kitten", "sitting")
+# -> 0.6153846153846154
+
+# Bit-exact with difflib at autojunk=False (we have no junk
+# character heuristic):
+import difflib
+sa.ratcliff_obershelp_similarity("ABCBDAB", "BDCAB") == \
+    difflib.SequenceMatcher(None, "ABCBDAB", "BDCAB", autojunk=False).ratio()
+# -> True
+
+# Batch form: one query against many targets, returned as
+# ndarray[float64].
+sa.ratcliff_obershelp_similarities("kitten",
+                                    ["sitting", "kitten", "kit"])
+# -> array([0.61538462, 1.        , 0.66666667])
+```
+
+Not commutative — the inner longest-common-substring tiebreak
+(`earliest in a, then earliest in b`) means the recursion splits
+leftover ranges differently for `(a, b)` vs `(b, a)`, and the total
+match length can differ. Faithful to difflib, which has the same
+property; `sa.ratcliff_obershelp_similarity("ABCBDAB", "BDCAB")`
+gives `0.333…` while the reverse gives `0.667…`. Pin both
+directions if your tests need an order-independent metric.
+
 ### Phonetic encoders
 
 For name matching, deduplication, and search-as-you-type, `stride-align`

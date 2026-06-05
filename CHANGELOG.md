@@ -8,6 +8,19 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **Ratcliff-Obershelp similarity (Phase D.5).** Python's
+  `difflib.SequenceMatcher().ratio()` algorithm — recursive
+  longest-matching-substring split, summed match lengths divided by
+  total length. Bit-exact with `difflib.SequenceMatcher(None, a, b,
+  autojunk=False).ratio()` (verified on 500 random pairs).
+  `sa.ratcliff_obershelp_similarity(a, b)` for the scalar form;
+  `sa.ratcliff_obershelp_similarities(query, targets)` for the
+  batch form returning `ndarray[float64]`. NOT commutative — the
+  longest-common-substring tiebreak (`earliest in a, then earliest
+  in b`) means the recursion splits leftover ranges differently
+  for `(a, b)` vs `(b, a)`. Faithful to difflib, which has the
+  same property.
+
 * **Longest Common Subsequence + Substring (Phase D.4).** Two
   related but distinct dynamic programs:
   * `sa.lcs_length(a, b)` — length of the longest common
