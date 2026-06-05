@@ -111,12 +111,11 @@ bench = [
   "editdistance>=0.6",
   "parasail>=1.3",
 ]
-# Phonetic oracles. Cross-check soundex / metaphone / double metaphone
-# / nysiis output against the de-facto Python implementations.
+# Phonetic oracles. Cross-check soundex / metaphone / nysiis output
+# against the de-facto Python implementations.
 phonetic-compat = [
   "jellyfish>=1.0",
   "metaphone>=0.6",
-  "doublemetaphone>=1.0",
   "pyphonetics>=0.5",
 ]
 

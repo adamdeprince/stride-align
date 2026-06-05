@@ -11,7 +11,8 @@ Warping (`int16` / `float32` / `float64`), and the standard phonetic
 encoders — Soundex, Metaphone (Philips and jellyfish variants),
 Double Metaphone (Apache Commons and Python-package variants),
 NYSIIS, Match Rating Approach, Caverphone 2, Cologne Phonetic,
-and Beider-Morse Phonetic Matching (GENERIC). Scoring kernels are
+Daitch-Mokotoff Soundex, and Beider-Morse Phonetic Matching
+(GENERIC). Scoring kernels are
 hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
 AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
 LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
@@ -497,6 +498,16 @@ sa.caverphone("Stevenson")                               # -> "STFNSN1111"
 # equivalents so callers don't have to NFKD-fold first.
 sa.cologne_phonetic("Müller")                            # -> "657"
 sa.cologne_phonetic("Schmidt")                           # -> "862"
+
+# Daitch-Mokotoff Soundex (Daitch & Mokotoff, 1985). Six-digit
+# Soundex tuned for Slavic and Yiddish surnames. The leading letter
+# is encoded (not preserved verbatim); multi-character clusters like
+# 'sch', 'tsch', 'rz' fire before any single-letter rule; several
+# rules emit '|'-joined alternative codes via branching.
+sa.daitch_mokotoff("LEWINSKY")                           # -> "876450"
+sa.daitch_mokotoff("Goldman")                            # -> "583660"
+sa.daitch_mokotoff("AUERBACH")                           # -> "097400|097500"
+sa.daitch_mokotoff("AUERBACH", branching=False)          # -> "097400"
 
 # Beider-Morse Phonetic Matching (Beider & Morse, 2008). Multi-
 # language phonetic encoder returning a '|'-separated set of plausible

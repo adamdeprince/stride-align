@@ -3028,6 +3028,29 @@ void bind_backend_module(nb::module_& m, const char* doc) {
 #endif  // STRIDE_ALIGN_BMPM_BACKEND
 
   m.def(
+      "daitch_mokotoff",
+      [](nb::handle s, bool branching, bool folding) {
+        return ::stride_align::phonetic::dispatch_daitch_mokotoff(
+            s, branching, folding);
+      },
+      "Daitch-Mokotoff Soundex encoding (Daitch & Mokotoff, 1985).\n\n"
+      "A refinement of American Soundex tuned for Slavic and Yiddish\n"
+      "surnames. Returns up to six digits per code; multi-character\n"
+      "n-grams (``schtsch``, ``rz``, ``cz``, ...) are recognised, the\n"
+      "leading letter is encoded, and several rules emit branched\n"
+      "alternatives.\n\n"
+      "``branching`` — when ``True`` (default) the result is a\n"
+      "``|``-separated list of distinct codes; when ``False`` only the\n"
+      "first branch is returned.\n\n"
+      "``folding`` — when ``True`` (default) the ASCII fold table is\n"
+      "applied so accented characters collapse to their ASCII bases\n"
+      "before encoding.",
+      nb::arg("s"),
+      nb::kw_only(),
+      nb::arg("branching") = true,
+      nb::arg("folding") = true);
+
+  m.def(
       "hamming_normalized_score",
       [](nb::handle query, nb::handle target) {
         return ::stride_align::hamming::dispatch_normalized_score(query, target);

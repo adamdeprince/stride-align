@@ -2085,6 +2085,7 @@ match_rating_codex = _LEVENSHTEIN_BACKEND.match_rating_codex
 match_rating_compare = _LEVENSHTEIN_BACKEND.match_rating_compare
 caverphone = _LEVENSHTEIN_BACKEND.caverphone
 cologne_phonetic = _LEVENSHTEIN_BACKEND.cologne_phonetic
+daitch_mokotoff = _LEVENSHTEIN_BACKEND.daitch_mokotoff
 
 # Beider-Morse Phonetic Matching is compiled only into the ``_generic``
 # backend to avoid duplicating the 280 KB rule set across every SIMD
@@ -3079,6 +3080,7 @@ __all__ = [
     "BmpmRuleType",
     "caverphone",
     "cologne_phonetic",
+    "daitch_mokotoff",
     "double_metaphone",
     "DoubleMetaphoneVariant",
     "match_rating_codex",

@@ -23,6 +23,7 @@
 #include "stride_align/cologne_phonetic.hpp"
 #include "stride_align/double_metaphone.hpp"
 #include "stride_align/beider_morse.hpp"
+#include "stride_align/daitch_mokotoff.hpp"
 
 namespace stride_align::phonetic {
 
@@ -219,6 +220,48 @@ inline void dispatch_bmpm_register_resources(nb::handle py_dict) {
               std::string(vdata, static_cast<std::size_t>(vlen)));
   }
   bmpm_register_resources(m);
+}
+
+// Daitch-Mokotoff runs in codepoint space. We widen Python ``str``
+// storage straight out of ``PyUnicode_DATA`` (1/2/4 bytes per
+// codepoint) into ``std::vector<uint32_t>`` and hand it to the
+// engine — no ``PyUnicode_AsUTF8String`` re-encode on the input
+// side. ``bytes`` input is interpreted as Latin-1 codepoints (each
+// byte is its own codepoint).
+inline std::string dispatch_daitch_mokotoff(nb::handle input,
+                                             bool branching,
+                                             bool folding) {
+  std::vector<std::uint32_t> codepoints;
+  if (PyUnicode_Check(input.ptr())) {
+    const auto length =
+        static_cast<std::size_t>(PyUnicode_GET_LENGTH(input.ptr()));
+    const int py_kind = PyUnicode_KIND(input.ptr());
+    void* data = PyUnicode_DATA(input.ptr());
+    codepoints.resize(length);
+    if (py_kind == PyUnicode_1BYTE_KIND) {
+      const auto* p = static_cast<const std::uint8_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else if (py_kind == PyUnicode_2BYTE_KIND) {
+      const auto* p = static_cast<const std::uint16_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else {
+      const auto* p = static_cast<const std::uint32_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    }
+  } else {
+    namespace bv = ::stride_align::byte_view;
+    const bv::ByteCompatKind kind = bv::classify(input.ptr());
+    if (kind != bv::ByteCompatKind::Bytes) {
+      ::stride_align::detail::throw_type_error(
+          "daitch_mokotoff() requires a str or bytes-like input");
+      return {};
+    }
+    const std::uint8_t* ptr = nullptr;
+    std::size_t len = 0;
+    bv::view(input.ptr(), kind, ptr, len);
+    codepoints.assign(ptr, ptr + len);
+  }
+  return daitch_mokotoff(codepoints, branching, folding);
 }
 
 // Two-input "encode both, compare" helpers. Implemented at the

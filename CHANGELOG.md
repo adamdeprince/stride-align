@@ -26,6 +26,23 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   Renault, SntJohn-Smith, d'ortley, van helsing, and Judenburg all
   match byte-for-byte.
 
+* **Daitch-Mokotoff Soundex (`sa.daitch_mokotoff`).** Six-digit
+  Soundex tuned for Slavic and Yiddish surnames (Daitch & Mokotoff,
+  1985). The leading letter is encoded, multi-character clusters
+  like `sch`, `tsch`, `schtsch`, `rz`, `cz` fire before any single-
+  letter rule, and several rules emit `|`-separated alternative
+  codes. `branching=False` returns the first code only;
+  `folding=False` skips the ASCII fold of accented characters
+  before encoding. Rule table and folding map are vendored from the
+  Apache Commons Codec `dmrules.txt` resource (Apache 2.0) and
+  embedded in `include/stride_align/daitch_mokotoff.hpp`. Cross-
+  checked against the canonical `DaitchMokotoffSoundexTest` vectors.
+
+### Changed
+
+* **`phonetic-compat` extras pruned.** Dropped `doublemetaphone>=1.0`
+  — no test in `tests/` imported it.
+
 ### Removed
 
 * The `Levenshtein` PyPI entry in the `bench` extras. The benchmark
