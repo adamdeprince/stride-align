@@ -10,7 +10,8 @@ Jaro-Winkler similarity, Hamming and Indel distance, Dynamic Time
 Warping (`int16` / `float32` / `float64`), and the standard phonetic
 encoders — Soundex, Metaphone (Philips and jellyfish variants),
 Double Metaphone (Apache Commons and Python-package variants),
-NYSIIS, Match Rating Approach, and Caverphone 2. Scoring kernels are
+NYSIIS, Match Rating Approach, Caverphone 2, Cologne Phonetic,
+and Beider-Morse Phonetic Matching (GENERIC). Scoring kernels are
 hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
 AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
 LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
@@ -489,15 +490,43 @@ sa.match_rating_compare("Robert", "Rupert")              # -> True
 # electoral rolls but widely applied to general English-language
 # name matching.
 sa.caverphone("Stevenson")                               # -> "STFNSN1111"
+
+# Cologne Phonetic / Kölner Phonetik (Postel, 1969). German-language
+# encoder that maps letters to digits 0-8 with context-sensitive rules
+# for C, X, D, T, P. Umlauts and ß preprocess to their Latin-letter
+# equivalents so callers don't have to NFKD-fold first.
+sa.cologne_phonetic("Müller")                            # -> "657"
+sa.cologne_phonetic("Schmidt")                           # -> "862"
+
+# Beider-Morse Phonetic Matching (Beider & Morse, 2008). Multi-
+# language phonetic encoder returning a '|'-separated set of plausible
+# pronunciation codes across European languages, optimised for family
+# names. stride-align ships the GENERIC name-type only — the broad
+# general-purpose rule set; the Ashkenazi and Sephardic rule sets from
+# the upstream Apache Commons Codec distribution are not included.
+sa.beider_morse("Renault")
+# -> "rinD|rinDlt|rina|rinalt|rino|rinolt|rinu|rinult"
+sa.beider_morse("Renault", rule_type=sa.BmpmRuleType.EXACT)
+# -> "renau|renault|reno|renolt"
+sa.beider_morse("Müller", rule_type=sa.BmpmRuleType.EXACT)
+# -> "mQler|muler"
+sa.beider_morse("d'ortley", rule_type=sa.BmpmRuleType.EXACT)
+# -> "(ortlaj|ortlej)-(dortlaj|dortlej)"   (d' prefix handler)
 ```
 
-All seven encoders are dispatched through the same byte-extraction
-helper, accept `str` and `bytes` inputs interchangeably, and skip
-non-letter / non-ASCII codepoints before encoding — pre-normalise
-with `unicodedata.normalize("NFKD", s)` if you want accent folding.
-Cross-checked against the canonical Apache Commons Codec reference
-data and the `jellyfish`, `metaphone`, and `doublemetaphone` PyPI
-packages.
+The first seven encoders are dispatched through the same byte-
+extraction helper, accept `str` and `bytes` inputs interchangeably,
+and skip non-letter / non-ASCII codepoints before encoding — pre-
+normalise with `unicodedata.normalize("NFKD", s)` if you want accent
+folding. Cologne Phonetic re-encodes `str` inputs through UTF-8 so its
+ß / Ä / Ö / Ü preprocessing fires correctly. Beider-Morse ships its
+GENERIC rule data (the 63 `gen_*.txt` files from Apache Commons Codec)
+as package resources loaded once at first call via
+`importlib.resources`, runs the language guesser plus a rule-based
+phonetic engine entirely in C++, and returns a `|`-separated UTF-8
+string of phonetic codes. Cross-checked against the canonical Apache
+Commons Codec reference data and the `jellyfish`, `metaphone`, and
+`doublemetaphone` PyPI packages.
 
 ### Dynamic Time Warping
 

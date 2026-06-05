@@ -15,7 +15,7 @@ originally generated ad-hoc:
 
 Usage::
 
-    $ pip install Levenshtein rapidfuzz editdistance
+    $ pip install rapidfuzz editdistance
     $ python tools/refresh_x86_benchmarks.py
     $ python tools/refresh_x86_benchmarks.py --bench kjv
 
@@ -41,10 +41,6 @@ from pathlib import Path
 
 import stride_align as sa
 
-try:
-    import Levenshtein  # type: ignore[import]
-except ImportError:
-    Levenshtein = None
 try:
     from rapidfuzz.distance import Levenshtein as rf_lev, OSA as rf_osa  # type: ignore[import]
 except ImportError:
@@ -106,7 +102,6 @@ def _kjv_lev(args: argparse.Namespace) -> Path:
 
     headers = ["query", "query_length", "n_targets", "mode"]
     libs: list[tuple[str, object]] = [("stride_align", "sw")]  # placeholder
-    if Levenshtein is not None: libs.append(("Levenshtein", Levenshtein.distance))
     if rf_lev is not None: libs.append(("rapidfuzz", rf_lev.distance))
     if editdistance is not None: libs.append(("editdistance", editdistance.eval))
     headers.extend(f"{name}_s" for name, _ in libs)
@@ -121,8 +116,6 @@ def _kjv_lev(args: argparse.Namespace) -> Path:
             for name, _ in libs:
                 if name == "stride_align":
                     fn = lambda q=query, ts=targets: sa.levenshtein_scores(q, ts)
-                elif name == "Levenshtein":
-                    fn = lambda q=query, ts=targets: [Levenshtein.distance(q, t) for t in ts]
                 elif name == "rapidfuzz":
                     fn = lambda q=query, ts=targets: [rf_lev.distance(q, t) for t in ts]
                 elif name == "editdistance":
@@ -176,8 +169,6 @@ def _v2_lev(args: argparse.Namespace) -> Path:
     rng = random.Random(args.seed)
     headers = ["workload", "q_len", "n_targets", "cutoff",
                "stride_align_us"]
-    if Levenshtein is not None:
-        headers.append("Levenshtein_us")
     if rf_lev is not None:
         headers.append("rapidfuzz_us")
 
@@ -210,12 +201,6 @@ def _v2_lev(args: argparse.Namespace) -> Path:
             row: list[object] = [workload, q_len, n_targets,
                                  "" if cutoff is None else cutoff,
                                  f"{sa_us:.2f}"]
-            if Levenshtein is not None:
-                if single:
-                    lv_fn = lambda q=query, t=t0: Levenshtein.distance(q, t)
-                else:
-                    lv_fn = lambda q=query, ts=targets: [Levenshtein.distance(q, t) for t in ts]
-                row.append(f"{_per_batch_us(lv_fn, args.iterations, args.repeat):.2f}")
             if rf_lev is not None:
                 if single:
                     if cutoff is None:

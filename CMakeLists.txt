@@ -219,6 +219,15 @@ configure_stride_align_target(_cpu)
 
 add_stride_align_backend(_generic src/cpp/backends/generic.cpp)
 
+# Beider-Morse Phonetic Matching ships its 280 KB GENERIC rule data via
+# Python's importlib.resources; the C++ engine is linked into only the
+# ``_generic`` module so the rule trie + LangRegistry singletons exist
+# in one ``.so`` per wheel. Python re-exports ``beider_morse`` from the
+# generic backend regardless of CPU dispatch. The compile definition
+# gates the binding in ``src/cpp/module_bindings.hpp``.
+target_sources(_generic PRIVATE src/cpp/beider_morse_impl.cpp)
+target_compile_definitions(_generic PRIVATE STRIDE_ALIGN_BMPM_BACKEND=1)
+
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
   add_stride_align_backend(_swar src/cpp/backends/swar.cpp)
   list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_SWAR=1)

@@ -22,6 +22,7 @@
 #include "stride_align/caverphone.hpp"
 #include "stride_align/cologne_phonetic.hpp"
 #include "stride_align/double_metaphone.hpp"
+#include "stride_align/beider_morse.hpp"
 
 namespace stride_align::phonetic {
 
@@ -145,6 +146,79 @@ dispatch_double_metaphone(nb::handle input,
   DoubleMetaphoneResult r =
       double_metaphone(std::string_view(s), max_length, variant);
   return {std::move(r.primary), std::move(r.alternate)};
+}
+
+// BMPM works in codepoint space end-to-end. Python ``str`` storage is
+// already fixed-width per string (``PyUnicode_KIND`` returns 1/2/4
+// bytes per codepoint, ``PyUnicode_DATA`` is the raw codepoint array),
+// so we widen that storage straight into a ``vector<Codepoint>`` —
+// no UTF-8 re-encode on the input side. For ``bytes`` input each byte
+// is taken as a Latin-1 codepoint (the engine then ASCII-lowercases
+// during normalisation).
+inline std::string dispatch_beider_morse(nb::handle input,
+                                          int rule_type_int,
+                                          bool concat,
+                                          std::size_t max_phonemes) {
+  std::vector<Codepoint> codepoints;
+  if (PyUnicode_Check(input.ptr())) {
+    const auto length =
+        static_cast<std::size_t>(PyUnicode_GET_LENGTH(input.ptr()));
+    const int py_kind = PyUnicode_KIND(input.ptr());
+    void* data = PyUnicode_DATA(input.ptr());
+    codepoints.resize(length);
+    if (py_kind == PyUnicode_1BYTE_KIND) {
+      const auto* p = static_cast<const std::uint8_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else if (py_kind == PyUnicode_2BYTE_KIND) {
+      const auto* p = static_cast<const std::uint16_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else {
+      const auto* p = static_cast<const std::uint32_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    }
+  } else {
+    namespace bv = ::stride_align::byte_view;
+    const bv::ByteCompatKind kind = bv::classify(input.ptr());
+    if (kind != bv::ByteCompatKind::Bytes) {
+      ::stride_align::detail::throw_type_error(
+          "beider_morse() requires a str or bytes-like input");
+      return {};
+    }
+    const std::uint8_t* ptr = nullptr;
+    std::size_t len = 0;
+    bv::view(input.ptr(), kind, ptr, len);
+    codepoints.assign(ptr, ptr + len);
+  }
+  return beider_morse(codepoints,
+                      static_cast<BmpmRuleType>(rule_type_int),
+                      concat, max_phonemes);
+}
+
+inline void dispatch_bmpm_register_resources(nb::handle py_dict) {
+  std::unordered_map<std::string, std::string> m;
+  if (!PyDict_Check(py_dict.ptr())) {
+    ::stride_align::detail::throw_type_error(
+        "bmpm_register_resources() requires a dict[str, str]");
+    return;
+  }
+  PyObject* k = nullptr;
+  PyObject* v = nullptr;
+  Py_ssize_t pos = 0;
+  while (PyDict_Next(py_dict.ptr(), &pos, &k, &v)) {
+    if (!PyUnicode_Check(k) || !PyUnicode_Check(v)) {
+      ::stride_align::detail::throw_type_error(
+          "bmpm_register_resources() dict keys/values must be str");
+      return;
+    }
+    Py_ssize_t klen = 0;
+    const char* kdata = PyUnicode_AsUTF8AndSize(k, &klen);
+    Py_ssize_t vlen = 0;
+    const char* vdata = PyUnicode_AsUTF8AndSize(v, &vlen);
+    if (kdata == nullptr || vdata == nullptr) throw nb::python_error();
+    m.emplace(std::string(kdata, static_cast<std::size_t>(klen)),
+              std::string(vdata, static_cast<std::size_t>(vlen)));
+  }
+  bmpm_register_resources(m);
 }
 
 // Two-input "encode both, compare" helpers. Implemented at the

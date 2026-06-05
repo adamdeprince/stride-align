@@ -4,6 +4,34 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+* **Beider-Morse Phonetic Matching (`sa.beider_morse`).** Multi-language
+  phonetic encoder for family names (Beider & Morse, 2008). Returns a
+  `|`-separated set of plausible pronunciation codes across European
+  languages. Ships the GENERIC name-type rule set only (the broad
+  general-purpose tree from the Apache Commons Codec `bm/` resource
+  files, Apache 2.0 — vendored under `src/stride_align/bmpm_data/`).
+  `BmpmRuleType.APPROX` (default) gives a broader spread;
+  `BmpmRuleType.EXACT` tightens it. `concat=` controls whether multi-
+  word names encode jointly or per-word with `-`-joined codes;
+  `max_phonemes=` caps the alternative set per encode (default 20).
+  The C++ engine is compiled into the `_generic` backend module only
+  so the ~280 KB rule set lives in one `.so` per wheel rather than
+  fourteen; Python re-exports `beider_morse` through that backend
+  regardless of detected CPU. Cross-checked against the canonical
+  Apache Commons Codec `PhoneticEngineTest` GENERIC vectors —
+  Renault, SntJohn-Smith, d'ortley, van helsing, and Judenburg all
+  match byte-for-byte.
+
+### Removed
+
+* The `Levenshtein` PyPI entry in the `bench` extras. The benchmark
+  and correctness scripts in `tools/` route Levenshtein comparisons
+  through `rapidfuzz.distance.Levenshtein.distance`.
+
 ## [0.4.1] - 2026-06-01
 
 ### Added

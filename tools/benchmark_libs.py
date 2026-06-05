@@ -5,8 +5,8 @@ For each line on stdin, run the line as a query against every line in
 
   --smith-waterman    : compares stride-align against the SW-capable libs
   --needleman-wunsch  : compares stride-align against the NW-capable libs
-  --levenshtein       : compares stride-align against Levenshtein,
-                        rapidfuzz, and editdistance
+  --levenshtein       : compares stride-align against rapidfuzz and
+                        editdistance
 
 Libraries are imported lazily. If a library is not installed the script
 prints a one-line `pip install ...` hint to stderr and skips that column
@@ -42,7 +42,6 @@ LIBRARIES = [
     ("swalign",       "pip install swalign",       {"sw"}),
     ("minineedle",    "pip install minineedle",    {"sw", "nw"}),
     ("pyalign",       "pip install pyalign",       {"sw", "nw"}),
-    ("Levenshtein",   "pip install Levenshtein",   {"lev"}),
     ("rapidfuzz",     "pip install rapidfuzz",     {"lev"}),
     ("editdistance",  "pip install editdistance",  {"lev"}),
 ]
@@ -172,13 +171,6 @@ def run_pyalign(query: str, targets: Sequence[str], mode: str) -> float | None:
     return _time(lambda: [solver(query, t) for t in targets])
 
 
-def run_Levenshtein(query, targets: Sequence, mode: str) -> float | None:
-    if mode != "lev":
-        return None
-    Lev = MODULES["Levenshtein"]
-    return _time(lambda: [Lev.distance(query, t) for t in targets])
-
-
 def run_rapidfuzz(query, targets: Sequence, mode: str) -> float | None:
     if mode != "lev":
         return None
@@ -207,7 +199,6 @@ ADAPTERS = {
     "swalign":       run_swalign,
     "minineedle":    run_minineedle,
     "pyalign":       run_pyalign,
-    "Levenshtein":   run_Levenshtein,
     "rapidfuzz":     run_rapidfuzz,
     "editdistance":  run_editdistance,
 }

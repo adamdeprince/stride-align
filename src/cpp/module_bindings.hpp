@@ -2988,6 +2988,45 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("max_length") = 64U,
       nb::arg("variant") = 0);
 
+#ifdef STRIDE_ALIGN_BMPM_BACKEND
+  // Beider-Morse Phonetic Matching — only compiled into the ``_generic``
+  // backend module to avoid duplicating the 280 KB rule set across every
+  // SIMD ``.so``. Python re-exports route ``stride_align.beider_morse``
+  // through ``_BACKENDS[BackendKind.GENERIC]`` regardless of the
+  // detected CPU.
+  m.def(
+      "_bmpm_register_resources",
+      [](nb::handle resources) {
+        ::stride_align::phonetic::dispatch_bmpm_register_resources(resources);
+      },
+      "Register Apache Commons Codec BMPM rule files with the engine.\n\n"
+      "``resources`` is a dict mapping basename (without ``.txt``) to file\n"
+      "content. Called once at module import from Python via\n"
+      "``importlib.resources.files('stride_align.bmpm_data')``.",
+      nb::arg("resources"));
+
+  m.def(
+      "beider_morse",
+      [](nb::handle s, int rule_type, bool concat, std::size_t max_phonemes) {
+        return ::stride_align::phonetic::dispatch_beider_morse(
+            s, rule_type, concat, max_phonemes);
+      },
+      "Beider-Morse Phonetic Matching encoding (Beider & Morse, 2008).\n\n"
+      "Returns a ``|``-separated string of phonetic codes capturing\n"
+      "plausible pronunciations across European languages. Stride-align\n"
+      "ships the GENERIC name-type rules only.\n\n"
+      "``rule_type`` — 0 for APPROX (broader spread), 1 for EXACT.\n"
+      "``concat`` — when True, multi-word names encode jointly; when\n"
+      "False, each word encodes separately and codes are ``-``-joined.\n"
+      "``max_phonemes`` — cap on the PhonemeBuilder set size (20 default,\n"
+      "matching upstream).",
+      nb::arg("s"),
+      nb::kw_only(),
+      nb::arg("rule_type") = 0,
+      nb::arg("concat") = true,
+      nb::arg("max_phonemes") = 20U);
+#endif  // STRIDE_ALIGN_BMPM_BACKEND
+
   m.def(
       "hamming_normalized_score",
       [](nb::handle query, nb::handle target) {
