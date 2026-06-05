@@ -21,6 +21,7 @@
 #include "indel_dispatch.hpp"
 #include "jaro_dispatch.hpp"
 #include "lcs_dispatch.hpp"
+#include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
 #include "stride_align/alignment.hpp"
@@ -3123,6 +3124,43 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       "returned (matches ``str.find`` convention).",
       nb::arg("a"),
       nb::arg("b"));
+
+  // --- Ratcliff-Obershelp similarity ---------------------------------
+  //
+  // Recursive longest-common-substring split (Ratcliff & Metzener,
+  // 1988). Bit-exact with Python's
+  // ``difflib.SequenceMatcher(None, a, b).ratio()`` on its default
+  // (autojunk-off) configuration. Builds directly on the range-based
+  // ``lcs_substring_info_range`` DP from the LCS family.
+
+  m.def(
+      "ratcliff_obershelp_similarity",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::ratcliff_obershelp::
+            dispatch_ratcliff_obershelp_similarity(a, b);
+      },
+      "Ratcliff-Obershelp similarity in [0, 1] (1 = identical).\n\n"
+      "Equivalent to ``difflib.SequenceMatcher(None, a, b).ratio()``\n"
+      "with the default ``autojunk=True`` — but our engine has no\n"
+      "junk character set, so the result matches the autojunk=False\n"
+      "form of difflib bit-exactly. Computed as ``2 * M / (|a| + |b|)``\n"
+      "where ``M`` is the total length of all matching blocks from\n"
+      "the recursive longest-matching-substring split.",
+      nb::arg("a"),
+      nb::arg("b"));
+
+  m.def(
+      "ratcliff_obershelp_similarities",
+      [](nb::handle query, nb::handle targets) {
+        return as_normalized_ndarray(
+            ::stride_align::ratcliff_obershelp::
+                dispatch_ratcliff_obershelp_similarities(query, targets));
+      },
+      "Ratcliff-Obershelp similarity from ``query`` to every target,\n"
+      "returned as ``ndarray[float64]``. The query's codepoint vector\n"
+      "is widened once and reused across all targets.",
+      nb::arg("query"),
+      nb::arg("targets"));
 
   // --- True Damerau-Levenshtein ---------------------------------------
   //

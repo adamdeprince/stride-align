@@ -66,37 +66,47 @@ inline std::size_t lcs_length(const std::vector<Codepoint>& a,
 }
 
 // Result of the substring DP: ``length`` is the LCSubstr length;
-// ``end_a`` is the one-past-the-last index in ``a`` of an occurrence
-// of that substring, so ``a[end_a - length .. end_a)`` is the
-// substring itself. When the inputs share no character, ``length``
-// is 0 and ``end_a`` is 0.
+// ``end_a`` and ``end_b`` are the one-past-the-last indices of an
+// occurrence of that substring in ``a`` and ``b`` respectively, so
+// ``a[end_a - length .. end_a) == b[end_b - length .. end_b)``. When
+// the inputs share no character, all three fields are 0.
+//
+// Tiebreak when several substrings achieve the maximum length:
+// smallest ``end_a`` first (earliest occurrence in ``a``), then
+// smallest ``end_b`` — matches Python's
+// ``difflib.SequenceMatcher.find_longest_match`` convention.
 struct LcsSubstringInfo {
   std::size_t length = 0;
   std::size_t end_a = 0;
+  std::size_t end_b = 0;
 };
 
-// Length and end-position of the longest common SUBSTRING.
+// Length and end-positions of the longest common SUBSTRING over the
+// half-open ranges ``a[a_lo, a_hi)`` and ``b[b_lo, b_hi)``. Returned
+// positions are absolute indices into the underlying vectors.
 //
 // The recurrence ``dp[i][j] = dp[i-1][j-1] + 1`` on match and ``0``
 // on mismatch lets us collapse to two rolling rows along the ``b``
-// axis. The running maximum is tracked as ``(length, end_a)`` so the
-// substring can be recovered with a single slice on ``a``.
-inline LcsSubstringInfo lcs_substring_info(
-    const std::vector<Codepoint>& a,
-    const std::vector<Codepoint>& b) {
+// axis. The running maximum is tracked so the substring's bounds in
+// both inputs can be recovered with two slices.
+inline LcsSubstringInfo lcs_substring_info_range(
+    const std::vector<Codepoint>& a, std::size_t a_lo, std::size_t a_hi,
+    const std::vector<Codepoint>& b, std::size_t b_lo, std::size_t b_hi) {
   LcsSubstringInfo r;
-  if (a.empty() || b.empty()) return r;
-  const std::size_t N = b.size();
+  if (a_hi <= a_lo || b_hi <= b_lo) return r;
+  const std::size_t M = a_hi - a_lo;
+  const std::size_t N = b_hi - b_lo;
   std::vector<std::size_t> prev(N + 1, 0);
   std::vector<std::size_t> curr(N + 1, 0);
-  for (std::size_t i = 1; i <= a.size(); ++i) {
+  for (std::size_t i = 1; i <= M; ++i) {
     curr[0] = 0;
     for (std::size_t j = 1; j <= N; ++j) {
-      if (a[i - 1] == b[j - 1]) {
+      if (a[a_lo + i - 1] == b[b_lo + j - 1]) {
         curr[j] = prev[j - 1] + 1;
         if (curr[j] > r.length) {
           r.length = curr[j];
-          r.end_a = i;
+          r.end_a = a_lo + i;
+          r.end_b = b_lo + j;
         }
       } else {
         curr[j] = 0;
@@ -105,6 +115,13 @@ inline LcsSubstringInfo lcs_substring_info(
     prev.swap(curr);
   }
   return r;
+}
+
+// Convenience overload that scans the whole of both inputs.
+inline LcsSubstringInfo lcs_substring_info(
+    const std::vector<Codepoint>& a,
+    const std::vector<Codepoint>& b) {
+  return lcs_substring_info_range(a, 0, a.size(), b, 0, b.size());
 }
 
 // Length of the longest common SUBSTRING.

@@ -2008,6 +2008,30 @@ lcs_substring_length = _LEVENSHTEIN_BACKEND.lcs_substring_length
 lcs_substring = _LEVENSHTEIN_BACKEND.lcs_substring
 
 
+# Ratcliff-Obershelp similarity — Python's ``difflib.SequenceMatcher``
+# algorithm, with no autojunk heuristic so the result is the
+# autojunk-off form (which matches the autojunk-on form on inputs
+# without any character that appears very frequently).
+ratcliff_obershelp_similarity = (
+    _LEVENSHTEIN_BACKEND.ratcliff_obershelp_similarity
+)
+
+
+def ratcliff_obershelp_similarities(
+    query: object, targets: object
+) -> np.ndarray:
+    """Ratcliff-Obershelp similarity per target as ndarray[float64]."""
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return _LEVENSHTEIN_BACKEND.ratcliff_obershelp_similarities(
+        query, targets,
+    )
+
+
 # True Damerau-Levenshtein — unrestricted form. Each character may
 # participate in multiple edits, unlike the OSA variant we ship under
 # ``damerau_levenshtein_*`` (which restricts each character to at most
@@ -3044,6 +3068,8 @@ __all__ = [
     "lcs_length",
     "lcs_substring",
     "lcs_substring_length",
+    "ratcliff_obershelp_similarities",
+    "ratcliff_obershelp_similarity",
     "LevenshteinScorer",
     "levenshtein_best",
     "levenshtein_normalized_best",
