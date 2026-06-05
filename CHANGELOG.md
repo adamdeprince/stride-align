@@ -4,6 +4,21 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+* **`sa.cologne_phonetic` runs in codepoint space.** The dispatch
+  wrapper widens Python ``str`` storage straight out of
+  ``PyUnicode_DATA`` into ``std::vector<Codepoint>``. The umlaut / ß
+  fold is keyed on the natural Unicode codepoint (Ä = U+00C4,
+  ß = U+00DF, ...) rather than on UTF-8 byte pairs. Same algorithm,
+  same outputs — the 28 canonical Cologne test vectors continue to
+  match upstream. ``bytes`` input is now taken as Latin-1
+  codepoints; if you previously relied on passing the UTF-8 bytes
+  form of an accented name (``"Müller".encode("utf-8")``), pass the
+  ``str`` instead.
+
 ## [0.4.1] - 2026-06-01
 
 ### Added
