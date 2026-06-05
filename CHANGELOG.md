@@ -43,6 +43,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 * **`phonetic-compat` extras pruned.** Dropped `doublemetaphone>=1.0`
   — no test in `tests/` imported it.
 
+* **`sa.cologne_phonetic` runs in codepoint space.** The dispatch
+  wrapper widens Python `str` storage straight out of
+  `PyUnicode_DATA` into `std::vector<Codepoint>`. The umlaut / ß
+  fold is keyed on the natural Unicode codepoint (Ä = U+00C4,
+  ß = U+00DF, ...) rather than on UTF-8 byte pairs. Same algorithm,
+  same outputs — the 28 canonical Cologne test vectors continue to
+  match upstream. `bytes` input is now taken as Latin-1
+  codepoints; if you previously relied on passing the UTF-8 bytes
+  form of an accented name (`"Müller".encode("utf-8")`), pass the
+  `str` instead.
+
 ### Removed
 
 * The `Levenshtein` PyPI entry in the `bench` extras. The benchmark
