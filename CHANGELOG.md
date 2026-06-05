@@ -8,6 +8,38 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **Ratcliff-Obershelp similarity (Phase D.5).** Python's
+  `difflib.SequenceMatcher().ratio()` algorithm — recursive
+  longest-matching-substring split, summed match lengths divided by
+  total length. Bit-exact with `difflib.SequenceMatcher(None, a, b,
+  autojunk=False).ratio()` (verified on 500 random pairs).
+  `sa.ratcliff_obershelp_similarity(a, b)` for the scalar form;
+  `sa.ratcliff_obershelp_similarities(query, targets)` for the
+  batch form returning `ndarray[float64]`. NOT commutative — the
+  longest-common-substring tiebreak (`earliest in a, then earliest
+  in b`) means the recursion splits leftover ranges differently
+  for `(a, b)` vs `(b, a)`. Faithful to difflib, which has the
+  same property.
+
+* **Longest Common Subsequence + Substring (Phase D.4).** Two
+  related but distinct dynamic programs:
+  * `sa.lcs_length(a, b)` — length of the longest common
+    subsequence (characters need not be contiguous). Cross-checked
+    via the closed-form relation
+    `indel = |a| + |b| - 2 * lcs_length`.
+  * `sa.lcs_substring_length(a, b)` — length of the longest common
+    substring (contiguous).
+  * `sa.lcs_substring(a, b)` — the substring itself, sliced from
+    `a`. Returns `bytes` when both inputs are `bytes`; otherwise
+    `str`. First-occurrence-in-`a` tiebreak (matches `str.find`
+    convention).
+
+  Both DPs are scalar `O(m·n)` time with two rolling rows for
+  `O(min(m,n))` (subsequence) or `O(|b|)` (substring) space. Engine
+  runs in codepoint space — dispatch widens `PyUnicode_DATA`
+  straight into `std::vector<Codepoint>`; non-ASCII codepoints are
+  first-class.
+
 * **Beider-Morse Phonetic Matching (`sa.beider_morse`).** Multi-language
   phonetic encoder for family names (Beider & Morse, 2008). Returns a
   `|`-separated set of plausible pronunciation codes across European
