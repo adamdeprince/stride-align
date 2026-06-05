@@ -10,7 +10,8 @@ Jaro-Winkler similarity, Hamming and Indel distance, Dynamic Time
 Warping (`int16` / `float32` / `float64`), and the standard phonetic
 encoders — Soundex, Metaphone (Philips and jellyfish variants),
 Double Metaphone (Apache Commons and Python-package variants),
-NYSIIS, Match Rating Approach, and Caverphone 2. Scoring kernels are
+NYSIIS, Match Rating Approach, Caverphone 2, and Daitch-Mokotoff
+Soundex. Scoring kernels are
 hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
 AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
 LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
@@ -489,9 +490,19 @@ sa.match_rating_compare("Robert", "Rupert")              # -> True
 # electoral rolls but widely applied to general English-language
 # name matching.
 sa.caverphone("Stevenson")                               # -> "STFNSN1111"
+
+# Daitch-Mokotoff Soundex (Daitch & Mokotoff, 1985). Six-digit
+# Soundex tuned for Slavic and Yiddish surnames. The leading letter
+# is encoded (not preserved verbatim); multi-character clusters like
+# 'sch', 'tsch', 'rz' fire before any single-letter rule; several
+# rules emit '|'-joined alternative codes via branching.
+sa.daitch_mokotoff("LEWINSKY")                           # -> "876450"
+sa.daitch_mokotoff("Goldman")                            # -> "583660"
+sa.daitch_mokotoff("AUERBACH")                           # -> "097400|097500"
+sa.daitch_mokotoff("AUERBACH", branching=False)          # -> "097400"
 ```
 
-All seven encoders are dispatched through the same byte-extraction
+All eight encoders are dispatched through the same byte-extraction
 helper, accept `str` and `bytes` inputs interchangeably, and skip
 non-letter / non-ASCII codepoints before encoding — pre-normalise
 with `unicodedata.normalize("NFKD", s)` if you want accent folding.
