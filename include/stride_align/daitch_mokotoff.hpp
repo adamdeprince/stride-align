@@ -253,13 +253,21 @@ struct Rule {
   std::vector<std::string> r_other;
 };
 
+// Forward declaration — defined further down. Needed here so the
+// folding-table parser can decode the accented ``<from>`` side of
+// each folding line to a codepoint key.
+inline std::uint32_t decode_one(std::string_view s, std::size_t pos,
+                                 std::size_t& consumed);
+
 struct CompiledTables {
   // Rules grouped by the first byte of their pattern; within each
   // bucket sorted by descending pattern length so longest-match wins.
   std::array<std::vector<Rule>, 256> by_first_byte;
-  // ASCII folding: maps a single codepoint (encoded UTF-8) to a single
-  // ASCII byte. Codepoint encoded as UTF-8 string for direct comparison.
-  std::unordered_map<std::string, char> foldings;
+  // ASCII folding: maps a single codepoint to a single ASCII byte.
+  // Keying directly on the codepoint means ``cleanup`` can look up
+  // the fold result without encoding the codepoint to UTF-8 just to
+  // build the search key.
+  std::unordered_map<std::uint32_t, char> foldings;
 };
 
 inline std::vector<std::string> split_alts(std::string_view s) {
@@ -331,12 +339,18 @@ inline CompiledTables parse_rules() {
     if (trimmed.empty()) continue;
 
     if (trimmed.find('=') != std::string_view::npos) {
-      // folding: ``<accented>=<ascii>``
+      // folding: ``<accented>=<ascii>`` where ``<accented>`` is a single
+      // codepoint encoded in the rule file as UTF-8 — decode it to a
+      // codepoint key at parse time.
       const auto eq = trimmed.find('=');
-      std::string from(trimmed.substr(0, eq));
-      std::string to(trimmed.substr(eq + 1));
-      if (!from.empty() && !to.empty() && to.size() == 1) {
-        t.foldings.emplace(std::move(from), to.front());
+      const auto from = trimmed.substr(0, eq);
+      const auto to = trimmed.substr(eq + 1);
+      if (!from.empty() && to.size() == 1) {
+        std::size_t consumed = 0;
+        const std::uint32_t cp = decode_one(from, 0, consumed);
+        if (consumed == from.size()) {
+          t.foldings.emplace(cp, to.front());
+        }
       }
       continue;
     }
@@ -431,48 +445,49 @@ inline std::uint32_t lower_cp(std::uint32_t cp) {
   return cp;
 }
 
-inline std::string cleanup(std::string_view input, bool folding) {
+// Encode one codepoint as UTF-8 onto ``out``. Pure helper, no state.
+inline void append_cp_as_utf8(std::string& out, std::uint32_t cp) {
+  if (cp < 0x80) {
+    out.push_back(static_cast<char>(cp));
+  } else if (cp < 0x800) {
+    out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  } else if (cp < 0x10000) {
+    out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  } else {
+    out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+  }
+}
+
+// Cleanup takes the codepoint stream the dispatch layer already
+// produced (no UTF-8 round-trip on the input side). The output is a
+// UTF-8 byte string because the rule matching loop is byte-level —
+// it walks ``cleaned[pos]`` looking up the per-first-byte bucket.
+// Folding turns each codepoint in the fold table into a single ASCII
+// byte; unfolded codepoints stay as their natural UTF-8 encoding so
+// the few non-ASCII rule patterns (``ţ``, ``ț``, ``ę``, ``ą``)
+// match.
+inline std::string cleanup(const std::vector<std::uint32_t>& input,
+                            bool folding) {
   const auto& t = tables();
   std::string out;
   out.reserve(input.size());
-  for (std::size_t i = 0; i < input.size();) {
-    std::size_t consumed = 0;
-    std::uint32_t cp = decode_one(input, i, consumed);
-    if (is_whitespace_cp(cp) || !is_letter_cp(cp)) {
-      i += consumed;
-      continue;
-    }
+  for (auto cp : input) {
+    if (is_whitespace_cp(cp) || !is_letter_cp(cp)) continue;
     cp = lower_cp(cp);
-    // Encode lowered codepoint as UTF-8 for folding-table lookup
-    // and for the output string.
-    char buf[4];
-    int n = 0;
-    if (cp < 0x80) {
-      buf[n++] = static_cast<char>(cp);
-    } else if (cp < 0x800) {
-      buf[n++] = static_cast<char>(0xC0 | (cp >> 6));
-      buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-      buf[n++] = static_cast<char>(0xE0 | (cp >> 12));
-      buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-      buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-      buf[n++] = static_cast<char>(0xF0 | (cp >> 18));
-      buf[n++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-      buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-      buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
-    }
-    std::string key(buf, n);
     if (folding) {
-      auto it = t.foldings.find(key);
+      auto it = t.foldings.find(cp);
       if (it != t.foldings.end()) {
         out.push_back(it->second);
-        i += consumed;
         continue;
       }
     }
-    out.append(key);
-    i += consumed;
+    append_cp_as_utf8(out, cp);
   }
   return out;
 }
@@ -501,7 +516,7 @@ inline void process_replacement(Branch& b, const std::string& replacement,
   b.last_replacement = replacement;
 }
 
-inline std::string daitch_mokotoff_impl(std::string_view input,
+inline std::string daitch_mokotoff_impl(const std::vector<std::uint32_t>& input,
                                          bool branching, bool folding) {
   const auto& t = tables();
   const std::string cleaned = cleanup(input, folding);
@@ -595,12 +610,18 @@ inline std::string daitch_mokotoff_impl(std::string_view input,
 
 }  // namespace daitch_mokotoff_detail
 
-// Encode ``input`` as a Daitch-Mokotoff Soundex set. When
-// ``branching`` is true (default) the result is a ``|``-separated
-// list of distinct 6-digit codes; otherwise a single 6-digit code.
+// Encode ``input`` as a Daitch-Mokotoff Soundex set. The engine runs
+// in codepoint space — Python ``str`` storage is fixed-width per
+// string (``PyUnicode_KIND`` is 1/2/4 bytes per codepoint), so the
+// dispatch wrapper widens that storage straight into
+// ``std::vector<std::uint32_t>`` without UTF-8 round-tripping on the
+// input side. The output is a UTF-8 byte string of 6-digit codes.
+//
+// When ``branching`` is true (default) the result is a ``|``-
+// separated list of distinct codes; otherwise a single code.
 // ``folding`` (default true) applies the ASCII fold table for
 // accented characters before encoding.
-inline std::string daitch_mokotoff(std::string_view input,
+inline std::string daitch_mokotoff(const std::vector<std::uint32_t>& input,
                                     bool branching = true,
                                     bool folding = true) {
   return daitch_mokotoff_detail::daitch_mokotoff_impl(

@@ -148,24 +148,32 @@ dispatch_double_metaphone(nb::handle input,
   return {std::move(r.primary), std::move(r.alternate)};
 }
 
-// Daitch-Mokotoff takes UTF-8 in / 6-digit ASCII out. The folding
-// table is keyed on UTF-8 byte sequences, so we re-encode Python
-// ``str`` through ``PyUnicode_AsUTF8String`` — same handling as
-// Cologne and BMPM.
+// Daitch-Mokotoff runs in codepoint space. We widen Python ``str``
+// storage straight out of ``PyUnicode_DATA`` (1/2/4 bytes per
+// codepoint) into ``std::vector<uint32_t>`` and hand it to the
+// engine — no ``PyUnicode_AsUTF8String`` re-encode on the input
+// side. ``bytes`` input is interpreted as Latin-1 codepoints (each
+// byte is its own codepoint).
 inline std::string dispatch_daitch_mokotoff(nb::handle input,
                                              bool branching,
                                              bool folding) {
-  std::string utf8;
+  std::vector<std::uint32_t> codepoints;
   if (PyUnicode_Check(input.ptr())) {
-    PyObject* enc = PyUnicode_AsUTF8String(input.ptr());
-    if (enc == nullptr) throw nb::python_error();
-    nb::object owner = nb::steal<nb::object>(enc);
-    char* data = nullptr;
-    Py_ssize_t len = 0;
-    if (PyBytes_AsStringAndSize(enc, &data, &len) < 0) {
-      throw nb::python_error();
+    const auto length =
+        static_cast<std::size_t>(PyUnicode_GET_LENGTH(input.ptr()));
+    const int py_kind = PyUnicode_KIND(input.ptr());
+    void* data = PyUnicode_DATA(input.ptr());
+    codepoints.resize(length);
+    if (py_kind == PyUnicode_1BYTE_KIND) {
+      const auto* p = static_cast<const std::uint8_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else if (py_kind == PyUnicode_2BYTE_KIND) {
+      const auto* p = static_cast<const std::uint16_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
+    } else {
+      const auto* p = static_cast<const std::uint32_t*>(data);
+      for (std::size_t i = 0; i < length; ++i) codepoints[i] = p[i];
     }
-    utf8.assign(data, static_cast<std::size_t>(len));
   } else {
     namespace bv = ::stride_align::byte_view;
     const bv::ByteCompatKind kind = bv::classify(input.ptr());
@@ -177,9 +185,9 @@ inline std::string dispatch_daitch_mokotoff(nb::handle input,
     const std::uint8_t* ptr = nullptr;
     std::size_t len = 0;
     bv::view(input.ptr(), kind, ptr, len);
-    utf8.assign(reinterpret_cast<const char*>(ptr), len);
+    codepoints.assign(ptr, ptr + len);
   }
-  return daitch_mokotoff(std::string_view(utf8), branching, folding);
+  return daitch_mokotoff(codepoints, branching, folding);
 }
 
 // Two-input "encode both, compare" helpers. Implemented at the
