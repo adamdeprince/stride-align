@@ -21,6 +21,7 @@
 #include "indel_dispatch.hpp"
 #include "jaro_dispatch.hpp"
 #include "lcs_dispatch.hpp"
+#include "ngram_dispatch.hpp"
 #include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
@@ -3223,6 +3224,117 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       "is widened once and reused across all targets.",
       nb::arg("query"),
       nb::arg("targets"));
+
+  // --- N-gram set similarity (Phase D.1) ----------------------------
+  //
+  // Four metrics over character n-gram MULTISETS: Jaccard,
+  // Sørensen-Dice, Cosine over multiset frequency vectors, and
+  // Overlap coefficient. All four share one ``ComparisonStats``
+  // one-pass walk; each batch entry point widens the query once
+  // and reuses its multiset across every target.
+
+  m.def(
+      "jaccard",
+      [](nb::handle a, nb::handle b, std::size_t n) {
+        return ::stride_align::ngram::dispatch_jaccard(a, b, n);
+      },
+      "Jaccard similarity over character n-gram multisets:\n"
+      "``|A intersect B| / |A union B|``. ``n`` defaults to 2\n"
+      "(character bigrams). Both empty -> 1.0, one empty -> 0.0.",
+      nb::arg("a"),
+      nb::arg("b"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "dice",
+      [](nb::handle a, nb::handle b, std::size_t n) {
+        return ::stride_align::ngram::dispatch_dice(a, b, n);
+      },
+      "Sorensen-Dice similarity over character n-gram multisets:\n"
+      "``2 * |A intersect B| / (|A| + |B|)``. ``n`` defaults to 2.",
+      nb::arg("a"),
+      nb::arg("b"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "cosine",
+      [](nb::handle a, nb::handle b, std::size_t n) {
+        return ::stride_align::ngram::dispatch_cosine(a, b, n);
+      },
+      "Cosine similarity over character n-gram multiset frequency\n"
+      "vectors: ``<A,B> / (||A|| * ||B||)``. ``n`` defaults to 2.",
+      nb::arg("a"),
+      nb::arg("b"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "overlap",
+      [](nb::handle a, nb::handle b, std::size_t n) {
+        return ::stride_align::ngram::dispatch_overlap(a, b, n);
+      },
+      "Overlap coefficient over character n-gram multisets:\n"
+      "``|A intersect B| / min(|A|, |B|)``. ``n`` defaults to 2.",
+      nb::arg("a"),
+      nb::arg("b"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "jaccard_similarities",
+      [](nb::handle query, nb::handle targets, std::size_t n) {
+        return as_normalized_ndarray(
+            ::stride_align::ngram::dispatch_jaccard_similarities(
+                query, targets, n));
+      },
+      "Jaccard similarity from ``query`` to every target, returned as\n"
+      "``ndarray[float64]``. Query multiset built once and reused.",
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "dice_similarities",
+      [](nb::handle query, nb::handle targets, std::size_t n) {
+        return as_normalized_ndarray(
+            ::stride_align::ngram::dispatch_dice_similarities(
+                query, targets, n));
+      },
+      "Sorensen-Dice similarity per target, returned as\n"
+      "``ndarray[float64]``.",
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "cosine_similarities",
+      [](nb::handle query, nb::handle targets, std::size_t n) {
+        return as_normalized_ndarray(
+            ::stride_align::ngram::dispatch_cosine_similarities(
+                query, targets, n));
+      },
+      "Cosine similarity per target, returned as ``ndarray[float64]``.",
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
+
+  m.def(
+      "overlap_similarities",
+      [](nb::handle query, nb::handle targets, std::size_t n) {
+        return as_normalized_ndarray(
+            ::stride_align::ngram::dispatch_overlap_similarities(
+                query, targets, n));
+      },
+      "Overlap coefficient per target, returned as ``ndarray[float64]``.",
+      nb::arg("query"),
+      nb::arg("targets"),
+      nb::kw_only(),
+      nb::arg("n") = 2U);
 
   // --- True Damerau-Levenshtein ---------------------------------------
   //

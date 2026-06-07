@@ -8,6 +8,25 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **N-gram set similarity (Phase D.1).** Four metrics over character
+  n-gram **multisets** (each n-gram counted with multiplicity),
+  keyword-only `n=` (default 2 — character bigrams):
+  * `sa.jaccard(a, b, n=2)` — `|A ∩ B| / |A ∪ B|`.
+  * `sa.dice(a, b, n=2)` — `2 * |A ∩ B| / (|A| + |B|)`.
+  * `sa.cosine(a, b, n=2)` — `<A, B> / (||A|| * ||B||)` over the
+    multiset frequency vectors.
+  * `sa.overlap(a, b, n=2)` — `|A ∩ B| / min(|A|, |B|)`.
+
+  Plus batch forms `sa.jaccard_similarities(query, targets, n=2)` and
+  the three siblings, all returning `ndarray[float64]` with the query
+  multiset built once and reused across targets. All four metrics are
+  symmetric, bounded in `[0, 1]`, and follow the identity convention
+  (both empty → `1.0`, one empty → `0.0`). Engine runs in codepoint
+  space — non-ASCII codepoints are first-class. N-gram keys are
+  packed binary `std::string` (n · 4 bytes), which for the default
+  `n = 2` fits libstdc++'s small-string-optimisation buffer and
+  avoids per-n-gram key allocation.
+
 * **Ratcliff-Obershelp similarity (Phase D.5).** Python's
   `difflib.SequenceMatcher().ratio()` algorithm — recursive
   longest-matching-substring split, summed match lengths divided by
