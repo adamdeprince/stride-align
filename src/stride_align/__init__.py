@@ -2081,6 +2081,20 @@ def overlap_similarities(
     return _ngram_similarities("overlap_similarities", query, targets, n=n)
 
 
+# Token-ratio family (Phase D.3) — rapidfuzz ``fuzz.*`` parity. Pure-
+# Python composition over ``sa.indel_normalized_score`` (which is
+# algebraically ``rapidfuzz.fuzz.ratio / 100``). Returned values are
+# in [0, 1] — multiply by 100 if you need rapidfuzz's [0, 100] scale.
+from . import _fuzz as _fuzz_mod  # noqa: E402
+
+token_sort_ratio          = _fuzz_mod.token_sort_ratio
+token_set_ratio           = _fuzz_mod.token_set_ratio
+partial_ratio             = _fuzz_mod.partial_ratio
+partial_token_sort_ratio  = _fuzz_mod.partial_token_sort_ratio
+partial_token_set_ratio   = _fuzz_mod.partial_token_set_ratio
+WRatio                    = _fuzz_mod.WRatio
+
+
 # True Damerau-Levenshtein — unrestricted form. Each character may
 # participate in multiple edits, unlike the OSA variant we ship under
 # ``damerau_levenshtein_*`` (which restricts each character to at most
@@ -3136,8 +3150,14 @@ __all__ = [
     "lcs_substring_length",
     "overlap",
     "overlap_similarities",
+    "partial_ratio",
+    "partial_token_set_ratio",
+    "partial_token_sort_ratio",
     "ratcliff_obershelp_similarities",
     "ratcliff_obershelp_similarity",
+    "token_set_ratio",
+    "token_sort_ratio",
+    "WRatio",
     "LevenshteinScorer",
     "levenshtein_best",
     "levenshtein_normalized_best",

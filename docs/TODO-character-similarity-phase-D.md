@@ -148,22 +148,35 @@ src/cpp/phonetic_dispatch.hpp
 **Notes:** Encoders are 100-300 LOC each; tests are the real cost
 because the rules have many edge cases.
 
-## Phase D.3 — token ratio family (rapidfuzz parity)
+## Phase D.3 — token ratio family (rapidfuzz parity) ✅ shipped
 
-Builds on phase D.1's tokenisation + the existing Levenshtein.
-Closes the direct rapidfuzz API gap: users porting from
-`rapidfuzz.fuzz.token_set_ratio(...)` get a one-for-one replacement.
+Shipped as pure-Python composition over `sa.indel_normalized_score`
+(algebraically equal to rapidfuzz's `fuzz.ratio / 100`: both reduce
+to `2 · LCS / (|a| + |b|)`) and `sa.lcs_substring` (Phase D.4 LCS
+substring primitive). No new C++ kernels.
 
-| API | Definition |
+| API | Shipped as |
 | --- | --- |
-| `sa.token_sort_ratio(s1, s2)` | Split on whitespace, sort tokens, Levenshtein-ratio the joined strings. |
-| `sa.token_set_ratio(s1, s2)` | Set intersection / difference of tokens, three Lev-ratio comparisons, take the max. |
-| `sa.partial_token_sort_ratio(s1, s2)` | Token-sort + partial-ratio (best-matching substring). |
-| `sa.partial_token_set_ratio(s1, s2)` | Token-set + partial-ratio. |
-| `sa.wratio(s1, s2)` | rapidfuzz's weighted blend of the above. |
+| `sa.token_sort_ratio(s1, s2)` | Sorted-whitespace tokenisation + Indel-ratio of joins. |
+| `sa.token_set_ratio(s1, s2)` | Sorted intersection / set-difference, max of three pairwise Indel-ratios. Empty-token-set sides return `0.0` per rapidfuzz. |
+| `sa.partial_ratio(s1, s2)` | Sliding-window of length `min(|a|, |b|)` over the longer string, plus the LCS substring as one more candidate window. |
+| `sa.partial_token_sort_ratio(s1, s2)` | Token-sort then `partial_ratio`. |
+| `sa.partial_token_set_ratio(s1, s2)` | Token-set preprocessing then max of three pairwise `partial_ratio` values. |
+| `sa.WRatio(s1, s2)` | rapidfuzz's weighted blend (length-ratio thresholds, `0.95` token scale, `0.9` partial scale). |
 
-**Notes:** Pure Python composition on top of phase D.1 and existing
-Levenshtein; no new C++ kernels.
+The five token / partial functions accept `processor=` for caller-
+provided preprocessing (e.g. `processor=str.lower`); `bytes` input
+is widened as Latin-1, matching the convention used by the C++
+engines. Returned values are in `[0, 1]`.
+
+Bit-exact parity with rapidfuzz holds for `token_sort_ratio` and
+`token_set_ratio` on all inputs, and for `partial_ratio` and its
+partial-token cousins on the vast majority of inputs. A small set
+of equal-length inputs (where rapidfuzz finds a window shifted off
+the boundary by one character) sees stride-align underestimate by
+up to `0.05`; the divergence is documented and the candidate
+algorithm matches rapidfuzz's published API description without
+importing the rapidfuzz source.
 
 ## Phase D.4 — Longest Common Subsequence + Substring
 
