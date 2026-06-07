@@ -52,17 +52,29 @@ classes; the C++ port is original code.
     lookup, predicate classifier, arena allocator, and parser in
     ``beider_morse_impl.cpp`` are original C++.
 
-Cross-checked against jellyfish (BSD-2-Clause), the ``metaphone`` and
-``doublemetaphone`` PyPI packages, and pyphonetics — these are used as
-test oracles only; no code is incorporated into stride-align.
+Algorithmic structure and named test vectors of each encoder were
+cross-checked against the canonical Apache Commons Codec test cases
+during development. The third-party Python libraries listed in
+``[project.optional-dependencies].phonetic-compat`` — jellyfish
+(MIT), the ``metaphone`` PyPI package (BSD), and pyphonetics (MIT) —
+are provided for downstream users who want their own cross-checks;
+stride-align's own tests (``tests/test_phonetic.py``,
+``tests/test_beider_morse.py``) import only ``pytest`` and
+``stride_align`` and use hand-pinned expected values.
+
+A consolidated source audit covering every phonetic encoder lives at
+``docs/phonetic-encoder-external-sources.md``. The BMPM-specific
+audit (Apache Commons Codec rule data, vendored resources, explicit
+GPL-port exclusions) lives at ``docs/bmpm-external-sources.md``.
 
 ----------------------------------------------------------------------
 
 Test oracles
 ============
 
-The cross-check tests in tests/test_phonetic.py compare stride-align's
-output to several third-party phonetic libraries. These libraries are
-runtime test dependencies only, declared under
-``[project.optional-dependencies].phonetic-compat`` — none of their
-source is included in or distributed with stride-align.
+The third-party phonetic libraries listed under
+``[project.optional-dependencies].phonetic-compat`` (jellyfish,
+metaphone, pyphonetics) are runtime extras only — none of their
+source is included in or distributed with stride-align, and none is
+imported by any file under ``tests/`` or ``src/``. Their licences
+(MIT and BSD) are Apache-2.0 compatible.

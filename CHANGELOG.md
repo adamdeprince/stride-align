@@ -6,6 +6,24 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Documented
+
+* **Phonetic-encoder external-source audit** (Phase D.2 + D.7). New
+  `docs/phonetic-encoder-external-sources.md` catalogs every external
+  source — used or excluded — for the Soundex / Metaphone / Double
+  Metaphone / NYSIIS / Caverphone / Match Rating / Cologne Phonetic
+  family. Lists the original publications behind each algorithm, the
+  Apache Commons Codec classes whose structure each port follows, the
+  hand-pinned canonical test vectors, and the GPL-licensed ports
+  explicitly excluded from code, comments, fixtures, and oracle
+  calls (abydos and any other GPL/AGPL/LGPL phonetic-encoder
+  implementation). The BMPM-specific audit at
+  `docs/bmpm-external-sources.md` and the non-phonetic Phase D audit
+  at `docs/phase-D-external-sources.md` cover the rest. `NOTICE`
+  updated: jellyfish licence corrected to MIT (was BSD-2-Clause);
+  test-oracle wording now reflects that no third-party phonetic
+  library is imported by any file under `tests/` or `src/`.
+
 ### Added
 
 * **Monge-Elkan multi-token similarity (Phase D.6).** Classic

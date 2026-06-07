@@ -119,34 +119,23 @@ Mirrors `LevenshteinScorer`. Builds the query representation
 intersection step only. This is where the win compounds for the
 1-query × many-targets workload.
 
-## Phase D.2 — phonetic encoders (Soundex, Metaphone, Double Metaphone)
+## Phase D.2 — phonetic encoders (Soundex, Metaphone, Double Metaphone) ✅ shipped
 
-Encoders, not distances — they emit a string (or tuple of strings).
-You compare those for equality, or pass through Levenshtein. Pure
-character-state-machine implementations; no SIMD speedup worth
-chasing for the encoders themselves (state machines don't
-vectorise). The value is having a uniform Python API and a tested
-C++ implementation alongside the rest of stride-align.
+Shipped as `sa.soundex`, `sa.soundex_equal`, `sa.metaphone`,
+`sa.metaphone_equal`, `sa.double_metaphone`. Implementations live in
+`include/stride_align/{soundex,metaphone,double_metaphone}.hpp` and
+share `src/cpp/soundex_dispatch.hpp` (the dispatch name is historical
+— it serves every phonetic encoder, not just Soundex).
 
-| API | Output | Notes |
-| --- | --- | --- |
-| `sa.soundex(s)` | 4-char ASCII | American Soundex (1918). Length-clipped + 0-padded. |
-| `sa.metaphone(s)` | variable ASCII | Lawrence Philips' 1990 encoder. |
-| `sa.double_metaphone(s)` | `tuple[str, str]` | Primary + alternate; non-English friendly. |
+`MetaphoneVariant.PHILIPS` (default) follows the published 1990
+spec via Apache Commons Codec; `MetaphoneVariant.JELLYFISH` matches
+the jellyfish PyPI package on the CH-after-S and terminal-GH cases.
+`DoubleMetaphoneVariant.COMMONS` (default) is the faithful Apache
+Commons Codec port; `DoubleMetaphoneVariant.PYTHON` reproduces a
+known bug in the `metaphone` PyPI package on the GH-after-vowel
+near-start case.
 
-Plus the obvious `sa.soundex_equal(s1, s2)` convenience wrappers.
-
-**C++ surface**
-
-```
-include/stride_align/phonetic/soundex.hpp
-include/stride_align/phonetic/metaphone.hpp
-include/stride_align/phonetic/double_metaphone.hpp
-src/cpp/phonetic_dispatch.hpp
-```
-
-**Notes:** Encoders are 100-300 LOC each; tests are the real cost
-because the rules have many edge cases.
+External-source audit: [`docs/phonetic-encoder-external-sources.md`](phonetic-encoder-external-sources.md).
 
 ## Phase D.3 — token ratio family (rapidfuzz parity) ✅ shipped
 
@@ -234,22 +223,24 @@ is wanted. Empty both sides → `1.0`; one side empty → `0.0`.
 External-source audit covering D.1, D.3, D.4, D.5, and D.6 lives in
 [`docs/phase-D-external-sources.md`](phase-D-external-sources.md).
 
-## Phase D.7 — additional phonetic encoders
+## Phase D.7 — additional phonetic encoders ✅ shipped
 
-Lower priority; ship only when a real user asks. Bundle so the work
-can be done in one focused session.
+Shipped:
 
-| API | Notes |
+| API | Header |
 | --- | --- |
-| `sa.nysiis(s)` | US Census, longer than Soundex. |
-| `sa.caverphone(s)` | New Zealand origin, international names. |
-| `sa.match_rating_codex(s)` | + `sa.match_rating_comparison(s1, s2) -> bool` |
-| `sa.beider_morse(s, lang=None)` | Multi-language; substantial implementation (large rule tables). |
+| `sa.nysiis` / `sa.nysiis_equal` | `include/stride_align/nysiis.hpp` |
+| `sa.caverphone` | `include/stride_align/caverphone.hpp` |
+| `sa.match_rating_codex` / `sa.match_rating_compare` | `include/stride_align/match_rating.hpp` |
+| `sa.cologne_phonetic` | `include/stride_align/cologne_phonetic.hpp` (codepoint engine, German Kölner Phonetik) |
+| `sa.beider_morse` | `include/stride_align/beider_morse.hpp` + `src/cpp/beider_morse_impl.cpp` (GENERIC name-type, Aho-Corasick + bump-pointer arena; rule data vendored from Apache Commons Codec under `src/stride_align/bmpm_data/`) |
+| `sa.daitch_mokotoff` | `include/stride_align/daitch_mokotoff.hpp` (single-header; rule data from Apache Commons Codec `dmrules.txt`) |
 
-**Notes:** Soundex / NYSIIS / Caverphone are each small encoders;
-Match Rating Approach is small + a comparison rule; Beider-Morse is
-much larger than the rest of D combined (huge rule tables + language
-detection).
+External-source audits:
+[`docs/phonetic-encoder-external-sources.md`](phonetic-encoder-external-sources.md)
+for the seven core encoders;
+[`docs/bmpm-external-sources.md`](bmpm-external-sources.md) for
+Beider-Morse and Daitch-Mokotoff specifically.
 
 ## Ordering / dependency graph
 
