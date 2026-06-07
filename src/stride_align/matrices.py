@@ -36,6 +36,12 @@ class SubstitutionMatrix:
     gap_open: int | None = None
     gap_extend: int | None = None
 
+    # Set in __post_init__ via object.__setattr__ (frozen-dataclass
+    # compatible). The class-level annotation lets type checkers see
+    # the attribute without putting it into the dataclass field list
+    # (it's a derived value of `matrix`, not an input).
+    max_abs: int = 0
+
     def __post_init__(self) -> None:
         if self.matrix.dtype != np.int8:
             raise TypeError(
@@ -55,6 +61,54 @@ class SubstitutionMatrix:
             )
         if len(set(self.alphabet)) != n:
             raise ValueError(f"alphabet {self.alphabet!r} has duplicate symbols")
+        # Cache the matrix max-abs once at construction so the kernel-
+        # cell-width selection logic doesn't recompute it per call. This
+        # is the matrix-mode analogue of the step_limit ::stride_align
+        # uses in match/mismatch mode (preprocess.hpp::compute_score_bound):
+        # the cell-width selector multiplies it by query+target length
+        # to get the worst-case absolute score, then picks the narrowest
+        # cell that holds the bound. Frozen-dataclass-compatible via
+        # object.__setattr__.
+        max_abs = int(np.abs(self.matrix.view(np.int8).astype(np.int32)).max(initial=0))
+        object.__setattr__(self, "max_abs", max_abs)
+
+    def score_step_limit(
+        self,
+        *,
+        gap_score: int | None = None,
+        gap_open: int | None = None,
+        gap_extend: int | None = None,
+    ) -> int:
+        """The per-step worst-case absolute score the kernel must hold.
+
+        This is the matrix-mode analogue of the ``step_limit`` used by
+        ``preprocess.hpp::compute_score_bound`` for match/mismatch mode.
+        The cell-width selector multiplies the return value by
+        ``query_len + target_len`` to get the worst-case absolute score
+        across a whole alignment, then picks the narrowest cell type
+        (int8 / int16 / int32 / int64) that holds the bound.
+
+        Resolution: linear-gap call (``gap_score`` non-``None``) uses
+        ``|gap_score|``; affine call (``gap_open`` and ``gap_extend``
+        non-``None``) uses ``max(|gap_open|, |gap_extend|)``;
+        all-``None`` falls back to this matrix's own ``gap_score``
+        attribute (and ``gap_open`` / ``gap_extend`` if they are set).
+        The result is ``max(self.max_abs, gap_magnitude)``.
+        """
+        if gap_score is None and gap_open is None and gap_extend is None:
+            # Fall back to the matrix's own defaults.
+            gap_score = self.gap_score
+            gap_open = self.gap_open
+            gap_extend = self.gap_extend
+
+        candidates: list[int] = [self.max_abs]
+        if gap_score is not None:
+            candidates.append(abs(gap_score))
+        if gap_open is not None:
+            candidates.append(abs(gap_open))
+        if gap_extend is not None:
+            candidates.append(abs(gap_extend))
+        return max(candidates)
 
     @classmethod
     def from_ncbi_text(

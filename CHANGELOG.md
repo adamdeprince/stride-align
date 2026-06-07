@@ -8,6 +8,21 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **`SubstitutionMatrix.max_abs` cached step-limit.** The matrix max-
+  absolute-value is computed once at construction and stored on the
+  `SubstitutionMatrix` instance — the matrix-mode analogue of the
+  match/mismatch `step_limit` that the kernel cell-width selector
+  (8 / 16 / 32 / 64 bits) uses. Previously each call recomputed it by
+  scanning the matrix; now the cached value is available for Python-
+  side decision-making and surfaces in `repr(matrix)`. New
+  `SubstitutionMatrix.score_step_limit(gap_score=..., gap_open=...,
+  gap_extend=...)` returns the combined per-step limit
+  `max(max_abs, |gap_open|, |gap_extend|)` that the kernel
+  multiplies by `len(query) + len(target)` to bound the worst-case
+  absolute score. A parallel `compute_score_bound_matrix` helper in
+  `src/cpp/preprocess.hpp` documents the matrix-mode bound formula
+  alongside the existing match/mismatch `compute_score_bound`.
+
 * **Smith-Waterman and Needleman-Wunsch in `sa.cdist`.** Four new
   `Scorer` enum values close the long-standing gap that left local
   and global alignment off the matrix surface:
