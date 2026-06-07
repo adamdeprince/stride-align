@@ -564,3 +564,62 @@ def test_max_abs_appears_in_repr() -> None:
         gap_score=-1,
     )
     assert "max_abs=5" in repr(m)
+
+
+# --------------------------------------------------------------------
+# Matrix-mode cached bytes — per-call .tobytes() elimination
+#
+# The matrix-mode dispatchers in stride_align/__init__.py used to call
+# matrix.matrix.tobytes() once per Python entry, allocating a fresh
+# bytes object each time. For 24x24 BLOSUM62 that's a 576-byte malloc;
+# for the planned 128x128 text matrices it's a 16 KB malloc whose
+# allocation cost adds up under cdist over large corpora. Cache the
+# bytes once at construction and let the dispatchers reuse the same
+# buffer for every call against this matrix.
+# --------------------------------------------------------------------
+
+
+def test_matrix_bytes_cached_once() -> None:
+    # Two reads return the same Python object (no fresh allocation).
+    m = SubstitutionMatrix(
+        name="t", alphabet="AX",
+        matrix=np.array([[5, -3], [-3, 5]], dtype=np.int8),
+        gap_score=-1,
+    )
+    assert m.matrix_bytes is m.matrix_bytes
+
+
+def test_matrix_bytes_matches_tobytes() -> None:
+    # The cached bytes equal a fresh tobytes() of the underlying array.
+    assert blosum62.matrix_bytes == blosum62.matrix.tobytes()
+
+
+def test_matrix_bytes_size_matches_matrix() -> None:
+    # row-major int8: len(matrix_bytes) == stride * stride.
+    assert len(blosum62.matrix_bytes) == blosum62.stride * blosum62.stride
+    assert len(blosum62.matrix_bytes) == blosum62.matrix.nbytes
+
+
+def test_matrix_bytes_independent_per_matrix() -> None:
+    # Two distinct matrices have distinct cached byte buffers.
+    m1 = SubstitutionMatrix(
+        name="a", alphabet="AX",
+        matrix=np.array([[1, 0], [0, 1]], dtype=np.int8), gap_score=-1,
+    )
+    m2 = SubstitutionMatrix(
+        name="b", alphabet="AX",
+        matrix=np.array([[2, 0], [0, 2]], dtype=np.int8), gap_score=-1,
+    )
+    assert m1.matrix_bytes is not m2.matrix_bytes
+    assert m1.matrix_bytes != m2.matrix_bytes
+
+
+def test_matrix_bytes_round_trip_through_dispatcher() -> None:
+    # Score-only matrix path consumes the cached bytes. Result must
+    # match the analytical answer (5 matches on the diagonal = 5*5).
+    m = SubstitutionMatrix(
+        name="t", alphabet="ACGTX",
+        matrix=np.diag([5, 5, 5, 5, 0]).astype(np.int8),
+        gap_score=-1,
+    )
+    assert sa.smith_waterman_score("AAAAA", "AAAAA", matrix=m) == 5 * 5

@@ -37,10 +37,18 @@ class SubstitutionMatrix:
     gap_extend: int | None = None
 
     # Set in __post_init__ via object.__setattr__ (frozen-dataclass
-    # compatible). The class-level annotation lets type checkers see
-    # the attribute without putting it into the dataclass field list
-    # (it's a derived value of `matrix`, not an input).
+    # compatible). The class-level annotations let type checkers see
+    # the attributes without putting them into the dataclass field list
+    # (they're derived values of `matrix`, not inputs).
     max_abs: int = 0
+    # Cached row-major int8 bytes of the matrix. Every matrix-mode
+    # dispatcher in __init__.py used to call ``matrix.matrix.tobytes()``
+    # per Python boundary crossing, which allocates a fresh ``bytes``
+    # object every call — fine for 24x24 protein matrices (576 B), but
+    # an L1d-thrasher for a 128x128 text matrix (16 KB). Cache it once
+    # at construction so the dispatchers can reuse the same buffer
+    # across every call against this matrix.
+    matrix_bytes: bytes = b""
 
     def __post_init__(self) -> None:
         if self.matrix.dtype != np.int8:
@@ -71,6 +79,11 @@ class SubstitutionMatrix:
         # object.__setattr__.
         max_abs = int(np.abs(self.matrix.view(np.int8).astype(np.int32)).max(initial=0))
         object.__setattr__(self, "max_abs", max_abs)
+        # Snapshot the row-major bytes once. The matrix ndarray is
+        # frozen by the dataclass decorator, but the underlying buffer
+        # is mutable in principle — we want a stable copy that doesn't
+        # get retraced on every dispatcher call.
+        object.__setattr__(self, "matrix_bytes", self.matrix.tobytes())
 
     def score_step_limit(
         self,

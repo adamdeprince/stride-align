@@ -525,7 +525,7 @@ def _dispatch_matrix(
     return getattr(_LEVENSHTEIN_BACKEND, function_name)(
         q_bytes,
         t_bytes,
-        matrix.matrix.tobytes(),
+        matrix.matrix_bytes,
         matrix.stride,
         gap_score,
     )
@@ -546,7 +546,7 @@ def _dispatch_matrix_affine(
     return getattr(_LEVENSHTEIN_BACKEND, function_name)(
         q_bytes,
         t_bytes,
-        matrix.matrix.tobytes(),
+        matrix.matrix_bytes,
         matrix.stride,
         gap_open_score,
         gap_extend_score,
@@ -572,7 +572,7 @@ def _dispatch_matrix_many(
     scores = getattr(_LEVENSHTEIN_BACKEND, function_name)(
         q_bytes,
         encoded_targets,
-        matrix.matrix.tobytes(),
+        matrix.matrix_bytes,
         matrix.stride,
         gap_score,
     )
@@ -602,13 +602,13 @@ def _dispatch_matrix_path_info(
         fn = ("smith_waterman_affine_path_info_matrix"
               if local else "needleman_wunsch_affine_path_info_matrix")
         return getattr(_LEVENSHTEIN_BACKEND, fn)(
-            q_bytes, t_bytes, matrix.matrix.tobytes(), matrix.stride,
+            q_bytes, t_bytes, matrix.matrix_bytes, matrix.stride,
             open_s, extend_s,
         )
     fn = ("smith_waterman_path_info_matrix"
           if local else "needleman_wunsch_path_info_matrix")
     return getattr(_LEVENSHTEIN_BACKEND, fn)(
-        q_bytes, t_bytes, matrix.matrix.tobytes(), matrix.stride, open_s,
+        q_bytes, t_bytes, matrix.matrix_bytes, matrix.stride, open_s,
     )
 
 
@@ -711,7 +711,7 @@ def _dispatch_matrix_affine_many(
     scores = getattr(_LEVENSHTEIN_BACKEND, function_name)(
         q_bytes,
         encoded_targets,
-        matrix.matrix.tobytes(),
+        matrix.matrix_bytes,
         matrix.stride,
         gap_open_score,
         gap_extend_score,

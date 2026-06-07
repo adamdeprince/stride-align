@@ -8,6 +8,18 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **`SubstitutionMatrix.matrix_bytes` cached row-major bytes.** The
+  matrix-mode dispatchers no longer call `matrix.matrix.tobytes()`
+  per Python entry — every call against the same `SubstitutionMatrix`
+  now shares one cached `bytes` object created in `__post_init__`.
+  Removes the per-call allocation that was 576 B for BLOSUM62 and
+  becomes 16 KB for a 128×128 text matrix. Visible win on short
+  alignments where the per-call DP doesn't hide the allocation: a
+  per-call SW score on BLOSUM62 drops from ~5.4 µs to ~3.2 µs
+  (40% faster) at a 38-char query. Larger matrices benefit less in
+  per-call wall time but stop thrashing L1d with a fresh allocation
+  on every call, which compounds across cdist matrix-mode batches.
+
 * **`SubstitutionMatrix.max_abs` cached step-limit.** The matrix max-
   absolute-value is computed once at construction and stored on the
   `SubstitutionMatrix` instance — the matrix-mode analogue of the
