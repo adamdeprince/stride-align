@@ -8,6 +8,24 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **Monge-Elkan multi-token similarity (Phase D.6).** Classic
+  record-linkage hybrid: tokenise both inputs on whitespace, then for
+  each token in `s1` pick the best-matching token in `s2` under a
+  configurable inner similarity, and average across `s1`'s tokens.
+  Asymmetric by definition; pass `symmetric=True` to average both
+  directions.
+  * `sa.monge_elkan(s1, s2, *, inner="jaro", processor=None, symmetric=False)`.
+  * `inner=` selects the per-token similarity: `"jaro"` (default),
+    `"jaro_winkler"`, `"levenshtein_ratio"`, `"indel_ratio"`, or any
+    `Callable[[str, str], float]`.
+  * `processor=` applies a preprocessor (e.g. `processor=str.lower`)
+    before tokenisation.
+  * Empty / whitespace-only inputs on both sides → `1.0`; one side
+    empty → `0.0`.
+  Pure-Python composition on top of stride-align's Jaro / Jaro-Winkler
+  / Levenshtein / Indel kernels; no new C++ kernels and no third-party
+  code in the production path.
+
 * **Token-ratio family (Phase D.3).** rapidfuzz `fuzz.*` parity in
   pure-Python composition over `sa.indel_normalized_score` and
   `sa.lcs_substring`:

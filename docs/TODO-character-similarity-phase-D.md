@@ -214,19 +214,25 @@ include/stride_align/ratcliff_obershelp.hpp
 **Notes:** The recursive split is straightforward; the longest-
 matching-substring inner step shares code with phase D.4.
 
-## Phase D.6 — Monge-Elkan
+## Phase D.6 — Monge-Elkan ✅ shipped
 
-Multi-token hybrid metric — for each token in s1, find the best-
-matching token in s2 by an inner similarity (default Jaro or
-Levenshtein-ratio); average across s1's tokens. Standard in record
-linkage.
+Shipped as `sa.monge_elkan(s1, s2, *, inner="jaro",
+processor=None, symmetric=False)`. Pure-Python composition over
+stride-align's per-token primitives — no new C++ kernels.
 
-| API | Notes |
+| API | Shipped as |
 | --- | --- |
-| `sa.monge_elkan(s1, s2, *, inner="jaro")` | `inner` selects the per-token metric: `"jaro"`, `"jaro_winkler"`, `"levenshtein_ratio"`. |
+| `sa.monge_elkan(s1, s2)` | Directional record-linkage hybrid: `(1 / |T_a|) · Σ_{t ∈ T_a} max_{u ∈ T_b} sim(t, u)`. |
 
-**Notes:** Pure Python composition on top of the existing per-token
-metrics; no new C++ kernels.
+`inner=` selects the per-token similarity from `"jaro"`,
+`"jaro_winkler"`, `"levenshtein_ratio"`, `"indel_ratio"`, or any
+callable. `processor=` applies a preprocessor (e.g.
+`processor=str.lower`) before tokenisation. `symmetric=True`
+averages the two directional scores when an order-independent score
+is wanted. Empty both sides → `1.0`; one side empty → `0.0`.
+
+External-source audit covering D.1, D.3, D.4, D.5, and D.6 lives in
+[`docs/phase-D-external-sources.md`](phase-D-external-sources.md).
 
 ## Phase D.7 — additional phonetic encoders
 
