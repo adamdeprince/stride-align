@@ -6,6 +6,32 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+* **Smith-Waterman and Needleman-Wunsch in `sa.cdist`.** Four new
+  `Scorer` enum values close the long-standing gap that left local
+  and global alignment off the matrix surface:
+  * `Scorer.SMITH_WATERMAN` — `int64` raw-score cells.
+  * `Scorer.SMITH_WATERMAN_NORMALIZED` — `float64` in `[0, 1]`.
+  * `Scorer.NEEDLEMAN_WUNSCH` — `int64`, can be negative.
+  * `Scorer.NEEDLEMAN_WUNSCH_NORMALIZED` — `float64` in `[0, 1]`.
+
+  `sa.cdist` gains `match_score=`, `mismatch_score=`, and `width=`
+  kwargs (the affine-gap kwargs `gap_open_score=` /
+  `gap_extend_score=` already existed for matrix-mode cdist and now
+  also route through to the SW / NW per-row kernel). The module-
+  level `smith_waterman_scores`, `smith_waterman_farrar_scores`,
+  `smith_waterman_normalized_scores`, `smith_waterman_farrar_normalized_scores`,
+  `needleman_wunsch_scores`, and `needleman_wunsch_normalized_scores`
+  are also accepted as `scorer=` arguments. Dispatch happens
+  Python-side via a `ThreadPoolExecutor` over rows because the C++
+  cdist kernel doesn't thread the SW / NW scoring parameters through
+  its per-row dispatch; the per-row kernels themselves release the
+  GIL so `cpu_count > 1` is real parallelism. The C++ `Scorer` enum
+  in `src/cpp/topk.hpp` gains four matching entries so the integer
+  contract with the Python `Scorer` IntEnum stays one-to-one even
+  though IDs 12-15 are Python-dispatched.
+
 ### Documented
 
 * **Phonetic-encoder external-source audit** (Phase D.2 + D.7). New

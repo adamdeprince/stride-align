@@ -7,7 +7,7 @@ import importlib
 import os
 import warnings
 from types import ModuleType
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import numpy as np
@@ -2288,10 +2288,20 @@ def jaro_winkler_similarities(
 
 
 class Scorer(enum.IntEnum):
-    """Algorithm identifier for ``extract()``.
+    """Algorithm identifier for ``extract()`` and ``cdist()``.
 
     Integer values are part of the user-visible contract and must stay
     in sync with the ``Scorer`` enum class in ``src/cpp/topk.hpp``.
+
+    Values 0-11 dispatch through the C++ cdist kernel (multi-threaded,
+    SIMD, GIL-released). Values 12-15 (Smith-Waterman, Needleman-Wunsch
+    and their normalised siblings) dispatch through a Python-level
+    row loop that calls the per-row ``smith_waterman_scores`` /
+    ``needleman_wunsch_scores`` SIMD kernels — the C++ cdist machinery
+    doesn't thread the SW/NW scoring parameters (match / mismatch /
+    gap_open / gap_extend / width) through its per-row dispatch.
+    Threading via ``cpu_count`` still parallelises rows because the
+    per-row kernels release the GIL.
     """
 
     LEVENSHTEIN = 0
@@ -2306,6 +2316,22 @@ class Scorer(enum.IntEnum):
     INDEL_NORMALIZED = 9
     TRUE_DAMERAU_LEVENSHTEIN = 10
     TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED = 11
+    SMITH_WATERMAN = 12
+    SMITH_WATERMAN_NORMALIZED = 13
+    NEEDLEMAN_WUNSCH = 14
+    NEEDLEMAN_WUNSCH_NORMALIZED = 15
+
+
+# Scorer values that dispatch through the Python-level SW/NW row loop
+# rather than the C++ cdist kernel. The Python dispatch is needed
+# because the C++ cdist signature doesn't carry the SW/NW scoring
+# parameters (match_score, mismatch_score, gap_*, width).
+_PYTHON_DISPATCH_SCORERS = frozenset({
+    int(Scorer.SMITH_WATERMAN),
+    int(Scorer.SMITH_WATERMAN_NORMALIZED),
+    int(Scorer.NEEDLEMAN_WUNSCH),
+    int(Scorer.NEEDLEMAN_WUNSCH_NORMALIZED),
+})
 
 
 # Top-k re-exports. The C++ bindings now do the str/bytes rejection
@@ -2561,6 +2587,117 @@ def extract_best(
 #     (e.g. ``stride_align.levenshtein_scores``,
 #     ``stride_align.jaro_similarities``). The dispatch happens in
 #     C++ via a PyObject* -> Scorer table populated at import time.
+#   * For Smith-Waterman / Needleman-Wunsch, the dispatch happens
+#     in Python via a ThreadPoolExecutor over rows (the per-row
+#     ``smith_waterman_scores`` / ``needleman_wunsch_scores``
+#     kernels are SIMD and GIL-releasing). See ``_cdist_sw_nw``.
+
+
+# ---------------------------------------------------------------- SW/NW cdist
+
+# Map from (scorer arg) -> (Scorer enum int, per-row callable, dtype).
+def _resolve_sw_nw_scorer(scorer: object) -> tuple[int, Callable, type] | None:
+    """Return ``(scorer_id, per_row_fn, dtype)`` if ``scorer`` is one
+    of the SW/NW scorers, else ``None``. ``per_row_fn`` is the
+    module-level ``*_scores`` function the row loop will call."""
+    # Module-level scoring functions (and their Farrar siblings).
+    if scorer in (smith_waterman_scores, smith_waterman_farrar_scores):
+        return int(Scorer.SMITH_WATERMAN), smith_waterman_scores, np.int64
+    if scorer in (smith_waterman_normalized_scores,
+                  smith_waterman_farrar_normalized_scores):
+        return (int(Scorer.SMITH_WATERMAN_NORMALIZED),
+                smith_waterman_normalized_scores, np.float64)
+    if scorer is needleman_wunsch_scores:
+        return int(Scorer.NEEDLEMAN_WUNSCH), needleman_wunsch_scores, np.int64
+    if scorer is needleman_wunsch_normalized_scores:
+        return (int(Scorer.NEEDLEMAN_WUNSCH_NORMALIZED),
+                needleman_wunsch_normalized_scores, np.float64)
+    # Scorer enum values (or any int matching one of the SW/NW IDs).
+    if isinstance(scorer, int) and int(scorer) in _PYTHON_DISPATCH_SCORERS:
+        sid = int(scorer)
+        if sid == int(Scorer.SMITH_WATERMAN):
+            return sid, smith_waterman_scores, np.int64
+        if sid == int(Scorer.SMITH_WATERMAN_NORMALIZED):
+            return sid, smith_waterman_normalized_scores, np.float64
+        if sid == int(Scorer.NEEDLEMAN_WUNSCH):
+            return sid, needleman_wunsch_scores, np.int64
+        if sid == int(Scorer.NEEDLEMAN_WUNSCH_NORMALIZED):
+            return sid, needleman_wunsch_normalized_scores, np.float64
+    return None
+
+
+def _cdist_sw_nw(
+    queries: object,
+    targets: object,
+    *,
+    per_row_fn: Callable,
+    dtype: type,
+    match_score: int,
+    mismatch_score: int,
+    gap_score: int,
+    gap_open_score: int | None,
+    gap_extend_score: int | None,
+    width: int | None,
+    tqdm: object,
+    cpu_count: int,
+) -> np.ndarray:
+    """All-pairs SW/NW score matrix. Each row is computed by calling
+    ``per_row_fn(query_i, targets_tuple, ...)``, which under the hood
+    runs the SIMD Farrar / generic Smith-Waterman or Needleman-Wunsch
+    kernel and releases the GIL — so a thread pool over rows is real
+    parallelism."""
+    query_tuple = _materialize_targets(queries)
+    target_tuple = _materialize_targets(targets)
+    n_queries = len(query_tuple)
+    n_targets = len(target_tuple)
+    result = np.empty((n_queries, n_targets), dtype=dtype)
+    if n_queries == 0 or n_targets == 0:
+        return result
+
+    # Optional tqdm progress bar. The C++ cdist updates the bar in
+    # length-product units; the Python row loop updates by row count
+    # because we don't have cheap access to per-row lengths here and
+    # users mostly want a "12% done" indicator.
+    bar = None
+    if tqdm is not None:
+        try:
+            bar = tqdm(total=n_queries)
+        except TypeError:
+            bar = tqdm  # caller passed a bar instance, not a factory
+
+    row_kwargs = {
+        "match_score": match_score,
+        "mismatch_score": mismatch_score,
+        "gap_score": gap_score,
+        "gap_open_score": gap_open_score,
+        "gap_extend_score": gap_extend_score,
+        "width": width,
+    }
+
+    def compute_row(i: int) -> None:
+        result[i, :] = per_row_fn(query_tuple[i], target_tuple, **row_kwargs)
+
+    if cpu_count <= 1 or n_queries == 1:
+        for i in range(n_queries):
+            compute_row(i)
+            if bar is not None:
+                bar.update(1)
+    else:
+        # ThreadPoolExecutor over rows. The per-row kernel releases
+        # the GIL so threads run concurrently in C++.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=cpu_count) as pool:
+            futures = {pool.submit(compute_row, i): i for i in range(n_queries)}
+            for fut in as_completed(futures):
+                fut.result()  # propagate exceptions
+                if bar is not None:
+                    bar.update(1)
+
+    if bar is not None:
+        close = getattr(bar, "close", None)
+        if callable(close):
+            close()
+    return result
 
 
 _MATRIX_CDIST_LOCAL = ("sw", "smith_waterman", "smith-waterman", "local")
@@ -2643,9 +2780,12 @@ def cdist(
     *,
     scorer: "Scorer | object" = None,
     matrix: Any = None,
+    match_score: int = 2,
+    mismatch_score: int = -1,
     gap_score: int = -1,
     gap_open_score: int | None = None,
     gap_extend_score: int | None = None,
+    width: int | None = None,
     tqdm: object = None,
     cpu_count: int = 0,
     prefix_weight: float = 0.1,
@@ -2656,21 +2796,32 @@ def cdist(
 
     ``queries`` and ``targets`` are sequences of strings/bytes. The
     return is a 2-D ``ndarray`` of shape ``(len(queries), len(targets))``
-    with ``int64`` cells for distance scorers and ``float64`` for
-    similarity scorers.
+    with ``int64`` cells for raw-score scorers (Levenshtein,
+    Damerau-Levenshtein, Hamming, Indel, Smith-Waterman, Needleman-
+    Wunsch) and ``float64`` for similarity / normalised scorers (Jaro,
+    Jaro-Winkler, the ``*_NORMALIZED`` family).
 
     ``scorer`` accepts a ``Scorer`` enum value or any of the top-level
-    scoring functions in this module (``stride_align.levenshtein_scores``
-    etc.) — the dispatch table is registered at import time.
+    scoring functions in this module (``stride_align.levenshtein_scores``,
+    ``stride_align.smith_waterman_scores`` etc.). Levenshtein /
+    Damerau / Hamming / Jaro / Jaro-Winkler / Indel / True-Damerau
+    dispatch through the multi-threaded C++ cdist kernel; Smith-
+    Waterman and Needleman-Wunsch (``Scorer.SMITH_WATERMAN``,
+    ``Scorer.SMITH_WATERMAN_NORMALIZED``, ``Scorer.NEEDLEMAN_WUNSCH``,
+    ``Scorer.NEEDLEMAN_WUNSCH_NORMALIZED``) dispatch through a
+    Python-level row loop that calls the per-row SIMD kernels — both
+    paths release the GIL and parallelise across ``cpu_count`` rows.
+
+    ``match_score`` / ``mismatch_score`` / ``gap_score`` /
+    ``gap_open_score`` / ``gap_extend_score`` / ``width`` are
+    forwarded to the SW / NW per-row kernel; ignored by the C++ cdist
+    scorers. Linear gap is the default; pass both ``gap_open_score``
+    and ``gap_extend_score`` for an affine gap. ``width`` forces the
+    Farrar lane width to one of 8 / 16 / 32 / 64 bits.
 
     ``tqdm`` is an optional callable that constructs a ``tqdm``-style
-    progress bar. cdist calls ``tqdm(total=N)`` with an estimated work
-    total (in length-product units), then ``bar.update(n)`` after each
-    query row with ``n = sum_j q_len * t_len`` for that row. Updates
-    are dispatched from the main thread; workers never touch the bar.
-    For symmetric inputs (``queries is targets``), rows shrink as
-    ``i`` grows; the cost-weighted updates make the bar advance
-    smoothly in wall-clock time.
+    progress bar. The C++ cdist updates the bar in length-product
+    units; the SW / NW row loop updates by row count.
 
     ``cpu_count`` controls the worker thread count. ``0`` (default)
     means ``os.cpu_count()``. ``1`` forces single-threaded mode. The
@@ -2697,6 +2848,21 @@ def cdist(
     resolved_cpu_count = cpu_count
     if resolved_cpu_count <= 0:
         resolved_cpu_count = os.cpu_count() or 1
+
+    sw_nw = _resolve_sw_nw_scorer(scorer)
+    if sw_nw is not None:
+        _scorer_id, per_row_fn, dtype = sw_nw
+        return _cdist_sw_nw(
+            queries, targets,
+            per_row_fn=per_row_fn, dtype=dtype,
+            match_score=match_score, mismatch_score=mismatch_score,
+            gap_score=gap_score,
+            gap_open_score=gap_open_score, gap_extend_score=gap_extend_score,
+            width=width,
+            tqdm=tqdm,
+            cpu_count=int(resolved_cpu_count),
+        )
+
     return _LEVENSHTEIN_BACKEND.cdist(
         queries, targets,
         scorer=scorer,

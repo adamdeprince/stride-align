@@ -60,6 +60,13 @@ enum class Scorer : int {
   IndelNormalized = 9,
   TrueDamerauLevenshtein = 10,
   TrueDamerauLevenshteinNormalized = 11,
+  // 12-15 dispatch Python-side in ``cdist()``; the C++ kernel never
+  // sees these enum values. They live here so the integer-id contract
+  // with the Python ``Scorer`` IntEnum stays one-to-one.
+  SmithWaterman = 12,
+  SmithWatermanNormalized = 13,
+  NeedlemanWunsch = 14,
+  NeedlemanWunschNormalized = 15,
 };
 
 // Build a Python list of at most `k` (item, score, index) tuples from

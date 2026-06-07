@@ -794,6 +794,18 @@ for query, top in sa.cdist_top_k_per_query(
 ):
     # top is [(score, target), ...] sorted descending
     ...
+
+# Smith-Waterman and Needleman-Wunsch on cdist. The SW / NW scorers
+# accept the same scoring parameters as the per-pair calls; both
+# raw-score and normalised-similarity variants are available. The
+# dispatch happens via a Python-level ThreadPoolExecutor over rows
+# because the SW / NW per-row kernels release the GIL.
+sa.cdist(qs, ts, scorer=sa.Scorer.SMITH_WATERMAN,
+         match_score=2, mismatch_score=-1, gap_score=-1)   # int64
+sa.cdist(qs, ts, scorer=sa.Scorer.SMITH_WATERMAN_NORMALIZED)  # float64 in [0, 1]
+sa.cdist(qs, ts, scorer=sa.Scorer.NEEDLEMAN_WUNSCH,
+         gap_open_score=-5, gap_extend_score=-1)            # int64, can be negative
+sa.cdist(qs, ts, scorer=sa.Scorer.NEEDLEMAN_WUNSCH_NORMALIZED)
 ```
 
 At high thresholds the pruning is dramatic — see the cross-arch
