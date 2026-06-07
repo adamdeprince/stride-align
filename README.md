@@ -585,6 +585,47 @@ whitespace splitting. The implementations are pure Python on top of
 stride-align's own kernels — no third-party code is imported into
 the production path.
 
+### Monge-Elkan multi-token similarity
+
+Classic record-linkage hybrid (Monge & Elkan, 1996). For each token
+in `s1`, find the best-matching token in `s2` under a configurable
+inner similarity, then average across `s1`'s tokens. Asymmetric by
+definition — pass `symmetric=True` to average both directions when
+an order-independent score is wanted.
+
+```python
+import stride_align as sa
+
+# Default inner is Jaro.
+sa.monge_elkan("paul johnson", "paul jones")      # -> ~0.94
+
+# Asymmetric: |s1| tokens drive the average.
+sa.monge_elkan("paul",         "paul johnson")    # -> 1.0
+sa.monge_elkan("paul johnson", "paul")            # -> 0.5
+
+# Symmetric variant.
+sa.monge_elkan("paul",         "paul johnson",
+               symmetric=True)                    # -> 0.75
+
+# Inner similarity selection.
+sa.monge_elkan("hello world", "hallo world",
+               inner="jaro_winkler")              # boost common prefixes
+sa.monge_elkan("hello world", "hallo world",
+               inner="levenshtein_ratio")         # bit-parallel Levenshtein
+sa.monge_elkan("a b c", "a c d",
+               inner=lambda x, y: 1.0 if x == y else 0.0)  # custom callable
+
+# Preprocessor (e.g. case-insensitive).
+sa.monge_elkan("PAUL JOHNSON", "paul Johnson",
+               processor=str.lower)               # -> 1.0
+```
+
+Returns `1.0` when both inputs have no tokens after whitespace
+splitting (vacuously identical); `0.0` when exactly one side has no
+tokens. The implementation is pure Python on top of stride-align's
+Jaro / Jaro-Winkler / Levenshtein / Indel kernels — no new C++
+kernels and no third-party code in the production path.
+
 ### Phonetic encoders
 
 For name matching, deduplication, and search-as-you-type, `stride-align`

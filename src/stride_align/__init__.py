@@ -2094,6 +2094,14 @@ partial_token_sort_ratio  = _fuzz_mod.partial_token_sort_ratio
 partial_token_set_ratio   = _fuzz_mod.partial_token_set_ratio
 WRatio                    = _fuzz_mod.WRatio
 
+# Monge-Elkan (Phase D.6) — directional multi-token hybrid for record
+# linkage. ``inner=`` selects the per-token similarity from
+# ``"jaro"``, ``"jaro_winkler"``, ``"levenshtein_ratio"``,
+# ``"indel_ratio"``, or any callable.
+from . import _monge_elkan as _monge_elkan_mod  # noqa: E402
+
+monge_elkan = _monge_elkan_mod.monge_elkan
+
 
 # True Damerau-Levenshtein — unrestricted form. Each character may
 # participate in multiple edits, unlike the OSA variant we ship under
@@ -3148,6 +3156,7 @@ __all__ = [
     "lcs_length",
     "lcs_substring",
     "lcs_substring_length",
+    "monge_elkan",
     "overlap",
     "overlap_similarities",
     "partial_ratio",
