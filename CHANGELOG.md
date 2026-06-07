@@ -6,6 +6,28 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed (breaking)
+
+* **`SubstitutionMatrix.encode` no longer case-folds.** Previously
+  `encode` called `sequence.upper()` and the translation table mapped
+  both cases of each alphabet letter to the same index, so passing
+  `"acdef"` to a BLOSUM-style matrix silently uppercased to `"ACDEF"`.
+  That implicit fold is gone: `encode` is now a pure translation-table
+  lookup, the alphabet defines exactly which codepoints map where, and
+  anything outside the alphabet (including case mismatches if the
+  alphabet is single-case) becomes the wildcard index.
+
+  Migration for callers of the protein matrices: pass uppercase. The
+  one-line fix at the call site is `seq.upper()` (or `.casefold()`
+  for richer locales). Built-in protein matrices use uppercase
+  single-letter codes, so any sequence already coming from FASTA /
+  NCBI / UniProt is unaffected.
+
+  Motivation: the planned 128×128 case-sensitive text matrices need
+  to map `'a'` and `'A'` to distinct indices. The previous design
+  forced the text path to pay a `.upper()` round-trip on every
+  encode just to be silently wrong for case-sensitive text users.
+
 ### Added
 
 * **`SubstitutionMatrix.matrix_bytes` cached row-major bytes.** The

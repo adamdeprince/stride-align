@@ -200,10 +200,22 @@ class SubstitutionMatrix:
         return len(self.alphabet)
 
     def encode(self, sequence: str) -> bytes:
-        """Map `sequence` to a `bytes` of alphabet indices.
+        """Map ``sequence`` to a ``bytes`` of alphabet indices.
 
-        Letters are uppercased before lookup; anything not in `alphabet`
-        becomes the wildcard index. Empty input yields empty bytes.
+        Pure translation-table lookup: the alphabet defines exactly
+        which codepoints map to which index, and anything not in the
+        alphabet (including case mismatches if the alphabet is
+        case-sensitive) becomes the wildcard index. Empty input yields
+        empty bytes.
+
+        **Case handling.** ``encode`` does NOT case-fold. If your
+        sequence may be mixed-case and the matrix's alphabet is
+        single-case (e.g. the standard NCBI protein alphabets), the
+        caller must normalise first — typically ``seq.upper()``. The
+        text-matrix design path takes the alphabet at face value, so a
+        case-sensitive 128-character text alphabet works correctly with
+        no implicit transformation, and the protein path pays no
+        per-call ``.upper()`` cost it doesn't ask for.
         """
         if not isinstance(sequence, str):
             raise TypeError(
@@ -213,9 +225,7 @@ class SubstitutionMatrix:
             )
         if not sequence:
             return b""
-        table = self._encode_table
-        upper = sequence.upper().encode("ascii", errors="replace")
-        return upper.translate(table)
+        return sequence.encode("ascii", errors="replace").translate(self._encode_table)
 
     @property
     def _encode_table(self) -> bytes:
@@ -226,7 +236,6 @@ class SubstitutionMatrix:
         table = bytearray([wildcard_index]) * 256
         for index, letter in enumerate(self.alphabet):
             table[ord(letter)] = index
-            table[ord(letter.lower())] = index
         result = bytes(table)
         object.__setattr__(self, "__encode_table_cache", result)
         return result
