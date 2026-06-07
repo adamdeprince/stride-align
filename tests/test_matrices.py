@@ -445,3 +445,122 @@ def test_matrix_wide_ndarray_rejected_in_batch() -> None:
         sa.smith_waterman_scores(
             query, targets, matrix=matrix, gap_score=-1,
         )
+
+
+# --------------------------------------------------------------------
+# Matrix-mode cell-width selection (channel width)
+#
+# The matrix-mode kernel picks its cell type (int8 / int16 / int32 /
+# int64) from ``query+target × max(|matrix entry|, |gap|)``, mirroring
+# the match/mismatch path's ``step_limit × path_length`` calculation
+# in ``preprocess.hpp::compute_score_bound``. ``SubstitutionMatrix``
+# caches the matrix max-abs once at construction so the selector
+# doesn't have to scan the matrix every call (the C++ side still does
+# its own bound calculation per batch, but the cached Python attribute
+# lets Python-side decision-making and downstream code skip the scan).
+# --------------------------------------------------------------------
+
+
+def test_max_abs_cached_on_construction() -> None:
+    # The standard NCBI matrices have known max-abs values: BLOSUM62
+    # entries range over [-4, 11] so max-abs is 11.
+    assert blosum62.max_abs == 11
+    # BLOSUM45 has wider range (entries up to +15).
+    assert blosum45.max_abs == 15
+    # PAM250 entries range over [-8, +17] -> 17.
+    assert pam250.max_abs == 17
+
+
+def test_max_abs_recomputed_per_distinct_matrix() -> None:
+    # Two matrices with different entries get different cached values.
+    big = SubstitutionMatrix(
+        name="big", alphabet="ACGTX",
+        matrix=np.array([
+            [100, -50, -50, -50, -50],
+            [-50, 100, -50, -50, -50],
+            [-50, -50, 100, -50, -50],
+            [-50, -50, -50, 100, -50],
+            [-50, -50, -50, -50,   0],
+        ], dtype=np.int8),
+        gap_score=-10,
+    )
+    small = SubstitutionMatrix(
+        name="small", alphabet="ACGTX",
+        matrix=np.eye(5, dtype=np.int8),
+        gap_score=-1,
+    )
+    assert big.max_abs == 100
+    assert small.max_abs == 1
+
+
+def test_max_abs_includes_negative_entries() -> None:
+    # |min| > |max| should still flow through.
+    m = SubstitutionMatrix(
+        name="neg-heavy", alphabet="AX",
+        matrix=np.array([[1, -127], [-127, 0]], dtype=np.int8),
+        gap_score=-1,
+    )
+    assert m.max_abs == 127
+
+
+def test_score_step_limit_defaults_to_matrix_own_gaps() -> None:
+    # No args -> uses self.gap_score (and gap_open / gap_extend when
+    # present on the matrix). BLOSUM62 has gap_open=-11 / gap_extend=-1.
+    assert blosum62.score_step_limit() == max(blosum62.max_abs, 11, 1)
+
+
+def test_score_step_limit_with_linear_gap_kwarg() -> None:
+    # max(max_abs=11, |gap|=20) == 20.
+    assert blosum62.score_step_limit(gap_score=-20) == 20
+    # max(11, |gap|=4) == 11.
+    assert blosum62.score_step_limit(gap_score=-4) == 11
+
+
+def test_score_step_limit_with_affine_kwargs() -> None:
+    # max(max_abs=11, |open|=50, |extend|=2) == 50.
+    assert blosum62.score_step_limit(gap_open=-50, gap_extend=-2) == 50
+
+
+def test_score_step_limit_predicts_kernel_score_bound() -> None:
+    # The step_limit × (|q| + |t|) gives the absolute-score upper
+    # bound the cell-width selector compares against int8.max=127,
+    # int16.max=32767, int32.max=2^31-1.
+    m = SubstitutionMatrix(
+        name="big-self", alphabet="ACGTX",
+        matrix=np.diag([100, 100, 100, 100, 0]).astype(np.int8),
+        gap_score=-10,
+    )
+    # A*5 vs A*5: step_limit=100, |q|+|t|=10, bound=1000. int8 won't
+    # hold 1000 (max 127) but int16 will (max 32767). The kernel must
+    # use int16-wide cells; correctness check (matches diagonal sum).
+    assert sa.smith_waterman_score("AAAAA", "AAAAA", matrix=m) == 5 * 100
+    # A*400 vs A*400: bound = 100 * 800 = 80000. int16 won't hold
+    # (max 32767); must use int32. Correctness still pinned to the
+    # diagonal sum.
+    assert sa.smith_waterman_score("A" * 400, "A" * 400, matrix=m) == 400 * 100
+
+
+def test_score_step_limit_affine_pinned_correctness() -> None:
+    # Same logic for affine: max_abs=100 driving the step_limit
+    # produces the right int16 / int32 cell selection. NW global
+    # alignment on identical inputs equals diagonal sum.
+    m = SubstitutionMatrix(
+        name="big-affine", alphabet="ACGTX",
+        matrix=np.diag([100, 100, 100, 100, 0]).astype(np.int8),
+        gap_score=-10,
+    )
+    assert sa.needleman_wunsch_score(
+        "A" * 400, "A" * 400, matrix=m,
+        gap_open_score=-15, gap_extend_score=-3,
+    ) == 400 * 100
+
+
+def test_max_abs_appears_in_repr() -> None:
+    # The cached value is a dataclass field so it surfaces in repr —
+    # makes the cached step_limit visible when debugging.
+    m = SubstitutionMatrix(
+        name="t", alphabet="AX",
+        matrix=np.array([[5, -3], [-3, 5]], dtype=np.int8),
+        gap_score=-1,
+    )
+    assert "max_abs=5" in repr(m)

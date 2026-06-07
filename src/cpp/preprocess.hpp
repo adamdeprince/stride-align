@@ -155,6 +155,47 @@ inline std::uint64_t compute_score_bound(
       gap_score);
 }
 
+// Matrix-mode analogue: the substitution matrix replaces the per-cell
+// match / mismatch scores, so the step_limit becomes
+// ``max(|matrix entry|, |gap_open|, |gap_extend|)``. The caller is
+// expected to have computed the matrix max-abs once (see
+// ``SubstitutionMatrix.max_abs`` Python-side, or
+// ``matrix_max_abs_with_*`` C++-side in ``farrar_fixed_kernel.hpp``)
+// rather than scanning the matrix every call. Multiplies the
+// step_limit by ``query + target`` length to bound the worst-case
+// path-summed absolute score, same shape as the match/mismatch path
+// above; ``select_kernel_bits`` then picks the narrowest cell that
+// holds the bound.
+inline std::uint64_t compute_score_bound_matrix(
+    std::size_t query_size,
+    std::size_t target_size,
+    std::uint32_t matrix_max_abs,
+    Score gap_open_score,
+    Score gap_extend_score) noexcept {
+  const auto step_limit = std::max({
+      static_cast<std::uint64_t>(matrix_max_abs),
+      magnitude(gap_open_score),
+      magnitude(gap_extend_score),
+  });
+  const auto path_length = saturating_add(
+      static_cast<std::uint64_t>(query_size),
+      static_cast<std::uint64_t>(target_size));
+  return saturating_multiply(path_length, step_limit);
+}
+
+inline std::uint64_t compute_score_bound_matrix(
+    std::size_t query_size,
+    std::size_t target_size,
+    std::uint32_t matrix_max_abs,
+    Score gap_score) noexcept {
+  return compute_score_bound_matrix(
+      query_size,
+      target_size,
+      matrix_max_abs,
+      gap_score,
+      gap_score);
+}
+
 inline KernelBits select_kernel_bits(std::uint64_t symbol_limit, std::uint64_t score_bound) {
   if (score_bound <= static_cast<std::uint64_t>(std::numeric_limits<std::int8_t>::max()) &&
       symbol_limit <= static_cast<std::uint64_t>(std::numeric_limits<std::uint8_t>::max())) {
