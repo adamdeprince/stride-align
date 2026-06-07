@@ -1,14 +1,16 @@
 # TODO: Character similarity gap-filling (Phase D)
 
-**Status:** queued, runs before continuing the numeric / DTW work in phase C.
-**Goal:** round out the character-based similarity surface to match what
-mainstream fuzzy-matching libraries (rapidfuzz, jellyfish, fuzzywuzzy,
-textdistance) expose, so users picking up stride-align don't have to
-reach for a second library for table-stakes operations like Jaccard or
-Soundex.
+**Status:** ✅ all seven sub-phases shipped (D.1-D.7 between 2026-05 and
+2026-06; see per-phase checkmarks below).
+**Goal (delivered):** round out the character-based similarity surface
+to match what mainstream fuzzy-matching libraries (rapidfuzz,
+jellyfish, fuzzywuzzy, textdistance) expose, so users picking up
+stride-align don't have to reach for a second library for table-stakes
+operations like Jaccard or Soundex.
 
-The numeric DTW path (phase C.1b — x86 SIMD batch and beyond — is on
-hold until phase D ships.
+Phase C (numeric / DTW) is now paused at the user's direction rather
+than by Phase-D dependency — see
+[docs/TODO-dtw.md](TODO-dtw.md) for the resume plan.
 
 ## Where stride-align stands today
 
@@ -22,8 +24,9 @@ Already shipped (and committed-baseline as of `d26910b`):
 * Hamming.
 * Indel.
 * Jaro and Jaro-Winkler.
-* DTW scalar reference (phase C.1a; on hold for SIMD until phase D
-  finishes).
+* DTW scalar reference (phase C.1a). C.1b SIMD batch and beyond
+  are paused at the user's direction; see
+  [docs/TODO-dtw.md](TODO-dtw.md).
 
 This covers the edit-distance and alignment families exhaustively for
 the byte / 1-byte-unicode hot path and wider tokens via Phase B's
@@ -279,7 +282,10 @@ larger than the rest of D combined.
 
 ## After phase D
 
-Resume numerics:
+Phase C (DTW SIMD + downstream numeric kernels) was queued to resume
+after Phase D shipped. Phase D is now shipped, but Phase C has been
+**held by the user** (2026-06-08) rather than restarted. The scope
+that will pick up when the hold lifts:
 
 * Phase C.1b — DTW x86 SIMD batch kernel (4-5 days).
 * Phase C.1c — DTW ARM / Loongson SIMD (2-3 days).
@@ -289,8 +295,8 @@ Resume numerics:
 
 ## Related
 
-- [docs/TODO-dtw.md](TODO-dtw.md) — paused numeric work resuming after
-  this phase D.
+- [docs/TODO-dtw.md](TODO-dtw.md) — Phase C numeric work, currently
+  on hold; C.1a scalar reference is shipped.
 - [docs/TODO-wide-traceback.md](TODO-wide-traceback.md) — separate
   string-side TODO (wide-token traceback / path / CIGAR).
 - [docs/TODO-matrix-roadmap.md](TODO-matrix-roadmap.md) — substitution-
