@@ -8,6 +8,34 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **Token-ratio family (Phase D.3).** rapidfuzz `fuzz.*` parity in
+  pure-Python composition over `sa.indel_normalized_score` and
+  `sa.lcs_substring`:
+  * `sa.token_sort_ratio(s1, s2)` — split on whitespace, sort
+    tokens, Indel-ratio the joined strings.
+  * `sa.token_set_ratio(s1, s2)` — set intersection / difference of
+    tokens, max of three Indel-ratios (`r(t0, t1)`, `r(t0, t2)`,
+    `r(t1, t2)` where `t0` is the sorted intersection, `t1` adds
+    `s1`-only tokens, `t2` adds `s2`-only tokens).
+  * `sa.partial_ratio(s1, s2)` — best Indel-ratio over sliding-
+    window alignments of the shorter string inside the longer,
+    plus the LCS substring as one more candidate window.
+  * `sa.partial_token_sort_ratio(s1, s2)` — token-sort then
+    `partial_ratio`.
+  * `sa.partial_token_set_ratio(s1, s2)` — token-set preprocessing
+    then max over the three pairwise `partial_ratio` candidates.
+  * `sa.WRatio(s1, s2)` — weighted blend of the above; rapidfuzz's
+    WRatio recipe (length-ratio thresholds, `0.95` token scale,
+    `0.9` partial scale).
+  Values are in `[0, 1]` (multiply by 100 for rapidfuzz's `[0, 100]`
+  convention). `processor=` accepts a callable applied to both
+  inputs before tokenisation (e.g. `processor=str.lower` for case-
+  insensitive matching). Token-set ratios follow rapidfuzz's empty-
+  input convention (zero when either side has no tokens). No third-
+  party code is imported into the production path: the implementation
+  is original Python on top of stride-align's existing C++ Indel and
+  LCS-substring kernels.
+
 * **N-gram set similarity (Phase D.1).** Four metrics over character
   n-gram **multisets** (each n-gram counted with multiplicity),
   keyword-only `n=` (default 2 — character bigrams):

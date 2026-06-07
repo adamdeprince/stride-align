@@ -544,6 +544,47 @@ convention: both inputs empty (or both shorter than `n`) → `1.0`;
 one empty → `0.0`. Dice and Jaccard satisfy the closed-form
 relation `D = 2·J / (1 + J)`.
 
+### Token-ratio family (rapidfuzz `fuzz.*` parity)
+
+Drop-in replacements for the `rapidfuzz.fuzz.*` token-ratio API,
+returning values in `[0, 1]` (multiply by 100 for rapidfuzz's
+`[0, 100]` convention). The base ratio is `sa.indel_normalized_score`
+— algebraically identical to `rapidfuzz.fuzz.ratio / 100` (both
+reduce to `2 · LCS / (|a| + |b|)`).
+
+```python
+import stride_align as sa
+
+# Token sort: split on whitespace, sort, join, compute the ratio.
+sa.token_sort_ratio("fuzzy wuzzy bear", "bear wuzzy fuzzy")     # -> 1.0
+
+# Token set: set intersection + per-side differences, max of three
+# pairwise ratios.
+sa.token_set_ratio("the quick brown fox", "the quick brown dog") # -> ~0.895
+
+# Partial ratio: best match of the shorter string within the longer
+# (sliding-window + LCS-substring candidate).
+sa.partial_ratio("apple", "an apple a day")                     # -> 1.0
+sa.partial_ratio("java language",
+                 "python programming language")                 # -> ~0.818
+
+# Token-sort / token-set combined with partial ratio.
+sa.partial_token_sort_ratio("apple bear", "an apple and a bear") # -> 1.0
+sa.partial_token_set_ratio("the cat",     "a cat sat down")      # -> 1.0
+
+# rapidfuzz's weighted blend.
+sa.WRatio("fuzzy wuzzy was a bear", "wuzzy fuzzy was a bear")    # -> 1.0
+
+# Case-insensitive: pass a processor callable.
+sa.token_sort_ratio("FOO BAR", "bar foo", processor=str.lower)   # -> 1.0
+```
+
+`token_set_ratio` and `partial_token_set_ratio` follow rapidfuzz's
+convention of returning `0.0` when either side has no tokens after
+whitespace splitting. The implementations are pure Python on top of
+stride-align's own kernels — no third-party code is imported into
+the production path.
+
 ### Phonetic encoders
 
 For name matching, deduplication, and search-as-you-type, `stride-align`
