@@ -2032,6 +2032,55 @@ def ratcliff_obershelp_similarities(
     )
 
 
+# N-gram set similarity (Phase D.1). Four metrics over character
+# n-gram multisets — Jaccard, Sorensen-Dice, Cosine, Overlap — sharing
+# the same multiset builder and one-pass comparison. ``n`` defaults to
+# 2 (character bigrams).
+jaccard = _LEVENSHTEIN_BACKEND.jaccard
+dice = _LEVENSHTEIN_BACKEND.dice
+cosine = _LEVENSHTEIN_BACKEND.cosine
+overlap = _LEVENSHTEIN_BACKEND.overlap
+
+
+def _ngram_similarities(backend_fn_name: str, query: object, targets: object,
+                         *, n: int) -> np.ndarray:
+    if isinstance(targets, (str, bytes)):
+        raise TypeError(
+            "targets must be an iterable of target sequences, not a single str/bytes"
+        )
+    if not isinstance(targets, (list, tuple)):
+        targets = tuple(targets)
+    return getattr(_LEVENSHTEIN_BACKEND, backend_fn_name)(query, targets, n=int(n))
+
+
+def jaccard_similarities(
+    query: object, targets: object, *, n: int = 2,
+) -> np.ndarray:
+    """Jaccard similarity per target as ndarray[float64]."""
+    return _ngram_similarities("jaccard_similarities", query, targets, n=n)
+
+
+def dice_similarities(
+    query: object, targets: object, *, n: int = 2,
+) -> np.ndarray:
+    """Sorensen-Dice similarity per target as ndarray[float64]."""
+    return _ngram_similarities("dice_similarities", query, targets, n=n)
+
+
+def cosine_similarities(
+    query: object, targets: object, *, n: int = 2,
+) -> np.ndarray:
+    """Cosine similarity per target as ndarray[float64]."""
+    return _ngram_similarities("cosine_similarities", query, targets, n=n)
+
+
+def overlap_similarities(
+    query: object, targets: object, *, n: int = 2,
+) -> np.ndarray:
+    """Overlap coefficient per target as ndarray[float64]."""
+    return _ngram_similarities("overlap_similarities", query, targets, n=n)
+
+
 # True Damerau-Levenshtein — unrestricted form. Each character may
 # participate in multiple edits, unlike the OSA variant we ship under
 # ``damerau_levenshtein_*`` (which restricts each character to at most
@@ -3076,9 +3125,17 @@ __all__ = [
     "jaro_winkler_similarities",
     "jaro_winkler_similarity",
     "jaro_winkler_top_k",
+    "cosine",
+    "cosine_similarities",
+    "dice",
+    "dice_similarities",
+    "jaccard",
+    "jaccard_similarities",
     "lcs_length",
     "lcs_substring",
     "lcs_substring_length",
+    "overlap",
+    "overlap_similarities",
     "ratcliff_obershelp_similarities",
     "ratcliff_obershelp_similarity",
     "LevenshteinScorer",

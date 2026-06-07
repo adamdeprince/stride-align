@@ -511,6 +511,39 @@ property; `sa.ratcliff_obershelp_similarity("ABCBDAB", "BDCAB")`
 gives `0.333…` while the reverse gives `0.667…`. Pin both
 directions if your tests need an order-independent metric.
 
+### N-gram set similarity
+
+Four metrics over character n-gram **multisets** (each n-gram counted
+with multiplicity), keyword-only `n=` (default 2 — character bigrams):
+
+```python
+import stride_align as sa
+
+# Jaccard: |A ∩ B| / |A ∪ B|
+sa.jaccard("ABCBDAB", "BDCAB")                  # -> 0.25
+
+# Sørensen-Dice: 2 * |A ∩ B| / (|A| + |B|)
+sa.dice("ABCBDAB", "BDCAB")                     # -> 0.4
+
+# Overlap coefficient: |A ∩ B| / min(|A|, |B|)
+sa.overlap("ABCBDAB", "BDCAB")                  # -> 0.5
+
+# Cosine over multiset frequency vectors: ⟨A, B⟩ / (‖A‖ · ‖B‖)
+sa.cosine("ABCBDAB", "BDCAB")                   # -> ~0.5303
+
+# Trigrams.
+sa.jaccard("hello", "help", n=3)                # -> 0.25
+
+# Batch — query multiset built once and reused across targets.
+sa.jaccard_similarities("kitten", ["sitting", "kitten", "kit"])
+# -> array([0.25, 1.0, 0.111...])
+```
+
+All four metrics are symmetric and bounded in `[0, 1]`. Identity
+convention: both inputs empty (or both shorter than `n`) → `1.0`;
+one empty → `0.0`. Dice and Jaccard satisfy the closed-form
+relation `D = 2·J / (1 + J)`.
+
 ### Phonetic encoders
 
 For name matching, deduplication, and search-as-you-type, `stride-align`
