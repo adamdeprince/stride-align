@@ -386,6 +386,44 @@ publications are:
   *Matrices for detecting distant relationships*, same volume,
   pages 353–358.)
 
+### rapidfuzz compatibility (drop-in shim)
+
+Replace one import line and most rapidfuzz code keeps working:
+
+```python
+# Before:
+# import rapidfuzz
+
+# After:
+import stride_align.rapidfuzz as rapidfuzz
+
+# fuzz: full token-ratio family, scores in [0, 100]
+rapidfuzz.fuzz.ratio("hello", "hallo")                  # 80.0
+rapidfuzz.fuzz.WRatio("foo bar baz", "foo bar")         # 90.0
+rapidfuzz.fuzz.token_set_ratio("the cat", "cat the")    # 100.0
+
+# distance: classes with distance / normalized / similarity methods,
+# plus editops / opcodes for Levenshtein.
+rapidfuzz.distance.Levenshtein.distance("kitten", "sitting")          # 3
+rapidfuzz.distance.JaroWinkler.normalized_similarity("MARTHA", "MARHTA")
+rapidfuzz.distance.Levenshtein.editops("kitten", "sitting")
+# -> Editops([Editop(tag='replace', src_pos=0, dest_pos=0), ...], src_len=6, dest_len=7)
+
+# process: extract / extractOne / cdist
+rapidfuzz.process.extract("hello", ["hallo", "world", "helo"], limit=2)
+# -> [('helo', 88.88, 2), ('hallo', 80.0, 0)]
+
+# utils: default_process (matches upstream bit-exactly, does NOT
+# collapse internal whitespace runs)
+rapidfuzz.utils.default_process("Hello, World!")        # 'hello  world'
+```
+
+Known divergences: the `partial_ratio` family inherits stride-align's
+Phase D.3 conservative-underestimate — never overshoots upstream, but
+can underestimate by a few points on pairs where rapidfuzz finds a
+shifted optimal window. `Levenshtein.distance` does not yet support
+the `weights=(insert, delete, replace)` kwarg.
+
 ### parasail compatibility (drop-in shim)
 
 Replace one import line and most parasail code keeps working:
