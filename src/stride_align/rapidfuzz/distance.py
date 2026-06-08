@@ -280,27 +280,39 @@ class _Indel:
     def distance(s1, s2, *, processor: Optional[Callable] = None,
                  score_cutoff: Optional[int] = None, score_hint=None) -> int:
         a = _apply(s1, processor); b = _apply(s2, processor)
-        return _coerce_score_cutoff_distance(int(_sa.indel_score(a, b)), score_cutoff)
+        # Kernel-level cutoff: pass through to the bit-parallel Indel
+        # kernel. score_cutoff for distance is the max-distance the
+        # caller cares about; the kernel returns cutoff+1 when the
+        # true distance exceeds it.
+        return int(_sa.indel_score(a, b, score_cutoff=score_cutoff))
 
     @staticmethod
     def similarity(s1, s2, *, processor: Optional[Callable] = None,
                    score_cutoff: Optional[int] = None, score_hint=None) -> int:
         a = _apply(s1, processor); b = _apply(s2, processor)
-        return _max_distance_indel(a, b) - int(_sa.indel_score(a, b))
+        # similarity = max_distance - distance, so a similarity cutoff
+        # of k corresponds to a distance cutoff of max_distance - k.
+        if score_cutoff is None:
+            return _max_distance_indel(a, b) - int(_sa.indel_score(a, b))
+        max_d = _max_distance_indel(a, b)
+        distance_cutoff = max_d - int(score_cutoff)
+        return max_d - int(_sa.indel_score(a, b, score_cutoff=distance_cutoff))
 
     @staticmethod
     def normalized_distance(s1, s2, *, processor: Optional[Callable] = None,
                             score_cutoff: Optional[float] = None,
                             score_hint=None) -> float:
         a = _apply(s1, processor); b = _apply(s2, processor)
-        return 1.0 - float(_sa.indel_normalized_score(a, b))
+        # normalized_distance = 1 - normalized_similarity. Translate.
+        sim_cutoff = None if score_cutoff is None else 1.0 - float(score_cutoff)
+        return 1.0 - float(_sa.indel_normalized_score(a, b, score_cutoff=sim_cutoff))
 
     @staticmethod
     def normalized_similarity(s1, s2, *, processor: Optional[Callable] = None,
                               score_cutoff: Optional[float] = None,
                               score_hint=None) -> float:
         a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.indel_normalized_score(a, b))
+        return float(_sa.indel_normalized_score(a, b, score_cutoff=score_cutoff))
 
 
 # --------------------------------------------------------------------

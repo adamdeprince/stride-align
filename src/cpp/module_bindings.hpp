@@ -3091,25 +3091,49 @@ void bind_backend_module(nb::module_& m, const char* doc) {
 
   m.def(
       "indel_score",
-      [](nb::handle query, nb::handle target) {
-        return ::stride_align::indel::dispatch_score(query, target);
+      [](nb::handle query, nb::handle target, nb::object score_cutoff_obj) {
+        std::size_t cutoff = ::stride_align::indel::kNoCutoff;
+        if (!score_cutoff_obj.is_none()) {
+          cutoff = static_cast<std::size_t>(nb::cast<std::int64_t>(score_cutoff_obj));
+        }
+        return static_cast<Score>(
+            ::stride_align::indel::detail::dispatch_indel_one(
+                query, target, cutoff));
       },
       "Indel distance (insertions + deletions only, no substitutions).\n\n"
       "Equals ``|query| + |target| - 2 * LCS(query, target)``. Lower is\n"
-      "more similar; 0 means identical.",
+      "more similar; 0 means identical.\n\n"
+      "``score_cutoff`` (rapidfuzz-compatible kernel-level early-exit):\n"
+      "if set, the kernel bails out of the per-character loop when it\n"
+      "can prove the final distance will exceed ``score_cutoff`` and\n"
+      "returns ``score_cutoff + 1`` (any value strictly greater than\n"
+      "the cutoff carries the same 'doesn't qualify' signal). For\n"
+      "cdist / extract workloads where most pairs are far apart this\n"
+      "is the main lever for matching rapidfuzz's per-call throughput.",
       nb::arg("query"),
-      nb::arg("target"));
+      nb::arg("target"),
+      nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "indel_normalized_score",
-      [](nb::handle query, nb::handle target) {
-        return ::stride_align::indel::dispatch_normalized_score(query, target);
+      [](nb::handle query, nb::handle target, nb::object score_cutoff_obj) {
+        double cutoff = 0.0;
+        if (!score_cutoff_obj.is_none()) {
+          cutoff = nb::cast<double>(score_cutoff_obj);
+        }
+        return ::stride_align::indel::dispatch_normalized_score(
+            query, target, cutoff);
       },
       "Indel similarity in [0, 1] (1 = identical).\n\n"
       "``1 - indel_score / (|query| + |target|)``. Bounded above by\n"
-      "``2 * min(|q|, |t|) / (|q| + |t|)`` for any pair.",
+      "``2 * min(|q|, |t|) / (|q| + |t|)`` for any pair.\n\n"
+      "``score_cutoff`` (rapidfuzz-compatible): if set, similarities\n"
+      "below the cutoff are returned as ``0.0`` and the kernel bails\n"
+      "early using the equivalent distance threshold. Useful for\n"
+      "extract / cdist workloads with a quality threshold.",
       nb::arg("query"),
-      nb::arg("target"));
+      nb::arg("target"),
+      nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "indel_scores",

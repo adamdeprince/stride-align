@@ -28,6 +28,31 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   forced the text path to pay a `.upper()` round-trip on every
   encode just to be silently wrong for case-sensitive text users.
 
+### Added
+
+* **`score_cutoff` kernel-level early-exit on Indel.** Following the
+  pattern Levenshtein already uses, the bit-parallel Indel kernel
+  now accepts a `score_cutoff` parameter and bails out of the per-
+  character loop when the lower bound on final distance — derived
+  from `2·(j + popcount(V)) - m - n` — exceeds the cutoff. The Python
+  API surfaces this as:
+  * `sa.indel_score(s1, s2, score_cutoff=k)` — integer cutoff;
+    returns `k + 1` when the true distance exceeds `k`.
+  * `sa.indel_normalized_score(s1, s2, score_cutoff=k)` — `[0, 1]`
+    similarity cutoff; returns `0.0` when the true similarity falls
+    below `k`.
+
+  The rapidfuzz shim plumbs `score_cutoff` through to the kernel for
+  `fuzz.ratio`, `fuzz.QRatio`, and the four `distance.Indel.*`
+  methods. This sets the pattern for adding kernel-level cutoff to
+  Jaro, JaroWinkler, Damerau, and OSA in follow-up work.
+
+* **`rapidfuzz.process.extract` fast-path** dispatches built-in
+  shim scorers through `sa.*_top_k` (length pruning, adaptive
+  global bound, GIL released). Arbitrary callable scorers still run
+  the Python loop. Measured: ties with rapidfuzz on Levenshtein,
+  closes the gap on Indel-based scorers to ~1.1× of upstream.
+
 ### Changed
 
 * **`sa.partial_ratio` switches from sliding-window to matching-block

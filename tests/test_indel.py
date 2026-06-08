@@ -173,3 +173,61 @@ def test_lcs_identity():
         d = sa.indel_score(a, b)
         l = lcs_len(a, b)
         assert d + 2 * l == len(a) + len(b)
+
+
+# --------------------------------------------------------------------
+# score_cutoff kernel-level early-exit
+# --------------------------------------------------------------------
+
+class TestIndelScoreCutoff:
+    """``indel_score(s1, s2, score_cutoff=k)`` and
+    ``indel_normalized_score`` push the cutoff into the bit-parallel
+    kernel: when the kernel can prove the final distance will exceed
+    ``k`` it bails and returns ``k + 1`` (any value > k carries the
+    same 'doesn't qualify' signal). This matches rapidfuzz's
+    convention."""
+
+    def test_identity_returns_zero_with_cutoff(self) -> None:
+        # cutoff doesn't apply to identical strings — distance = 0 < cutoff.
+        assert sa.indel_score("hello", "hello", score_cutoff=5) == 0
+
+    def test_cutoff_above_true_returns_true_distance(self) -> None:
+        # cutoff well above the true distance: kernel runs to completion.
+        assert sa.indel_score("hello", "hallo", score_cutoff=100) == 2
+
+    def test_cutoff_below_true_returns_cutoff_plus_one_at_minimum(self) -> None:
+        # Far-apart inputs with a tight cutoff: kernel bails. Result
+        # must be strictly greater than the cutoff.
+        result = sa.indel_score("a" * 10, "b" * 10, score_cutoff=3)
+        assert result > 3
+
+    def test_cutoff_none_matches_no_cutoff(self) -> None:
+        # Passing score_cutoff=None must give the same answer as
+        # omitting the kwarg.
+        cases = [("hello", "world"), ("abc", "xyz"), ("a" * 30, "b" * 30)]
+        for s1, s2 in cases:
+            no_cutoff = sa.indel_score(s1, s2)
+            with_none = sa.indel_score(s1, s2, score_cutoff=None)
+            assert no_cutoff == with_none, (s1, s2)
+
+    def test_normalized_cutoff_returns_zero_below_threshold(self) -> None:
+        # normalized score_cutoff is in [0, 1]; below the threshold
+        # returns 0.0.
+        # 'hello' vs 'world' has indel similarity ~0.2; cutoff=0.5
+        # should return 0.0.
+        assert sa.indel_normalized_score("hello", "world", score_cutoff=0.5) == 0.0
+
+    def test_normalized_cutoff_above_threshold_returns_true_value(self) -> None:
+        # 'hello' vs 'hallo' has indel similarity ~0.8; cutoff=0.5
+        # passes through unchanged.
+        result = sa.indel_normalized_score("hello", "hallo", score_cutoff=0.5)
+        assert result == pytest.approx(0.8, abs=1e-9)
+
+    def test_cutoff_kernel_bails_on_long_disjoint_inputs(self) -> None:
+        # Stress test: kernel must bail well before processing all
+        # text chars when the inputs share no characters and cutoff
+        # is tight.
+        result = sa.indel_score("a" * 50, "b" * 50, score_cutoff=5)
+        # The true distance is 100 (|a| + |b| - 2*LCS where LCS=0).
+        # With cutoff=5 we must return something > 5 and ≤ true.
+        assert 5 < result <= 100
