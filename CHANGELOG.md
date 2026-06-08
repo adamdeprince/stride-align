@@ -30,6 +30,52 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **`stride_align.rapidfuzz` — drop-in shim for the rapidfuzz Python
+  package.** Replace `import rapidfuzz` with
+  `import stride_align.rapidfuzz as rapidfuzz` and most rapidfuzz code
+  keeps working unchanged:
+  * `stride_align.rapidfuzz.fuzz` — 10 entry points (`ratio`,
+    `partial_ratio`, `token_sort_ratio`, `token_set_ratio`,
+    `partial_token_sort_ratio`, `partial_token_set_ratio`,
+    `token_ratio`, `partial_token_ratio`, `WRatio`, `QRatio`) with
+    `processor=` and `score_cutoff=` kwargs, returning `[0, 100]` to
+    match upstream.
+  * `stride_align.rapidfuzz.distance` — `Levenshtein`, `Indel`,
+    `Hamming`, `Jaro`, `JaroWinkler`, `DamerauLevenshtein`, `OSA`,
+    `LCSseq`, each with `distance` / `normalized_distance` /
+    `similarity` / `normalized_similarity`. Plus
+    `Levenshtein.editops(s1, s2)` returning the rapidfuzz `Editops`
+    collection of `Editop(tag, src_pos, dest_pos)` records, and
+    `Levenshtein.opcodes(s1, s2)` returning `Opcodes` of
+    `Opcode(tag, src_start, src_end, dest_start, dest_end)`.
+    Collection types `Editop`, `Editops`, `Opcode`, `Opcodes`,
+    `MatchingBlock`, `ScoreAlignment` match upstream's shapes.
+  * `stride_align.rapidfuzz.process` — `extract`, `extractOne`,
+    `extract_iter`, `cdist` with the usual `scorer=`, `processor=`,
+    `score_cutoff=`, `limit=`, `workers=` kwargs. Dict choices work;
+    output tuples are `(choice, score, key)`.
+  * `stride_align.rapidfuzz.utils.default_process` — bit-exact match
+    with upstream (replaces each non-alphanumeric ASCII character
+    with a single space individually, does NOT collapse runs,
+    lowercases, strips).
+
+  The shim's `WRatio` reimplements upstream's exact recipe (skip
+  `partial_*` branch when `len_ratio < 1.5`; `partial_scale = 0.6`
+  when `len_ratio >= 8`) rather than routing through
+  `stride_align.WRatio` (which always computes the partial branch
+  and diverges from upstream when lengths are similar). Verified
+  bit-exact against upstream on 11 contrast pairs including identity,
+  case-swap, subset, length-disparate.
+
+  Known divergences: the `partial_ratio` family inherits Phase D.3's
+  conservative-underestimate — stride-align enumerates fewer matching-
+  block candidates than rapidfuzz, so for inputs where rapidfuzz
+  finds a higher-scoring shifted window the shim returns a lower
+  value. The invariant tested is "shim never overshoots upstream",
+  not bit-exact parity. The `weights=` kwarg on `Levenshtein.distance`
+  (custom insert/delete/replace costs) raises `NotImplementedError`;
+  the rest of the kwargs are accepted with upstream semantics.
+
 * **`stride_align.parasail` — drop-in shim for the parasail Python
   package.** Replace `import parasail` with `import stride_align.parasail
   as parasail` and most parasail code keeps working unchanged:
