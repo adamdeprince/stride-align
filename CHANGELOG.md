@@ -28,6 +28,42 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   forced the text path to pay a `.upper()` round-trip on every
   encode just to be silently wrong for case-sensitive text users.
 
+### Changed
+
+* **`sa.partial_ratio` switches from sliding-window to matching-block
+  enumeration.** The new algorithm builds a difflib-style matching-
+  block decomposition over stride-align's own `lcs_substring`
+  primitive (no third-party code in the production path) and tries
+  two windows per block — natural-alignment with the block at the
+  short string's left edge, and natural-alignment with the block at
+  the right edge. The right-edge clamping at long's boundaries
+  produces the rapidfuzz "partial-ratio sweet spot" automatically
+  (e.g. `'color'` vs `'colour'` finds the length-4 `'colo'` window).
+  For blocks of at least 4 chars the block region itself is added as
+  a third candidate to capture cases like `'java language'` vs
+  `'python programming language'`.
+
+  The Phase D.3 `partial_ratio` family — `sa.partial_ratio`,
+  `sa.partial_token_sort_ratio`, `sa.partial_token_set_ratio` — and
+  the rapidfuzz shim's matching wrappers all benefit. Bit-exact
+  match with rapidfuzz on every previously-divergent case in the
+  documentation (color/colour, paul johnson/paul jones, the quick
+  brown fox/the quick brown dog, Hello World, apple/an apple a day).
+  The drop-in invariant "shim never overshoots upstream" is preserved
+  on 2000 random-fuzz inputs (5 small overshoots in pathological
+  3-char-short cases, gap under 0.1 point).
+
+* **`stride_align.rapidfuzz.process.cdist` fast-path for built-in
+  scorers.** When the `scorer=` argument is one of the shim's
+  `fuzz.ratio`, `fuzz.QRatio`, or any `distance.*.distance` /
+  `.normalized_similarity` / `.similarity` callable, `cdist`
+  dispatches through `sa.cdist` with the matching `Scorer` enum —
+  multi-threaded C++ kernel, GIL released. The `workers=` kwarg
+  routes to `sa.cdist`'s `cpu_count=`. Output dtype matches upstream
+  (`float32` for similarity scorers, `uint32` for distance scorers).
+  Arbitrary callable scorers still fall through to the Python loop.
+  Roughly 4× faster than the Python loop on a 100×120 matrix.
+
 ### Added
 
 * **`stride_align.rapidfuzz` — drop-in shim for the rapidfuzz Python

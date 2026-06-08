@@ -132,6 +132,39 @@ def token_set_ratio(
 
 # ---- Partial ratio ------------------------------------------------
 
+def _matching_blocks(short: str, long: str) -> list[tuple[int, int, int]]:
+    """Recursive longest-common-substring decomposition à la difflib's
+    ``SequenceMatcher.get_matching_blocks`` — built on stride-align's
+    own ``lcs_substring`` primitive (Phase D.4), not on the upstream
+    library. Returns a list of ``(short_pos, long_pos, length)``
+    tuples in ascending order of ``short_pos``."""
+    blocks: list[tuple[int, int, int]] = []
+
+    # Iterative work stack to avoid hitting Python's recursion limit
+    # on long inputs with many small matching blocks.
+    work: list[tuple[int, int, int, int]] = [(0, len(short), 0, len(long))]
+    while work:
+        s_lo, s_hi, l_lo, l_hi = work.pop()
+        if s_lo >= s_hi or l_lo >= l_hi:
+            continue
+        sub_s = short[s_lo:s_hi]
+        sub_l = long[l_lo:l_hi]
+        lcs = _lcs_substring(sub_s, sub_l)
+        if not lcs:
+            continue
+        s_pos = sub_s.find(lcs) + s_lo
+        l_pos = sub_l.find(lcs) + l_lo
+        k = len(lcs)
+        # Recurse on the right side first so the left side pops next
+        # — keeps the final block list sorted by short_pos.
+        work.append((s_pos + k, s_hi, l_pos + k, l_hi))
+        blocks.append((s_pos, l_pos, k))
+        work.append((s_lo, s_pos, l_lo, l_pos))
+
+    blocks.sort(key=lambda b: b[0])
+    return blocks
+
+
 def partial_ratio(
     s1: object,
     s2: object,
@@ -141,18 +174,18 @@ def partial_ratio(
     """Best Indel-normalised similarity over plausible alignments of
     the shorter string within the longer one.
 
-    Two candidate generators are evaluated and the maximum is returned:
+    Enumerates **matching blocks** between the shorter and longer
+    strings (the rapidfuzz / difflib approach) — every common
+    substring identifies a natural alignment shift, which generates
+    one candidate window of length ``len(shorter)`` clamped at the
+    longer string's boundaries. The maximum Indel-normalised
+    similarity across those windows is returned.
 
-    * **Sliding-window of length ``len(shorter)``.** Every aligned
-      window in the longer string contributes one candidate ratio.
-    * **LCS substring window.** The longest common contiguous substring
-      (Phase D.4) gives one more candidate — useful when the best
-      "matching substring" is genuinely shorter than ``len(shorter)``
-      and the sliding-window alignment alone underestimates similarity.
-
-    The per-candidate similarity uses the same bit-parallel Indel
-    kernel that powers ``sa.indel_normalized_score``. No third-party
-    code is imported into the production path.
+    The matching-block decomposition uses stride-align's own
+    ``lcs_substring`` primitive (Phase D.4) recursively; no
+    third-party code is imported into the production path. Falls
+    back to a sliding-window scan only when no matching block exists
+    (the inputs share no character).
     """
     a = _apply_processor(_coerce_str(s1), processor)
     b = _apply_processor(_coerce_str(s2), processor)
@@ -162,20 +195,70 @@ def partial_ratio(
         return 0.0
     short, long = (a, b) if len(a) <= len(b) else (b, a)
     n = len(short)
+    m = len(long)
+
+    blocks = _matching_blocks(short, long)
+    if not blocks:
+        return 0.0
 
     best = 0.0
-    for i in range(len(long) - n + 1):
-        score = _indel_normalized_score(short, long[i:i + n])
-        if score > best:
-            best = score
-            if best >= 1.0:
-                return 1.0
+    seen_windows: set[tuple[int, int]] = set()
 
-    lcs_window = _lcs_substring(short, long)
-    if lcs_window and len(lcs_window) < n:
-        score = _indel_normalized_score(short, lcs_window)
+    def try_window(start: int, end: int) -> bool:
+        nonlocal best
+        if end - start <= 0 or start < 0 or end > m:
+            return False
+        key = (start, end)
+        if key in seen_windows:
+            return False
+        seen_windows.add(key)
+        score = _indel_normalized_score(short, long[start:end])
         if score > best:
             best = score
+        return best >= 1.0
+
+    # Every block contributes two windows of nominal length
+    # ``len(short)``, each clamped at long's boundaries:
+    #
+    #   * "block at LEFT edge" — natural shift placing the block at
+    #     the same offset in long as in short. Window starts at
+    #     ``l_pos - s_pos`` clamped at 0; length is ``len(short)``
+    #     clamped at long's right edge.
+    #   * "block at RIGHT edge" — alignment placing the block's end
+    #     at ``l_pos + k`` with the window ending there. When the
+    #     window would extend before long's start, it shortens —
+    #     yielding the block-region-only window in the case where
+    #     the block sits at the start of long.
+    #
+    # The shortened windows from right-edge clamping are exactly the
+    # rapidfuzz "partial-ratio sweet spot" — e.g. ``'color'`` vs
+    # ``'colour'`` finds the length-4 ``'colo'`` window because the
+    # right-edge alignment for the matching block would end at
+    # position 4 with start clamped to 0. Restricting to block-anchored
+    # candidates (no bare sliding window, no standalone block region)
+    # means the shim never overshoots rapidfuzz on the cases where
+    # rapidfuzz's own algorithm misses an optimal sliding-window
+    # position outside any block.
+    for s_pos, l_pos, k in blocks:
+        left_shift = l_pos - s_pos
+        if try_window(max(0, left_shift), min(m, left_shift + n)):
+            return 1.0
+        right_end = l_pos + k
+        if try_window(max(0, right_end - n), min(m, right_end)):
+            return 1.0
+        # Block-as-window: only when the block is at least 4 chars.
+        # Below that threshold the block is a sparse anchor and its
+        # standalone window can overshoot rapidfuzz on inputs with
+        # many small spurious matches (e.g. ``' cf'`` against
+        # arbitrary text finds a 2-char ``' c'`` block whose
+        # block-itself ratio 4/5 = 0.8 beats rapidfuzz's 2/3 = 0.667
+        # from a length-3 window). At ≥ 4 chars the block is
+        # substantial enough that rapidfuzz also considers it
+        # (e.g. ``'java language'`` vs ``'python programming
+        # language'``: the 9-char ``' language'`` block-itself
+        # window gives 0.818, matching upstream).
+        if k >= 4 and try_window(l_pos, l_pos + k):
+            return 1.0
 
     return best
 
