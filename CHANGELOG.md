@@ -30,6 +30,40 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* **`stride_align.parasail` — drop-in shim for the parasail Python
+  package.** Replace `import parasail` with `import stride_align.parasail
+  as parasail` and most parasail code keeps working unchanged:
+  * Core entry points `sw`, `nw`, `sg` plus `_trace` / `_stats`
+    variants take the same `(s1, s2, open, extend, matrix)` signature.
+    Gap penalties are positive numbers; the BLAST gap convention
+    `cost(N) = open + (N - 1) * extend` matches parasail.
+  * `matrix_create(alphabet, match, mismatch, case_sensitive=None)`
+    returns a parasail-shaped `Matrix` (`.size`, `.matrix`, `.mapper`,
+    `.name`, `.min`, `.max`, `.copy`, `.set_value`).
+  * Pre-built `blosum45`, `blosum50`, `blosum62`, `blosum80`,
+    `blosum90`, `pam30`, `pam70`, `pam250` are available as module
+    attributes with the parasail `Matrix` shape.
+  * `Result` exposes `.score`, `.end_query`, `.end_ref`, and (for
+    `_trace` / `_stats`) `.cigar`, `.traceback`, `.matches`,
+    `.length`, `.similar`. `Cigar` exposes `.decode` (bytes),
+    `.beg_query`, `.beg_ref`, `.len`. `Traceback` exposes `.query`,
+    `.ref`, `.comp`.
+  * The 2000+ kernel-suffix variants
+    (`sw_striped_avx2_16`, `nw_scan_64`, `sw_trace_diag_sat`, …) alias
+    to their core entry via module-level `__getattr__`. stride-align
+    picks the kernel internally based on score range and hardware.
+  * `can_use_sse2`, `can_use_sse41`, `can_use_avx2`,
+    `can_use_altivec`, `can_use_neon` report what the loaded
+    stride-align backend supports — match upstream parasail on every
+    hardware combination tested.
+
+  Known divergences: SW with multiple optimal alignments picks one
+  path, parasail picks another (both score-correct, alignment
+  differs); the `sg_qb_de`-style semi-global mode selectors and
+  `dnafull` / `nuc44` matrices are not yet provided; CIGAR for SW
+  is the local-alignment-only CIGAR (parasail prepends leading
+  edits — `Cigar.beg_query` / `.beg_ref` carry the same information).
+
 * **`SubstitutionMatrix.matrix_bytes` cached row-major bytes.** The
   matrix-mode dispatchers no longer call `matrix.matrix.tobytes()`
   per Python entry — every call against the same `SubstitutionMatrix`

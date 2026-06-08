@@ -386,6 +386,43 @@ publications are:
   *Matrices for detecting distant relationships*, same volume,
   pages 353–358.)
 
+### parasail compatibility (drop-in shim)
+
+Replace one import line and most parasail code keeps working:
+
+```python
+# Before:
+# import parasail
+
+# After:
+import stride_align.parasail as parasail
+
+# Same parasail signature: (s1, s2, open, extend, matrix)
+# Gap penalties are positive numbers (BLAST convention:
+# cost(N) = open + (N-1)*extend).
+r = parasail.sw_trace("HEAGAWGHEE", "PAWHEAE", 11, 1, parasail.blosum62)
+print(r.score)               # int
+print(r.cigar.decode)        # bytes, e.g. b'2=1X3='
+print(r.traceback.query)     # 'HEAGAWGHEE' aligned with gaps
+print(r.traceback.ref)       # 'PAWHEAE'    aligned with gaps
+print(r.traceback.comp)      # '|.| ||'-style match annotation
+
+# matrix_create + stats
+m = parasail.matrix_create("ACGT", 2, -1)
+r = parasail.sw_stats("ACGTAC", "ACATAC", 5, 2, m)
+print(r.matches, r.similar, r.length)
+
+# The 2000+ kernel-suffix variants (sw_striped_avx2_16, nw_scan_64,
+# sw_trace_diag_sat, ...) all alias to the matching core entry —
+# stride-align picks the kernel based on score range and hardware.
+parasail.sw_striped_avx2_16("ACGT", "ACGT", 5, 2, m)
+```
+
+Known divergences: SW with multiple optimal alignments may pick a
+different path than upstream parasail (both score-correct); the
+`sg_qb`/`sg_qe`/`sg_qb_de` style semi-global mode selectors and the
+`dnafull` / `nuc44` matrices are not yet provided.
+
 ### Edit-distance scorers
 
 Beyond Smith-Waterman and Needleman-Wunsch, `stride-align` exposes
