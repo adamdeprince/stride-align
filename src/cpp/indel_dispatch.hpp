@@ -25,7 +25,9 @@ namespace nb = nanobind;
 
 namespace detail {
 
-inline std::size_t dispatch_indel_one(nb::handle query, nb::handle target) {
+inline std::size_t dispatch_indel_one(
+    nb::handle query, nb::handle target,
+    std::size_t cutoff = ::stride_align::indel::kNoCutoff) {
   namespace bv = ::stride_align::byte_view;
   const bv::ByteCompatKind q_kind = bv::classify(query.ptr());
   const bv::ByteCompatKind t_kind = bv::classify(target.ptr());
@@ -39,7 +41,8 @@ inline std::size_t dispatch_indel_one(nb::handle query, nb::handle target) {
     bv::view(target.ptr(), t_kind, t_ptr, t_len);
     return ::stride_align::indel::indel_distance_u8(
         std::span<const std::uint8_t>(q_ptr, q_len),
-        std::span<const std::uint8_t>(t_ptr, t_len));
+        std::span<const std::uint8_t>(t_ptr, t_len),
+        cutoff);
   }
 
   const auto prepared = ::stride_align::prepare_alignment(
@@ -50,13 +53,14 @@ inline std::size_t dispatch_indel_one(nb::handle query, nb::handle target) {
       /*gap_extend_score=*/-1,
       /*width=*/0U);
   return std::visit(
-      [](const auto& q, const auto& t) -> std::size_t {
+      [cutoff](const auto& q, const auto& t) -> std::size_t {
         using QT = typename std::decay_t<decltype(q)>::value_type;
         using TT = typename std::decay_t<decltype(t)>::value_type;
         if constexpr (std::is_same_v<QT, TT>) {
           return ::stride_align::indel::indel_distance<QT>(
               std::span<const QT>(q.data(), q.size()),
-              std::span<const QT>(t.data(), t.size()));
+              std::span<const QT>(t.data(), t.size()),
+              cutoff);
         } else {
           PyErr_SetString(
               PyExc_RuntimeError,
@@ -76,13 +80,27 @@ inline Score dispatch_score(nb::handle query, nb::handle target) {
 }
 
 inline double dispatch_normalized_score(
-    nb::handle query, nb::handle target) {
-  const std::size_t d = detail::dispatch_indel_one(query, target);
+    nb::handle query, nb::handle target,
+    double score_cutoff = 0.0) {
+  // rapidfuzz semantics: ``score_cutoff`` is the minimum normalized
+  // similarity the caller cares about; values below that get returned
+  // as 0.0. Translate to a max-distance cutoff via the closed-form
+  //   distance = (|q| + |t|) * (1 - sim) => sim < cutoff iff
+  //   distance > (|q| + |t|) * (1 - cutoff).
   const std::size_t q_len =
       static_cast<std::size_t>(PyObject_Length(query.ptr()));
   const std::size_t t_len =
       static_cast<std::size_t>(PyObject_Length(target.ptr()));
-  return normalize(d, q_len, t_len);
+  std::size_t distance_cutoff = ::stride_align::indel::kNoCutoff;
+  if (score_cutoff > 0.0 && score_cutoff <= 1.0) {
+    const double allowed = static_cast<double>(q_len + t_len) *
+                           (1.0 - score_cutoff);
+    distance_cutoff = static_cast<std::size_t>(allowed);
+  }
+  const std::size_t d = detail::dispatch_indel_one(
+      query, target, distance_cutoff);
+  const double sim = normalize(d, q_len, t_len);
+  return (score_cutoff > 0.0 && sim < score_cutoff) ? 0.0 : sim;
 }
 
 inline std::vector<Score> dispatch_scores(

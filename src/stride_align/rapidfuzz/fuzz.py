@@ -31,10 +31,21 @@ def ratio(s1, s2, *, processor: Optional[Callable] = None,
           score_cutoff: Optional[float] = None) -> float:
     """Indel-normalised similarity scaled to ``[0, 100]`` — rapidfuzz's
     base ``fuzz.ratio``. Algebraically identical to
-    ``stride_align.indel_normalized_score(s1, s2) * 100``."""
+    ``stride_align.indel_normalized_score(s1, s2) * 100``.
+
+    When ``score_cutoff`` is set, the cutoff is pushed into the
+    bit-parallel Indel kernel (converted from rapidfuzz's ``[0, 100]``
+    scale to stride-align's ``[0, 1]`` normalised-similarity scale).
+    The kernel bails out of the per-character loop when it can prove
+    the final similarity will fall below the cutoff — useful in
+    ``extract`` / ``cdist`` workloads where most pairs fail the
+    threshold.
+    """
     a = _apply_processor(s1, processor)
     b = _apply_processor(s2, processor)
-    return _clamp(float(_sa.indel_normalized_score(a, b)) * 100.0, score_cutoff)
+    kernel_cutoff = None if score_cutoff is None else score_cutoff / 100.0
+    sim = float(_sa.indel_normalized_score(a, b, score_cutoff=kernel_cutoff))
+    return _clamp(sim * 100.0, score_cutoff)
 
 
 def partial_ratio(s1, s2, *, processor: Optional[Callable] = None,
@@ -151,7 +162,9 @@ def QRatio(s1, s2, *, processor: Optional[Callable] = None,
     b = _apply_processor(s2, processor)
     if not a and not b:
         return _clamp(0.0, score_cutoff)
-    return _clamp(float(_sa.indel_normalized_score(a, b)) * 100.0, score_cutoff)
+    kernel_cutoff = None if score_cutoff is None else score_cutoff / 100.0
+    sim = float(_sa.indel_normalized_score(a, b, score_cutoff=kernel_cutoff))
+    return _clamp(sim * 100.0, score_cutoff)
 
 
 __all__ = [
