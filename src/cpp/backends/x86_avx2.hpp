@@ -1126,6 +1126,19 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     const vector_type mask = _mm256_cmpeq_epi8(load_tokens(query), load_tokens(target));
     return _mm256_blendv_epi8(set1(mismatch_score), set1(match_score), mask);
   }
+
+  static std::int8_t reduce_max(vector_type vector) {
+    // Fold the two 128-bit halves, then a signed-max shift tree over the
+    // 16 bytes -- fully in-register, replacing the shared scalar-spill
+    // reducer that ran at the tail of every score-only call.
+    __m128i m = _mm_max_epi8(
+        _mm256_castsi256_si128(vector), _mm256_extracti128_si256(vector, 1));
+    m = _mm_max_epi8(m, _mm_srli_si128(m, 8));
+    m = _mm_max_epi8(m, _mm_srli_si128(m, 4));
+    m = _mm_max_epi8(m, _mm_srli_si128(m, 2));
+    m = _mm_max_epi8(m, _mm_srli_si128(m, 1));
+    return static_cast<std::int8_t>(_mm_extract_epi8(m, 0));
+  }
 };
 
 template <>
@@ -1262,6 +1275,15 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     const vector_type mask = _mm256_cmpeq_epi16(load_tokens(query), load_tokens(target));
     return _mm256_blendv_epi8(set1(mismatch_score), set1(match_score), mask);
   }
+
+  static std::int16_t reduce_max(vector_type vector) {
+    __m128i m = _mm_max_epi16(
+        _mm256_castsi256_si128(vector), _mm256_extracti128_si256(vector, 1));
+    m = _mm_max_epi16(m, _mm_srli_si128(m, 8));
+    m = _mm_max_epi16(m, _mm_srli_si128(m, 4));
+    m = _mm_max_epi16(m, _mm_srli_si128(m, 2));
+    return static_cast<std::int16_t>(_mm_extract_epi16(m, 0));
+  }
 };
 
 template <>
@@ -1393,6 +1415,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
       std::int32_t mismatch_score) {
     const vector_type mask = _mm256_cmpeq_epi32(load_tokens(query), load_tokens(target));
     return _mm256_blendv_epi8(set1(mismatch_score), set1(match_score), mask);
+  }
+
+  static std::int32_t reduce_max(vector_type vector) {
+    __m128i m = _mm_max_epi32(
+        _mm256_castsi256_si128(vector), _mm256_extracti128_si256(vector, 1));
+    m = _mm_max_epi32(m, _mm_shuffle_epi32(m, 0x4E));
+    m = _mm_max_epi32(m, _mm_shuffle_epi32(m, 0xB1));
+    return _mm_cvtsi128_si32(m);
   }
 };
 

@@ -848,8 +848,17 @@ ScoreProfileLayout resolve_score_profile_layout(
                                     : ScoreProfileLayout::token_major;
 }
 
+// In-place form of prepare_score_state: fills `state`, reusing its existing
+// profile / h_store / h_load / e_store / target_profile_offsets storage
+// instead of allocating fresh buffers. The one-shot score() path holds a
+// thread_local state and calls this, so a stream of short alignments
+// (the per-pair scores / cdist workload) stops churning ~5 allocations
+// per call. Mirrors the in-place prepare_matrix_score_state pattern that
+// score_matrix already uses. The reused fields are explicitly reset up
+// front so nothing leaks in from the previous call.
 template <template <typename, typename> class OpsTemplate, typename Cell, bool UseFastPath = true>
-PreparedScoreState<Cell> prepare_score_state(
+void prepare_score_state_into(
+    PreparedScoreState<Cell>& state,
     const PreparedFarrarAlignment& prepared,
     Score match_score,
     Score mismatch_score,
@@ -870,11 +879,13 @@ PreparedScoreState<Cell> prepare_score_state(
 
   const auto match = static_cast<Cell>(match_score);
   const auto mismatch = static_cast<Cell>(mismatch_score);
-  PreparedScoreState<Cell> state;
   state.gap_score = static_cast<Cell>(gap_score);
   state.query_size = query.size();
   state.target_size = target.size();
   state.kernel_strategy = kernel_strategy;
+  state.fast_score.reset();
+  state.segment_count = 0;
+  state.target_profile_offsets.clear();
   if constexpr (UseFastPath) {
     state.fast_score = score_fast_paths::fast_score_only<
         std::uint8_t,
@@ -887,13 +898,13 @@ PreparedScoreState<Cell> prepare_score_state(
         static_cast<std::int64_t>(gap_score));
     if (state.fast_score.has_value()) {
       state.profile_indices.fill(missing_profile_index);
-      return state;
+      return;
     }
   }
 
   if (query.empty() || target.empty()) {
     state.profile_indices.fill(missing_profile_index);
-    return state;
+    return;
   }
 
   state.segment_count = (query.size() + lane_count - 1U) / lane_count;
@@ -937,12 +948,21 @@ PreparedScoreState<Cell> prepare_score_state(
     case ScoreProfileLayout::automatic:
     case ScoreProfileLayout::token_major:
     case ScoreProfileLayout::compact_observed:
-      state.profile = build_profile<OpsTemplate, Cell>(
-          query,
-          profile_tokens,
-          match,
-          mismatch,
-          state.segment_count);
+      // Token-major build in place: reuse state.profile's storage rather
+      // than allocating a fresh AlignedVector each call. fill_score_profile_row
+      // overwrites every lane of every (token, segment) cell, so the assign
+      // value only sizes the buffer. Identical result to build_profile().
+      state.profile.assign(profile_tokens.size() * state_cells, mismatch);
+      for (std::size_t profile_index = 0; profile_index < profile_tokens.size();
+           ++profile_index) {
+        const auto token = profile_tokens[profile_index];
+        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+          Cell* lanes = state.profile.data() +
+              ((profile_index * state.segment_count + segment) * lane_count);
+          fill_score_profile_row<OpsTemplate, Cell>(
+              lanes, query, token, match, mismatch, segment, state.segment_count);
+        }
+      }
       for (const auto token : target) {
         state.target_profile_offsets.push_back(
             static_cast<std::size_t>(state.profile_indices[token]) * state_cells);
@@ -952,6 +972,29 @@ PreparedScoreState<Cell> prepare_score_state(
   state.h_store.resize(state_cells);
   state.h_load.resize(state_cells);
   state.e_store.resize(state_cells);
+}
+
+template <template <typename, typename> class OpsTemplate, typename Cell, bool UseFastPath = true>
+PreparedScoreState<Cell> prepare_score_state(
+    const PreparedFarrarAlignment& prepared,
+    Score match_score,
+    Score mismatch_score,
+    Score gap_score,
+    ScoreProfileLayout profile_layout = ScoreProfileLayout::automatic,
+    std::size_t profile_block_size = 64U,
+    ScoreKernelStrategy kernel_strategy = ScoreKernelStrategy::automatic,
+    bool amortize_profile_build = false) {
+  PreparedScoreState<Cell> state;
+  prepare_score_state_into<OpsTemplate, Cell, UseFastPath>(
+      state,
+      prepared,
+      match_score,
+      mismatch_score,
+      gap_score,
+      profile_layout,
+      profile_block_size,
+      kernel_strategy,
+      amortize_profile_build);
   return state;
 }
 
@@ -3535,7 +3578,6 @@ Score score_state(PreparedScoreState<Cell>& state) {
 
   const auto zero_vector = Ops::zero();
   const auto gap_vector = Ops::set1(state.gap_score);
-  const bool track_lazy_best = state.gap_score > 0;
   auto best_vector = zero_vector;
   Cell* h_store_data = state.h_store.data();
   Cell* h_load_data = state.h_load.data();
@@ -3572,87 +3614,29 @@ Score score_state(PreparedScoreState<Cell>& state) {
       v_h = load_state_cells<Ops, Cell>(h_load_segment);
     }
 
-    // Parasail/SWPS3 can stop the lazy-F scan inside the segment loop by
-    // comparing against H-gap, but that deliberately excludes adjacent
-    // insertion/deletion paths. Keep full exact propagation and optimize only
-    // the convergence bookkeeping here.
-    if constexpr (requires(typename Ops::vector_type value) {
-                    Ops::greater_mask(value, value);
-                    Ops::bit_or(value, value);
-                    Ops::any_nonzero(value);
-                  }) {
-      for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
-        v_f = shift_left_zero<Ops, Cell>(v_f);
-        auto propagated_vector = zero_vector;
-
-        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
-          Cell* h_store_segment = h_store_data + segment * lane_count;
-          auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
-          propagated_vector =
-              Ops::bit_or(propagated_vector, Ops::greater_mask(v_f, v_h_segment));
-          v_h_segment = Ops::max(v_h_segment, v_f);
-          store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
-          if (track_lazy_best) {
-            best_vector = Ops::max(best_vector, v_h_segment);
-          }
-
-          v_f = Ops::add(v_f, gap_vector);
-        }
-
-        if (state.gap_score <= 0 && !Ops::any_nonzero(propagated_vector)) {
-          break;
-        }
-      }
-    } else if constexpr (requires(typename Ops::vector_type value, typename Ops::mask_type mask) {
-                           Ops::empty_mask();
-                           Ops::greater_mask(value, value);
-                           Ops::mask_or(mask, mask);
-                           Ops::any_mask(mask);
-                         }) {
-      for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
-        v_f = shift_left_zero<Ops, Cell>(v_f);
-        auto propagated_mask = Ops::empty_mask();
-
-        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
-          Cell* h_store_segment = h_store_data + segment * lane_count;
-          auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
-          propagated_mask =
-              Ops::mask_or(propagated_mask, Ops::greater_mask(v_f, v_h_segment));
-          v_h_segment = Ops::max(v_h_segment, v_f);
-          store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
-          if (track_lazy_best) {
-            best_vector = Ops::max(best_vector, v_h_segment);
-          }
-
-          v_f = Ops::add(v_f, gap_vector);
-        }
-
-        if (state.gap_score <= 0 && !Ops::any_mask(propagated_mask)) {
-          break;
-        }
-      }
-    } else {
-      for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
-        v_f = shift_left_zero<Ops, Cell>(v_f);
-        bool propagated = false;
-
-        for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
-          Cell* h_store_segment = h_store_data + segment * lane_count;
-          auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
-          propagated = propagated || any_greater<Ops, Cell>(v_f, v_h_segment);
-          v_h_segment = Ops::max(v_h_segment, v_f);
-          store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
-          if (track_lazy_best) {
-            best_vector = Ops::max(best_vector, v_h_segment);
-          }
-
-          v_f = Ops::add(v_f, gap_vector);
-        }
-
-        if (state.gap_score <= 0 && !propagated) {
-          break;
-        }
-      }
+    // Lazy-F correction. The classic Farrar loop re-scans every segment up
+    // to lane_count times; instead compute the cross-lane F carry in
+    // O(log lane_count) (local_lazy_f_prefix_carry -- SIMD where the backend
+    // provides it, scalar fallback otherwise) and apply it in a single
+    // segment pass. This is the exact propagation the exact-fill kernels
+    // already use (score_state_exact_fill_local_sw), here extended to the
+    // short-string path whose segment_count falls below the exact-fill
+    // thresholds. Same result as the naive loop, but no lane_count-scaled
+    // worst case -- which matters most at the widest cells (lane_count 32/64)
+    // that the local width bound now selects for short queries. The scans
+    // update best_vector unconditionally: for gap <= 0 a propagated F can
+    // never exceed an already-recorded H (gap term is <= 0), so the extra
+    // max is a no-op; for gap > 0 it correctly tracks the raised cells.
+    v_f = local_lazy_f_prefix_carry<Ops, Cell>(v_f, state.segment_count, state.gap_score);
+    if (any_greater<Ops, Cell>(v_f, zero_vector)) {
+      // Unbounded scan: one full pass over the segments. The bounded
+      // variant's early-exit (stop once v_f <= h[seg]+gap) assumes h is
+      // monotonic across segments, which does not hold here -- a later
+      // segment with smaller h must still receive the carried F -- so it
+      // would under-propagate. The carry already collapsed the cross-lane
+      // wavefront, so a single unbounded pass is exact and O(segment_count).
+      scan_local_linear_lazy_f_once<Ops, Cell>(
+          h_store_data, state.segment_count, v_f, gap_vector, best_vector);
     }
   }
 
@@ -3772,7 +3756,12 @@ Score score(
     Score match_score,
     Score mismatch_score,
     Score gap_score) {
-  auto state = prepare_score_state<OpsTemplate, Cell>(
+  // Reuse one scratch state per thread across calls: a stream of short
+  // alignments then pays zero profile / h / e / offset allocations after
+  // the first. prepare_score_state_into resets every reused field.
+  thread_local PreparedScoreState<Cell> state;
+  prepare_score_state_into<OpsTemplate, Cell>(
+      state,
       prepared,
       match_score,
       mismatch_score,

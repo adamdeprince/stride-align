@@ -11,35 +11,54 @@ from stride_align.rapidfuzz import distance as _distance
 from stride_align.rapidfuzz import fuzz as _fuzz
 
 
-# Map shim scorers -> (sa.cdist Scorer enum, score scale factor).
+# Map shim scorers -> (sa.cdist Scorer enum, sa.*_top_k function,
+#                       score scale factor, higher_is_better).
 # The shim scorers return values that need scaling/inversion to match
-# what sa.cdist produces for the corresponding Scorer enum. For
-# rapidfuzz-style similarity (returned in [0, 100]) the scale factor
-# applies to sa.cdist's [0, 1] normalized output. Distance scorers
-# return integer counts that sa.cdist already produces directly.
-_FAST_PATH_SCORERS: dict[Callable, Tuple["_sa.Scorer", float, bool]] = {
+# what sa.cdist / sa.*_top_k produces for the corresponding Scorer
+# enum. For rapidfuzz-style similarity (returned in [0, 100]) the
+# scale factor applies to sa.cdist's [0, 1] normalized output.
+# Distance scorers return integer counts that sa.cdist already
+# produces directly.
+_FAST_PATH_SCORERS: dict[Callable, Tuple["_sa.Scorer", Callable, float, bool]] = {
     # fuzz.* family — all similarity, return * 100
-    _fuzz.ratio:            (_sa.Scorer.INDEL_NORMALIZED, 100.0, True),
-    _fuzz.QRatio:           (_sa.Scorer.INDEL_NORMALIZED, 100.0, True),
+    _fuzz.ratio:            (_sa.Scorer.INDEL_NORMALIZED,
+                             _sa.indel_normalized_top_k, 100.0, True),
+    _fuzz.QRatio:           (_sa.Scorer.INDEL_NORMALIZED,
+                             _sa.indel_normalized_top_k, 100.0, True),
     # distance.X.similarity / .distance / .normalized_*
-    _distance.Levenshtein.distance:             (_sa.Scorer.LEVENSHTEIN, 1.0, False),
-    _distance.Levenshtein.normalized_similarity:(_sa.Scorer.LEVENSHTEIN_NORMALIZED, 1.0, True),
-    _distance.Indel.distance:                   (_sa.Scorer.INDEL, 1.0, False),
-    _distance.Indel.normalized_similarity:      (_sa.Scorer.INDEL_NORMALIZED, 1.0, True),
-    _distance.Hamming.distance:                 (_sa.Scorer.HAMMING, 1.0, False),
-    _distance.Hamming.normalized_similarity:    (_sa.Scorer.HAMMING_NORMALIZED, 1.0, True),
-    _distance.Jaro.similarity:                  (_sa.Scorer.JARO, 1.0, True),
-    _distance.JaroWinkler.similarity:           (_sa.Scorer.JARO_WINKLER, 1.0, True),
-    _distance.DamerauLevenshtein.distance:      (_sa.Scorer.TRUE_DAMERAU_LEVENSHTEIN, 1.0, False),
-    _distance.DamerauLevenshtein.normalized_similarity: (_sa.Scorer.TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED, 1.0, True),
-    _distance.OSA.distance:                     (_sa.Scorer.DAMERAU_LEVENSHTEIN, 1.0, False),
-    _distance.OSA.normalized_similarity:        (_sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED, 1.0, True),
+    _distance.Levenshtein.distance:
+        (_sa.Scorer.LEVENSHTEIN, _sa.levenshtein_top_k, 1.0, False),
+    _distance.Levenshtein.normalized_similarity:
+        (_sa.Scorer.LEVENSHTEIN_NORMALIZED, _sa.levenshtein_normalized_top_k, 1.0, True),
+    _distance.Indel.distance:
+        (_sa.Scorer.INDEL, _sa.indel_top_k, 1.0, False),
+    _distance.Indel.normalized_similarity:
+        (_sa.Scorer.INDEL_NORMALIZED, _sa.indel_normalized_top_k, 1.0, True),
+    _distance.Hamming.distance:
+        (_sa.Scorer.HAMMING, _sa.hamming_top_k, 1.0, False),
+    _distance.Hamming.normalized_similarity:
+        (_sa.Scorer.HAMMING_NORMALIZED, _sa.hamming_normalized_top_k, 1.0, True),
+    _distance.Jaro.similarity:
+        (_sa.Scorer.JARO, _sa.jaro_top_k, 1.0, True),
+    _distance.JaroWinkler.similarity:
+        (_sa.Scorer.JARO_WINKLER, _sa.jaro_winkler_top_k, 1.0, True),
+    _distance.DamerauLevenshtein.distance:
+        (_sa.Scorer.TRUE_DAMERAU_LEVENSHTEIN, _sa.true_damerau_levenshtein_top_k, 1.0, False),
+    _distance.DamerauLevenshtein.normalized_similarity:
+        (_sa.Scorer.TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED,
+         _sa.true_damerau_levenshtein_normalized_top_k, 1.0, True),
+    _distance.OSA.distance:
+        (_sa.Scorer.DAMERAU_LEVENSHTEIN, _sa.damerau_levenshtein_top_k, 1.0, False),
+    _distance.OSA.normalized_similarity:
+        (_sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED,
+         _sa.damerau_levenshtein_normalized_top_k, 1.0, True),
 }
 
 
 def _resolve_fast_path(scorer: Callable):
-    """Return the sa.cdist routing tuple for ``scorer`` if it's a
-    recognised shim entry point, else ``None``."""
+    """Return the (Scorer, top_k_fn, scale, higher_is_better) routing
+    tuple for ``scorer`` if it's a recognised shim entry point, else
+    ``None``."""
     return _FAST_PATH_SCORERS.get(scorer)
 
 
@@ -75,16 +94,60 @@ def extract(
 ) -> List[Tuple]:
     """Return up to ``limit`` ``(choice, score, key)`` tuples sorted
     by score (descending for similarity scorers, ascending for
-    distance scorers — matches rapidfuzz's behaviour by inferring
-    direction from the score field name of the scorer module).
+    distance scorers).
 
     ``choices`` may be a sequence or a mapping; with a mapping, the
     third tuple element is the matching key instead of an integer
     index.
+
+    Built-in shim scorers dispatch through ``sa.*_top_k`` — SIMD
+    kernels with the length-pruning + adaptive-bound optimisations
+    already shipped in stride-align. Arbitrary callable scorers fall
+    back to a Python loop.
     """
     items, keys = _materialize_choices(choices)
+    if not items:
+        return []
     higher_is_better = _scorer_is_similarity(scorer)
-    results: List[Tuple] = []
+
+    # Fast path: dispatch to sa.*_top_k for recognised shim scorers.
+    fast = _resolve_fast_path(scorer)
+    if fast is not None and not scorer_kwargs:
+        _scorer_enum, top_k_fn, scale, fast_higher_is_better = fast
+        # Pre-apply processor since sa.*_top_k has no processor kwarg.
+        processed_query = query if processor is None else processor(query)
+        processed_items = (items if processor is None
+                           else [processor(c) for c in items])
+        # rapidfuzz default limit is 5; sa top_k accepts k=None as
+        # "all matches".
+        if limit is None:
+            k = len(processed_items)
+        else:
+            k = max(1, min(int(limit), len(processed_items)))
+        raw = top_k_fn(processed_query, processed_items, k=k)
+        # raw is [(target_str, score, target_index), ...] from sa
+        # (matches the stride-align convention). Map back to the
+        # original ``items`` / ``keys`` via the index, scale the
+        # score for rapidfuzz's [0, 100] similarity convention,
+        # apply the cutoff, then sort.
+        results: List[Tuple] = []
+        for _target_str, sa_score, idx in raw:
+            choice = items[idx]
+            key = keys[idx]
+            score = float(sa_score) * scale
+            if score_cutoff is not None:
+                if fast_higher_is_better and score < score_cutoff:
+                    continue
+                if not fast_higher_is_better and score > score_cutoff:
+                    continue
+            results.append((choice, score, key))
+        results.sort(key=lambda r: r[1], reverse=fast_higher_is_better)
+        return results
+
+    # Slow path: callable scorer not in the registry (e.g. fuzz.WRatio,
+    # fuzz.partial_ratio, or arbitrary user callables). Per-pair
+    # Python loop matches upstream's behaviour for these scorers.
+    results = []
     for item, key in zip(items, keys):
         if item is None:
             continue
@@ -188,7 +251,7 @@ def cdist(
 
     fast_path = _resolve_fast_path(scorer)
     if fast_path is not None:
-        sa_scorer, scale, higher_is_better = fast_path
+        sa_scorer, _top_k_fn, scale, higher_is_better = fast_path
         cpu_count = max(1, int(workers))
         sa_result = _sa.cdist(
             queries_list, choices_list,
