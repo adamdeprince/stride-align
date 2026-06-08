@@ -239,6 +239,85 @@ class TestProcess:
         assert key in choices
         assert choices[key] == choice
 
+    # ---- fast-path dispatch via sa.*_top_k ----
+
+    @pytest.mark.parametrize("scorer_pair", [
+        (sh_fuzz.ratio,                              up_fuzz.ratio),
+        (sh_dist.Levenshtein.distance,               up_dist.Levenshtein.distance),
+        (sh_dist.Levenshtein.normalized_similarity,  up_dist.Levenshtein.normalized_similarity),
+        (sh_dist.Indel.distance,                     up_dist.Indel.distance),
+        (sh_dist.Indel.normalized_similarity,        up_dist.Indel.normalized_similarity),
+        (sh_dist.Jaro.similarity,                    up_dist.Jaro.similarity),
+        (sh_dist.JaroWinkler.similarity,             up_dist.JaroWinkler.similarity),
+    ], ids=lambda p: getattr(p[0], "__qualname__", getattr(p[0], "__name__", "?")))
+    def test_extract_fast_path_top_k_matches_upstream(self, scorer_pair) -> None:
+        # Top-k score values must bit-match upstream on a unique-score
+        # corpus (no ties). Use distinct short strings to minimise
+        # ties.
+        sh_scorer, up_scorer = scorer_pair
+        choices = ["hallo", "hello", "world", "helo", "yellow", "halo",
+                   "below", "fellow", "pillow", "bellow"]
+        sh_out = sh_proc.extract("hello", choices, scorer=sh_scorer, limit=3)
+        up_out = up_proc.extract("hello", choices, scorer=up_scorer, limit=3)
+        # Match the score values position-by-position (tuples sorted
+        # the same way).
+        for (s_c, s_s, _), (u_c, u_s, _) in zip(sh_out, up_out):
+            assert s_s == pytest.approx(u_s, abs=1e-6), \
+                f"scorer {sh_scorer} score mismatch: shim={s_s} up={u_s}"
+
+    def test_extract_fast_path_sorted_descending_for_similarity(self) -> None:
+        # Similarity scorers: higher scores first.
+        out = sh_proc.extract("hello", ["world", "hello", "hallo"],
+                              scorer=sh_fuzz.ratio, limit=3)
+        scores = [r[1] for r in out]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_extract_fast_path_sorted_ascending_for_distance(self) -> None:
+        # Distance scorers: lower distances first.
+        out = sh_proc.extract("hello", ["world", "hello", "hallo"],
+                              scorer=sh_dist.Levenshtein.distance, limit=3)
+        scores = [r[1] for r in out]
+        assert scores == sorted(scores)
+
+    def test_extract_fast_path_score_cutoff_similarity(self) -> None:
+        # cutoff=90 excludes all except near-identical matches.
+        out = sh_proc.extract("hello", ["hello", "hallo", "world"],
+                              scorer=sh_fuzz.ratio, score_cutoff=90)
+        # Only "hello" (100.0) clears 90.
+        assert len(out) == 1
+        assert out[0][0] == "hello"
+
+    def test_extract_fast_path_score_cutoff_distance(self) -> None:
+        # cutoff=2 excludes pairs with distance > 2.
+        out = sh_proc.extract("hello", ["hello", "hallo", "world"],
+                              scorer=sh_dist.Levenshtein.distance, score_cutoff=2)
+        # "hello"=0, "hallo"=1, "world"=4. Only hello+hallo qualify.
+        choices = {r[0] for r in out}
+        assert choices == {"hello", "hallo"}
+
+    def test_extract_fast_path_processor_applied(self) -> None:
+        # processor=str.lower should fold case before scoring.
+        out = sh_proc.extract("HELLO", ["hallo", "HELLO", "world"],
+                              scorer=sh_fuzz.ratio, processor=str.lower)
+        # HELLO/HELLO → 100 after lowercasing both.
+        assert out[0][0] == "HELLO"
+        assert out[0][1] == pytest.approx(100.0)
+
+    def test_extract_fast_path_dict_choices(self) -> None:
+        # Dict choices yield (value, score, key) tuples with the dict
+        # key (not integer index) as the third element.
+        choices = {"alpha": "hallo", "beta": "hello", "gamma": "world"}
+        out = sh_proc.extract("hello", choices, scorer=sh_fuzz.ratio, limit=1)
+        choice, score, key = out[0]
+        assert key == "beta"
+        assert choice == "hello"
+
+    def test_extract_fast_path_limit_clamped(self) -> None:
+        # limit > len(choices) returns all matches, not a crash.
+        out = sh_proc.extract("hello", ["hallo", "hi"],
+                              scorer=sh_fuzz.ratio, limit=10)
+        assert len(out) == 2
+
 
 class TestProcessCdist:
     def test_cdist_returns_2d_matrix(self) -> None:
