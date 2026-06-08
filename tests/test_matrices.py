@@ -48,13 +48,46 @@ def test_encode_roundtrip() -> None:
     assert list(enc) == expected_indices
 
 
-def test_encode_lowercase_uppercased() -> None:
-    assert blosum62.encode("acdef") == blosum62.encode("ACDEF")
+def test_encode_does_not_case_fold() -> None:
+    # encode is a pure translation lookup; the alphabet defines exactly
+    # which codepoints are recognised. The standard protein alphabets
+    # are uppercase, so lowercase input is treated as unknown and
+    # folds to the wildcard. Callers who want case-insensitive matching
+    # must normalise themselves (``seq.upper()`` or ``seq.casefold()``).
+    wildcard_idx = blosum62.alphabet.index("X")
+    assert blosum62.encode("acdef") == bytes([wildcard_idx] * 5)
+    assert blosum62.encode("ACDEF") != blosum62.encode("acdef")
+
+
+def test_encode_caller_normalises_with_upper() -> None:
+    # The migration path for callers who used to rely on the silent
+    # ``.upper()``: do it themselves.
+    assert blosum62.encode("acdef".upper()) == blosum62.encode("ACDEF")
 
 
 def test_encode_unknown_folds_to_wildcard() -> None:
     wildcard_idx = blosum62.alphabet.index("X")
     assert blosum62.encode("J?@") == bytes([wildcard_idx] * 3)
+
+
+def test_encode_case_sensitive_text_alphabet() -> None:
+    # The whole point of dropping the implicit case-fold: a text
+    # alphabet that distinguishes case maps the two cases to distinct
+    # indices. No flag, no surprise. (Use ``?`` as the wildcard
+    # sentinel so the alphabet stays case-sensitive without a duplicate.)
+    text_alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ?"
+    matrix = SubstitutionMatrix(
+        name="case-sensitive",
+        alphabet=text_alphabet,
+        matrix=np.eye(len(text_alphabet), dtype=np.int8),
+        gap_score=-1,
+        wildcard="?",
+    )
+    enc_lower = matrix.encode("abc")
+    enc_upper = matrix.encode("ABC")
+    assert enc_lower != enc_upper
+    assert list(enc_lower) == [text_alphabet.index(c) for c in "abc"]
+    assert list(enc_upper) == [text_alphabet.index(c) for c in "ABC"]
 
 
 def test_encode_empty() -> None:
