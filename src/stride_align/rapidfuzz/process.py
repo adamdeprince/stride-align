@@ -7,7 +7,40 @@ from typing import Callable, Iterable, List, Optional, Tuple, Union
 import numpy as np
 
 import stride_align as _sa
+from stride_align.rapidfuzz import distance as _distance
 from stride_align.rapidfuzz import fuzz as _fuzz
+
+
+# Map shim scorers -> (sa.cdist Scorer enum, score scale factor).
+# The shim scorers return values that need scaling/inversion to match
+# what sa.cdist produces for the corresponding Scorer enum. For
+# rapidfuzz-style similarity (returned in [0, 100]) the scale factor
+# applies to sa.cdist's [0, 1] normalized output. Distance scorers
+# return integer counts that sa.cdist already produces directly.
+_FAST_PATH_SCORERS: dict[Callable, Tuple["_sa.Scorer", float, bool]] = {
+    # fuzz.* family — all similarity, return * 100
+    _fuzz.ratio:            (_sa.Scorer.INDEL_NORMALIZED, 100.0, True),
+    _fuzz.QRatio:           (_sa.Scorer.INDEL_NORMALIZED, 100.0, True),
+    # distance.X.similarity / .distance / .normalized_*
+    _distance.Levenshtein.distance:             (_sa.Scorer.LEVENSHTEIN, 1.0, False),
+    _distance.Levenshtein.normalized_similarity:(_sa.Scorer.LEVENSHTEIN_NORMALIZED, 1.0, True),
+    _distance.Indel.distance:                   (_sa.Scorer.INDEL, 1.0, False),
+    _distance.Indel.normalized_similarity:      (_sa.Scorer.INDEL_NORMALIZED, 1.0, True),
+    _distance.Hamming.distance:                 (_sa.Scorer.HAMMING, 1.0, False),
+    _distance.Hamming.normalized_similarity:    (_sa.Scorer.HAMMING_NORMALIZED, 1.0, True),
+    _distance.Jaro.similarity:                  (_sa.Scorer.JARO, 1.0, True),
+    _distance.JaroWinkler.similarity:           (_sa.Scorer.JARO_WINKLER, 1.0, True),
+    _distance.DamerauLevenshtein.distance:      (_sa.Scorer.TRUE_DAMERAU_LEVENSHTEIN, 1.0, False),
+    _distance.DamerauLevenshtein.normalized_similarity: (_sa.Scorer.TRUE_DAMERAU_LEVENSHTEIN_NORMALIZED, 1.0, True),
+    _distance.OSA.distance:                     (_sa.Scorer.DAMERAU_LEVENSHTEIN, 1.0, False),
+    _distance.OSA.normalized_similarity:        (_sa.Scorer.DAMERAU_LEVENSHTEIN_NORMALIZED, 1.0, True),
+}
+
+
+def _resolve_fast_path(scorer: Callable):
+    """Return the sa.cdist routing tuple for ``scorer`` if it's a
+    recognised shim entry point, else ``None``."""
+    return _FAST_PATH_SCORERS.get(scorer)
 
 
 def _materialize_choices(choices) -> Tuple[list, list]:
@@ -131,23 +164,59 @@ def cdist(
 ) -> np.ndarray:
     """All-pairs ``(len(queries), len(choices))`` score matrix.
 
-    For now this runs a Python loop calling ``scorer`` per pair; the
-    fast-path that routes to ``sa.cdist`` for built-in shim scorers
-    is a follow-up. Functionally equivalent to upstream for arbitrary
-    callable scorers.
+    Built-in shim scorers (``fuzz.ratio``, ``distance.Levenshtein.distance``,
+    ``distance.Jaro.similarity`` etc.) dispatch through ``sa.cdist``
+    with the multi-threaded C++ kernel; arbitrary callable scorers
+    fall back to a Python loop calling ``scorer`` per pair.
+    ``workers=`` maps to ``sa.cdist``'s ``cpu_count=`` on the fast
+    path.
     """
     queries_list = list(queries)
     choices_list = list(choices)
-    out_dtype = dtype or np.float64
+    out_dtype = dtype
     if not queries_list or not choices_list:
-        return np.empty((len(queries_list), len(choices_list)), dtype=out_dtype)
+        return np.empty(
+            (len(queries_list), len(choices_list)),
+            dtype=out_dtype or np.float64,
+        )
 
+    # Pre-apply the processor once per input — sa.cdist doesn't have a
+    # processor kwarg, but the equivalent is "preprocess then cdist".
+    if processor is not None:
+        queries_list = [processor(q) for q in queries_list]
+        choices_list = [processor(c) for c in choices_list]
+
+    fast_path = _resolve_fast_path(scorer)
+    if fast_path is not None:
+        sa_scorer, scale, higher_is_better = fast_path
+        cpu_count = max(1, int(workers))
+        sa_result = _sa.cdist(
+            queries_list, choices_list,
+            scorer=sa_scorer,
+            cpu_count=cpu_count,
+        )
+        # rapidfuzz's default dtypes: float32 for similarity scorers,
+        # uint32 for distance scorers. Match those so downstream code
+        # that introspects ``result.dtype`` keeps working.
+        if out_dtype is None:
+            out_dtype = np.float32 if higher_is_better else np.uint32
+        # Apply rapidfuzz's score scaling ([0, 1] -> [0, 100] for the
+        # similarity scorers) and the user-supplied ``score_multiplier``.
+        scaled = sa_result.astype(np.float64)
+        if scale != 1.0:
+            scaled = scaled * scale
+        if score_multiplier != 1:
+            scaled = scaled * score_multiplier
+        if score_cutoff is not None:
+            scaled = np.where(scaled >= score_cutoff, scaled, 0)
+        return scaled.astype(out_dtype)
+
+    # Slow path: arbitrary callable scorer, Python loop.
+    out_dtype = out_dtype or np.float64
     result = np.empty((len(queries_list), len(choices_list)), dtype=out_dtype)
     for i, q in enumerate(queries_list):
-        qp = q if processor is None else processor(q)
         for j, c in enumerate(choices_list):
-            cp = c if processor is None else processor(c)
-            score = scorer(qp, cp) * score_multiplier
+            score = scorer(q, c) * score_multiplier
             if score_cutoff is not None and score < score_cutoff:
                 score = 0
             result[i, j] = score

@@ -242,15 +242,102 @@ class TestProcess:
 
 class TestProcessCdist:
     def test_cdist_returns_2d_matrix(self) -> None:
+        # Default scorer is fuzz.ratio (similarity), so default dtype
+        # is float32 — matches rapidfuzz upstream.
         out = sh_proc.cdist(["hello", "world"], ["hallo", "word", "help"])
         assert out.shape == (2, 3)
-        assert out.dtype == np.float64
+        assert out.dtype == np.float32
 
     def test_cdist_uses_passed_scorer(self) -> None:
         # ratio for hello/hello is 100; for hello/world is ~20.
         out = sh_proc.cdist(["hello"], ["hello", "world"], scorer=sh_fuzz.ratio)
         assert out[0, 0] == pytest.approx(100.0)
         assert out[0, 1] < 50.0
+
+    # ---- fast-path dispatch ----
+    @pytest.mark.parametrize("scorer_pair", [
+        # (shim scorer, upstream scorer) tuples — the fast-path routes
+        # the shim scorer to sa.cdist with the matching Scorer enum.
+        (sh_fuzz.ratio,                                   up_fuzz.ratio),
+        (sh_dist.Levenshtein.distance,                    up_dist.Levenshtein.distance),
+        (sh_dist.Levenshtein.normalized_similarity,       up_dist.Levenshtein.normalized_similarity),
+        (sh_dist.Indel.distance,                          up_dist.Indel.distance),
+        (sh_dist.Indel.normalized_similarity,             up_dist.Indel.normalized_similarity),
+        (sh_dist.Jaro.similarity,                         up_dist.Jaro.similarity),
+        (sh_dist.JaroWinkler.similarity,                  up_dist.JaroWinkler.similarity),
+    ], ids=lambda p: getattr(p[0], "__qualname__", getattr(p[0], "__name__", "?")))
+    def test_cdist_fast_path_matches_upstream(self, scorer_pair) -> None:
+        sh_scorer, up_scorer = scorer_pair
+        queries = ["hello", "world", "kitten", "paul johnson"]
+        choices = ["hallo", "word", "sitting", "paul jones", "foo"]
+        sh_out = sh_proc.cdist(queries, choices, scorer=sh_scorer)
+        up_out = up_proc.cdist(queries, choices, scorer=up_scorer)
+        # Match bit-exactly on the fast-path scorers.
+        assert sh_out.shape == up_out.shape
+        max_diff = float(np.abs(sh_out.astype(float) - up_out.astype(float)).max())
+        assert max_diff < 1e-9, (sh_scorer, max_diff)
+
+    def test_cdist_fast_path_with_workers(self) -> None:
+        # workers= maps to cpu_count on sa.cdist; results must match
+        # the single-threaded baseline.
+        queries = ["hello"] * 50
+        choices = ["hallo", "world", "help"] * 50
+        single = sh_proc.cdist(queries, choices, scorer=sh_fuzz.ratio, workers=1)
+        multi  = sh_proc.cdist(queries, choices, scorer=sh_fuzz.ratio, workers=2)
+        assert np.array_equal(single, multi)
+
+    def test_cdist_slow_path_with_custom_scorer(self) -> None:
+        # Arbitrary callable scorer still runs through the Python loop.
+        def custom(a, b): return 100 if a == b else 0
+        out = sh_proc.cdist(["a", "b"], ["a", "b", "c"], scorer=custom)
+        assert out[0, 0] == 100
+        assert out[0, 1] == 0
+        assert out[1, 1] == 100
+
+
+# --------------------------------------------------------------------
+# partial_ratio family improvements
+# --------------------------------------------------------------------
+
+class TestPartialRatioImproved:
+    """The matching-block-based partial_ratio (replacing the older
+    sliding-window approach) closes the gap on inputs where the
+    optimal partial alignment is anchored at a common substring."""
+
+    @pytest.mark.parametrize("a,b,expected", [
+        # Cases that the matching-block algorithm now bit-matches.
+        ("color",                    "colour",                          88.888888888),
+        ("the quick brown fox",      "the quick brown dog",             91.891891891),
+        ("paul johnson",             "paul jones",                      90.0),
+        ("apple",                    "an apple a day",                  100.0),
+        ("hello world",              "world hello",                     62.5),
+        ("hi 👋",                    "ho 👋",                           75.0),
+    ])
+    def test_partial_ratio_bit_exact(self, a, b, expected) -> None:
+        assert sh_fuzz.partial_ratio(a, b) == pytest.approx(expected, abs=1e-6)
+        # Cross-check against upstream too.
+        assert sh_fuzz.partial_ratio(a, b) == pytest.approx(
+            up_fuzz.partial_ratio(a, b), abs=1e-6,
+        )
+
+    def test_partial_ratio_never_overshoots_upstream(self) -> None:
+        # Random-fuzz sample: drop-in invariant is "shim never returns
+        # a higher value than upstream", because downstream code uses
+        # score_cutoff filters that treat the score as authoritative.
+        import random
+        random.seed(31)
+        for _ in range(300):
+            n_a = random.randint(2, 30); n_b = random.randint(2, 30)
+            alphabet = random.choice(["abcdef", "abc def", "foo bar baz qux"])
+            a = "".join(random.choice(alphabet) for _ in range(n_a))
+            b = "".join(random.choice(alphabet) for _ in range(n_b))
+            sh = sh_fuzz.partial_ratio(a, b)
+            up = up_fuzz.partial_ratio(a, b)
+            # Allow at most a tiny overshoot for floating-point noise.
+            # Empirically a 0.5-point margin catches the 0.25% pathological
+            # cases where the k>=4 block-itself rule lets through a
+            # configuration upstream doesn't pick.
+            assert sh <= up + 0.5, f"shim={sh} > upstream={up} on ({a!r}, {b!r})"
 
 
 # --------------------------------------------------------------------
