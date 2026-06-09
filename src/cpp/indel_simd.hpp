@@ -142,6 +142,74 @@ inline void indel_batch_single_word(
   }
 }
 
+#if defined(__AVX512F__)
+// 16-lane uint32 variant of the indel SIMD batch kernel. Used when
+// the query length is small enough that the per-lane bit-parallel
+// state fits in 32 bits (m <= 32), which is the common case for the
+// short-string workload the cdist hot path serves. Doubles the
+// per-batch parallelism vs the 8-lane uint64 path.
+inline void indel_batch_single_word_u32_avx512(
+    const std::uint32_t* peq32,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    Score* out) {
+  constexpr std::size_t lanes = 16;
+
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+
+  const std::uint32_t mask_bits =
+      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
+  const __m512i mask_v = _mm512_set1_epi32(static_cast<int>(mask_bits));
+  __m512i V = mask_v;
+
+  // Pre-transpose batch's target bytes into [max_len][16] uint8 matrix.
+  // Inner loop widens 16 bytes -> 16 uint32 indices then gathers PEQ.
+  alignas(64) std::uint8_t bytes_matrix[lanes * 64U] = {};
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      bytes_matrix[k * lanes + l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+  }
+
+  for (std::size_t k = 0; k < max_len; ++k) {
+    const __m128i bytes16 = _mm_load_si128(
+        reinterpret_cast<const __m128i*>(&bytes_matrix[k * lanes]));
+    const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
+    const __m512i pm = _mm512_i32gather_epi32(
+        indices, reinterpret_cast<const int*>(peq32), 4);
+
+    const __m512i U = _mm512_and_si512(V, pm);
+    const __m512i sum = _mm512_add_epi32(V, U);
+    const __m512i diff = _mm512_sub_epi32(V, U);
+    V = _mm512_and_si512(_mm512_or_si512(sum, diff), mask_v);
+  }
+
+  alignas(64) std::uint32_t v_out[lanes];
+  _mm512_store_si512(reinterpret_cast<__m512i*>(v_out), V);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    const std::size_t lcs =
+        m - static_cast<std::size_t>(std::popcount(v_out[l]));
+    out[l] = static_cast<Score>(m + target_lengths[l] - 2U * lcs);
+  }
+}
+
+inline std::array<std::uint32_t, 256> build_peq_u32(
+    std::span<const std::uint8_t> pattern) {
+  std::array<std::uint32_t, 256> peq{};
+  const std::uint32_t one = 1U;
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    peq[pattern[i]] |= one << i;
+  }
+  return peq;
+}
+#endif  // __AVX512F__
+
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64]. Writes Indel distances into
 // `out[0..count)`.
@@ -155,6 +223,38 @@ inline void indel_scores_simd_raw(
   if (count == 0U) {
     return;
   }
+
+#if defined(__AVX512F__)
+  // 16-lane uint32 path: 2× batch parallelism vs the 8-lane uint64
+  // path. Gated on (a) Avx512Ops being the requested ops type (so
+  // AVX-512 hardware is available) and (b) q_len <= 32 (state fits
+  // in a 32-bit lane). Disabled for non-AVX-512 backends.
+  if constexpr (Ops::lanes == 8U &&
+                std::is_same_v<typename Ops::Vec, __m512i>) {
+    if (q_len <= 32U) {
+      const auto peq32 = build_peq_u32(std::span<const std::uint8_t>(q_ptr, q_len));
+      constexpr std::size_t lanes32 = 16;
+      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
+      std::array<std::size_t, lanes32> batch_lens32{};
+      for (std::size_t b = 0; b < count; b += lanes32) {
+        const std::size_t batch_count = std::min(lanes32, count - b);
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_ptrs32[l] = t_ptrs[b + l];
+          batch_lens32[l] = t_lens[b + l];
+        }
+        for (std::size_t l = batch_count; l < lanes32; ++l) {
+          batch_ptrs32[l] = nullptr;
+          batch_lens32[l] = 0;
+        }
+        indel_batch_single_word_u32_avx512(
+            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
+            batch_count, q_len, out + b);
+      }
+      return;
+    }
+  }
+#endif
+
   const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
 
   constexpr std::size_t lanes = Ops::lanes;
