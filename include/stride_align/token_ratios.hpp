@@ -256,6 +256,19 @@ inline double token_sort_ratio(
       std::span<const Codepoint>(b));
 }
 
+// Byte fast path entries: caller has already established
+// byte-compatible inputs (ASCII Python str or bytes-like).
+inline double token_sort_ratio_bytes(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) {
+  return token_sort_ratio_engine<std::uint8_t>(a, b);
+}
+inline double token_set_ratio_bytes(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) {
+  return token_set_ratio_engine<std::uint8_t>(a, b);
+}
+
 inline double token_set_ratio(
     const std::vector<Codepoint>& a,
     const std::vector<Codepoint>& b) {

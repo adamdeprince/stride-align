@@ -217,6 +217,15 @@ inline double wratio_engine(
   return best > score_cutoff ? best : 0.0;
 }
 
+// Byte fast path: caller has already established byte-compatible
+// inputs.
+inline double wratio_bytes(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b,
+    double score_cutoff = 0.0) {
+  return wratio_engine<std::uint8_t>(a, b, score_cutoff);
+}
+
 // Public byte-fast-path-or-codepoint dispatcher.
 inline double wratio(
     const std::vector<Codepoint>& a,

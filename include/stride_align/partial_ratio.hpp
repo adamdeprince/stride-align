@@ -302,6 +302,25 @@ inline double partial_ratio_engine(
   return best;
 }
 
+// Byte fast path entry: caller has already established that both
+// inputs are byte-compatible (ASCII Python str, bytes-like, or
+// pre-narrowed). No widening or per-codepoint check needed.
+inline double partial_ratio_bytes(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) {
+  if (a.empty() && b.empty()) return 1.0;
+  if (a.empty() || b.empty()) return 0.0;
+  // Copy into vectors only because the engine signature expects
+  // owning containers. (The internal slicing is span-based, so this
+  // copy is the only allocation on the byte fast path.)
+  std::vector<std::uint8_t> av(a.begin(), a.end());
+  std::vector<std::uint8_t> bv(b.begin(), b.end());
+  // The codepoint views are only used by the legacy engine signature
+  // for the (now-removed) matching-block lookup; pass empty here.
+  static const std::vector<Codepoint> empty_cps;
+  return partial_ratio_engine<std::uint8_t>(av, bv, empty_cps, empty_cps);
+}
+
 // Public entry: routes through the byte fast path when both inputs
 // fit in the [0, 256) range (the common case for ASCII / Latin-1
 // text), and through the codepoint path otherwise. The byte path
