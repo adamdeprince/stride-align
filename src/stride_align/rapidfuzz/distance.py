@@ -210,63 +210,20 @@ def _coerce_score_cutoff_distance(value: int, score_cutoff: Optional[int]) -> in
 # --------------------------------------------------------------------
 
 class _Levenshtein:
-    """Mirrors ``rapidfuzz.distance.Levenshtein``."""
+    """Mirrors ``rapidfuzz.distance.Levenshtein``.
 
-    # Hot four — distance, similarity, normalized_distance,
-    # normalized_similarity — bound directly to the C++
-    # ``_shim_dist_Levenshtein_*`` dispatchers. Weights are restricted
-    # to ``(1, 1, 1)`` (matches our kernel) — the only Python
-    # bookkeeping left is the weights validation guard.
-    _distance_kernel              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_distance)
-    _similarity_kernel            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_similarity)
-    _normalized_distance_kernel   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_normalized_distance)
-    _normalized_similarity_kernel = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_normalized_similarity)
+    The four hot methods bind directly to the C++ dispatchers; custom
+    ``weights`` aren't supported (the bit-parallel Myers kernel
+    assumes unit insert/delete/substitute), so non-default weights
+    will silently produce the default-weights result. Callers that
+    rely on non-default weights should use ``rapidfuzz.distance``
+    directly.
+    """
 
-    @staticmethod
-    def distance(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                 processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None,
-                 score_hint=None) -> int:
-        if weights != (1, 1, 1):
-            raise NotImplementedError(
-                "stride_align.rapidfuzz.distance.Levenshtein does not yet "
-                "support custom weights (insert, delete, replace)"
-            )
-        return _Levenshtein._distance_kernel(
-            s1, s2, processor=processor, score_cutoff=score_cutoff)
-
-    @staticmethod
-    def similarity(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                   processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None,
-                   score_hint=None) -> int:
-        if weights != (1, 1, 1):
-            raise NotImplementedError(
-                "stride_align.rapidfuzz.distance.Levenshtein does not yet "
-                "support custom weights (insert, delete, replace)"
-            )
-        return _Levenshtein._similarity_kernel(
-            s1, s2, processor=processor, score_cutoff=score_cutoff)
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                            processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        if weights != (1, 1, 1):
-            raise NotImplementedError("custom weights not supported")
-        return _Levenshtein._normalized_distance_kernel(
-            s1, s2, processor=processor, score_cutoff=score_cutoff)
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                              processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        if weights != (1, 1, 1):
-            raise NotImplementedError("custom weights not supported")
-        return _Levenshtein._normalized_similarity_kernel(
-            s1, s2, processor=processor, score_cutoff=score_cutoff)
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_normalized_similarity)
 
     @staticmethod
     def editops(s1, s2, *, processor: Optional[Callable] = None,
