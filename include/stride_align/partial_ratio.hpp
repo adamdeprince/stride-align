@@ -272,26 +272,107 @@ inline double partial_ratio_one_direction(
 
   // --- Prefix boundary phase: long[0:i] for i in [1, n-1].
   //
-  // Extending from length i-1 to length i adds long_s[i-1] at the
-  // RIGHT of the window. If that character isn't in the pattern, the
-  // LCS at length i equals the LCS at length i-1; the denominator
-  // grows by 1; so normalised similarity strictly decreases. Skip
-  // those extensions.
-  {
+  // Boundary windows are nested: ``long[0:i+1] = long[0:i] +
+  // long[i]``. The bit-parallel Indel kernel's state vector ``V`` is
+  // a running summary of the LCS bit-vector after processing the
+  // text-so-far against the pattern, so a SINGLE incremental scan
+  // over ``long[0..n-1]`` covers every prefix window — one
+  // ``__builtin_ffs``-style update per text character instead of one
+  // full kernel call per window. O(n) total work instead of O(n^2).
+  //
+  // Only the single-word kernel (``n <= 64``) participates in this
+  // fast path; multi-word patterns fall back to the per-window
+  // ``try_window`` loop below. The single-word path is by far the
+  // common case for the user's sub-100-char workload.
+  if (n > 0U && n <= 64U) {
+    std::uint64_t V = prepared.mask;
+    std::size_t i_lo = min_boundary_len();
+    for (std::size_t k = 0; k < n - 1U; ++k) {
+      const Token c = long_s[k];
+      const std::uint64_t pm = prepared.peq_of(c);
+      if (pm == 0U) continue;  // char not in pattern -> V unchanged, sim decreases
+      // Single-step Hyyrö update on V.
+      const std::uint64_t U = V & pm;
+      V = ((V + U) | (V - U)) & prepared.mask;
+
+      const std::size_t i = k + 1U;
+      if (i < i_lo) continue;  // length-bound prunes this window
+
+      const std::size_t lcs =
+          n - static_cast<std::size_t>(std::popcount(V));
+      const std::size_t indel = n + i - 2U * lcs;
+      const std::size_t total = n + i;
+      const double sim =
+          1.0 - static_cast<double>(indel) / static_cast<double>(total);
+      if (sim > best) {
+        best = sim;
+        if (best >= 1.0) return 1.0;
+        i_lo = min_boundary_len();
+      }
+    }
+  } else {
     std::size_t i_lo = min_boundary_len();
     for (std::size_t i = i_lo; i < n; ++i) {
       if (!in_pattern.contains(long_s[i - 1])) continue;
       if (try_window(0, i)) return 1.0;
-      // ``best`` may have just risen; re-tighten the lower bound
-      // for the remaining iterations.
       const std::size_t new_lo = min_boundary_len();
-      if (new_lo > i + 1U) i = new_lo - 1U;  // loop ++i lands at new_lo
+      if (new_lo > i + 1U) i = new_lo - 1U;
     }
   }
 
   // --- Suffix boundary phase: long[m-i:m] for i in [1, n-1].
   //
-  // Extending from length i-1 to length i adds long_s[m-i] at the
+  // Same incremental trick as the prefix phase, applied to the
+  // REVERSED text against the REVERSED pattern. LCS is symmetric
+  // under reversal, so ``indel(pattern, long[m-i:m])`` equals
+  // ``indel(reverse(pattern), reverse(long)[0:i])``. Build a PEQ over
+  // the reversed pattern once, then scan reversed long incrementally.
+  if (n > 0U && n <= 64U) {
+    // Build PEQ for the reversed pattern. The mask is the same.
+    std::array<std::uint64_t, 256> rev_peq{};
+    const std::uint64_t one = 1U;
+    for (std::size_t i = 0; i < n; ++i) {
+      // Reversed pattern: short_s[n - 1 - i] goes at position i.
+      if constexpr (std::is_same_v<Token, std::uint8_t>) {
+        rev_peq[short_s[n - 1U - i]] |= one << i;
+      } else {
+        // For codepoint tokens we don't have a 256-entry array; fall
+        // back to the per-window loop in that case.
+      }
+    }
+    if constexpr (std::is_same_v<Token, std::uint8_t>) {
+      std::uint64_t V = prepared.mask;
+      std::size_t i_lo = min_boundary_len();
+      for (std::size_t k = 0; k < n - 1U; ++k) {
+        // Read reversed long: long_s[m - 1 - k].
+        const Token c = long_s[m - 1U - k];
+        const std::uint64_t pm = rev_peq[c];
+        if (pm == 0U) continue;
+        const std::uint64_t U = V & pm;
+        V = ((V + U) | (V - U)) & prepared.mask;
+
+        const std::size_t i = k + 1U;
+        if (i < i_lo) continue;
+
+        const std::size_t lcs =
+            n - static_cast<std::size_t>(std::popcount(V));
+        const std::size_t indel = n + i - 2U * lcs;
+        const std::size_t total = n + i;
+        const double sim =
+            1.0 - static_cast<double>(indel) / static_cast<double>(total);
+        if (sim > best) {
+          best = sim;
+          if (best >= 1.0) return 1.0;
+          i_lo = min_boundary_len();
+        }
+      }
+      return best;
+    }
+  }
+
+  // Multi-word / codepoint fallback for the suffix phase: per-window
+  // loop, unchanged from the original implementation.
+  // (Extending from length i-1 to length i adds long_s[m-i] at the
   // LEFT of the window. Same skip applies.
   {
     std::size_t i_lo = min_boundary_len();
