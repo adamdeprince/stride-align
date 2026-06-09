@@ -25,6 +25,7 @@
 #include "partial_ratio_dispatch.hpp"
 #include "token_ratios_dispatch.hpp"
 #include "wratio_dispatch.hpp"
+#include "fuzz_shim_dispatch.hpp"
 #include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
@@ -3273,6 +3274,83 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       nb::arg("a"),
       nb::arg("b"),
       nb::arg("score_cutoff") = 0.0);
+
+  // ---- rapidfuzz-shim fuzz bindings ---------------------------------
+  //
+  // These match ``stride_align.rapidfuzz.fuzz.*`` 1:1 — same name,
+  // same ``(s1, s2, *, processor=None, score_cutoff=None)`` signature,
+  // same 0..100 return scale, same score-cutoff clamp. The Python
+  // wrappers in fuzz.py become thin re-exports. Crossing the Python
+  // boundary once per call instead of through the multi-step Python
+  // recipe shaves ~1.5 µs / call (mostly attribute lookups and
+  // _apply_processor / _clamp function call overhead).
+  using ::stride_align::fuzz_shim::dispatch_ratio;
+  using ::stride_align::fuzz_shim::dispatch_partial_ratio;
+  using ::stride_align::fuzz_shim::dispatch_token_sort_ratio;
+  using ::stride_align::fuzz_shim::dispatch_token_set_ratio;
+  using ::stride_align::fuzz_shim::dispatch_partial_token_sort_ratio;
+  using ::stride_align::fuzz_shim::dispatch_partial_token_set_ratio;
+  using ::stride_align::fuzz_shim::dispatch_token_ratio;
+  using ::stride_align::fuzz_shim::dispatch_partial_token_ratio;
+  using ::stride_align::fuzz_shim::dispatch_wratio;
+  using ::stride_align::fuzz_shim::dispatch_qratio;
+  const auto fuzz_args = []() {
+    return std::make_tuple(
+        nb::arg("s1"), nb::arg("s2"),
+        nb::kw_only(),
+        nb::arg("processor") = nb::none(),
+        nb::arg("score_cutoff") = nb::none());
+  };
+  m.def("_shim_fuzz_ratio",
+        &dispatch_ratio,
+        "rapidfuzz.fuzz.ratio — Indel-normalised similarity in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_partial_ratio",
+        &dispatch_partial_ratio,
+        "rapidfuzz.fuzz.partial_ratio in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_token_sort_ratio",
+        &dispatch_token_sort_ratio,
+        "rapidfuzz.fuzz.token_sort_ratio in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_token_set_ratio",
+        &dispatch_token_set_ratio,
+        "rapidfuzz.fuzz.token_set_ratio in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_partial_token_sort_ratio",
+        &dispatch_partial_token_sort_ratio,
+        "rapidfuzz.fuzz.partial_token_sort_ratio in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_partial_token_set_ratio",
+        &dispatch_partial_token_set_ratio,
+        "rapidfuzz.fuzz.partial_token_set_ratio in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_token_ratio",
+        &dispatch_token_ratio,
+        "rapidfuzz.fuzz.token_ratio = max(token_sort, token_set) in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_partial_token_ratio",
+        &dispatch_partial_token_ratio,
+        "rapidfuzz.fuzz.partial_token_ratio = max(partial_token_sort, partial_token_set).",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_WRatio",
+        &dispatch_wratio,
+        "rapidfuzz.fuzz.WRatio composite recipe in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_QRatio",
+        &dispatch_qratio,
+        "rapidfuzz.fuzz.QRatio (== ratio since rapidfuzz 3.0) in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "ratcliff_obershelp_similarity",

@@ -136,101 +136,29 @@ inline double indel_normalized(
   return 1.0 - static_cast<double>(d) / static_cast<double>(total);
 }
 
-// token_sort_ratio engine. ``a`` and ``b`` are the raw inputs.
+// Forward declarations of the thread-local scratch type and accessor
+// used by the engines below. The full definitions appear later in
+// the file — they need the engines' helper types.
+template <typename Token>
+struct TokenWorkspace;
+template <typename Token>
+inline TokenWorkspace<Token>& token_workspace();
+
+// token_sort_ratio engine. Uses thread-local scratch buffers for
+// the token lists and the joined output, so consecutive calls reuse
+// allocations.
 template <typename Token>
 inline double token_sort_ratio_engine(
     std::span<const Token> a,
-    std::span<const Token> b) {
-  auto ta = tokens_of(a);
-  auto tb = tokens_of(b);
-  // Empty-both: vacuously identical. One empty, one not: 0.
-  if (ta.empty() && tb.empty()) {
-    return (a.empty() && b.empty()) ? 1.0 : 1.0;
-  }
-  std::sort(ta.begin(), ta.end(), LexLess<Token>{});
-  std::sort(tb.begin(), tb.end(), LexLess<Token>{});
-  std::vector<Token> ja, jb;
-  join_with_space(ta, ja);
-  join_with_space(tb, jb);
-  return indel_normalized<Token>(
-      std::span<const Token>(ja.data(), ja.size()),
-      std::span<const Token>(jb.data(), jb.size()));
-}
+    std::span<const Token> b);
 
-// token_set_ratio engine.
+// token_set_ratio engine. Same thread-local scratch as the sort
+// engine — the two share buffers when called in sequence (e.g. by
+// the WRatio path below).
 template <typename Token>
 inline double token_set_ratio_engine(
     std::span<const Token> a,
-    std::span<const Token> b) {
-  auto ta = tokens_of(a);
-  auto tb = tokens_of(b);
-  // rapidfuzz: token_set_ratio returns 0 when either side has no
-  // tokens. The intersection-empty path would otherwise return 1.0
-  // ("vacuously identical empty intersection") on whitespace-only
-  // inputs, which diverges from upstream.
-  if (ta.empty() || tb.empty()) return 0.0;
-
-  // Sort + dedup.
-  const LexLess<Token> lt;
-  std::sort(ta.begin(), ta.end(), lt);
-  ta.erase(std::unique(ta.begin(), ta.end(), LexEqual<Token>{}), ta.end());
-  std::sort(tb.begin(), tb.end(), lt);
-  tb.erase(std::unique(tb.begin(), tb.end(), LexEqual<Token>{}), tb.end());
-
-  // Three-way merge over sorted-unique token lists. Produces the
-  // intersection (in either side's order — both are identical), and
-  // the two set-differences.
-  std::vector<std::span<const Token>> intersect, diff_a, diff_b;
-  intersect.reserve(std::min(ta.size(), tb.size()));
-  std::size_t i = 0, j = 0;
-  while (i < ta.size() && j < tb.size()) {
-    if (lt(ta[i], tb[j])) {
-      diff_a.push_back(ta[i]); ++i;
-    } else if (lt(tb[j], ta[i])) {
-      diff_b.push_back(tb[j]); ++j;
-    } else {
-      intersect.push_back(ta[i]); ++i; ++j;
-    }
-  }
-  while (i < ta.size()) diff_a.push_back(ta[i++]);
-  while (j < tb.size()) diff_b.push_back(tb[j++]);
-
-  // Build the three candidate strings. ``t1`` / ``t2`` are the
-  // intersect-sorted list followed by the diff-sorted list — NOT
-  // re-merged into a single sorted union. (rapidfuzz preserves this
-  // because it changes the indel score whenever intersect and diff
-  // overlap in lex order.)
-  std::vector<std::span<const Token>> t1_parts(intersect);
-  t1_parts.insert(t1_parts.end(), diff_a.begin(), diff_a.end());
-  std::vector<std::span<const Token>> t2_parts(intersect);
-  t2_parts.insert(t2_parts.end(), diff_b.begin(), diff_b.end());
-
-  std::vector<Token> t0, t1, t2;
-  join_with_space(intersect, t0);
-  join_with_space(t1_parts, t1);
-  join_with_space(t2_parts, t2);
-
-  // Common short-circuit: if either side has no tokens unique to it,
-  // ``t1`` (or ``t2``) collapses to ``t0`` and the corresponding
-  // ratio is 1.0 — no need to compute it. Same for the third
-  // candidate. This dominates the all-tokens-shared case (token_set
-  // returns 1.0 cleanly) and the one-side-superset case (the
-  // superset-vs-superset ratio is 1.0 because one is a relabelling
-  // of the other).
-  if (diff_a.empty() && diff_b.empty()) return 1.0;  // t0 == t1 == t2
-  const double r0 = indel_normalized<Token>(
-      std::span<const Token>(t0.data(), t0.size()),
-      std::span<const Token>(t1.data(), t1.size()));
-  if (r0 >= 1.0) return 1.0;
-  const double r1 = indel_normalized<Token>(
-      std::span<const Token>(t0.data(), t0.size()),
-      std::span<const Token>(t2.data(), t2.size()));
-  if (r1 >= 1.0) return 1.0;
-  const double r2 = indel_normalized<Token>(
-      std::span<const Token>(t1.data(), t1.size()),
-      std::span<const Token>(t2.data(), t2.size()));
-  return std::max({r0, r1, r2});
-}
+    std::span<const Token> b);
 
 // Public byte-fast-path-or-codepoint dispatchers. The byte fast path
 // drops to ``std::uint8_t`` token type when every codepoint in both
@@ -254,6 +182,221 @@ inline double token_sort_ratio(
   return token_sort_ratio_engine<Codepoint>(
       std::span<const Codepoint>(a),
       std::span<const Codepoint>(b));
+}
+
+// In-place tokenisation variant that writes into a caller-owned
+// buffer. Used by the combined WRatio token path that shares a
+// thread-local scratch across token_sort + token_set computations.
+template <typename Token>
+inline void tokens_of_inplace(
+    std::span<const Token> s,
+    std::vector<std::span<const Token>>& out) {
+  out.clear();
+  std::size_t i = 0;
+  while (i < s.size()) {
+    while (i < s.size() && is_ws(s[i])) ++i;
+    if (i >= s.size()) break;
+    const std::size_t start = i;
+    while (i < s.size() && !is_ws(s[i])) ++i;
+    out.emplace_back(s.data() + start, i - start);
+  }
+}
+
+// Thread-local scratch for the combined token-sort + token-set path.
+// Carries every per-call buffer (token lists, sorted-vs-unique
+// views, candidate joins) so consecutive WRatio calls reuse the
+// allocations.
+template <typename Token>
+struct TokenWorkspace {
+  std::vector<std::span<const Token>> tokens_a, tokens_b;
+  std::vector<std::span<const Token>> intersect, diff_a, diff_b;
+  std::vector<std::span<const Token>> t1_parts, t2_parts;
+  std::vector<Token> ja, jb;     // sort_ratio joined strings
+  std::vector<Token> t0, t1, t2; // set_ratio candidate strings
+};
+
+template <typename Token>
+inline TokenWorkspace<Token>& token_workspace() {
+  thread_local TokenWorkspace<Token> w;
+  return w;
+}
+
+// Combined entry: compute both token_sort_ratio AND token_set_ratio
+// in one pass over the inputs. Used by ``wratio_engine`` in the
+// length-similar branch (``len_ratio < 1.5``), where both ratios are
+// needed. Tokenises ``a`` and ``b`` ONCE, sorts ONCE (with
+// duplicates), reuses the sorted views for the dedupe + set-merge,
+// and shares the thread-local join buffers across the 1 + 3 indel
+// calls. Writes the two ratios into the out-params.
+template <typename Token>
+inline void compute_token_sort_and_set_ratio(
+    std::span<const Token> a,
+    std::span<const Token> b,
+    double& sort_score,
+    double& set_score) {
+  auto& w = token_workspace<Token>();
+  tokens_of_inplace(a, w.tokens_a);
+  tokens_of_inplace(b, w.tokens_b);
+
+  // Edge cases mirror the standalone engines.
+  const bool a_empty = w.tokens_a.empty();
+  const bool b_empty = w.tokens_b.empty();
+  if (a_empty && b_empty) {
+    sort_score = 1.0;
+    set_score  = 0.0;  // rapidfuzz convention: empty/empty token_set is 0
+    return;
+  }
+  if (a_empty || b_empty) {
+    sort_score = 0.0;
+    set_score  = 0.0;
+    return;
+  }
+
+  const LexLess<Token> lt;
+  std::sort(w.tokens_a.begin(), w.tokens_a.end(), lt);
+  std::sort(w.tokens_b.begin(), w.tokens_b.end(), lt);
+
+  // --- token_sort_ratio leg: join the (sorted, with duplicates) views.
+  join_with_space(w.tokens_a, w.ja);
+  join_with_space(w.tokens_b, w.jb);
+  sort_score = indel_normalized<Token>(
+      std::span<const Token>(w.ja.data(), w.ja.size()),
+      std::span<const Token>(w.jb.data(), w.jb.size()));
+
+  // --- token_set_ratio leg: dedupe the already-sorted token lists
+  // in place. The set algebra then runs on the unique views without
+  // a second sort pass.
+  w.tokens_a.erase(std::unique(w.tokens_a.begin(), w.tokens_a.end(),
+                                LexEqual<Token>{}),
+                    w.tokens_a.end());
+  w.tokens_b.erase(std::unique(w.tokens_b.begin(), w.tokens_b.end(),
+                                LexEqual<Token>{}),
+                    w.tokens_b.end());
+
+  w.intersect.clear();
+  w.diff_a.clear();
+  w.diff_b.clear();
+  std::size_t i = 0, j = 0;
+  while (i < w.tokens_a.size() && j < w.tokens_b.size()) {
+    if (lt(w.tokens_a[i], w.tokens_b[j])) {
+      w.diff_a.push_back(w.tokens_a[i]); ++i;
+    } else if (lt(w.tokens_b[j], w.tokens_a[i])) {
+      w.diff_b.push_back(w.tokens_b[j]); ++j;
+    } else {
+      w.intersect.push_back(w.tokens_a[i]); ++i; ++j;
+    }
+  }
+  while (i < w.tokens_a.size()) w.diff_a.push_back(w.tokens_a[i++]);
+  while (j < w.tokens_b.size()) w.diff_b.push_back(w.tokens_b[j++]);
+
+  if (w.diff_a.empty() && w.diff_b.empty()) {
+    set_score = 1.0;
+    return;
+  }
+
+  w.t1_parts.assign(w.intersect.begin(), w.intersect.end());
+  w.t1_parts.insert(w.t1_parts.end(), w.diff_a.begin(), w.diff_a.end());
+  w.t2_parts.assign(w.intersect.begin(), w.intersect.end());
+  w.t2_parts.insert(w.t2_parts.end(), w.diff_b.begin(), w.diff_b.end());
+
+  join_with_space(w.intersect, w.t0);
+  join_with_space(w.t1_parts, w.t1);
+  join_with_space(w.t2_parts, w.t2);
+
+  const double r0 = indel_normalized<Token>(
+      std::span<const Token>(w.t0.data(), w.t0.size()),
+      std::span<const Token>(w.t1.data(), w.t1.size()));
+  if (r0 >= 1.0) { set_score = 1.0; return; }
+  const double r1 = indel_normalized<Token>(
+      std::span<const Token>(w.t0.data(), w.t0.size()),
+      std::span<const Token>(w.t2.data(), w.t2.size()));
+  if (r1 >= 1.0) { set_score = 1.0; return; }
+  const double r2 = indel_normalized<Token>(
+      std::span<const Token>(w.t1.data(), w.t1.size()),
+      std::span<const Token>(w.t2.data(), w.t2.size()));
+  set_score = std::max({r0, r1, r2});
+}
+
+// Standalone engine definitions (forward-declared earlier in the file
+// because they need ``TokenWorkspace``).
+
+template <typename Token>
+inline double token_sort_ratio_engine(
+    std::span<const Token> a,
+    std::span<const Token> b) {
+  auto& w = token_workspace<Token>();
+  tokens_of_inplace(a, w.tokens_a);
+  tokens_of_inplace(b, w.tokens_b);
+  if (w.tokens_a.empty() && w.tokens_b.empty()) {
+    return 1.0;
+  }
+  std::sort(w.tokens_a.begin(), w.tokens_a.end(), LexLess<Token>{});
+  std::sort(w.tokens_b.begin(), w.tokens_b.end(), LexLess<Token>{});
+  join_with_space(w.tokens_a, w.ja);
+  join_with_space(w.tokens_b, w.jb);
+  return indel_normalized<Token>(
+      std::span<const Token>(w.ja.data(), w.ja.size()),
+      std::span<const Token>(w.jb.data(), w.jb.size()));
+}
+
+template <typename Token>
+inline double token_set_ratio_engine(
+    std::span<const Token> a,
+    std::span<const Token> b) {
+  auto& w = token_workspace<Token>();
+  tokens_of_inplace(a, w.tokens_a);
+  tokens_of_inplace(b, w.tokens_b);
+  if (w.tokens_a.empty() || w.tokens_b.empty()) return 0.0;
+
+  const LexLess<Token> lt;
+  std::sort(w.tokens_a.begin(), w.tokens_a.end(), lt);
+  w.tokens_a.erase(std::unique(w.tokens_a.begin(), w.tokens_a.end(),
+                                LexEqual<Token>{}),
+                    w.tokens_a.end());
+  std::sort(w.tokens_b.begin(), w.tokens_b.end(), lt);
+  w.tokens_b.erase(std::unique(w.tokens_b.begin(), w.tokens_b.end(),
+                                LexEqual<Token>{}),
+                    w.tokens_b.end());
+
+  w.intersect.clear();
+  w.diff_a.clear();
+  w.diff_b.clear();
+  std::size_t i = 0, j = 0;
+  while (i < w.tokens_a.size() && j < w.tokens_b.size()) {
+    if (lt(w.tokens_a[i], w.tokens_b[j])) {
+      w.diff_a.push_back(w.tokens_a[i]); ++i;
+    } else if (lt(w.tokens_b[j], w.tokens_a[i])) {
+      w.diff_b.push_back(w.tokens_b[j]); ++j;
+    } else {
+      w.intersect.push_back(w.tokens_a[i]); ++i; ++j;
+    }
+  }
+  while (i < w.tokens_a.size()) w.diff_a.push_back(w.tokens_a[i++]);
+  while (j < w.tokens_b.size()) w.diff_b.push_back(w.tokens_b[j++]);
+
+  if (w.diff_a.empty() && w.diff_b.empty()) return 1.0;
+
+  w.t1_parts.assign(w.intersect.begin(), w.intersect.end());
+  w.t1_parts.insert(w.t1_parts.end(), w.diff_a.begin(), w.diff_a.end());
+  w.t2_parts.assign(w.intersect.begin(), w.intersect.end());
+  w.t2_parts.insert(w.t2_parts.end(), w.diff_b.begin(), w.diff_b.end());
+
+  join_with_space(w.intersect, w.t0);
+  join_with_space(w.t1_parts, w.t1);
+  join_with_space(w.t2_parts, w.t2);
+
+  const double r0 = indel_normalized<Token>(
+      std::span<const Token>(w.t0.data(), w.t0.size()),
+      std::span<const Token>(w.t1.data(), w.t1.size()));
+  if (r0 >= 1.0) return 1.0;
+  const double r1 = indel_normalized<Token>(
+      std::span<const Token>(w.t0.data(), w.t0.size()),
+      std::span<const Token>(w.t2.data(), w.t2.size()));
+  if (r1 >= 1.0) return 1.0;
+  const double r2 = indel_normalized<Token>(
+      std::span<const Token>(w.t1.data(), w.t1.size()),
+      std::span<const Token>(w.t2.data(), w.t2.size()));
+  return std::max({r0, r1, r2});
 }
 
 // Byte fast path entries: caller has already established

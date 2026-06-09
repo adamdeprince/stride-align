@@ -168,13 +168,14 @@ inline double wratio_engine(
     if (best >= UNBASE_SCALE) {
       return best > score_cutoff ? best : 0.0;
     }
-    const double ts = ::stride_align::token_ratios::token_sort_ratio_engine<Token>(a, b);
+    // token_sort and token_set are both needed here. Use the combined
+    // engine that tokenises a/b once, sorts once, and shares the
+    // thread-local scratch buffers across the 1 + 3 indel calls.
+    double ts = 0.0, tx = 0.0;
+    ::stride_align::token_ratios::compute_token_sort_and_set_ratio<Token>(
+        a, b, ts, tx);
     const double ts_scaled = ts * UNBASE_SCALE;
     if (ts_scaled > best) best = ts_scaled;
-    if (best >= UNBASE_SCALE) {
-      return best > score_cutoff ? best : 0.0;
-    }
-    const double tx = ::stride_align::token_ratios::token_set_ratio_engine<Token>(a, b);
     const double tx_scaled = tx * UNBASE_SCALE;
     if (tx_scaled > best) best = tx_scaled;
     return best > score_cutoff ? best : 0.0;
@@ -224,6 +225,16 @@ inline double wratio_bytes(
     std::span<const std::uint8_t> b,
     double score_cutoff = 0.0) {
   return wratio_engine<std::uint8_t>(a, b, score_cutoff);
+}
+inline double partial_token_sort_ratio_bytes(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) {
+  return partial_token_sort_ratio_engine<std::uint8_t>(a, b);
+}
+inline double partial_token_set_ratio_bytes(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) {
+  return partial_token_set_ratio_engine<std::uint8_t>(a, b);
 }
 
 // Public byte-fast-path-or-codepoint dispatcher.
