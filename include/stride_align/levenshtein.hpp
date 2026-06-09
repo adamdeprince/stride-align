@@ -632,18 +632,284 @@ inline std::size_t osa_single_word_u8(
   return score;
 }
 
-// OSA dispatch: bit-parallel single-word for short u8 patterns, scalar
-// DP otherwise. A bit-parallel multi-word OSA (analogous to Hyyrö's
-// multi-word Levenshtein) is doable but deferred — needs per-block
-// carry propagation for the transposition mask as well as for the
-// standard d0 chain.
+// Thread-local PEQ + state scratch for the multi-word OSA kernel.
+// Carries the per-block ``vp``, ``vn``, plus the OSA cross-column
+// state vectors ``d0_prev`` and ``pm_old``. Used by the generic-K
+// fallback; the K=2/K=3 hand-spec paths keep everything on the stack.
+struct MultiWordOsaScratch {
+  std::vector<std::uint64_t> peq;
+  std::vector<std::uint64_t> vp;
+  std::vector<std::uint64_t> vn;
+  std::vector<std::uint64_t> d0_prev;
+  std::vector<std::uint64_t> pm_old;
+  std::size_t k = 0;
+
+  void resize_for(std::size_t K) {
+    if (K > k) {
+      peq.assign(256U * K, 0U);
+      vp.resize(K);
+      vn.resize(K);
+      d0_prev.resize(K);
+      pm_old.resize(K);
+      k = K;
+    }
+  }
+};
+
+inline MultiWordOsaScratch& multi_word_osa_scratch() {
+  thread_local MultiWordOsaScratch s;
+  return s;
+}
+
+// Forward declarations for the K-hand-spec multi-word OSA paths.
+inline std::size_t osa_multi_word_k2_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) noexcept;
+inline std::size_t osa_multi_word_k3_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) noexcept;
+inline std::size_t osa_multi_word_generic_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text);
+
+// OSA dispatch: bit-parallel single-word for short u8 patterns,
+// K-hand-spec multi-word for m = 65..192, generic multi-word for
+// m > 192. The scalar DP fallback is no longer reached on the byte
+// path — the new multi-word kernels (Hyyrö 2002 generalised across
+// blocks with carry propagation on both the standard Myers add chain
+// and the per-column transposition mask) handle every length.
 inline std::size_t osa_distance_u8(
     std::span<const std::uint8_t> pattern,
     std::span<const std::uint8_t> text) {
-  if (pattern.size() > 0 && pattern.size() <= 64U) {
-    return osa_single_word_u8(pattern, text);
+  const std::size_t m = pattern.size();
+  if (m == 0U) return text.size();
+  if (text.empty()) return m;
+  if (m <= 64U)   return osa_single_word_u8(pattern, text);
+  if (m <= 128U)  return osa_multi_word_k2_u8(pattern, text);
+  if (m <= 192U)  return osa_multi_word_k3_u8(pattern, text);
+  return osa_multi_word_generic_u8(pattern, text);
+}
+
+// Templated K = 2..3 multi-word bit-parallel OSA. Constexpr ``K``
+// keeps the per-block state arrays stack-resident and unrolls the
+// inner block loop. State per block: ``vp[k]``, ``vn[k]``,
+// ``d0_prev[k]``, ``pm_old[k]`` — 4 words/block, so K = 2 fits the
+// x86-64 GPR file comfortably, K = 3 is tight but still register-
+// resident on modern compilers.
+//
+// Carries propagated across blocks within one text column:
+//   add_carry — 128-bit ``(pm & vp) + vp + add_carry`` add chain
+//   hp_carry_in / hn_carry_in — left-shift of hp / hn
+//   trans_carry_in — left-shift of the transposition pre-mask
+//
+// Block 0 of the hp shift initialises ``hp_carry_in = 1`` (matches
+// the standard single-word kernel's ``| 1``). All other carries
+// init to 0.
+template <std::size_t K>
+inline std::size_t osa_multi_word_kN_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) noexcept {
+  static_assert(K >= 2 && K <= 3, "osa_multi_word_kN_u8 covers K=2..3");
+  const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+  const std::uint64_t one = 1U;
+
+  MultiWordOsaScratch& scr = multi_word_osa_scratch();
+  scr.resize_for(K);
+  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
+  for (std::size_t i = 0; i < m; ++i) {
+    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
+        one << (i & 63U);
   }
-  return detail::osa_dp<std::uint8_t>(pattern, text);
+
+  std::uint64_t vp[K];
+  std::uint64_t vn[K];
+  std::uint64_t d0_prev[K];
+  std::uint64_t pm_old[K];
+  for (std::size_t k = 0; k < K; ++k) {
+    vp[k] = ~std::uint64_t{0};
+    vn[k] = 0;
+    d0_prev[k] = 0;
+    pm_old[k] = 0;
+  }
+  const std::size_t last_bits = m - (K - 1U) * 64U;
+  if (last_bits < 64U) {
+    vp[K - 1U] = (one << last_bits) - 1U;
+  }
+  const std::uint64_t top_bit_last = one << (last_bits - 1U);
+
+  std::size_t score = m;
+  const std::uint64_t* const peq_base = scr.peq.data();
+
+  for (const std::uint8_t c : text) {
+    const std::uint64_t* peq_row = peq_base + static_cast<std::size_t>(c) * K;
+
+    std::uint64_t add_carry = 0;
+    std::uint64_t hp_carry_in = 1U;
+    std::uint64_t hn_carry_in = 0;
+    std::uint64_t trans_carry_in = 0;
+    std::uint64_t last_hp = 0;
+    std::uint64_t last_hn = 0;
+
+    for (std::size_t b = 0; b < K; ++b) {
+      const std::uint64_t pm = peq_row[b];
+
+      // Transposition mask: ``trans = (((~d0_prev) & pm) << 1) & pm_old``
+      // with the ``<< 1`` shift carry crossing block boundaries.
+      const std::uint64_t trans_premask = (~d0_prev[b]) & pm;
+      const std::uint64_t trans_shift = (trans_premask << 1) | trans_carry_in;
+      trans_carry_in = trans_premask >> 63;
+      const std::uint64_t trans = trans_shift & pm_old[b];
+
+      // Hyyrö single-step ``d0`` derivation, extended across blocks
+      // with an add carry chain on ``(pm & vp) + vp``.
+      const std::uint64_t pm_and_vp = pm & vp[b];
+      std::uint64_t s1;
+      const bool c1 = __builtin_add_overflow(pm_and_vp, vp[b], &s1);
+      std::uint64_t sum;
+      const bool c2 = __builtin_add_overflow(s1, add_carry, &sum);
+      add_carry = static_cast<std::uint64_t>(c1) + static_cast<std::uint64_t>(c2);
+
+      std::uint64_t d0 = (sum ^ vp[b]) | pm | vn[b];
+      d0 |= trans;
+
+      const std::uint64_t hp = vn[b] | ~(d0 | vp[b]);
+      const std::uint64_t hn = d0 & vp[b];
+
+      const std::uint64_t hp_shift = (hp << 1) | hp_carry_in;
+      const std::uint64_t hn_shift = (hn << 1) | hn_carry_in;
+      hp_carry_in = hp >> 63;
+      hn_carry_in = hn >> 63;
+
+      vp[b] = hn_shift | ~(d0 | hp_shift);
+      vn[b] = d0 & hp_shift;
+
+      d0_prev[b] = d0;
+      pm_old[b] = pm;
+
+      if (b == K - 1U) {
+        last_hp = hp;
+        last_hn = hn;
+      }
+    }
+
+    if (last_hp & top_bit_last) {
+      ++score;
+    } else if (last_hn & top_bit_last) {
+      --score;
+    }
+  }
+  return score;
+}
+
+inline std::size_t osa_multi_word_k2_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) noexcept {
+  return osa_multi_word_kN_u8<2>(pattern, text);
+}
+inline std::size_t osa_multi_word_k3_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) noexcept {
+  return osa_multi_word_kN_u8<3>(pattern, text);
+}
+
+// Generic-K fallback for m > 192. Same fused per-block recurrence as
+// the K=2..3 paths but with a runtime K loop and heap-resident state.
+inline std::size_t osa_multi_word_generic_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text) {
+  const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+  constexpr std::size_t kWord = 64U;
+  const std::size_t K = (m + kWord - 1U) / kWord;
+  const std::uint64_t one = 1U;
+
+  MultiWordOsaScratch& scr = multi_word_osa_scratch();
+  scr.resize_for(K);
+  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
+  for (std::size_t i = 0; i < m; ++i) {
+    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i / kWord)] |=
+        one << (i % kWord);
+  }
+
+  std::uint64_t* const vp = scr.vp.data();
+  std::uint64_t* const vn = scr.vn.data();
+  std::uint64_t* const d0_prev = scr.d0_prev.data();
+  std::uint64_t* const pm_old = scr.pm_old.data();
+  for (std::size_t k = 0; k < K; ++k) {
+    vp[k] = ~std::uint64_t{0};
+    vn[k] = 0;
+    d0_prev[k] = 0;
+    pm_old[k] = 0;
+  }
+  const std::size_t last_bits = m - (K - 1U) * kWord;
+  if (last_bits < kWord) {
+    vp[K - 1U] = (one << last_bits) - 1U;
+  }
+  const std::uint64_t top_bit_last = one << (last_bits - 1U);
+
+  std::size_t score = m;
+  const std::uint64_t* const peq_base = scr.peq.data();
+
+  for (const std::uint8_t c : text) {
+    const std::uint64_t* peq_row = peq_base + static_cast<std::size_t>(c) * K;
+
+    std::uint64_t add_carry = 0;
+    std::uint64_t hp_carry_in = 1U;
+    std::uint64_t hn_carry_in = 0;
+    std::uint64_t trans_carry_in = 0;
+    std::uint64_t last_hp = 0;
+    std::uint64_t last_hn = 0;
+
+    for (std::size_t b = 0; b < K; ++b) {
+      const std::uint64_t pm = peq_row[b];
+
+      const std::uint64_t trans_premask = (~d0_prev[b]) & pm;
+      const std::uint64_t trans_shift = (trans_premask << 1) | trans_carry_in;
+      trans_carry_in = trans_premask >> 63;
+      const std::uint64_t trans = trans_shift & pm_old[b];
+
+      const std::uint64_t pm_and_vp = pm & vp[b];
+      std::uint64_t s1;
+      const bool c1 = __builtin_add_overflow(pm_and_vp, vp[b], &s1);
+      std::uint64_t sum;
+      const bool c2 = __builtin_add_overflow(s1, add_carry, &sum);
+      add_carry = static_cast<std::uint64_t>(c1) + static_cast<std::uint64_t>(c2);
+
+      std::uint64_t d0 = (sum ^ vp[b]) | pm | vn[b];
+      d0 |= trans;
+
+      const std::uint64_t hp = vn[b] | ~(d0 | vp[b]);
+      const std::uint64_t hn = d0 & vp[b];
+
+      const std::uint64_t hp_shift = (hp << 1) | hp_carry_in;
+      const std::uint64_t hn_shift = (hn << 1) | hn_carry_in;
+      hp_carry_in = hp >> 63;
+      hn_carry_in = hn >> 63;
+
+      vp[b] = hn_shift | ~(d0 | hp_shift);
+      vn[b] = d0 & hp_shift;
+
+      d0_prev[b] = d0;
+      pm_old[b] = pm;
+
+      if (b == K - 1U) {
+        last_hp = hp;
+        last_hn = hn;
+      }
+    }
+
+    if (last_hp & top_bit_last) {
+      ++score;
+    } else if (last_hn & top_bit_last) {
+      --score;
+    }
+  }
+  return score;
 }
 
 template <typename Token>
