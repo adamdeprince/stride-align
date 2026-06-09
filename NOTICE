@@ -62,6 +62,44 @@ stride-align's own tests (``tests/test_phonetic.py``,
 ``tests/test_beider_morse.py``) import only ``pytest`` and
 ``stride_align`` and use hand-pinned expected values.
 
+----------------------------------------------------------------------
+
+Algorithmic inspiration
+=======================
+
+The multi-word bit-parallel Indel / LCSseq kernel in
+``include/stride_align/indel.hpp`` (the ``indel_distance_k2_u8`` and
+related K-specialised paths, plus the fused per-block recurrence in
+``indel_distance_multi_word_u8``) is informed by the architecture of
+rapidfuzz-cpp (https://github.com/rapidfuzz/rapidfuzz-cpp,
+licensed MIT, Max Bachmann and contributors). Specifically:
+
+  * The fused single-step Hyyrö per-block update
+    ``U = S & PEQ[c]; sum = addc64(S, U, carry);
+    S = sum | (S - U)`` — one fused expression per K block
+    rather than four separate K-sized passes — was adopted from
+    the rapidfuzz-cpp Indel / LCSseq design.
+  * The observation that the per-block ``S - U`` term needs no
+    borrow chain across blocks (the Hyyrö invariant ``U <= S``
+    bitwise) was likewise inherited from their implementation.
+  * Compile-time template specialisation of K = 1 through 8 paths
+    with a runtime ``switch`` dispatch on block count, so the
+    compiler sees N as a constant and pins state in registers
+    across the entire text loop.
+  * Stack-resident ``S[N]`` state for K <= 8 (no heap traffic per
+    call).
+  * The Ukkonen-style diagonal-band early-exit shape for the
+    ``score_cutoff`` path.
+
+No source code, header comments, identifier names, file layouts,
+struct field orderings, or close-paraphrased structural elements
+were copied from rapidfuzz-cpp. The architectural ideas above were
+extracted by a delegated investigation that reported back algorithm
+structure in its own prose, while the code-authoring agent did not
+read the rapidfuzz-cpp source. See
+``docs/phase-D-external-sources.md`` §3a and §4c for the full
+provenance trail.
+
 A consolidated source audit covering every phonetic encoder lives at
 ``docs/phonetic-encoder-external-sources.md``. The BMPM-specific
 audit (Apache Commons Codec rule data, vendored resources, explicit

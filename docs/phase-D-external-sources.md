@@ -67,21 +67,39 @@ These are mathematical / textbook references, not licensed code.
 Used **only** from `tests/`. None is imported by any production code
 shipped in the wheel.
 
-### 3a. rapidfuzz
+### 3a. rapidfuzz (Python package) and rapidfuzz-cpp (C++ headers)
 
-- **URL:** https://github.com/rapidfuzz/rapidfuzz
+- **URL:** https://github.com/rapidfuzz/rapidfuzz,
+  https://github.com/rapidfuzz/rapidfuzz-cpp
 - **License:** MIT (Apache-2.0 compatible)
-- **What is used:** Parity oracle for `tests/test_fuzz.py`. The test
-  imports `rapidfuzz.fuzz` and calls `token_sort_ratio`,
-  `token_set_ratio`, `partial_ratio`, `partial_token_sort_ratio`,
-  `partial_token_set_ratio` to verify that stride-align matches.
-  rapidfuzz is **invoked as a black box** — its source code, fixtures,
-  and internal algorithms were not read.
-- **What is *not* used:** the rapidfuzz C++ kernel source, its
-  algorithm internals, its test fixtures.
-- **Attribution / NOTICE:** Not required (MIT, used only as a test
-  oracle, not redistributed).
-- **Files affected:** `tests/test_fuzz.py`.
+- **What is used:**
+  - **(a) Runtime parity oracle** for `tests/test_fuzz.py` and the
+    rapidfuzz-shim test suite (`tests/test_rapidfuzz_shim.py`).
+    rapidfuzz is invoked through its public Python API; source not
+    consulted at this layer.
+  - **(b) Algorithmic inspiration for the multi-word Indel /
+    LCSseq kernel** (Phase D follow-up, June 2026). The
+    rapidfuzz-cpp C++ headers were read by a delegated investigator
+    sub-agent that reported algorithmic structure back to the
+    main code-authoring agent. See §4c below for the policy change
+    that authorised this and the complete list of architectural
+    ideas absorbed. **No source code was copied or close-
+    paraphrased.**
+- **What is *not* used:** Verbatim source, header comments,
+  identifier names, file layouts, struct fields, or any
+  close-paraphrased structural element from the rapidfuzz Python
+  or rapidfuzz-cpp source.
+- **Attribution / NOTICE:** Required for (b) — `NOTICE` has an
+  "Algorithmic inspiration" bullet crediting rapidfuzz-cpp (MIT,
+  Max Bachmann et al.) for the Indel / LCSseq architectural ideas
+  listed in §4c. (a) requires no NOTICE entry because rapidfuzz is
+  not redistributed.
+- **Files affected:**
+  - `tests/test_fuzz.py`, `tests/test_rapidfuzz_shim.py` (runtime
+    oracle).
+  - `include/stride_align/indel.hpp` (algorithmic inspiration; see
+    §4c).
+  - `NOTICE` (attribution bullet).
 
 ### 3b. Python `difflib.SequenceMatcher`
 
@@ -145,13 +163,76 @@ vectors to any Phase D file.
 - **What is used:** Nothing.
 - **Files affected:** None.
 
-### 4c. rapidfuzz internal source code
+### 4c. rapidfuzz internal source code — POLICY LIFTED 2026-06-09
 
-- **License:** MIT (compatible) — but **not read** by policy.
-- **Why excluded from reading:** Keeps the parity claim honest:
-  "stride-align matches rapidfuzz's *documented API behaviour*, derived
-  from the formula", not "stride-align is a port of rapidfuzz".
-- **Files affected:** None.
+- **License:** MIT (Apache-2.0 compatible).
+- **Original policy (now superseded):** "Not read; keep the parity
+  claim honest as 'matches the documented API behaviour' rather
+  than 'port'."
+- **Why the policy was lifted:** Closing the multi-word Indel
+  performance gap by blind guessing wasn't working. A 50× kernel
+  gap remained after the K=2 hand-specialization and the algorithm
+  source-of-truth lived in their public `rapidfuzz-cpp` C++ header
+  library at https://github.com/rapidfuzz/rapidfuzz-cpp. Their
+  license permits reading; only a self-imposed positioning
+  preference had blocked it.
+- **How we maintain the clean-room separation:** rapidfuzz's source
+  was read by a delegated investigator (a sub-agent) under
+  instructions to report **algorithmic structure only, in their own
+  words, never paste any source code, comments, or close
+  paraphrase**. The main agent (who writes the kernel) does not
+  see rapidfuzz's source — only the investigator's structured
+  algorithm description. The clean-room separation is therefore
+  preserved at the code-authoring boundary, while the architecture
+  is informed by reading their work.
+- **What is now used:** Algorithmic ideas, not code. Specifically:
+  - **Hyyrö single-step fused recurrence.** The realization that
+    the bit-parallel multi-word LCS step can be expressed as a
+    single fused per-block update — `U = S & PEQ[c]; sum =
+    addc64(S, U, carry); S = sum | (S − U)` — rather than four
+    separate K-sized passes (U build, sum chain, diff chain, V
+    update).
+  - **Absence of a borrow chain across blocks for the `S − U`
+    term.** A Hyyrö invariant guarantees `U ≤ S` bitwise, so the
+    per-block subtraction never underflows. The fourth loop in our
+    original generalised-Allison-Dix translation is provably
+    redundant.
+  - **Compile-time K specialization via templates.** K = 1 through
+    8 are template instantiations dispatched by a runtime switch
+    on block count, so the compiler sees N as a constant and pins
+    state in registers across the entire text loop.
+  - **Stack-resident state for K ≤ 8.** No heap traffic per call;
+    `S[N]` is a stack array.
+  - **Ukkonen-style diagonal-band early exit for `score_cutoff`.**
+    Tracks `first_block` / `last_block` bounds that tighten after
+    each text-character row; blocks outside the active band are
+    skipped entirely.
+  - **Manual unroll-by-3 on the K loop** to amortise ADCX/ADOX
+    latency vs throughput on modern x86.
+  - **SSE2 / AVX2 batch path uses one query per SIMD lane** —
+    SIMD is reserved for `cdist`-style batch mode, not single-pair.
+    No AVX-512 / `vpternlog` / `vpadcq` is used in their scalar
+    path.
+  - **PEQ stored row-major (character × block) BitMatrix** for the
+    multi-word case; non-ASCII codepoints fall through to a lazy
+    per-block hashmap.
+- **What is NOT used:** Their source code, header comments, file
+  layouts, identifier names, struct field orderings, or any
+  verbatim or close-paraphrased structural element. The
+  investigator's report explicitly excludes those; the main agent
+  has never seen the source.
+- **Attribution / NOTICE:** Required. A bullet under "Algorithmic
+  inspiration" in `NOTICE` credits rapidfuzz-cpp (MIT, Max Bachmann
+  et al.) for the Indel / LCSseq architectural ideas above. The
+  affected stride-align files carry a header comment naming
+  rapidfuzz-cpp and the specific idea each one borrows.
+- **Files affected:**
+  - `include/stride_align/indel.hpp` — multi-word and K=2/K=3/K=4
+    specialisations rewritten using the fused single-step
+    recurrence and template-K dispatch.
+  - `NOTICE` — adds an "Algorithmic inspiration" bullet for
+    rapidfuzz-cpp.
+  - `docs/phase-D-external-sources.md` — this section.
 
 ### 4d. CPython `Lib/difflib.py` internal source code
 

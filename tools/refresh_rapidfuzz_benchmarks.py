@@ -81,6 +81,31 @@ def _make_corpus(seed: int = 0xC0FFEE) -> dict:
             "".join(rng.choices(alphabet, k=n_a)),
             "".join(rng.choices(alphabet, k=n_b)),
         ))
+    # Long pairs exercise the multi-word bit-parallel Indel kernel at
+    # K = 2 through K = 8 (patterns 65..512 chars). Each band sized so
+    # the per-band total walltime is on the same order as the short /
+    # medium workloads above; fewer pairs at higher K because each
+    # call is more work.
+    long_bands = {
+        "K2_long_pairs": (65, 128, 600),    # K = 2
+        "K3_long_pairs": (129, 192, 500),   # K = 3
+        "K4_long_pairs": (193, 256, 400),   # K = 4
+        "K5_long_pairs": (257, 320, 300),   # K = 5
+        "K6_long_pairs": (321, 384, 250),   # K = 6
+        "K7_long_pairs": (385, 448, 200),   # K = 7
+        "K8_long_pairs": (449, 512, 150),   # K = 8
+    }
+    long_pairs_by_band = {}
+    for label, (lo, hi, count) in long_bands.items():
+        band_pairs = []
+        for _ in range(count):
+            n_a = rng.randint(lo, hi)
+            n_b = rng.randint(lo, hi)
+            band_pairs.append((
+                "".join(rng.choices(alphabet, k=n_a)),
+                "".join(rng.choices(alphabet, k=n_b)),
+            ))
+        long_pairs_by_band[label] = band_pairs
     corpus_10k = []
     for _ in range(10_000):
         n = rng.randint(8, 40)
@@ -99,6 +124,7 @@ def _make_corpus(seed: int = 0xC0FFEE) -> dict:
         "extract_corpus": corpus_10k,
         "cdist_queries":  cdist_queries,
         "cdist_choices":  cdist_choices,
+        **long_pairs_by_band,
     }
 
 
@@ -176,6 +202,21 @@ def run_benchmarks(corpus: dict) -> dict:
     results["Indel.normalized_similarity_cutoff_5000"] = {"upstream_ms": up_t,
                                                             "shim_ms": sh_t,
                                                             "ratio": sh_t / up_t}
+
+    # Long-pair Indel sweep across K = 2..8. Exercises the multi-word
+    # bit-parallel kernel's hand-specialised K bands (m in 65..512)
+    # where rapidfuzz historically had a wide lead on stride-align.
+    for k_label in ("K2", "K3", "K4", "K5", "K6", "K7", "K8"):
+        key = f"{k_label}_long_pairs"
+        if key not in corpus:
+            continue
+        pairs = corpus[key]
+        print(f"  Indel.distance {k_label} long pairs ({len(pairs)})...", file=sys.stderr)
+        up_t = _bench_pair_loop(upstream_dist.Indel.distance, pairs)
+        sh_t = _bench_pair_loop(shim_dist.Indel.distance,     pairs)
+        results[f"Indel.distance_{k_label}_long"] = {"upstream_ms": up_t,
+                                                       "shim_ms": sh_t,
+                                                       "ratio": sh_t / up_t}
 
     print("  process.extract limit=5 (10k corpus)...", file=sys.stderr)
     up_t = _time(lambda: upstream_proc.extract(eq, ec, scorer=upstream_fuzz.ratio, limit=5), iters=10)
