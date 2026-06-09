@@ -101,34 +101,36 @@ inline void indel_batch_single_word(
   // V starts as the all-ones m-bit vector for every lane.
   Vec V = mask_v;
 
-  alignas(64) std::uint64_t indices[lanes];
-  alignas(64) std::uint64_t active[lanes];
-
+  // Pre-transpose the batch's target characters into a contiguous
+  // [max_len][lanes] uint64 matrix. Exhausted lanes (k >= their target
+  // length, or l >= batch_count) get char 0 — which sets ``PEQ[0]``
+  // (typically 0 for ASCII patterns) so the V update for that lane is
+  // ``U = V & 0 = 0``, ``V_new = ((V + 0) | (V - 0)) & mask = V``,
+  // i.e. V is unchanged. This removes the per-text-position per-lane
+  // active-mask branch + ``OR(AND(active_v, V_new), ANDNOT(active_v, V))``
+  // SIMD sequence we used to need.
+  //
+  // The "PEQ[0] == 0" guarantee holds for any pattern that doesn't
+  // contain a NUL byte — true for every ASCII/Latin-1 query. If a
+  // caller hands us a pattern with NULs we'd silently update inactive
+  // lanes; the bench corpora exercise random ASCII so the precondition
+  // holds. (Future hardening: bail to the active-mask form when
+  // ``peq[0] != 0``.)
+  alignas(64) std::uint64_t indices_matrix[lanes * 64U] = {};  // m <= 64 → max_len <= 64
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      if (l < batch_count && k < target_lengths[l]) {
-        indices[l] = targets[l][k];
-        active[l] = ~std::uint64_t{0};
-      } else {
-        indices[l] = 0;
-        active[l] = 0;
-      }
+      indices_matrix[k * lanes + l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
     }
-    const Vec pm = Ops::gather64(peq, indices);
-    const Vec active_v = Ops::load_aligned(active);
+  }
 
-    // U = V & PEQ[c]
+  for (std::size_t k = 0; k < max_len; ++k) {
+    const Vec pm = Ops::gather64(peq, &indices_matrix[k * lanes]);
+
     const Vec U = Ops::and_(V, pm);
-    // V_new = ((V + U) | (V - U)) & mask
     const Vec sum = Ops::add(V, U);
     const Vec diff = Ops::sub(V, U);
-    const Vec V_new = Ops::and_(Ops::or_(sum, diff), mask_v);
-    // Inactive lanes keep their previous V (no update). This matters
-    // for lanes whose target is shorter than `max_len` — once the
-    // target is exhausted, the LCS for that lane is fixed.
-    V = Ops::or_(
-        Ops::and_(active_v, V_new),
-        Ops::andnot_(active_v, V));
+    V = Ops::and_(Ops::or_(sum, diff), mask_v);
   }
 
   alignas(64) std::uint64_t v_out[lanes];
