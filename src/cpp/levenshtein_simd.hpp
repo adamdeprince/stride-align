@@ -68,8 +68,24 @@ inline void myers_batch_single_word(
   const Vec top_bit_mask = Ops::set1(std::uint64_t{1} << (m - 1U));
   const Vec zero_v = Ops::zero();
 
-  alignas(64) std::uint64_t indices[lanes];
-  alignas(64) std::uint64_t active[lanes];
+  // Pre-transpose target characters into [max_len][lanes] uint64 matrix
+  // once per batch. Inner loop just does an aligned gather of the
+  // current k's lane indices, no per-text-position scalar branch.
+  alignas(64) std::uint64_t indices_matrix[lanes * 64U] = {};
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      indices_matrix[k * lanes + l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+  }
+  // Per-lane target lengths as a SIMD vector. The per-k active mask is
+  // ``target_lens_v > k_v`` (single SIMD compare, replaces 8 scalar
+  // branches per text position).
+  alignas(64) std::uint64_t target_lengths_padded[lanes] = {};
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    target_lengths_padded[l] = static_cast<std::uint64_t>(target_lengths[l]);
+  }
+  const Vec target_lens_v = Ops::load_aligned(target_lengths_padded);
 
   // Cutoff bookkeeping. `done` is sticky-per-lane (set once score crosses
   // the bail threshold). `threshold` carries `cutoffs[l] + remaining_chars`
@@ -101,18 +117,10 @@ inline void myers_batch_single_word(
   }
 
   for (std::size_t k = 0; k < max_len; ++k) {
-    for (std::size_t l = 0; l < lanes; ++l) {
-      if (l < batch_count && k < target_lengths[l]) {
-        indices[l] = targets[l][k];
-        active[l] = ~std::uint64_t{0};
-      } else {
-        indices[l] = 0;
-        active[l] = 0;
-      }
-    }
-
-    const Vec eq = Ops::gather64(peq, indices);
-    const Vec active_v = Ops::load_aligned(active);
+    const Vec eq = Ops::gather64(peq, &indices_matrix[k * lanes]);
+    // active_v: ~0 per lane where target_length > k, else 0.
+    const Vec k_v = Ops::set1(static_cast<std::uint64_t>(k));
+    const Vec active_v = Ops::gt_u64(target_lens_v, k_v);
     Vec eff_active = active_v;
     if constexpr (HasCutoff) {
       eff_active = Ops::andnot_(done, active_v);
