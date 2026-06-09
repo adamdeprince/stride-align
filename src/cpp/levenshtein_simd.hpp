@@ -499,6 +499,109 @@ inline constexpr std::size_t kLevMaxSimdPatternLen = 256U;
 //   * a length-`count` array: each pair gets its own cutoff. Pairs
 //     whose distance provably exceeds their cutoff get the per-pair
 //     sentinel `cutoffs_per_pair[i] + 1` instead of the true distance.
+#if defined(__AVX512F__)
+// 16-lane uint32 Myers (Levenshtein) batch kernel: same architecture
+// as ``indel_batch_single_word_u32_avx512`` — pre-transposed bytes,
+// SIMD-mask active gate, gather PEQ at 32-bit width. Doubles the
+// per-batch parallelism vs the 8-lane uint64 path when q_len <= 32
+// AND no per-pair score-cutoff is requested (the cutoff variant
+// stays on the uint64 path for now).
+inline void myers_batch_single_word_u32_avx512(
+    const std::uint32_t* peq32,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    Score* out) {
+  constexpr std::size_t lanes = 16;
+
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+
+  // ``init_vp`` is the all-ones m-bit pattern. ``score`` starts at m
+  // (the Levenshtein distance of pattern-vs-empty).
+  const std::uint32_t init_vp =
+      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
+  __m512i vp = _mm512_set1_epi32(static_cast<int>(init_vp));
+  __m512i vn = _mm512_setzero_si512();
+  __m512i score = _mm512_set1_epi32(static_cast<int>(m));
+  const __m512i one_v = _mm512_set1_epi32(1);
+  const __m512i top_bit_mask =
+      _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
+
+  // Pre-transpose 16-lane bytes per text position into a contiguous matrix.
+  alignas(64) std::uint8_t bytes_matrix[lanes * 64U] = {};
+  alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
+  }
+  const __m512i target_lens_v =
+      _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      bytes_matrix[k * lanes + l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+  }
+
+  for (std::size_t k = 0; k < max_len; ++k) {
+    const __m128i bytes16 = _mm_load_si128(
+        reinterpret_cast<const __m128i*>(&bytes_matrix[k * lanes]));
+    const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
+    const __m512i eq = _mm512_i32gather_epi32(
+        indices, reinterpret_cast<const int*>(peq32), 4);
+
+    const __m512i k_v = _mm512_set1_epi32(static_cast<int>(k));
+    const __mmask16 active_mask =
+        _mm512_cmpgt_epu32_mask(target_lens_v, k_v);
+
+    const __m512i x = _mm512_or_si512(eq, vn);
+    const __m512i xv = _mm512_and_si512(x, vp);
+    const __m512i sum = _mm512_add_epi32(xv, vp);
+    const __m512i d0 = _mm512_or_si512(_mm512_xor_si512(sum, vp), x);
+    const __m512i hp = _mm512_or_si512(
+        vn, _mm512_xor_si512(_mm512_or_si512(d0, vp),
+                              _mm512_set1_epi32(-1)));
+    const __m512i hn = _mm512_and_si512(d0, vp);
+
+    // Score delta: +1 per lane if hp's top bit is set, -1 if hn's
+    // top bit is set. Combine via mask-driven score add (lanes
+    // outside active_mask don't update).
+    const __mmask16 hp_set_mask = _mm512_test_epi32_mask(hp, top_bit_mask);
+    const __mmask16 hn_set_mask = _mm512_test_epi32_mask(hn, top_bit_mask);
+    score = _mm512_mask_add_epi32(score, active_mask & hp_set_mask, score, one_v);
+    score = _mm512_mask_sub_epi32(score, active_mask & hn_set_mask, score, one_v);
+
+    const __m512i hp_shift =
+        _mm512_or_si512(_mm512_add_epi32(hp, hp), one_v);
+    const __m512i hn_shift = _mm512_add_epi32(hn, hn);
+    vp = _mm512_or_si512(
+        hn_shift,
+        _mm512_xor_si512(_mm512_or_si512(d0, hp_shift),
+                          _mm512_set1_epi32(-1)));
+    vn = _mm512_and_si512(d0, hp_shift);
+  }
+
+  alignas(64) std::uint32_t score_out[lanes];
+  _mm512_store_si512(reinterpret_cast<__m512i*>(score_out), score);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    out[l] = static_cast<Score>(score_out[l]);
+  }
+}
+
+inline std::array<std::uint32_t, 256> build_peq_u32_lev(
+    std::span<const std::uint8_t> pattern) {
+  std::array<std::uint32_t, 256> peq{};
+  const std::uint32_t one = 1U;
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    peq[pattern[i]] |= one << i;
+  }
+  return peq;
+}
+#endif  // __AVX512F__
+
 template <typename Ops>
 inline void levenshtein_scores_simd_raw_per_pair(
     const std::uint8_t* q_ptr, std::size_t q_len,
@@ -518,6 +621,37 @@ inline void levenshtein_scores_simd_raw_per_pair(
   const bool has_cutoff = cutoffs_per_pair != nullptr;
 
   const std::span<const std::uint8_t> pattern_span(q_ptr, q_len);
+
+#if defined(__AVX512F__)
+  // uint32 fast path: 16-lane SIMD for q_len <= 32, when no per-pair
+  // cutoff is requested (the cutoff variant stays on the 8-lane
+  // uint64 path).
+  if constexpr (Ops::lanes == 8U &&
+                std::is_same_v<typename Ops::Vec, __m512i>) {
+    if (q_len > 0U && q_len <= 32U && !has_cutoff) {
+      const auto peq32 = build_peq_u32_lev(pattern_span);
+      constexpr std::size_t lanes32 = 16;
+      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
+      std::array<std::size_t, lanes32> batch_lens32{};
+      for (std::size_t b = 0; b < count; b += lanes32) {
+        const std::size_t batch_count = std::min(lanes32, count - b);
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_ptrs32[l] = t_ptrs[b + l];
+          batch_lens32[l] = t_lens[b + l];
+        }
+        for (std::size_t l = batch_count; l < lanes32; ++l) {
+          batch_ptrs32[l] = nullptr;
+          batch_lens32[l] = 0;
+        }
+        myers_batch_single_word_u32_avx512(
+            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
+            batch_count, q_len, out + b);
+      }
+      return;
+    }
+  }
+#endif
+
   if (q_len <= 64U) {
     const auto peq = build_peq(pattern_span);
     for (std::size_t b = 0; b < count; b += lanes) {
