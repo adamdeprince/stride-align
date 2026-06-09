@@ -22,6 +22,7 @@
 #include "jaro_dispatch.hpp"
 #include "lcs_dispatch.hpp"
 #include "ngram_dispatch.hpp"
+#include "partial_ratio_dispatch.hpp"
 #include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
@@ -3219,6 +3220,18 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   // ``difflib.SequenceMatcher(None, a, b).ratio()`` on its default
   // (autojunk-off) configuration. Builds directly on the range-based
   // ``lcs_substring_info_range`` DP from the LCS family.
+
+  m.def(
+      "_partial_ratio_kernel",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::partial_ratio::dispatch_partial_ratio(a, b);
+      },
+      "Internal: Indel-normalised similarity of the best block-anchored\n"
+      "window of the shorter input inside the longer. Underlies\n"
+      "``sa.partial_ratio`` / the rapidfuzz shim's ``partial_*_ratio``\n"
+      "family. Returns a value in ``[0, 1]``.",
+      nb::arg("a"),
+      nb::arg("b"));
 
   m.def(
       "ratcliff_obershelp_similarity",

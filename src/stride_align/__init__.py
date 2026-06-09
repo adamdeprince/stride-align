@@ -2017,6 +2017,14 @@ ratcliff_obershelp_similarity = (
 )
 
 
+# Underlying C++ kernel for ``sa.partial_ratio`` (and by extension the
+# rapidfuzz shim's ``partial_*`` family). Operates on codepoints
+# directly, with the matching-block enumeration and per-window Indel
+# kernel all inside C++ — one Python boundary crossing per call
+# instead of one per matching block × candidate window.
+_partial_ratio_kernel = _LEVENSHTEIN_BACKEND._partial_ratio_kernel
+
+
 def ratcliff_obershelp_similarities(
     query: object, targets: object
 ) -> np.ndarray:
