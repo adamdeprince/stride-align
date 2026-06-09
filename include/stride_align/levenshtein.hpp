@@ -179,51 +179,282 @@ inline std::size_t myers_single_word_u8(
   return score;
 }
 
+// Thread-local PEQ scratch for the multi-word Myers kernel. Same
+// idea as ``indel.hpp::MultiWordU8Scratch`` — amortise the 256*K
+// PEQ buffer allocation across calls.
+struct MultiWordLevScratch {
+  std::vector<std::uint64_t> peq;
+  std::vector<std::uint64_t> vp;
+  std::vector<std::uint64_t> vn;
+  std::size_t k = 0;
+
+  void resize_for(std::size_t K) {
+    if (K > k) {
+      peq.assign(256U * K, 0U);
+      vp.resize(K);
+      vn.resize(K);
+      k = K;
+    }
+  }
+};
+
+inline MultiWordLevScratch& multi_word_lev_scratch() {
+  thread_local MultiWordLevScratch s;
+  return s;
+}
+
+// Forward declarations: the templated dispatcher below routes
+// patterns in 65..256 chars to K=2/3/4 hand-specialised kernels.
+inline std::size_t myers_multi_word_k2_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff = kNoCutoff) noexcept;
+inline std::size_t myers_multi_word_k3_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff = kNoCutoff) noexcept;
+inline std::size_t myers_multi_word_k4_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff = kNoCutoff) noexcept;
+inline std::size_t myers_multi_word_generic_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff);
+
+// Public multi-word entry: dispatches by pattern length to the
+// hand-specialised K=2/3/4 paths (m=65..256), or the generic
+// heap-state variant for longer patterns.
 inline std::size_t myers_multi_word_u8(
     std::span<const std::uint8_t> pattern,
     std::span<const std::uint8_t> text,
     std::size_t cutoff = kNoCutoff) {
   const std::size_t m = pattern.size();
-  if (m == 0) {
-    return text.size();
-  }
-  if (text.empty()) {
-    return m;
-  }
+  if (m == 0) return text.size();
+  if (text.empty()) return m;
   if (m <= 64U) {
     return myers_single_word_u8(pattern, text, cutoff);
   }
+  if (m <= 128U) return myers_multi_word_k2_u8(pattern, text, cutoff);
+  if (m <= 192U) return myers_multi_word_k3_u8(pattern, text, cutoff);
+  if (m <= 256U) return myers_multi_word_k4_u8(pattern, text, cutoff);
+  return myers_multi_word_generic_u8(pattern, text, cutoff);
+}
 
-  constexpr std::size_t kWord = 64U;
-  const std::size_t B = (m + kWord - 1U) / kWord;
+// Templated K = 2..4 Myers kernel: constexpr K means stack-resident
+// ``vp[K]`` / ``vn[K]`` state arrays and a fully-unrolled per-block
+// loop. The compiler pins vp/vn in registers across the text scan.
+//
+// Carry across blocks (the ``xv + vp[b] + add_carry`` 128-bit add in
+// the original myers_inner) is decomposed into two
+// ``__builtin_add_overflow`` calls so the carry chain rides the
+// native carry-flag instruction on every supported arch (ADCX/ADOX
+// on x86, ADCS on ARM).
+//
+// Above K = 4 the register file (16 GPRs on x86-64) overflows because
+// every block needs vp + vn (2 regs) plus per-step temporaries — the
+// dispatch above falls back to the heap-state generic kernel there.
+template <std::size_t K>
+inline std::size_t myers_multi_word_kN_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff) noexcept {
+  static_assert(K >= 2 && K <= 4, "myers_multi_word_kN_u8 covers K=2..4");
+  const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+  const std::uint64_t one = 1U;
 
-  std::vector<std::uint64_t> peq(static_cast<std::size_t>(256) * B, 0);
-  const std::uint64_t one = 1;
+  MultiWordLevScratch& scr = multi_word_lev_scratch();
+  scr.resize_for(K);
+  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
   for (std::size_t i = 0; i < m; ++i) {
-    peq[static_cast<std::size_t>(pattern[i]) * B + (i / kWord)] |=
+    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
+        one << (i & 63U);
+  }
+
+  // Stack-resident state. ``K`` is constexpr so the compiler treats
+  // these as register-promotable fixed-size arrays.
+  std::uint64_t vp[K];
+  std::uint64_t vn[K];
+  for (std::size_t k = 0; k < K; ++k) {
+    vp[k] = ~std::uint64_t{0};
+    vn[k] = 0;
+  }
+  const std::size_t last_bits = m - (K - 1U) * 64U;  // bits in last block
+  if (last_bits < 64U) {
+    vp[K - 1U] = (one << last_bits) - 1U;
+  }
+  const std::uint64_t top_bit_last = one << (last_bits - 1U);
+
+  std::size_t score = m;
+  std::size_t k_col = 0;
+  const std::uint64_t* const peq_base = scr.peq.data();
+
+  for (const std::uint8_t c : text) {
+    const std::uint64_t* peq_row = peq_base + static_cast<std::size_t>(c) * K;
+
+    std::uint64_t add_carry = 0;
+    std::uint64_t hp_carry_in = 1U;
+    std::uint64_t hn_carry_in = 0;
+    std::uint64_t last_hp = 0;
+    std::uint64_t last_hn = 0;
+
+    // Per-block loop. Unrolled at compile time because K is constexpr.
+    for (std::size_t b = 0; b < K; ++b) {
+      const std::uint64_t eq = peq_row[b];
+      const std::uint64_t x = eq | vn[b];
+      const std::uint64_t xv = x & vp[b];
+
+      // 128-bit-equivalent add: xv + vp[b] + add_carry. Carries
+      // propagate via __builtin_add_overflow; the sum of the two
+      // overflow flags is the next block's add_carry.
+      std::uint64_t s1;
+      const bool c1 = __builtin_add_overflow(xv, vp[b], &s1);
+      std::uint64_t sum;
+      const bool c2 = __builtin_add_overflow(s1, add_carry, &sum);
+      add_carry = static_cast<std::uint64_t>(c1) + static_cast<std::uint64_t>(c2);
+
+      const std::uint64_t d0 = (sum ^ vp[b]) | x;
+      const std::uint64_t hp = vn[b] | ~(d0 | vp[b]);
+      const std::uint64_t hn = d0 & vp[b];
+
+      const std::uint64_t hp_shift = (hp << 1) | hp_carry_in;
+      const std::uint64_t hn_shift = (hn << 1) | hn_carry_in;
+      hp_carry_in = hp >> 63;
+      hn_carry_in = hn >> 63;
+
+      vp[b] = hn_shift | ~(d0 | hp_shift);
+      vn[b] = d0 & hp_shift;
+
+      if (b == K - 1U) {
+        last_hp = hp;
+        last_hn = hn;
+      }
+    }
+
+    if (last_hp & top_bit_last) {
+      ++score;
+    } else if (last_hn & top_bit_last) {
+      --score;
+    }
+    ++k_col;
+    if (cutoff != kNoCutoff && score > cutoff + (n - k_col)) {
+      return cutoff + 1U;
+    }
+  }
+  return score;
+}
+
+inline std::size_t myers_multi_word_k2_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff) noexcept {
+  return myers_multi_word_kN_u8<2>(pattern, text, cutoff);
+}
+inline std::size_t myers_multi_word_k3_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff) noexcept {
+  return myers_multi_word_kN_u8<3>(pattern, text, cutoff);
+}
+inline std::size_t myers_multi_word_k4_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff) noexcept {
+  return myers_multi_word_kN_u8<4>(pattern, text, cutoff);
+}
+
+// Generic-K fallback for patterns of m > 256 chars. Heap-resident
+// state via the thread-local scratch's vp/vn vectors. Same fused
+// per-block recurrence as the K=2..4 paths; the inner loop runs the
+// runtime-K loop body instead of a compile-time-unrolled one.
+inline std::size_t myers_multi_word_generic_u8(
+    std::span<const std::uint8_t> pattern,
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff) {
+  const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+  constexpr std::size_t kWord = 64U;
+  const std::size_t K = (m + kWord - 1U) / kWord;
+  const std::uint64_t one = 1U;
+
+  MultiWordLevScratch& scr = multi_word_lev_scratch();
+  scr.resize_for(K);
+  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
+  for (std::size_t i = 0; i < m; ++i) {
+    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i / kWord)] |=
         one << (i % kWord);
   }
 
-  std::vector<std::uint64_t> vp;
-  std::vector<std::uint64_t> vn;
-  detail::init_vp_vn(vp, vn, m);
+  std::uint64_t* const vp = scr.vp.data();
+  std::uint64_t* const vn = scr.vn.data();
+  for (std::size_t k = 0; k < K; ++k) {
+    vp[k] = ~std::uint64_t{0};
+    vn[k] = 0;
+  }
+  const std::size_t last_bits = m - (K - 1U) * kWord;
+  if (last_bits < kWord) {
+    vp[K - 1U] = (one << last_bits) - 1U;
+  }
+  const std::uint64_t top_bit_last = one << (last_bits - 1U);
 
-  const std::size_t last_bits = m - (B - 1U) * kWord;
-  const std::uint64_t top_bit_last = std::uint64_t{1} << (last_bits - 1U);
+  std::size_t score = m;
+  std::size_t k_col = 0;
+  const std::uint64_t* const peq_base = scr.peq.data();
 
-  return detail::myers_inner(
-      m,
-      B,
-      text,
-      [&](std::uint8_t c) {
-        return std::span<const std::uint64_t>(
-            peq.data() + static_cast<std::size_t>(c) * B, B);
-      },
-      vp.data(),
-      vn.data(),
-      top_bit_last,
-      m,
-      cutoff);
+  for (const std::uint8_t c : text) {
+    const std::uint64_t* peq_row = peq_base + static_cast<std::size_t>(c) * K;
+
+    std::uint64_t add_carry = 0;
+    std::uint64_t hp_carry_in = 1U;
+    std::uint64_t hn_carry_in = 0;
+    std::uint64_t last_hp = 0;
+    std::uint64_t last_hn = 0;
+
+    for (std::size_t b = 0; b < K; ++b) {
+      const std::uint64_t eq = peq_row[b];
+      const std::uint64_t x = eq | vn[b];
+      const std::uint64_t xv = x & vp[b];
+
+      std::uint64_t s1;
+      const bool c1 = __builtin_add_overflow(xv, vp[b], &s1);
+      std::uint64_t sum;
+      const bool c2 = __builtin_add_overflow(s1, add_carry, &sum);
+      add_carry = static_cast<std::uint64_t>(c1) + static_cast<std::uint64_t>(c2);
+
+      const std::uint64_t d0 = (sum ^ vp[b]) | x;
+      const std::uint64_t hp = vn[b] | ~(d0 | vp[b]);
+      const std::uint64_t hn = d0 & vp[b];
+
+      const std::uint64_t hp_shift = (hp << 1) | hp_carry_in;
+      const std::uint64_t hn_shift = (hn << 1) | hn_carry_in;
+      hp_carry_in = hp >> 63;
+      hn_carry_in = hn >> 63;
+
+      vp[b] = hn_shift | ~(d0 | hp_shift);
+      vn[b] = d0 & hp_shift;
+
+      if (b == K - 1U) {
+        last_hp = hp;
+        last_hn = hn;
+      }
+    }
+
+    if (last_hp & top_bit_last) {
+      ++score;
+    } else if (last_hn & top_bit_last) {
+      --score;
+    }
+    ++k_col;
+    if (cutoff != kNoCutoff && score > cutoff + (n - k_col)) {
+      return cutoff + 1U;
+    }
+  }
+  return score;
 }
 
 template <typename Token>
