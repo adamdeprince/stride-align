@@ -3399,6 +3399,142 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
 
+  // DamerauLevenshtein (true, unrestricted)
+  using ::stride_align::dist_shim::dispatch_DamerauLevenshtein_distance;
+  using ::stride_align::dist_shim::dispatch_DamerauLevenshtein_similarity;
+  using ::stride_align::dist_shim::dispatch_DamerauLevenshtein_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_DamerauLevenshtein_normalized_similarity;
+  m.def("_shim_dist_DamerauLevenshtein_distance",              &dispatch_DamerauLevenshtein_distance,
+        "rapidfuzz.distance.DamerauLevenshtein.distance (unrestricted).",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_DamerauLevenshtein_similarity",            &dispatch_DamerauLevenshtein_similarity,
+        "rapidfuzz.distance.DamerauLevenshtein.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_DamerauLevenshtein_normalized_distance",   &dispatch_DamerauLevenshtein_normalized_distance,
+        "rapidfuzz.distance.DamerauLevenshtein.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_DamerauLevenshtein_normalized_similarity", &dispatch_DamerauLevenshtein_normalized_similarity,
+        "rapidfuzz.distance.DamerauLevenshtein.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+
+  // Hamming
+  using ::stride_align::dist_shim::dispatch_Hamming_distance;
+  using ::stride_align::dist_shim::dispatch_Hamming_similarity;
+  using ::stride_align::dist_shim::dispatch_Hamming_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_Hamming_normalized_similarity;
+  m.def("_shim_dist_Hamming_distance",              &dispatch_Hamming_distance,
+        "rapidfuzz.distance.Hamming.distance (padded).",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Hamming_similarity",            &dispatch_Hamming_similarity,
+        "rapidfuzz.distance.Hamming.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Hamming_normalized_distance",   &dispatch_Hamming_normalized_distance,
+        "rapidfuzz.distance.Hamming.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Hamming_normalized_similarity", &dispatch_Hamming_normalized_similarity,
+        "rapidfuzz.distance.Hamming.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+
+  // Jaro
+  using ::stride_align::dist_shim::dispatch_Jaro_distance;
+  using ::stride_align::dist_shim::dispatch_Jaro_similarity;
+  using ::stride_align::dist_shim::dispatch_Jaro_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_Jaro_normalized_similarity;
+  m.def("_shim_dist_Jaro_distance",                 &dispatch_Jaro_distance,
+        "rapidfuzz.distance.Jaro.distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Jaro_similarity",               &dispatch_Jaro_similarity,
+        "rapidfuzz.distance.Jaro.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Jaro_normalized_distance",      &dispatch_Jaro_normalized_distance,
+        "rapidfuzz.distance.Jaro.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Jaro_normalized_similarity",    &dispatch_Jaro_normalized_similarity,
+        "rapidfuzz.distance.Jaro.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+
+  // JaroWinkler
+  using ::stride_align::dist_shim::dispatch_JaroWinkler_distance;
+  using ::stride_align::dist_shim::dispatch_JaroWinkler_similarity;
+  using ::stride_align::dist_shim::dispatch_JaroWinkler_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_JaroWinkler_normalized_similarity;
+  m.def("_shim_dist_JaroWinkler_distance",          &dispatch_JaroWinkler_distance,
+        "rapidfuzz.distance.JaroWinkler.distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none(),
+        nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight);
+  m.def("_shim_dist_JaroWinkler_similarity",        &dispatch_JaroWinkler_similarity,
+        "rapidfuzz.distance.JaroWinkler.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none(),
+        nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight);
+  m.def("_shim_dist_JaroWinkler_normalized_distance",   &dispatch_JaroWinkler_normalized_distance,
+        "rapidfuzz.distance.JaroWinkler.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none(),
+        nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight);
+  m.def("_shim_dist_JaroWinkler_normalized_similarity", &dispatch_JaroWinkler_normalized_similarity,
+        "rapidfuzz.distance.JaroWinkler.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none(),
+        nb::arg("prefix_weight") = ::stride_align::jaro::kDefaultPrefixWeight);
+
+  // OSA
+  using ::stride_align::dist_shim::dispatch_OSA_distance;
+  using ::stride_align::dist_shim::dispatch_OSA_similarity;
+  using ::stride_align::dist_shim::dispatch_OSA_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_OSA_normalized_similarity;
+  m.def("_shim_dist_OSA_distance",                  &dispatch_OSA_distance,
+        "rapidfuzz.distance.OSA.distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_OSA_similarity",                &dispatch_OSA_similarity,
+        "rapidfuzz.distance.OSA.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_OSA_normalized_distance",       &dispatch_OSA_normalized_distance,
+        "rapidfuzz.distance.OSA.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_OSA_normalized_similarity",     &dispatch_OSA_normalized_similarity,
+        "rapidfuzz.distance.OSA.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+
+  // LCSseq
+  using ::stride_align::dist_shim::dispatch_LCSseq_distance;
+  using ::stride_align::dist_shim::dispatch_LCSseq_similarity;
+  using ::stride_align::dist_shim::dispatch_LCSseq_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_LCSseq_normalized_similarity;
+  m.def("_shim_dist_LCSseq_distance",               &dispatch_LCSseq_distance,
+        "rapidfuzz.distance.LCSseq.distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_LCSseq_similarity",             &dispatch_LCSseq_similarity,
+        "rapidfuzz.distance.LCSseq.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_LCSseq_normalized_distance",    &dispatch_LCSseq_normalized_distance,
+        "rapidfuzz.distance.LCSseq.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_LCSseq_normalized_similarity",  &dispatch_LCSseq_normalized_similarity,
+        "rapidfuzz.distance.LCSseq.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+
   m.def(
       "ratcliff_obershelp_similarity",
       [](nb::handle a, nb::handle b) {

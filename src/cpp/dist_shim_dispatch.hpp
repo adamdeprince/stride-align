@@ -18,11 +18,15 @@
 #include <nanobind/nanobind.h>
 
 #include "byte_view.hpp"
-#include "lcs_dispatch.hpp"
-#include "levenshtein_dispatch.hpp"  // dispatch_score / dispatch_normalized_score
+#include "jaro_dispatch.hpp"          // jaro::dispatch_similarity / winkler
+#include "lcs_dispatch.hpp"           // lcs::dispatch_lcs_length
+#include "levenshtein_dispatch.hpp"   // dispatch_score / dispatch_normalized_score
+#include "stride_align/hamming.hpp"
 #include "stride_align/indel.hpp"
+#include "stride_align/jaro.hpp"
 #include "stride_align/levenshtein.hpp"
-#include "fuzz_shim_dispatch.hpp"  // prepare(), run_kernel()
+#include "stride_align/lcs.hpp"
+#include "fuzz_shim_dispatch.hpp"     // prepare(), run_kernel()
 
 namespace stride_align::dist_shim {
 
@@ -219,6 +223,307 @@ inline double dispatch_Levenshtein_normalized_distance(
     sim_cutoff_h = sim_cutoff;
   }
   return 1.0 - dispatch_Levenshtein_normalized_similarity(s1, s2, processor, sim_cutoff_h);
+}
+
+// ---- Hamming --------------------------------------------------------------
+//
+// rapidfuzz convention: with ``pad=True`` (default) the longer side
+// counts its overflow as mismatches; ``pad=False`` raises on unequal
+// length. The C++ side does the padded form unconditionally — the
+// pad=False guard stays in the Python shim because it's a precondition
+// check, not a hot-path computation.
+
+inline nb::object dispatch_Hamming_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;  // Hamming has no kernel-level cutoff yet
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t common = la < lb ? la : lb;
+  std::size_t mismatches = 0;
+  if (common > 0) {
+    const double m = run_kernel(p.ah, p.bh,
+        [common](std::span<const std::uint8_t> a,
+                  std::span<const std::uint8_t> b) -> double {
+          return static_cast<double>(
+              ::stride_align::hamming::hamming_scalar<std::uint8_t>(
+                  a.first(common), b.first(common)));
+        },
+        [common](const std::vector<lcs::Codepoint>& a,
+                  const std::vector<lcs::Codepoint>& b) -> double {
+          return static_cast<double>(
+              ::stride_align::hamming::hamming_scalar<lcs::Codepoint>(
+                  std::span<const lcs::Codepoint>(a.data(), common),
+                  std::span<const lcs::Codepoint>(b.data(), common)));
+        });
+    mismatches = static_cast<std::size_t>(m);
+  }
+  return nb::cast(mismatches + (la > lb ? la - lb : lb - la));
+}
+
+inline nb::object dispatch_Hamming_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  nb::object d_obj = dispatch_Hamming_distance(s1, s2, processor, score_cutoff);
+  const std::size_t d = nb::cast<std::size_t>(d_obj);
+  return nb::cast(max_d - d);
+}
+
+inline double dispatch_Hamming_normalized_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  if (max_d == 0U) return 0.0;
+  const std::size_t d = nb::cast<std::size_t>(
+      dispatch_Hamming_distance(s1, s2, processor, nb::none()));
+  return static_cast<double>(d) / static_cast<double>(max_d);
+}
+
+inline double dispatch_Hamming_normalized_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  return 1.0 - dispatch_Hamming_normalized_distance(s1, s2, processor, score_cutoff);
+}
+
+// ---- Jaro -----------------------------------------------------------------
+
+inline double dispatch_Jaro_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const Prepped p = prepare(s1, s2, processor);
+  const double sim = ::stride_align::jaro::dispatch_similarity(p.ah, p.bh);
+  if (!score_cutoff.is_none() && sim < nb::cast<double>(score_cutoff)) return 0.0;
+  return sim;
+}
+
+inline double dispatch_Jaro_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  return 1.0 - ::stride_align::jaro::dispatch_similarity(p.ah, p.bh);
+}
+
+inline double dispatch_Jaro_normalized_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  return dispatch_Jaro_similarity(s1, s2, processor, score_cutoff);
+}
+
+inline double dispatch_Jaro_normalized_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  return dispatch_Jaro_distance(s1, s2, processor, score_cutoff);
+}
+
+// ---- JaroWinkler ----------------------------------------------------------
+
+inline double dispatch_JaroWinkler_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff,
+    double prefix_weight) {
+  const Prepped p = prepare(s1, s2, processor);
+  const double sim = ::stride_align::jaro::dispatch_winkler_similarity(
+      p.ah, p.bh, prefix_weight,
+      ::stride_align::jaro::kDefaultPrefixThreshold,
+      ::stride_align::jaro::kDefaultPrefixCap);
+  if (!score_cutoff.is_none() && sim < nb::cast<double>(score_cutoff)) return 0.0;
+  return sim;
+}
+
+inline double dispatch_JaroWinkler_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff,
+    double prefix_weight) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  return 1.0 - ::stride_align::jaro::dispatch_winkler_similarity(
+      p.ah, p.bh, prefix_weight,
+      ::stride_align::jaro::kDefaultPrefixThreshold,
+      ::stride_align::jaro::kDefaultPrefixCap);
+}
+
+inline double dispatch_JaroWinkler_normalized_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff,
+    double prefix_weight) {
+  return dispatch_JaroWinkler_similarity(s1, s2, processor, score_cutoff, prefix_weight);
+}
+
+inline double dispatch_JaroWinkler_normalized_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff,
+    double prefix_weight) {
+  return dispatch_JaroWinkler_distance(s1, s2, processor, score_cutoff, prefix_weight);
+}
+
+// ---- OSA (restricted Damerau-Levenshtein) ---------------------------------
+//
+// In stride-align the kernel is named ``damerau_levenshtein_*`` for
+// historical reasons (it's the OSA / restricted form); the unrestricted
+// true Damerau-Levenshtein lives in ``true_damerau_levenshtein_*``.
+
+inline nb::object dispatch_OSA_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t d = static_cast<std::size_t>(run_kernel(p.ah, p.bh,
+      [](std::span<const std::uint8_t> a, std::span<const std::uint8_t> b) -> double {
+        return static_cast<double>(
+            ::stride_align::levenshtein::osa_distance_u8(a, b));
+      },
+      [](const std::vector<lcs::Codepoint>& a,
+         const std::vector<lcs::Codepoint>& b) -> double {
+        return static_cast<double>(::stride_align::levenshtein::osa_distance<lcs::Codepoint>(
+            std::span<const lcs::Codepoint>(a),
+            std::span<const lcs::Codepoint>(b)));
+      }));
+  return nb::cast(d);
+}
+
+inline nb::object dispatch_OSA_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  const std::size_t d = nb::cast<std::size_t>(
+      dispatch_OSA_distance(s1, s2, processor, score_cutoff));
+  return nb::cast(max_d - d);
+}
+
+inline double dispatch_OSA_normalized_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  if (max_d == 0U) return 0.0;
+  const std::size_t d = nb::cast<std::size_t>(
+      dispatch_OSA_distance(s1, s2, processor, nb::none()));
+  return static_cast<double>(d) / static_cast<double>(max_d);
+}
+
+inline double dispatch_OSA_normalized_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const double sim = 1.0 - dispatch_OSA_normalized_distance(s1, s2, processor, nb::none());
+  if (!score_cutoff.is_none() && sim < nb::cast<double>(score_cutoff)) return 0.0;
+  return sim;
+}
+
+// ---- DamerauLevenshtein (true, unrestricted) ------------------------------
+
+inline nb::object dispatch_DamerauLevenshtein_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t d = static_cast<std::size_t>(run_kernel(p.ah, p.bh,
+      [](std::span<const std::uint8_t> a, std::span<const std::uint8_t> b) -> double {
+        return static_cast<double>(
+            ::stride_align::levenshtein::true_damerau_levenshtein_distance_u8(a, b));
+      },
+      [](const std::vector<lcs::Codepoint>& a,
+         const std::vector<lcs::Codepoint>& b) -> double {
+        return static_cast<double>(::stride_align::levenshtein::true_damerau_levenshtein_distance<lcs::Codepoint>(
+            std::span<const lcs::Codepoint>(a),
+            std::span<const lcs::Codepoint>(b)));
+      }));
+  return nb::cast(d);
+}
+
+inline nb::object dispatch_DamerauLevenshtein_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  const std::size_t d = nb::cast<std::size_t>(
+      dispatch_DamerauLevenshtein_distance(s1, s2, processor, score_cutoff));
+  return nb::cast(max_d - d);
+}
+
+inline double dispatch_DamerauLevenshtein_normalized_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  if (max_d == 0U) return 0.0;
+  const std::size_t d = nb::cast<std::size_t>(
+      dispatch_DamerauLevenshtein_distance(s1, s2, processor, nb::none()));
+  return static_cast<double>(d) / static_cast<double>(max_d);
+}
+
+inline double dispatch_DamerauLevenshtein_normalized_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const double sim = 1.0 - dispatch_DamerauLevenshtein_normalized_distance(s1, s2, processor, nb::none());
+  if (!score_cutoff.is_none() && sim < nb::cast<double>(score_cutoff)) return 0.0;
+  return sim;
+}
+
+// ---- LCSseq ---------------------------------------------------------------
+//
+// distance = max(|s1|, |s2|) - LCS(s1, s2); similarity = LCS(s1, s2).
+
+inline nb::object dispatch_LCSseq_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t lcs = ::stride_align::lcs::dispatch_lcs_length(p.ah, p.bh);
+  return nb::cast(lcs);
+}
+
+inline nb::object dispatch_LCSseq_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  const std::size_t lcs = ::stride_align::lcs::dispatch_lcs_length(p.ah, p.bh);
+  return nb::cast(max_d - lcs);
+}
+
+inline double dispatch_LCSseq_normalized_distance(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
+  const Prepped p = prepare(s1, s2, processor);
+  const std::size_t la = length_of(p.ah);
+  const std::size_t lb = length_of(p.bh);
+  const std::size_t max_d = la > lb ? la : lb;
+  if (max_d == 0U) return 0.0;
+  const std::size_t lcs = ::stride_align::lcs::dispatch_lcs_length(p.ah, p.bh);
+  return static_cast<double>(max_d - lcs) / static_cast<double>(max_d);
+}
+
+inline double dispatch_LCSseq_normalized_similarity(
+    nb::handle s1, nb::handle s2,
+    nb::handle processor, nb::handle score_cutoff) {
+  const double sim = 1.0 - dispatch_LCSseq_normalized_distance(s1, s2, processor, nb::none());
+  if (!score_cutoff.is_none() && sim < nb::cast<double>(score_cutoff)) return 0.0;
+  return sim;
 }
 
 }  // namespace stride_align::dist_shim
