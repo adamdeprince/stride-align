@@ -208,6 +208,23 @@ def run_benchmarks(corpus: dict) -> dict:
                                                             "shim_ms": sh_t,
                                                             "ratio": sh_t / up_t}
 
+    # Long-pair OSA sweep across K = 2..3. Exercises the multi-word
+    # bit-parallel Hyyrö OSA kernel's hand-specialised K bands
+    # (m = 65..192). The scalar DP fallback this replaces was
+    # 16-22× slower than rapidfuzz, so this is the largest cross-arch
+    # gap closed by the recent kernel work.
+    for k_label in ("K2", "K3"):
+        key = f"{k_label}_long_pairs"
+        if key not in corpus:
+            continue
+        pairs = corpus[key]
+        print(f"  OSA.distance {k_label} long pairs ({len(pairs)})...", file=sys.stderr)
+        up_t = _bench_pair_loop(upstream_dist.OSA.distance, pairs)
+        sh_t = _bench_pair_loop(shim_dist.OSA.distance,     pairs)
+        results[f"OSA.distance_{k_label}_long"] = {"upstream_ms": up_t,
+                                                    "shim_ms": sh_t,
+                                                    "ratio": sh_t / up_t}
+
     print("  Indel.normalized_similarity score_cutoff=0.7 (5000 short pairs)...", file=sys.stderr)
     up_t = _bench_pair_loop(
         lambda a, b: upstream_dist.Indel.normalized_similarity(a, b, score_cutoff=0.7),
