@@ -251,6 +251,25 @@ inline double partial_ratio_one_direction(
     }
   }
 
+  // Length-based skip threshold for the boundary phases. A boundary
+  // window of length ``i`` against the pattern of length ``n`` has
+  // maximum possible normalised similarity ``2i / (n + i)`` — the
+  // best case where all ``i`` characters of the window contribute to
+  // LCS. Any ``i`` where that ceiling is at or below the current
+  // ``best`` cannot beat ``best``, so the kernel call is skipped
+  // entirely. Solving ``2i / (n + i) > best`` for ``i`` gives
+  // ``i > best * n / (2 - best)``. Floor + 1 is the smallest
+  // candidate length worth evaluating.
+  auto min_boundary_len = [&]() -> std::size_t {
+    if (best <= 0.0) return 1U;
+    if (best >= 1.0) return n;  // skip everything below; we want >best
+    const double thresh = best * static_cast<double>(n) / (2.0 - best);
+    const std::size_t floored = static_cast<std::size_t>(thresh);
+    // We need ``i`` strictly greater than thresh; the next integer
+    // above thresh is the lowest candidate.
+    return floored + 1U;
+  };
+
   // --- Prefix boundary phase: long[0:i] for i in [1, n-1].
   //
   // Extending from length i-1 to length i adds long_s[i-1] at the
@@ -258,18 +277,30 @@ inline double partial_ratio_one_direction(
   // LCS at length i equals the LCS at length i-1; the denominator
   // grows by 1; so normalised similarity strictly decreases. Skip
   // those extensions.
-  for (std::size_t i = 1; i < n; ++i) {
-    if (!in_pattern.contains(long_s[i - 1])) continue;
-    if (try_window(0, i)) return 1.0;
+  {
+    std::size_t i_lo = min_boundary_len();
+    for (std::size_t i = i_lo; i < n; ++i) {
+      if (!in_pattern.contains(long_s[i - 1])) continue;
+      if (try_window(0, i)) return 1.0;
+      // ``best`` may have just risen; re-tighten the lower bound
+      // for the remaining iterations.
+      const std::size_t new_lo = min_boundary_len();
+      if (new_lo > i + 1U) i = new_lo - 1U;  // loop ++i lands at new_lo
+    }
   }
 
   // --- Suffix boundary phase: long[m-i:m] for i in [1, n-1].
   //
   // Extending from length i-1 to length i adds long_s[m-i] at the
   // LEFT of the window. Same skip applies.
-  for (std::size_t i = 1; i < n; ++i) {
-    if (!in_pattern.contains(long_s[m - i])) continue;
-    if (try_window(m - i, i)) return 1.0;
+  {
+    std::size_t i_lo = min_boundary_len();
+    for (std::size_t i = i_lo; i < n; ++i) {
+      if (!in_pattern.contains(long_s[m - i])) continue;
+      if (try_window(m - i, i)) return 1.0;
+      const std::size_t new_lo = min_boundary_len();
+      if (new_lo > i + 1U) i = new_lo - 1U;
+    }
   }
 
   return best;
