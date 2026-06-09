@@ -84,10 +84,16 @@ def token_sort_ratio(
     any pair where neither input is empty after tokenisation. Empty-
     or whitespace-only inputs on both sides return ``1.0`` (vacuously
     identical); one empty and one non-empty returns ``0.0``.
+
+    The tokenisation, sort, join, and Indel similarity all run inside
+    one C++ kernel call (``_token_sort_ratio_kernel``); the Python
+    layer here is only the processor / type coercion. See
+    ``include/stride_align/token_ratios.hpp`` for the engine.
     """
+    from stride_align import _token_sort_ratio_kernel
     a = _apply_processor(_coerce_str(s1), processor)
     b = _apply_processor(_coerce_str(s2), processor)
-    return _indel_normalized_score(_sort_join(a), _sort_join(b))
+    return float(_token_sort_ratio_kernel(a, b))
 
 
 def token_set_ratio(
@@ -105,29 +111,15 @@ def token_set_ratio(
     ``T1``, and the sorted intersection plus sorted ``s2``-only tokens
     ``T2``. The three ratios compared are ``r(T0, T1)``, ``r(T0, T2)``,
     and ``r(T1, T2)``. Matches the rapidfuzz formula bit-exactly.
+
+    All of the above runs inside one C++ kernel call
+    (``_token_set_ratio_kernel``); see
+    ``include/stride_align/token_ratios.hpp`` for the engine.
     """
-    a_str = _apply_processor(_coerce_str(s1), processor)
-    b_str = _apply_processor(_coerce_str(s2), processor)
-    a_tokens = set(_tokenise(a_str))
-    b_tokens = set(_tokenise(b_str))
-    # rapidfuzz convention: token_set_ratio returns 0 when either side
-    # has no tokens. The set-difference algebra below would otherwise
-    # treat ``(∅, ∅)`` as vacuously identical and report 1.0.
-    if not a_tokens or not b_tokens:
-        return 0.0
-
-    intersect = sorted(a_tokens & b_tokens)
-    diff_a    = sorted(a_tokens - b_tokens)
-    diff_b    = sorted(b_tokens - a_tokens)
-
-    t0 = " ".join(intersect)
-    t1 = (t0 + " " + " ".join(diff_a)).strip()
-    t2 = (t0 + " " + " ".join(diff_b)).strip()
-
-    r0 = _indel_normalized_score(t0, t1)
-    r1 = _indel_normalized_score(t0, t2)
-    r2 = _indel_normalized_score(t1, t2)
-    return max(r0, r1, r2)
+    from stride_align import _token_set_ratio_kernel
+    a = _apply_processor(_coerce_str(s1), processor)
+    b = _apply_processor(_coerce_str(s2), processor)
+    return float(_token_set_ratio_kernel(a, b))
 
 
 # ---- Partial ratio ------------------------------------------------

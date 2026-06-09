@@ -112,42 +112,22 @@ def WRatio(s1, s2, *, processor: Optional[Callable] = None,
            score_cutoff: Optional[float] = None) -> float:  # noqa: N802
     """rapidfuzz's ``fuzz.WRatio`` — weighted blend of ratios.
 
-    Reimplements rapidfuzz's documented recipe exactly (the
-    ``sa.WRatio`` in the stride-align main namespace evaluates the
-    partial-ratio branch unconditionally, which diverges from upstream
-    when ``len_ratio < 1.5``; the shim version follows the upstream
-    rule here for drop-in parity).
+    Routes the whole recipe (ratio + len_ratio branch + token /
+    partial variants + short-circuit) through one C++ kernel call
+    (``_wratio_kernel``); see ``include/stride_align/wratio.hpp``.
+    The Python layer here is only the processor / type coercion and
+    the score-cutoff clamp on the result.
     """
+    from stride_align import _wratio_kernel
     a = _apply_processor(s1, processor)
     b = _apply_processor(s2, processor)
     if not a or not b:
         return _clamp(0.0, score_cutoff)
-
-    base = float(_sa.indel_normalized_score(a, b)) * 100.0
-    len_ratio = max(len(a), len(b)) / min(len(a), len(b))
-
-    UNBASE_SCALE = 0.95
-
-    if len_ratio < 1.5:
-        # Lengths similar — partial ratios add no signal beyond the
-        # plain token ratios; the candidate set is just the three
-        # token-based variants scaled by the un-base penalty.
-        token_sort = float(_sa.token_sort_ratio(a, b)) * 100.0 * UNBASE_SCALE
-        token_set  = float(_sa.token_set_ratio(a, b)) * 100.0 * UNBASE_SCALE
-        return _clamp(max(base, token_sort, token_set), score_cutoff)
-
-    # Length-mismatched regime. partial_ratio dominates the candidate
-    # set; the non-partial token ratios are dropped because their
-    # partial cousins are strictly better proxies here.
-    partial_scale = 0.9 if len_ratio < 8.0 else 0.6
-
-    partial             = float(_sa.partial_ratio(a, b)) * 100.0 * partial_scale
-    partial_token_sort  = float(_sa.partial_token_sort_ratio(a, b)) * 100.0 * UNBASE_SCALE * partial_scale
-    partial_token_set   = float(_sa.partial_token_set_ratio(a, b)) * 100.0 * UNBASE_SCALE * partial_scale
-    return _clamp(
-        max(base, partial, partial_token_sort, partial_token_set),
-        score_cutoff,
-    )
+    # The kernel expects a normalised cutoff in ``[0, 1]``; the
+    # public API takes the rapidfuzz 0..100 convention.
+    cutoff_norm = (score_cutoff / 100.0) if score_cutoff is not None else 0.0
+    score = float(_wratio_kernel(a, b, cutoff_norm)) * 100.0
+    return _clamp(score, score_cutoff)
 
 
 def QRatio(s1, s2, *, processor: Optional[Callable] = None,

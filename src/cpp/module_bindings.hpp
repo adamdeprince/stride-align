@@ -23,6 +23,8 @@
 #include "lcs_dispatch.hpp"
 #include "ngram_dispatch.hpp"
 #include "partial_ratio_dispatch.hpp"
+#include "token_ratios_dispatch.hpp"
+#include "wratio_dispatch.hpp"
 #include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
@@ -3232,6 +3234,45 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       "family. Returns a value in ``[0, 1]``.",
       nb::arg("a"),
       nb::arg("b"));
+
+  m.def(
+      "_token_sort_ratio_kernel",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::token_ratios::dispatch_token_sort_ratio(a, b);
+      },
+      "Internal: whitespace-tokenise each input, sort tokens, join with\n"
+      "single space, return Indel-normalised similarity of the two\n"
+      "sorted joins. Returns a value in ``[0, 1]``.",
+      nb::arg("a"),
+      nb::arg("b"));
+
+  m.def(
+      "_token_set_ratio_kernel",
+      [](nb::handle a, nb::handle b) {
+        return ::stride_align::token_ratios::dispatch_token_set_ratio(a, b);
+      },
+      "Internal: whitespace-tokenise each input, take the set-intersection\n"
+      "and set-differences, build three candidate strings, return the\n"
+      "maximum pairwise Indel-normalised similarity. Returns a value in\n"
+      "``[0, 1]``.",
+      nb::arg("a"),
+      nb::arg("b"));
+
+  m.def(
+      "_wratio_kernel",
+      [](nb::handle a, nb::handle b, double score_cutoff) {
+        return ::stride_align::wratio::dispatch_wratio(a, b, score_cutoff);
+      },
+      "Internal: rapidfuzz's WRatio recipe — ratio plus the len_ratio-\n"
+      "branched token / partial variants — with the short-circuit that\n"
+      "skips remaining components once the running best exceeds the\n"
+      "maximum scaled ceiling. Returns a value in ``[0, 1]`` (caller\n"
+      "multiplies by 100 for the rapidfuzz 0..100 convention).\n"
+      "``score_cutoff`` is interpreted as a normalised threshold; the\n"
+      "kernel returns 0.0 when the result would not strictly exceed it.",
+      nb::arg("a"),
+      nb::arg("b"),
+      nb::arg("score_cutoff") = 0.0);
 
   m.def(
       "ratcliff_obershelp_similarity",
