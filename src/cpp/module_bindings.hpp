@@ -26,6 +26,7 @@
 #include "token_ratios_dispatch.hpp"
 #include "wratio_dispatch.hpp"
 #include "fuzz_shim_dispatch.hpp"
+#include "dist_shim_dispatch.hpp"
 #include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
 #include "true_damerau_dispatch.hpp"
@@ -3349,6 +3350,52 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   m.def("_shim_fuzz_QRatio",
         &dispatch_qratio,
         "rapidfuzz.fuzz.QRatio (== ratio since rapidfuzz 3.0) in [0,100].",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+
+  // ---- rapidfuzz-shim distance bindings -----------------------------
+  //
+  // Covers Indel and Levenshtein — the two distance classes the
+  // cross-arch bench measures and where the Python-class-based
+  // wrapper shows measurable per-call overhead on short pairs.
+  using ::stride_align::dist_shim::dispatch_Indel_distance;
+  using ::stride_align::dist_shim::dispatch_Indel_similarity;
+  using ::stride_align::dist_shim::dispatch_Indel_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_Indel_normalized_similarity;
+  using ::stride_align::dist_shim::dispatch_Levenshtein_distance;
+  using ::stride_align::dist_shim::dispatch_Levenshtein_similarity;
+  using ::stride_align::dist_shim::dispatch_Levenshtein_normalized_distance;
+  using ::stride_align::dist_shim::dispatch_Levenshtein_normalized_similarity;
+  m.def("_shim_dist_Indel_distance",                  &dispatch_Indel_distance,
+        "rapidfuzz.distance.Indel.distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Indel_similarity",                &dispatch_Indel_similarity,
+        "rapidfuzz.distance.Indel.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Indel_normalized_distance",       &dispatch_Indel_normalized_distance,
+        "rapidfuzz.distance.Indel.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Indel_normalized_similarity",     &dispatch_Indel_normalized_similarity,
+        "rapidfuzz.distance.Indel.normalized_similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Levenshtein_distance",            &dispatch_Levenshtein_distance,
+        "rapidfuzz.distance.Levenshtein.distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Levenshtein_similarity",          &dispatch_Levenshtein_similarity,
+        "rapidfuzz.distance.Levenshtein.similarity.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Levenshtein_normalized_distance", &dispatch_Levenshtein_normalized_distance,
+        "rapidfuzz.distance.Levenshtein.normalized_distance.",
+        nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_dist_Levenshtein_normalized_similarity", &dispatch_Levenshtein_normalized_similarity,
+        "rapidfuzz.distance.Levenshtein.normalized_similarity.",
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
 
