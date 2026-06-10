@@ -482,14 +482,37 @@ inline double dispatch_DamerauLevenshtein_normalized_similarity(
 
 // ---- LCSseq ---------------------------------------------------------------
 //
-// distance = max(|s1|, |s2|) - LCS(s1, s2); similarity = LCS(s1, s2).
+// Derived from the bit-parallel Indel kernel via the algebraic
+// identity ``indel(a, b) = |a| + |b| - 2 * LCS(a, b)`` — i.e.
+// ``LCS = (|a| + |b| - indel) / 2`` and
+// ``LCSseq.distance = max(|a|, |b|) - LCS``. Routing through the
+// already-fast Indel multi-word kernel sidesteps the previous LCS
+// scalar-DP fallback, which was 33-61× slower than rapidfuzz on
+// multi-word inputs.
+
+inline std::size_t lcs_via_indel(nb::handle a, nb::handle b,
+                                  std::size_t la, std::size_t lb) {
+  const std::size_t indel = run_kernel(a, b,
+      [](std::span<const std::uint8_t> ax, std::span<const std::uint8_t> bx) -> double {
+        return static_cast<double>(
+            ::stride_align::indel::indel_distance_u8(ax, bx));
+      },
+      [](const std::vector<lcs::Codepoint>& ax,
+         const std::vector<lcs::Codepoint>& bx) -> double {
+        return static_cast<double>(::stride_align::indel::indel_distance<lcs::Codepoint>(
+            std::span<const lcs::Codepoint>(ax),
+            std::span<const lcs::Codepoint>(bx)));
+      });
+  return (la + lb - indel) / 2U;
+}
 
 inline nb::object dispatch_LCSseq_similarity(
     nb::handle s1, nb::handle s2,
     nb::handle processor, nb::handle score_cutoff) {
   (void)score_cutoff;
   const Prepped p = prepare(s1, s2, processor);
-  const std::size_t lcs = ::stride_align::lcs::dispatch_lcs_length(p.ah, p.bh);
+  const std::size_t lcs = lcs_via_indel(p.ah, p.bh,
+      length_of(p.ah), length_of(p.bh));
   return nb::cast(lcs);
 }
 
@@ -501,7 +524,7 @@ inline nb::object dispatch_LCSseq_distance(
   const std::size_t la = length_of(p.ah);
   const std::size_t lb = length_of(p.bh);
   const std::size_t max_d = la > lb ? la : lb;
-  const std::size_t lcs = ::stride_align::lcs::dispatch_lcs_length(p.ah, p.bh);
+  const std::size_t lcs = lcs_via_indel(p.ah, p.bh, la, lb);
   return nb::cast(max_d - lcs);
 }
 
@@ -514,7 +537,7 @@ inline double dispatch_LCSseq_normalized_distance(
   const std::size_t lb = length_of(p.bh);
   const std::size_t max_d = la > lb ? la : lb;
   if (max_d == 0U) return 0.0;
-  const std::size_t lcs = ::stride_align::lcs::dispatch_lcs_length(p.ah, p.bh);
+  const std::size_t lcs = lcs_via_indel(p.ah, p.bh, la, lb);
   return static_cast<double>(max_d - lcs) / static_cast<double>(max_d);
 }
 
