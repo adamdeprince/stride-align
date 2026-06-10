@@ -269,48 +269,15 @@ class _Indel:
 
 class _Hamming:
     """Hamming distance with rapidfuzz ``pad=True`` semantics (padded
-    with mismatches) by default. The four hot methods re-export the
-    C++ dispatchers; non-default ``pad=False`` requires the Python
-    guard (equal-length precondition check)."""
+    with mismatches) by default. ``pad`` and the length-mismatch
+    ValueError both live in the C++ dispatcher, so the Python class
+    is a direct re-export — same per-call overhead profile as
+    ``_Indel``."""
 
-    _distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_distance)
-    _similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_similarity)
-    _normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_normalized_distance)
-    _normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_normalized_similarity)
-
-    @staticmethod
-    def distance(s1, s2, *, pad: bool = True,
-                 processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        if not pad and _len(s1) != _len(s2):
-            raise ValueError("Hamming distance requires equal-length inputs when pad=False")
-        return _Hamming._distance(s1, s2, processor=processor, score_cutoff=score_cutoff)
-
-    @staticmethod
-    def similarity(s1, s2, *, pad: bool = True,
-                   processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        if not pad and _len(s1) != _len(s2):
-            raise ValueError("Hamming distance requires equal-length inputs when pad=False")
-        return _Hamming._similarity(s1, s2, processor=processor, score_cutoff=score_cutoff)
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, pad: bool = True,
-                            processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        if not pad and _len(s1) != _len(s2):
-            raise ValueError("Hamming distance requires equal-length inputs when pad=False")
-        return _Hamming._normalized_distance(s1, s2, processor=processor, score_cutoff=score_cutoff)
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, pad: bool = True,
-                              processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        if not pad and _len(s1) != _len(s2):
-            raise ValueError("Hamming distance requires equal-length inputs when pad=False")
-        return _Hamming._normalized_similarity(s1, s2, processor=processor, score_cutoff=score_cutoff)
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_normalized_similarity)
 
 
 # --------------------------------------------------------------------

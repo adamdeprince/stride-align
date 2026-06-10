@@ -3427,20 +3427,24 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   using ::stride_align::dist_shim::dispatch_Hamming_normalized_distance;
   using ::stride_align::dist_shim::dispatch_Hamming_normalized_similarity;
   m.def("_shim_dist_Hamming_distance",              &dispatch_Hamming_distance,
-        "rapidfuzz.distance.Hamming.distance (padded).",
+        "rapidfuzz.distance.Hamming.distance.",
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("pad") = true,
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
   m.def("_shim_dist_Hamming_similarity",            &dispatch_Hamming_similarity,
         "rapidfuzz.distance.Hamming.similarity.",
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("pad") = true,
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
   m.def("_shim_dist_Hamming_normalized_distance",   &dispatch_Hamming_normalized_distance,
         "rapidfuzz.distance.Hamming.normalized_distance.",
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("pad") = true,
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
   m.def("_shim_dist_Hamming_normalized_similarity", &dispatch_Hamming_normalized_similarity,
         "rapidfuzz.distance.Hamming.normalized_similarity.",
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
+        nb::arg("pad") = true,
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
 
   // Jaro

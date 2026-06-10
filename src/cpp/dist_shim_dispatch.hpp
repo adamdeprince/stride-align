@@ -233,17 +233,24 @@ inline double dispatch_Levenshtein_normalized_distance(
 // pad=False guard stays in the Python shim because it's a precondition
 // check, not a hot-path computation.
 
-inline nb::object dispatch_Hamming_distance(
-    nb::handle s1, nb::handle s2,
-    nb::handle processor, nb::handle score_cutoff) {
-  (void)score_cutoff;  // Hamming has no kernel-level cutoff yet
-  const Prepped p = prepare(s1, s2, processor);
-  const std::size_t la = length_of(p.ah);
-  const std::size_t lb = length_of(p.bh);
+// Common Hamming distance computation. ``pad=True`` (default) treats
+// the length-difference as that many extra mismatches; ``pad=False``
+// raises ValueError on length mismatch (matches rapidfuzz). Moving
+// the ``pad`` validation into C++ lets the Python class shim be a
+// direct re-export, eliminating the per-call Python-frame overhead.
+inline std::size_t hamming_distance_core(
+    nb::handle ah, nb::handle bh, bool pad) {
+  const std::size_t la = length_of(ah);
+  const std::size_t lb = length_of(bh);
+  if (!pad && la != lb) {
+    PyErr_SetString(PyExc_ValueError,
+                    "Hamming distance requires equal-length inputs when pad=False");
+    throw nb::python_error();
+  }
   const std::size_t common = la < lb ? la : lb;
   std::size_t mismatches = 0;
   if (common > 0) {
-    const double m = run_kernel(p.ah, p.bh,
+    const double m = run_kernel(ah, bh,
         [common](std::span<const std::uint8_t> a,
                   std::span<const std::uint8_t> b) -> double {
           return static_cast<double>(
@@ -259,39 +266,46 @@ inline nb::object dispatch_Hamming_distance(
         });
     mismatches = static_cast<std::size_t>(m);
   }
-  return nb::cast(mismatches + (la > lb ? la - lb : lb - la));
+  return mismatches + (la > lb ? la - lb : lb - la);
+}
+
+inline nb::object dispatch_Hamming_distance(
+    nb::handle s1, nb::handle s2,
+    bool pad, nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;  // Hamming has no kernel-level cutoff yet
+  const Prepped p = prepare(s1, s2, processor);
+  return nb::cast(hamming_distance_core(p.ah, p.bh, pad));
 }
 
 inline nb::object dispatch_Hamming_similarity(
     nb::handle s1, nb::handle s2,
-    nb::handle processor, nb::handle score_cutoff) {
+    bool pad, nb::handle processor, nb::handle score_cutoff) {
+  (void)score_cutoff;
   const Prepped p = prepare(s1, s2, processor);
   const std::size_t la = length_of(p.ah);
   const std::size_t lb = length_of(p.bh);
   const std::size_t max_d = la > lb ? la : lb;
-  nb::object d_obj = dispatch_Hamming_distance(s1, s2, processor, score_cutoff);
-  const std::size_t d = nb::cast<std::size_t>(d_obj);
+  const std::size_t d = hamming_distance_core(p.ah, p.bh, pad);
   return nb::cast(max_d - d);
 }
 
 inline double dispatch_Hamming_normalized_distance(
     nb::handle s1, nb::handle s2,
-    nb::handle processor, nb::handle score_cutoff) {
+    bool pad, nb::handle processor, nb::handle score_cutoff) {
   (void)score_cutoff;
   const Prepped p = prepare(s1, s2, processor);
   const std::size_t la = length_of(p.ah);
   const std::size_t lb = length_of(p.bh);
   const std::size_t max_d = la > lb ? la : lb;
   if (max_d == 0U) return 0.0;
-  const std::size_t d = nb::cast<std::size_t>(
-      dispatch_Hamming_distance(s1, s2, processor, nb::none()));
+  const std::size_t d = hamming_distance_core(p.ah, p.bh, pad);
   return static_cast<double>(d) / static_cast<double>(max_d);
 }
 
 inline double dispatch_Hamming_normalized_similarity(
     nb::handle s1, nb::handle s2,
-    nb::handle processor, nb::handle score_cutoff) {
-  return 1.0 - dispatch_Hamming_normalized_distance(s1, s2, processor, score_cutoff);
+    bool pad, nb::handle processor, nb::handle score_cutoff) {
+  return 1.0 - dispatch_Hamming_normalized_distance(s1, s2, pad, processor, score_cutoff);
 }
 
 // ---- Jaro -----------------------------------------------------------------
