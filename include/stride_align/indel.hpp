@@ -954,6 +954,98 @@ inline PreparedIndelPattern<Token> prepare_indel_pattern(
   return prepared;
 }
 
+// Multi-word kernel that accepts a pre-built PEQ buffer instead of
+// rebuilding it from the pattern. The buffer layout is the standard
+// flat ``[256][K]`` row-major: ``peq[c * K + b]`` is block ``b`` of
+// the bitmap for character ``c``. Used by ``partial_ratio`` (and
+// other "fixed pattern, many text windows" loops) to amortise the
+// 256 * K * 8-byte PEQ fill across many calls.
+//
+// Carry chain + cutoff bookkeeping match ``indel_distance_multi_word_u8``;
+// only the PEQ source changes.
+inline std::size_t indel_distance_multi_word_u8_with_peq(
+    const std::uint64_t* peq, std::size_t K,
+    std::size_t m,  // pattern length
+    std::span<const std::uint8_t> text,
+    std::size_t cutoff = kNoCutoff) {
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+
+  // Stack-resident V[K] when K small (K <= 8 covers up to m = 512;
+  // partial_ratio's hot path is K <= 4). Heap fallback for K > 8.
+  constexpr std::size_t kStackMaxK = 8U;
+  std::uint64_t V_stack[kStackMaxK];
+  std::vector<std::uint64_t> V_heap;
+  std::uint64_t* V;
+  if (K <= kStackMaxK) {
+    V = V_stack;
+  } else {
+    V_heap.resize(K);
+    V = V_heap.data();
+  }
+
+  const std::uint64_t one = 1U;
+  const std::size_t last_bits = m - (K - 1U) * 64U;
+  const std::uint64_t mask_last =
+      (last_bits == 64U) ? ~std::uint64_t{0} : ((one << last_bits) - 1U);
+  for (std::size_t k = 0; k < K - 1U; ++k) V[k] = ~std::uint64_t{0};
+  V[K - 1U] = mask_last;
+
+  const bool has_cutoff = cutoff != kNoCutoff;
+  const std::size_t bail_threshold = m + n + (has_cutoff ? cutoff : 0U);
+
+  std::size_t j = 0;
+  for (const std::uint8_t c : text) {
+    const std::uint64_t* peq_row = peq + static_cast<std::size_t>(c) * K;
+    std::uint64_t carry_in = 0;
+    for (std::size_t k = 0; k < K; ++k) {
+      const std::uint64_t Vk = V[k];
+      const std::uint64_t Uk = Vk & peq_row[k];
+      std::uint64_t s1;
+      const bool c1 = __builtin_add_overflow(Vk, Uk, &s1);
+      std::uint64_t s2;
+      const bool c2 = __builtin_add_overflow(s1, carry_in, &s2);
+      carry_in = static_cast<std::uint64_t>(c1) +
+                  static_cast<std::uint64_t>(c2);
+      const std::uint64_t mask_k =
+          (k == K - 1U) ? mask_last : ~std::uint64_t{0};
+      V[k] = (s2 | (Vk - Uk)) & mask_k;
+    }
+    ++j;
+    if (has_cutoff) {
+      std::size_t pc = 0;
+      for (std::size_t k = 0; k < K; ++k) {
+        pc += static_cast<std::size_t>(std::popcount(V[k]));
+      }
+      const std::size_t lower_bound_score = 2U * (j + pc);
+      if (lower_bound_score > bail_threshold) {
+        return cutoff + 1U;
+      }
+    }
+  }
+  std::size_t lcs_unmatched = 0;
+  for (std::size_t k = 0; k < K; ++k) {
+    lcs_unmatched += static_cast<std::size_t>(std::popcount(V[k]));
+  }
+  return m + n - 2U * (m - lcs_unmatched);
+}
+
+// Build a multi-word PEQ for a byte-pattern into a caller-provided
+// vector (sized 256 * K). Skips the per-call allocation when callers
+// own a persistent buffer (e.g. ``partial_ratio``).
+inline void build_multi_word_peq_u8(
+    std::span<const std::uint8_t> pattern,
+    std::size_t K,
+    std::vector<std::uint64_t>& peq) {
+  peq.assign(256U * K, 0U);
+  const std::uint64_t one = 1U;
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
+        one << (i & 63U);
+  }
+}
+
 template <typename Token>
 inline std::size_t indel_distance_prepared(
     const PreparedIndelPattern<Token>& prepared,

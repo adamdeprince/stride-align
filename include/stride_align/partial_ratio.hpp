@@ -144,6 +144,24 @@ inline double partial_ratio_one_direction(
 
   double best = initial_best;
 
+  // For multi-word byte patterns the per-window indel call would
+  // otherwise rebuild the 256 * K * 8-byte PEQ on every call (50+
+  // boundary windows × ~1000 ns PEQ fill = 50+ µs of pure overhead).
+  // Build it once into a thread-local buffer, then have the per-
+  // window kernel skip the rebuild.
+  thread_local std::vector<std::uint64_t> mw_peq;
+  const std::size_t mw_K = (n + 63U) / 64U;
+  const bool use_mw_peq =
+      std::is_same_v<Token, std::uint8_t> && n > 64U;
+  if (use_mw_peq) {
+    if constexpr (std::is_same_v<Token, std::uint8_t>) {
+      ::stride_align::indel::build_multi_word_peq_u8(
+          std::span<const std::uint8_t>(
+              reinterpret_cast<const std::uint8_t*>(short_s.data()), n),
+          mw_K, mw_peq);
+    }
+  }
+
   // Per-window call: builds the right cutoff, runs the Indel kernel
   // against the prepared PEQ, and returns the **actual indel distance**
   // (or ``cutoff + 1`` if the kernel bailed). The score update on
@@ -153,10 +171,26 @@ inline double partial_ratio_one_direction(
   auto run_window = [&](std::size_t start, std::size_t w) -> std::size_t {
     const std::size_t total = n + w;
     const std::size_t cutoff = cutoff_for(best, total);
-    const std::size_t d = ::stride_align::indel::indel_distance_prepared<Token>(
-        prepared,
-        std::span<const Token>(long_s.data() + start, w),
-        cutoff);
+    std::size_t d;
+    if (use_mw_peq) {
+      if constexpr (std::is_same_v<Token, std::uint8_t>) {
+        d = ::stride_align::indel::indel_distance_multi_word_u8_with_peq(
+            mw_peq.data(), mw_K, n,
+            std::span<const std::uint8_t>(
+                reinterpret_cast<const std::uint8_t*>(long_s.data() + start), w),
+            cutoff);
+      } else {
+        d = ::stride_align::indel::indel_distance_prepared<Token>(
+            prepared,
+            std::span<const Token>(long_s.data() + start, w),
+            cutoff);
+      }
+    } else {
+      d = ::stride_align::indel::indel_distance_prepared<Token>(
+          prepared,
+          std::span<const Token>(long_s.data() + start, w),
+          cutoff);
+    }
     if (cutoff != ::stride_align::indel::kNoCutoff && d > cutoff) {
       return d;  // bailed; ``d == cutoff + 1`` is a sound upper-bound
     }
@@ -183,10 +217,14 @@ inline double partial_ratio_one_direction(
   if (n <= m) {
     const std::size_t max_offset = m - n;
 
-    // Stack-resident scratch sized at compile-time-unknown ``max_offset+1``.
-    // ``UINT64_MAX`` sentinel marks unevaluated offsets.
+    // Thread-local scratch — the D-by-offset cache and the work stack
+    // would otherwise allocate per partial_ratio call. ``assign``
+    // resets contents without releasing the underlying allocation.
     constexpr std::size_t kUnevaluated = ~std::size_t{0};
-    std::vector<std::size_t> D(max_offset + 1U, kUnevaluated);
+    thread_local std::vector<std::size_t> D;
+    thread_local std::vector<std::pair<std::size_t, std::size_t>> work;
+    D.assign(max_offset + 1U, kUnevaluated);
+    work.clear();
 
     auto eval = [&](std::size_t s) -> std::size_t {
       if (D[s] != kUnevaluated) return D[s];
@@ -203,31 +241,15 @@ inline double partial_ratio_one_direction(
     }
 
     // Lower bound on indel distance over the open interval ``(a, b)``.
-    //
-    // Shifting a fixed-length-n window by one offset drops one
-    // character at the LEFT and adds one at the RIGHT. Each side can
-    // independently change the LCS by 0 or 1, so the indel
-    // ``= m + n - 2 * LCS`` can change by AT MOST 2 per offset step
-    // (not 1, as one might naïvely expect for "shift by one position").
-    // Hence the per-step bound is ``|D(s+1) - D(s)| <= 2``.
-    //
-    // Combining the two endpoint bounds:
-    //   D(s) >= D(a) - 2 * (s - a)
-    //   D(s) >= D(b) - 2 * (b - s)
-    // Minimum over s in (a, b) of the max of those two lines is
-    //   (D(a) + D(b)) / 2 - (b - a)
-    // which is the tightest interval-wide lower bound. Clamped at 0
-    // because indel distances are non-negative.
+    // For fixed-length-n windows ``|D(s+1) - D(s)| <= 2``, so the
+    // tightest interval-wide bound is ``(D(a) + D(b)) / 2 - (b - a)``,
+    // clamped at 0.
     auto interval_bound = [](std::size_t Da, std::size_t Db, std::size_t span) {
       const std::size_t sum = Da + Db;
       const std::size_t two_span = 2U * span;
       return sum <= two_span ? std::size_t{0} : ((sum - two_span) / 2U);
     };
 
-    // Stack-based divide-and-conquer. The interior-phase total is
-    // ``2 * n`` (windows are always length n there), so the cutoff
-    // converts uniformly.
-    std::vector<std::pair<std::size_t, std::size_t>> work;
     if (max_offset >= 2) work.push_back({0, max_offset});
     while (!work.empty()) {
       const auto [a, b] = work.back();
@@ -235,8 +257,7 @@ inline double partial_ratio_one_direction(
       if (b <= a + 1U) continue;  // no interior offset
 
       const std::size_t bound = interval_bound(D[a], D[b], b - a);
-      const std::size_t cutoff_d =
-          cutoff_for(best, 2U * n);
+      const std::size_t cutoff_d = cutoff_for(best, 2U * n);
       if (cutoff_d != ::stride_align::indel::kNoCutoff && bound > cutoff_d) {
         continue;  // entire interval can't beat current best
       }
@@ -245,7 +266,6 @@ inline double partial_ratio_one_direction(
       eval(mid);
       if (best >= 1.0) return 1.0;
 
-      // Recurse on the two halves.
       work.push_back({mid, b});
       work.push_back({a, mid});
     }
