@@ -2017,6 +2017,28 @@ ratcliff_obershelp_similarity = (
 )
 
 
+# Underlying C++ kernel for ``sa.partial_ratio`` (and by extension the
+# rapidfuzz shim's ``partial_*`` family). Operates on codepoints
+# directly, with the matching-block enumeration and per-window Indel
+# kernel all inside C++ — one Python boundary crossing per call
+# instead of one per matching block × candidate window.
+_partial_ratio_kernel = _LEVENSHTEIN_BACKEND._partial_ratio_kernel
+
+# token_sort_ratio / token_set_ratio C++ kernels. Same one-crossing
+# principle: whitespace tokenisation, sort or set algebra, candidate-
+# string construction, and per-candidate Indel calls all happen inside
+# C++. Both return values in ``[0, 1]``.
+_token_sort_ratio_kernel = _LEVENSHTEIN_BACKEND._token_sort_ratio_kernel
+_token_set_ratio_kernel  = _LEVENSHTEIN_BACKEND._token_set_ratio_kernel
+
+# Full WRatio kernel: the rapidfuzz composite recipe (ratio + len_ratio-
+# branched token / partial variants) executed in C++ with the
+# short-circuit that skips remaining components once the running best
+# exceeds the maximum scaled ceiling. Closes the ~4× WRatio gap that
+# was driven entirely by per-component Python boundary crossings.
+_wratio_kernel = _LEVENSHTEIN_BACKEND._wratio_kernel
+
+
 def ratcliff_obershelp_similarities(
     query: object, targets: object
 ) -> np.ndarray:

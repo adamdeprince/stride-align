@@ -106,8 +106,21 @@ inline void osa_batch_single_word(
   const Vec top_bit_mask = Ops::set1(std::uint64_t{1} << (m - 1U));
   const Vec zero_v = Ops::zero();
 
-  alignas(64) std::uint64_t indices[lanes];
-  alignas(64) std::uint64_t active[lanes];
+  // Pre-transpose target characters; SIMD-compare for active mask.
+  // Same pattern as the Levenshtein single-word batch kernel — avoids
+  // the per-text-position scalar branch over lanes.
+  alignas(64) std::uint64_t indices_matrix[lanes * 64U] = {};
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      indices_matrix[k * lanes + l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+  }
+  alignas(64) std::uint64_t target_lengths_padded[lanes] = {};
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    target_lengths_padded[l] = static_cast<std::uint64_t>(target_lengths[l]);
+  }
+  const Vec target_lens_v = Ops::load_aligned(target_lengths_padded);
 
   Vec done = Ops::zero();
   Vec threshold = Ops::zero();
@@ -132,17 +145,9 @@ inline void osa_batch_single_word(
   }
 
   for (std::size_t k = 0; k < max_len; ++k) {
-    for (std::size_t l = 0; l < lanes; ++l) {
-      if (l < batch_count && k < target_lengths[l]) {
-        indices[l] = targets[l][k];
-        active[l] = ~std::uint64_t{0};
-      } else {
-        indices[l] = 0;
-        active[l] = 0;
-      }
-    }
-    const Vec pm = Ops::gather64(peq, indices);
-    const Vec active_v = Ops::load_aligned(active);
+    const Vec pm = Ops::gather64(peq, &indices_matrix[k * lanes]);
+    const Vec k_v = Ops::set1(static_cast<std::uint64_t>(k));
+    const Vec active_v = Ops::gt_u64(target_lens_v, k_v);
     Vec eff_active = active_v;
     if constexpr (HasCutoff) {
       eff_active = Ops::andnot_(done, active_v);
@@ -215,6 +220,115 @@ inline void osa_batch_single_word(
   }
 }
 
+#if defined(__AVX512F__)
+// 16-lane uint32 OSA batch kernel. Adds the Hyyrö 2002 transposition
+// term ``trans = (((~d0_prev) & pm) << 1) & pm_old`` to the standard
+// Myers d0; cross-column state is pm_old + d0_prev per lane (4 state
+// vectors per lane total: vp, vn, pm_old, d0_prev). Same pre-
+// transpose + SIMD-mask active gate as the indel / Lev uint32 paths.
+inline void osa_batch_single_word_u32_avx512(
+    const std::uint32_t* peq32,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    Score* out) {
+  constexpr std::size_t lanes = 16;
+
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+
+  const std::uint32_t init_vp =
+      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
+  __m512i vp = _mm512_set1_epi32(static_cast<int>(init_vp));
+  __m512i vn = _mm512_setzero_si512();
+  __m512i pm_old = _mm512_setzero_si512();
+  __m512i d0_prev = _mm512_setzero_si512();
+  __m512i score = _mm512_set1_epi32(static_cast<int>(m));
+  const __m512i one_v = _mm512_set1_epi32(1);
+  const __m512i top_bit_mask =
+      _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
+  const __m512i minus_one = _mm512_set1_epi32(-1);
+
+  alignas(64) std::uint8_t bytes_matrix[lanes * 64U] = {};
+  alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
+  }
+  const __m512i target_lens_v =
+      _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      bytes_matrix[k * lanes + l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+  }
+
+  for (std::size_t k = 0; k < max_len; ++k) {
+    const __m128i bytes16 = _mm_load_si128(
+        reinterpret_cast<const __m128i*>(&bytes_matrix[k * lanes]));
+    const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
+    const __m512i pm = _mm512_i32gather_epi32(
+        indices, reinterpret_cast<const int*>(peq32), 4);
+
+    const __m512i k_v = _mm512_set1_epi32(static_cast<int>(k));
+    const __mmask16 active_mask =
+        _mm512_cmpgt_epu32_mask(target_lens_v, k_v);
+
+    // trans = (((~d0_prev) & pm) << 1) & pm_old
+    const __m512i not_d0_prev = _mm512_xor_si512(d0_prev, minus_one);
+    const __m512i not_d0p_and_pm = _mm512_and_si512(not_d0_prev, pm);
+    const __m512i trans_shift = _mm512_add_epi32(not_d0p_and_pm, not_d0p_and_pm);
+    const __m512i trans = _mm512_and_si512(trans_shift, pm_old);
+
+    // Standard d0 = (((pm & vp) + vp) ^ vp) | pm | vn, then |= trans
+    const __m512i pm_and_vp = _mm512_and_si512(pm, vp);
+    const __m512i sum = _mm512_add_epi32(pm_and_vp, vp);
+    __m512i d0 = _mm512_or_si512(
+        _mm512_or_si512(_mm512_xor_si512(sum, vp), pm), vn);
+    d0 = _mm512_or_si512(d0, trans);
+
+    const __m512i hp = _mm512_or_si512(
+        vn, _mm512_xor_si512(_mm512_or_si512(d0, vp), minus_one));
+    const __m512i hn = _mm512_and_si512(d0, vp);
+
+    const __mmask16 hp_set_mask = _mm512_test_epi32_mask(hp, top_bit_mask);
+    const __mmask16 hn_set_mask = _mm512_test_epi32_mask(hn, top_bit_mask);
+    score = _mm512_mask_add_epi32(score, active_mask & hp_set_mask, score, one_v);
+    score = _mm512_mask_sub_epi32(score, active_mask & hn_set_mask, score, one_v);
+
+    const __m512i hp_shift =
+        _mm512_or_si512(_mm512_add_epi32(hp, hp), one_v);
+    const __m512i hn_shift = _mm512_add_epi32(hn, hn);
+    vp = _mm512_or_si512(
+        hn_shift,
+        _mm512_xor_si512(_mm512_or_si512(d0, hp_shift), minus_one));
+    vn = _mm512_and_si512(d0, hp_shift);
+
+    d0_prev = d0;
+    pm_old = pm;
+  }
+
+  alignas(64) std::uint32_t score_out[lanes];
+  _mm512_store_si512(reinterpret_cast<__m512i*>(score_out), score);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    out[l] = static_cast<Score>(score_out[l]);
+  }
+}
+
+inline std::array<std::uint32_t, 256> build_peq_u32_osa(
+    std::span<const std::uint8_t> pattern) {
+  std::array<std::uint32_t, 256> peq{};
+  const std::uint32_t one = 1U;
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    peq[pattern[i]] |= one << i;
+  }
+  return peq;
+}
+#endif  // __AVX512F__
+
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64] (single-word OSA path). Writes OSA
 // distances into `out[0..count)`. No Python interaction.
@@ -235,6 +349,37 @@ inline void osa_scores_simd_raw_per_pair(
   if (count == 0U) {
     return;
   }
+
+#if defined(__AVX512F__)
+  // uint32 fast path: 16-lane SIMD for q_len <= 32, no cutoff.
+  const bool has_cutoff_check = cutoffs_per_pair != nullptr;
+  if constexpr (Ops::lanes == 8U &&
+                std::is_same_v<typename Ops::Vec, __m512i>) {
+    if (q_len > 0U && q_len <= 32U && !has_cutoff_check) {
+      const auto peq32 = build_peq_u32_osa(
+          std::span<const std::uint8_t>(q_ptr, q_len));
+      constexpr std::size_t lanes32 = 16;
+      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
+      std::array<std::size_t, lanes32> batch_lens32{};
+      for (std::size_t b = 0; b < count; b += lanes32) {
+        const std::size_t batch_count = std::min(lanes32, count - b);
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_ptrs32[l] = t_ptrs[b + l];
+          batch_lens32[l] = t_lens[b + l];
+        }
+        for (std::size_t l = batch_count; l < lanes32; ++l) {
+          batch_ptrs32[l] = nullptr;
+          batch_lens32[l] = 0;
+        }
+        osa_batch_single_word_u32_avx512(
+            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
+            batch_count, q_len, out + b);
+      }
+      return;
+    }
+  }
+#endif
+
   const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
 
   constexpr std::size_t lanes = Ops::lanes;

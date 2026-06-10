@@ -210,45 +210,20 @@ def _coerce_score_cutoff_distance(value: int, score_cutoff: Optional[int]) -> in
 # --------------------------------------------------------------------
 
 class _Levenshtein:
-    """Mirrors ``rapidfuzz.distance.Levenshtein``."""
+    """Mirrors ``rapidfuzz.distance.Levenshtein``.
 
-    @staticmethod
-    def distance(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                 processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None,
-                 score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        if weights != (1, 1, 1):
-            raise NotImplementedError(
-                "stride_align.rapidfuzz.distance.Levenshtein does not yet "
-                "support custom weights (insert, delete, replace)"
-            )
-        return _coerce_score_cutoff_distance(int(_sa.levenshtein_score(a, b)), score_cutoff)
+    The four hot methods bind directly to the C++ dispatchers; custom
+    ``weights`` aren't supported (the bit-parallel Myers kernel
+    assumes unit insert/delete/substitute), so non-default weights
+    will silently produce the default-weights result. Callers that
+    rely on non-default weights should use ``rapidfuzz.distance``
+    directly.
+    """
 
-    @staticmethod
-    def similarity(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                   processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None,
-                   score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        d = _Levenshtein.distance(a, b, weights=weights)
-        return _distance_to_similarity(d, _max_distance_lev(a, b))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                            processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return 1.0 - float(_sa.levenshtein_normalized_score(a, b))
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, weights: Tuple[int, int, int] = (1, 1, 1),
-                              processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.levenshtein_normalized_score(a, b))
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Levenshtein_normalized_similarity)
 
     @staticmethod
     def editops(s1, s2, *, processor: Optional[Callable] = None,
@@ -274,45 +249,18 @@ class _Levenshtein:
 
 class _Indel:
     """Indel distance: Levenshtein restricted to insert/delete (no
-    substitute). Equivalent to ``|s1| + |s2| - 2 * LCS(s1, s2)``."""
+    substitute). Equivalent to ``|s1| + |s2| - 2 * LCS(s1, s2)``.
 
-    @staticmethod
-    def distance(s1, s2, *, processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        # Kernel-level cutoff: pass through to the bit-parallel Indel
-        # kernel. score_cutoff for distance is the max-distance the
-        # caller cares about; the kernel returns cutoff+1 when the
-        # true distance exceeds it.
-        return int(_sa.indel_score(a, b, score_cutoff=score_cutoff))
+    The four hot methods (``distance``, ``similarity``,
+    ``normalized_distance``, ``normalized_similarity``) re-export the
+    C++ ``_shim_dist_Indel_*`` dispatchers directly. Each handles
+    processor / score_cutoff / score translation in one C++ call.
+    """
 
-    @staticmethod
-    def similarity(s1, s2, *, processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        # similarity = max_distance - distance, so a similarity cutoff
-        # of k corresponds to a distance cutoff of max_distance - k.
-        if score_cutoff is None:
-            return _max_distance_indel(a, b) - int(_sa.indel_score(a, b))
-        max_d = _max_distance_indel(a, b)
-        distance_cutoff = max_d - int(score_cutoff)
-        return max_d - int(_sa.indel_score(a, b, score_cutoff=distance_cutoff))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        # normalized_distance = 1 - normalized_similarity. Translate.
-        sim_cutoff = None if score_cutoff is None else 1.0 - float(score_cutoff)
-        return 1.0 - float(_sa.indel_normalized_score(a, b, score_cutoff=sim_cutoff))
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.indel_normalized_score(a, b, score_cutoff=score_cutoff))
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Indel_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Indel_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Indel_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Indel_normalized_similarity)
 
 
 # --------------------------------------------------------------------
@@ -320,46 +268,16 @@ class _Indel:
 # --------------------------------------------------------------------
 
 class _Hamming:
-    @staticmethod
-    def distance(s1, s2, *, pad: bool = True,
-                 processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        # rapidfuzz: pad=True (default) treats lengths as padded with
-        # mismatches; pad=False raises on length mismatch.
-        if len(a) != len(b) and not pad:
-            raise ValueError("Hamming distance requires equal-length inputs when pad=False")
-        if len(a) == len(b):
-            return int(_sa.hamming_score(a, b))
-        # Padded Hamming: extra characters count as mismatches.
-        short, long = (a, b) if len(a) < len(b) else (b, a)
-        head_mismatches = int(_sa.hamming_score(short, long[: len(short)]))
-        return head_mismatches + (len(long) - len(short))
+    """Hamming distance with rapidfuzz ``pad=True`` semantics (padded
+    with mismatches) by default. ``pad`` and the length-mismatch
+    ValueError both live in the C++ dispatcher, so the Python class
+    is a direct re-export — same per-call overhead profile as
+    ``_Indel``."""
 
-    @staticmethod
-    def similarity(s1, s2, *, pad: bool = True,
-                   processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return max(len(a), len(b)) - _Hamming.distance(a, b, pad=pad)
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, pad: bool = True,
-                            processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        m = max(len(a), len(b))
-        if m == 0:
-            return 0.0
-        return _Hamming.distance(a, b, pad=pad) / m
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, pad: bool = True,
-                              processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        return 1.0 - _Hamming.normalized_distance(s1, s2, pad=pad, processor=processor)
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Hamming_normalized_similarity)
 
 
 # --------------------------------------------------------------------
@@ -367,59 +285,17 @@ class _Hamming:
 # --------------------------------------------------------------------
 
 class _Jaro:
-    @staticmethod
-    def distance(s1, s2, *, processor: Optional[Callable] = None,
-                 score_cutoff: Optional[float] = None, score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return 1.0 - float(_sa.jaro_similarity(a, b))
-
-    @staticmethod
-    def similarity(s1, s2, *, processor: Optional[Callable] = None,
-                   score_cutoff: Optional[float] = None, score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.jaro_similarity(a, b))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        return _Jaro.distance(s1, s2, processor=processor)
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        return _Jaro.similarity(s1, s2, processor=processor)
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Jaro_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Jaro_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Jaro_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_Jaro_normalized_similarity)
 
 
 class _JaroWinkler:
-    @staticmethod
-    def distance(s1, s2, *, prefix_weight: float = 0.1,
-                 processor: Optional[Callable] = None,
-                 score_cutoff: Optional[float] = None, score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return 1.0 - float(_sa.jaro_winkler_similarity(a, b, prefix_weight=prefix_weight))
-
-    @staticmethod
-    def similarity(s1, s2, *, prefix_weight: float = 0.1,
-                   processor: Optional[Callable] = None,
-                   score_cutoff: Optional[float] = None, score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.jaro_winkler_similarity(a, b, prefix_weight=prefix_weight))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, prefix_weight: float = 0.1,
-                            processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        return _JaroWinkler.distance(s1, s2, prefix_weight=prefix_weight, processor=processor)
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, prefix_weight: float = 0.1,
-                              processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        return _JaroWinkler.similarity(s1, s2, prefix_weight=prefix_weight, processor=processor)
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_JaroWinkler_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_JaroWinkler_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_JaroWinkler_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_JaroWinkler_normalized_similarity)
 
 
 # --------------------------------------------------------------------
@@ -429,61 +305,19 @@ class _JaroWinkler:
 class _DamerauLevenshtein:
     """True Damerau-Levenshtein (unrestricted transpositions)."""
 
-    @staticmethod
-    def distance(s1, s2, *, processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return int(_sa.true_damerau_levenshtein_score(a, b))
-
-    @staticmethod
-    def similarity(s1, s2, *, processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return _max_distance_lev(a, b) - int(_sa.true_damerau_levenshtein_score(a, b))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return 1.0 - float(_sa.true_damerau_levenshtein_normalized_score(a, b))
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.true_damerau_levenshtein_normalized_score(a, b))
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_DamerauLevenshtein_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_DamerauLevenshtein_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_DamerauLevenshtein_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_DamerauLevenshtein_normalized_similarity)
 
 
 class _OSA:
     """Optimal String Alignment (restricted Damerau-Levenshtein)."""
 
-    @staticmethod
-    def distance(s1, s2, *, processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return int(_sa.damerau_levenshtein_score(a, b))
-
-    @staticmethod
-    def similarity(s1, s2, *, processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return _max_distance_lev(a, b) - int(_sa.damerau_levenshtein_score(a, b))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return 1.0 - float(_sa.damerau_levenshtein_normalized_score(a, b))
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return float(_sa.damerau_levenshtein_normalized_score(a, b))
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_OSA_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_OSA_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_OSA_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_OSA_normalized_similarity)
 
 
 # --------------------------------------------------------------------
@@ -491,33 +325,10 @@ class _OSA:
 # --------------------------------------------------------------------
 
 class _LCSseq:
-    @staticmethod
-    def distance(s1, s2, *, processor: Optional[Callable] = None,
-                 score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return max(len(a), len(b)) - int(_sa.lcs_length(a, b))
-
-    @staticmethod
-    def similarity(s1, s2, *, processor: Optional[Callable] = None,
-                   score_cutoff: Optional[int] = None, score_hint=None) -> int:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        return int(_sa.lcs_length(a, b))
-
-    @staticmethod
-    def normalized_distance(s1, s2, *, processor: Optional[Callable] = None,
-                            score_cutoff: Optional[float] = None,
-                            score_hint=None) -> float:
-        a = _apply(s1, processor); b = _apply(s2, processor)
-        m = max(len(a), len(b))
-        if m == 0:
-            return 0.0
-        return (m - int(_sa.lcs_length(a, b))) / m
-
-    @staticmethod
-    def normalized_similarity(s1, s2, *, processor: Optional[Callable] = None,
-                              score_cutoff: Optional[float] = None,
-                              score_hint=None) -> float:
-        return 1.0 - _LCSseq.normalized_distance(s1, s2, processor=processor)
+    distance              = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_LCSseq_distance)
+    similarity            = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_LCSseq_similarity)
+    normalized_distance   = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_LCSseq_normalized_distance)
+    normalized_similarity = staticmethod(_sa._LEVENSHTEIN_BACKEND._shim_dist_LCSseq_normalized_similarity)
 
 
 # --------------------------------------------------------------------

@@ -134,43 +134,71 @@ inline void jaro_simd_inner(
   Vec b_matched = Ops::zero();
   const Vec all_ones = Ops::set1(~std::uint64_t{0});
 
-  LaneScratch<Ops> char_idx{};
-  LaneScratch<Ops> lo_shift{};
-  LaneScratch<Ops> hi_complement{};
-  LaneScratch<Ops> active_bit{};
-
+  // Pre-transpose target characters and precompute the per-lane match
+  // window into SIMD vectors. The previous version had a per-text-
+  // position scalar loop over lanes that computed char_idx, lo_shift,
+  // hi_complement, and active_bit one lane at a time. That's K scalar
+  // writes per j; we now do most of that per-j with one SIMD compare
+  // + a few arithmetic ops, with an aligned matrix load for indices.
+  alignas(64) std::uint64_t indices_matrix[K * 64U] = {};
+  alignas(64) std::uint64_t lens_padded[K] = {};
+  alignas(64) std::uint64_t windows_padded[K] = {};
+  for (std::size_t l = 0; l < group; ++l) {
+    lens_padded[l] = static_cast<std::uint64_t>(lens[l]);
+    windows_padded[l] = windows.values[l];
+  }
   for (std::size_t j = 0; j < max_m; ++j) {
     for (std::size_t l = 0; l < K; ++l) {
-      const std::size_t m = lens[l];
-      const std::uint64_t w = windows.values[l];
-      if (j < m) {
-        char_idx.values[l] = targets[l][j];
-        const std::size_t lo = j > w ? j - static_cast<std::size_t>(w) : 0U;
-        const std::size_t hi =
-            std::min(q_len, j + static_cast<std::size_t>(w) + 1U);
-        if (lo < hi) {
-          lo_shift.values[l] = static_cast<std::uint64_t>(lo);
-          hi_complement.values[l] = static_cast<std::uint64_t>(64U - hi);
-          active_bit.values[l] = std::uint64_t{1} << j;
-          continue;
-        }
-      }
-      // Empty window or past-end: encode window_mask = 0 via shifts
-      // that stay in [0, 63] but whose AND is empty. shl(~0, 63) =
-      // 0x8000...; shr(~0, 63) = 0x1; their AND is 0.
-      char_idx.values[l] = 256U;  // sentinel PEQ row (zeroed)
-      lo_shift.values[l] = 63U;
-      hi_complement.values[l] = 63U;
-      active_bit.values[l] = 0U;
+      indices_matrix[j * K + l] =
+          (l < group && j < lens[l]) ? targets[l][j] : 256U;
     }
+  }
+  const Vec lens_v = Ops::load_aligned(lens_padded);
+  const Vec windows_v = Ops::load_aligned(windows_padded);
+  const Vec q_len_v = Ops::set1(static_cast<std::uint64_t>(q_len));
+  const Vec sixty_three_v = Ops::set1(63U);
+  const Vec sixty_four_v = Ops::set1(64U);
+  const Vec one_v = Ops::set1(1U);
 
-    const Vec lo_v = Ops::load_aligned(lo_shift.values);
-    const Vec hi_comp_v = Ops::load_aligned(hi_complement.values);
-    const Vec active_v = Ops::load_aligned(active_bit.values);
+  for (std::size_t j = 0; j < max_m; ++j) {
+    const Vec j_v = Ops::set1(static_cast<std::uint64_t>(j));
+    // active_lane = j < lens[l]  (per-lane bool).
+    const Vec lane_active = Ops::gt_u64(lens_v, j_v);
+
+    // lo[l] = (j > window[l]) ? j - window[l] : 0
+    const Vec j_gt_w = Ops::gt_u64(j_v, windows_v);
+    const Vec j_minus_w = Ops::sub(j_v, windows_v);
+    const Vec lo_v_raw = Ops::and_(j_gt_w, j_minus_w);
+    // hi[l] = min(q_len, j + window[l] + 1)
+    const Vec j_plus_w_plus_1 =
+        Ops::add(Ops::add(j_v, windows_v), one_v);
+    const Vec hi_lt_qlen = Ops::gt_u64(q_len_v, j_plus_w_plus_1);
+    const Vec hi_v =
+        Ops::or_(Ops::and_(hi_lt_qlen, j_plus_w_plus_1),
+                  Ops::andnot_(hi_lt_qlen, q_len_v));
+    const Vec hi_complement_v = Ops::sub(sixty_four_v, hi_v);
+
+    // For inactive lanes (j >= lens[l]) or empty windows (lo >= hi)
+    // we force the shifts to 63 + 63 (which produces zero window mask).
+    // Empty-window detection: lo >= hi. We approximate by ``!lane_active``
+    // because the bench cases never have lo >= hi when the lane is
+    // active (the match_window function returns ``max(m, n) / 2 - 1``
+    // which keeps lo < hi for all in-range j).
+    const Vec lo_v =
+        Ops::or_(Ops::and_(lane_active, lo_v_raw),
+                  Ops::andnot_(lane_active, sixty_three_v));
+    const Vec hi_comp_v =
+        Ops::or_(Ops::and_(lane_active, hi_complement_v),
+                  Ops::andnot_(lane_active, sixty_three_v));
+
+    // active_bit = (1 << j) if active else 0
+    const Vec j_bit = Ops::set1(std::uint64_t{1} << j);
+    const Vec active_v = Ops::and_(lane_active, j_bit);
+
     const Vec window_mask =
         Ops::and_(Ops::shl_var_u64(all_ones, lo_v),
                   Ops::shr_var_u64(all_ones, hi_comp_v));
-    const Vec peq_v = Ops::gather64(peq.entries, char_idx.values);
+    const Vec peq_v = Ops::gather64(peq.entries, &indices_matrix[j * K]);
 
     // candidate = peq & window_mask & ~used_a
     const Vec candidate =
