@@ -6,6 +6,45 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## [0.5.0] - 2026-06-10
+
+### Performance
+
+* **rapidfuzz shim full-surface competitive across architectures.**
+  The `stride_align.rapidfuzz` shim now ships C++/nanobind kernels
+  for every public entry point — `fuzz.*`, `distance.*.{distance,
+  similarity, normalized_distance, normalized_similarity}`,
+  `partial_ratio`, `token_sort_ratio`, `token_set_ratio`, `WRatio`,
+  `process.cdist`, `process.extract`. Multi-word bit-parallel
+  kernels for Indel (K=2..K=8 hand-spec + generic), Levenshtein
+  (K=2..K=4 + generic), and OSA (K=2..K=3 + generic) fuse the
+  Hyyrö per-block recurrence so the 64-bit carry chain stays in
+  registers across blocks. `partial_ratio` matches rapidfuzz
+  semantics with a length-skip + incremental triangle-inequality
+  boundary scan, a thread-local interior D-array, and a multi-word
+  PEQ built once per pair and reused across windows. cdist SIMD
+  batch kernels pre-transpose the batch layout once and SIMD-compare
+  the active-lane mask; AVX-512 adds a 16-lane uint32 path for
+  `q_len <= 32`. Jaro's SIMD path computes per-text-position window
+  state in registers. DamerauLevenshtein (unrestricted) gets a
+  byte-specialised flat Lowrance-Wagner DP with an array-indexed
+  last-occurrence table. LCSseq routes through the Indel kernel via
+  the algebraic identity `LCS = (m + n - indel) / 2`. The new
+  `tools/rapidfuzz_shim_full_bench.py` exercises 108 workloads
+  against upstream rapidfuzz 3.14.5; cross-arch results (geomean,
+  upstream / shim — > 1.0 = shim faster):
+
+  | Host                          | Backend                      | Geomean | Wins/Ties/Losses |
+  | ---                           | ---                          | ---:    | ---:             |
+  | Intel AWS                     | `x86_avx10_512`              | 0.94x   | 60 / 4 / 44      |
+  | Mac M-series                  | `macos_arm64_neon`           | 0.98x   | 76 / 1 / 31      |
+  | Loongson                      | `linux_loongarch64_lasx`     | 49.17x  | 108 / 0 / 0      |
+
+  Loongson is a clean sweep because upstream rapidfuzz ships no
+  LoongArch wheel. Full per-workload tables in
+  `BENCHMARK.md#rapidfuzz-shim-full-surface-cross-arch-2026-06-10`
+  and raw JSON under `benchmarks/shim-full-*-2026-06-10.json`.
+
 ### Changed (breaking)
 
 * **`SubstitutionMatrix.encode` no longer case-folds.** Previously

@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "stride-align"
-version = "0.4.1"
+version = "0.5.0"
 description = "SIMD-accelerated fuzzy string matching, sequence alignment (Smith-Waterman / Needleman-Wunsch), edit distance (Levenshtein / OSA / Indel / Jaro-Winkler), phonetic encoders (Soundex / Metaphone / NYSIIS / Caverphone), and Dynamic Time Warping — x86 / ARM / LoongArch / POWER kernels with first-class CJK."
 readme = "README.md"
 requires-python = ">=3.12"

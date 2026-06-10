@@ -957,8 +957,8 @@ channel:
 
 | Channel | URL prefix |
 | --- | --- |
-| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/` |
-| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.4.0/` |
+| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/` |
+| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.5.0/` |
 
 Same wheels on both, pick whichever loads faster from your network.
 The mirror is convenient when GitHub egress is slow from inside
@@ -1010,14 +1010,14 @@ old-world binaries keep working).
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 Mirror:
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### New-world wheel
@@ -1038,14 +1038,14 @@ Then:
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 Mirror:
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### Other notes

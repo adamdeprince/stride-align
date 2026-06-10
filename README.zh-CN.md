@@ -602,8 +602,8 @@ python tools/x86_microbench_regression.py \
 
 | 渠道 | URL 前缀 |
 | --- | --- |
-| GitHub Releases（主渠道） | `https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/` |
-| `stride-align.com` 镜像 | `https://stride-align.com/wheels/v0.4.0/` |
+| GitHub Releases（主渠道） | `https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/` |
+| `stride-align.com` 镜像 | `https://stride-align.com/wheels/v0.5.0/` |
 
 两个渠道提供完全相同的 wheel，挑访问更快的那个用。在国内访问
 GitHub 较慢时，镜像比较方便；GitHub Releases 是规范主页。
@@ -652,14 +652,14 @@ test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 镜像：
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### 新世界 wheel
@@ -679,14 +679,14 @@ sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 镜像：
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.4.0/stride_align-0.4.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### 其他说明
