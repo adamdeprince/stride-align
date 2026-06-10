@@ -90,9 +90,9 @@ inline Prepped prepare(
     p.ah = s1;
     p.bh = s2;
   } else {
-    p.holder_a = nb::steal(PyObject_CallOneArg(processor.ptr(), s1.ptr()));
+    p.holder_a = nb::steal(PyObject_CallFunctionObjArgs(processor.ptr(), s1.ptr(), nullptr));
     if (!p.holder_a.is_valid()) throw nb::python_error();
-    p.holder_b = nb::steal(PyObject_CallOneArg(processor.ptr(), s2.ptr()));
+    p.holder_b = nb::steal(PyObject_CallFunctionObjArgs(processor.ptr(), s2.ptr(), nullptr));
     if (!p.holder_b.is_valid()) throw nb::python_error();
     p.ah = p.holder_a;
     p.bh = p.holder_b;
