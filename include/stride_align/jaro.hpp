@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 #include "stride_align/alignment.hpp"
@@ -220,6 +221,205 @@ inline double jaro_bp_byte_64(
   while (a_bits != 0U) {
     const std::size_t i = static_cast<std::size_t>(std::countr_zero(a_bits));
     const std::size_t k = static_cast<std::size_t>(std::countr_zero(b_bits));
+    if (a[i] != b[k]) {
+      ++half_trans;
+    }
+    a_bits &= a_bits - 1U;
+    b_bits &= b_bits - 1U;
+  }
+
+  const double matches_d = static_cast<double>(matches);
+  const double trans_d = static_cast<double>(half_trans / 2U);
+  return (matches_d / static_cast<double>(n)
+       + matches_d / static_cast<double>(m)
+       + (matches_d - trans_d) / matches_d)
+       / 3.0;
+}
+
+// Arbitrary-length bit-parallel Jaro for byte inputs (no 64-char cap).
+// A faithful bit-parallel transcription of jaro_scalar: it iterates `a`
+// and, for each a[i], takes the leftmost not-yet-used position in b's
+// window — the identical greedy, so the result is bit-for-bit equal to
+// jaro_scalar at every length. The per-a-char match step is O(ceil(m/64))
+// word ops instead of O(window) scalar compares, making the whole
+// function O(n * ceil(m/64)) ~ O(n*m/64): 64x cheaper than the scalar
+// O(n*window) path it replaces, and with no length cliff. PEQ is built
+// over `b`; the W = ceil(m/64) word count is a runtime value.
+inline double jaro_bp_byte_multiword(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) {
+  const std::size_t n = a.size();
+  const std::size_t m = b.size();
+  if (n == 0U && m == 0U) {
+    return 1.0;
+  }
+  if (n == 0U || m == 0U) {
+    return 0.0;
+  }
+
+  const std::size_t window = match_window(n, m);
+  const std::size_t wb = (m + 63U) / 64U;  // words spanning b's positions
+  const std::size_t wa = (n + 63U) / 64U;  // words spanning a's positions
+
+  // PEQ over b: bit j of peq row b[j] is set. 256 rows of `wb` words.
+  std::vector<std::uint64_t> peq(256U * wb, 0U);
+  for (std::size_t j = 0; j < m; ++j) {
+    peq[static_cast<std::size_t>(b[j]) * wb + (j >> 6U)] |=
+        std::uint64_t{1} << (j & 63U);
+  }
+
+  std::vector<std::uint64_t> used_b(wb, 0U);
+  std::vector<std::uint64_t> a_matched(wa, 0U);
+  std::size_t matches = 0U;
+
+  for (std::size_t i = 0; i < n; ++i) {
+    const std::size_t lo = i > window ? i - window : 0U;
+    const std::size_t hi = std::min(i + window + 1U, m);
+    if (lo >= hi) {
+      continue;
+    }
+    const std::uint64_t* row = peq.data() + static_cast<std::size_t>(a[i]) * wb;
+    // Leftmost unused b-position in [lo, hi) matching a[i]: scan words
+    // low->high; the first word holding a candidate has the lowest
+    // position, and its lowest set bit is the leftmost one.
+    const std::size_t w_lo = lo >> 6U;
+    const std::size_t w_hi = (hi - 1U) >> 6U;
+    for (std::size_t w = w_lo; w <= w_hi; ++w) {
+      const std::size_t base = w * 64U;
+      const std::size_t blo = lo > base ? lo - base : 0U;
+      const std::size_t bhi = std::min<std::size_t>(64U, hi - base);
+      const std::uint64_t cand = row[w] & bit_range(blo, bhi) & ~used_b[w];
+      if (cand != 0U) {
+        used_b[w] |= cand & (~cand + 1U);
+        a_matched[i >> 6U] |= std::uint64_t{1} << (i & 63U);
+        ++matches;
+        break;
+      }
+    }
+  }
+
+  if (matches == 0U) {
+    return 0.0;
+  }
+
+  // Transposition: lockstep ascending walk over the matched positions of
+  // a (a_matched) and b (used_b), counting pairs whose chars differ.
+  std::size_t half_trans = 0U;
+  std::size_t wa_i = 0U;
+  std::size_t wb_i = 0U;
+  std::uint64_t a_bits = a_matched[0];
+  std::uint64_t b_bits = used_b[0];
+  for (std::size_t c = 0; c < matches; ++c) {
+    while (a_bits == 0U) {
+      a_bits = a_matched[++wa_i];
+    }
+    while (b_bits == 0U) {
+      b_bits = used_b[++wb_i];
+    }
+    const std::size_t i =
+        wa_i * 64U + static_cast<std::size_t>(std::countr_zero(a_bits));
+    const std::size_t k =
+        wb_i * 64U + static_cast<std::size_t>(std::countr_zero(b_bits));
+    if (a[i] != b[k]) {
+      ++half_trans;
+    }
+    a_bits &= a_bits - 1U;
+    b_bits &= b_bits - 1U;
+  }
+
+  const double matches_d = static_cast<double>(matches);
+  const double trans_d = static_cast<double>(half_trans / 2U);
+  return (matches_d / static_cast<double>(n)
+       + matches_d / static_cast<double>(m)
+       + (matches_d - trans_d) / matches_d)
+       / 3.0;
+}
+
+// Arbitrary-length, arbitrary-alphabet bit-parallel Jaro for wider tokens
+// (UCS-2 / UCS-4 / object sequences). Same a-outer greedy as jaro_scalar
+// — bit-identical at every length — but the PEQ is a hash map keyed by
+// token value (the alphabet is sparse and can be huge, so a dense table
+// is out). O(n * ceil(m/64)) with O(1) amortized map lookups; replaces
+// the O(n*window) scalar reference on the wide-token path.
+template <typename Token>
+inline double jaro_bp_token_multiword(
+    std::span<const Token> a,
+    std::span<const Token> b) {
+  const std::size_t n = a.size();
+  const std::size_t m = b.size();
+  if (n == 0U && m == 0U) {
+    return 1.0;
+  }
+  if (n == 0U || m == 0U) {
+    return 0.0;
+  }
+
+  const std::size_t window = match_window(n, m);
+  const std::size_t wb = (m + 63U) / 64U;
+  const std::size_t wa = (n + 63U) / 64U;
+
+  // PEQ over b, keyed by token value: row[token] has bit j set for each
+  // j where b[j] == token. `wb` words per distinct token.
+  std::unordered_map<Token, std::vector<std::uint64_t>> peq;
+  for (std::size_t j = 0; j < m; ++j) {
+    auto& row = peq[b[j]];
+    if (row.empty()) {
+      row.assign(wb, 0U);
+    }
+    row[j >> 6U] |= std::uint64_t{1} << (j & 63U);
+  }
+
+  std::vector<std::uint64_t> used_b(wb, 0U);
+  std::vector<std::uint64_t> a_matched(wa, 0U);
+  std::size_t matches = 0U;
+
+  for (std::size_t i = 0; i < n; ++i) {
+    const std::size_t lo = i > window ? i - window : 0U;
+    const std::size_t hi = std::min(i + window + 1U, m);
+    if (lo >= hi) {
+      continue;
+    }
+    const auto it = peq.find(a[i]);
+    if (it == peq.end()) {
+      continue;
+    }
+    const std::uint64_t* row = it->second.data();
+    const std::size_t w_lo = lo >> 6U;
+    const std::size_t w_hi = (hi - 1U) >> 6U;
+    for (std::size_t w = w_lo; w <= w_hi; ++w) {
+      const std::size_t base = w * 64U;
+      const std::size_t blo = lo > base ? lo - base : 0U;
+      const std::size_t bhi = std::min<std::size_t>(64U, hi - base);
+      const std::uint64_t cand = row[w] & bit_range(blo, bhi) & ~used_b[w];
+      if (cand != 0U) {
+        used_b[w] |= cand & (~cand + 1U);
+        a_matched[i >> 6U] |= std::uint64_t{1} << (i & 63U);
+        ++matches;
+        break;
+      }
+    }
+  }
+
+  if (matches == 0U) {
+    return 0.0;
+  }
+
+  std::size_t half_trans = 0U;
+  std::size_t wa_i = 0U;
+  std::size_t wb_i = 0U;
+  std::uint64_t a_bits = a_matched[0];
+  std::uint64_t b_bits = used_b[0];
+  for (std::size_t c = 0; c < matches; ++c) {
+    while (a_bits == 0U) {
+      a_bits = a_matched[++wa_i];
+    }
+    while (b_bits == 0U) {
+      b_bits = used_b[++wb_i];
+    }
+    const std::size_t i =
+        wa_i * 64U + static_cast<std::size_t>(std::countr_zero(a_bits));
+    const std::size_t k =
+        wb_i * 64U + static_cast<std::size_t>(std::countr_zero(b_bits));
     if (a[i] != b[k]) {
       ++half_trans;
     }

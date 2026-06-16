@@ -42,17 +42,16 @@ inline double dispatch_jaro_one(nb::handle query, nb::handle target) {
     std::size_t t_len = 0;
     bv::view(query.ptr(), q_kind, q_ptr, q_len);
     bv::view(target.ptr(), t_kind, t_ptr, t_len);
-    // Bit-parallel fast path when both lengths fit in a 64-bit word.
-    // Above 64 chars on either side we fall through to the scalar
-    // reference (the bit-parallel kernel could be extended to multi-
-    // word, but typical fuzzy-match inputs are short — names,
-    // addresses, search terms — and the scalar path is correct).
+    // Bit-parallel at every length: the unrolled single-word kernel when
+    // both sides fit in a 64-bit word (the common short-string case),
+    // the runtime-W multi-word kernel otherwise. Both are O(n*ceil(m/64))
+    // — no O(n*window) scalar cliff at 64 chars.
     if (q_len <= 64U && t_len <= 64U) {
       return jaro_bp_byte_64(
           std::span<const std::uint8_t>(q_ptr, q_len),
           std::span<const std::uint8_t>(t_ptr, t_len));
     }
-    return jaro_scalar<std::uint8_t>(
+    return jaro_bp_byte_multiword(
         std::span<const std::uint8_t>(q_ptr, q_len),
         std::span<const std::uint8_t>(t_ptr, t_len));
   }
@@ -72,7 +71,7 @@ inline double dispatch_jaro_one(nb::handle query, nb::handle target) {
         using QT = typename std::decay_t<decltype(q)>::value_type;
         using TT = typename std::decay_t<decltype(t)>::value_type;
         if constexpr (std::is_same_v<QT, TT>) {
-          return jaro_scalar<QT>(
+          return jaro_bp_token_multiword<QT>(
               std::span<const QT>(q.data(), q.size()),
               std::span<const QT>(t.data(), t.size()));
         } else {
