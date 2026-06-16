@@ -15,7 +15,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #include <nanobind/nanobind.h>
 
@@ -68,16 +73,12 @@ inline void myers_batch_single_word(
   const Vec top_bit_mask = Ops::set1(std::uint64_t{1} << (m - 1U));
   const Vec zero_v = Ops::zero();
 
-  // Pre-transpose target characters into [max_len][lanes] uint64 matrix
-  // once per batch. Inner loop just does an aligned gather of the
-  // current k's lane indices, no per-text-position scalar branch.
-  alignas(64) std::uint64_t indices_matrix[lanes * 64U] = {};
-  for (std::size_t k = 0; k < max_len; ++k) {
-    for (std::size_t l = 0; l < lanes; ++l) {
-      indices_matrix[k * lanes + l] =
-          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
-    }
-  }
+  // Per-column PEQ gather scratch (lanes wide), rebuilt at each text
+  // position from the live targets — mirrors myers_batch_multi_word. This
+  // replaces a fixed [lanes * 64] pre-transpose, which overflowed for any
+  // target longer than 64: the Myers text (target) length is unbounded
+  // even when the pattern fits a single 64-bit word.
+  alignas(64) std::uint64_t indices[lanes];
   // Per-lane target lengths as a SIMD vector. The per-k active mask is
   // ``target_lens_v > k_v`` (single SIMD compare, replaces 8 scalar
   // branches per text position).
@@ -117,7 +118,10 @@ inline void myers_batch_single_word(
   }
 
   for (std::size_t k = 0; k < max_len; ++k) {
-    const Vec eq = Ops::gather64(peq, &indices_matrix[k * lanes]);
+    for (std::size_t l = 0; l < lanes; ++l) {
+      indices[l] = (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+    const Vec eq = Ops::gather64(peq, indices);
     // active_v: ~0 per lane where target_length > k, else 0.
     const Vec k_v = Ops::set1(static_cast<std::uint64_t>(k));
     const Vec active_v = Ops::gt_u64(target_lens_v, k_v);
@@ -531,8 +535,9 @@ inline void myers_batch_single_word_u32_avx512(
   const __m512i top_bit_mask =
       _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
 
-  // Pre-transpose 16-lane bytes per text position into a contiguous matrix.
-  alignas(64) std::uint8_t bytes_matrix[lanes * 64U] = {};
+  // Per-column gather scratch (16 bytes), rebuilt each text position — was
+  // a fixed [lanes*64] transpose that overflowed for targets longer than 64.
+  alignas(16) std::uint8_t bytes_col[lanes];
   alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
   for (std::size_t l = 0; l < batch_count; ++l) {
     target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
@@ -541,14 +546,11 @@ inline void myers_batch_single_word_u32_avx512(
       _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      bytes_matrix[k * lanes + l] =
+      bytes_col[l] =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
     }
-  }
-
-  for (std::size_t k = 0; k < max_len; ++k) {
     const __m128i bytes16 = _mm_load_si128(
-        reinterpret_cast<const __m128i*>(&bytes_matrix[k * lanes]));
+        reinterpret_cast<const __m128i*>(bytes_col));
     const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
     const __m512i eq = _mm512_i32gather_epi32(
         indices, reinterpret_cast<const int*>(peq32), 4);
@@ -591,6 +593,11 @@ inline void myers_batch_single_word_u32_avx512(
   }
 }
 
+#endif  // __AVX512F__
+
+// uint32 Peq bitmask table for the short-pattern (m <= 32) Myers fast
+// paths — the AVX-512 16-lane kernel and the NEON 4-lane kernel both use
+// it. Pure scalar; defined outside any ISA guard so both can share it.
 inline std::array<std::uint32_t, 256> build_peq_u32_lev(
     std::span<const std::uint8_t> pattern) {
   std::array<std::uint32_t, 256> peq{};
@@ -600,7 +607,85 @@ inline std::array<std::uint32_t, 256> build_peq_u32_lev(
   }
   return peq;
 }
-#endif  // __AVX512F__
+
+#if defined(__ARM_NEON)
+// 4-lane uint32 Myers (Levenshtein) batch kernel — the NEON twin of
+// myers_batch_single_word_u32_avx512. Each 128-bit vector holds four
+// targets' Myers state at 32-bit width, doubling per-batch parallelism
+// versus the 2-lane uint64 path for patterns of length m <= 32. No
+// score-cutoff variant (cutoff calls stay on the uint64 path), matching
+// the AVX-512 specialization.
+inline void myers_batch_single_word_u32_neon(
+    const std::uint32_t* peq32,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    Score* out) {
+  constexpr std::size_t lanes = 4;
+
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+
+  // init_vp is the all-ones m-bit pattern; guard 1u<<32 (UB) at m==32.
+  const std::uint32_t init_vp =
+      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
+  uint32x4_t vp = vdupq_n_u32(init_vp);
+  uint32x4_t vn = vdupq_n_u32(0);
+  uint32x4_t score = vdupq_n_u32(static_cast<std::uint32_t>(m));
+  const uint32x4_t one_v = vdupq_n_u32(1U);
+  const uint32x4_t top_bit_mask = vdupq_n_u32(std::uint32_t{1} << (m - 1U));
+  const uint32x4_t zero_v = vdupq_n_u32(0);
+
+  alignas(16) std::uint32_t target_lengths_padded[lanes] = {};
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
+  }
+  const uint32x4_t target_lens_v = vld1q_u32(target_lengths_padded);
+
+  // Per-column PEQ gather, rebuilt at each text position from the live
+  // targets. No fixed-size transpose: the target (text) length is
+  // unbounded even though the pattern fits in 32 bits.
+  for (std::size_t k = 0; k < max_len; ++k) {
+    alignas(16) std::uint32_t e[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      e[l] = (l < batch_count && k < target_lengths[l]) ? peq32[targets[l][k]] : 0U;
+    }
+    const uint32x4_t eq = vld1q_u32(e);
+
+    const uint32x4_t k_v = vdupq_n_u32(static_cast<std::uint32_t>(k));
+    const uint32x4_t active_v = vcgtq_u32(target_lens_v, k_v);
+
+    const uint32x4_t x = vorrq_u32(eq, vn);
+    const uint32x4_t xv = vandq_u32(x, vp);
+    const uint32x4_t sum = vaddq_u32(xv, vp);
+    const uint32x4_t d0 = vorrq_u32(veorq_u32(sum, vp), x);
+    const uint32x4_t hp = vorrq_u32(vn, vmvnq_u32(vorrq_u32(d0, vp)));
+    const uint32x4_t hn = vandq_u32(d0, vp);
+
+    // +1 where hp's bit m-1 is set, -1 where hn's is, gated by active_v.
+    const uint32x4_t hp_eq_zero = vceqq_u32(vandq_u32(hp, top_bit_mask), zero_v);
+    const uint32x4_t hn_eq_zero = vceqq_u32(vandq_u32(hn, top_bit_mask), zero_v);
+    const uint32x4_t hp_set = vbicq_u32(one_v, hp_eq_zero);
+    const uint32x4_t hn_set = vbicq_u32(one_v, hn_eq_zero);
+    const uint32x4_t delta = vandq_u32(vsubq_u32(hp_set, hn_set), active_v);
+    score = vaddq_u32(score, delta);
+
+    const uint32x4_t hp_shift = vorrq_u32(vshlq_n_u32(hp, 1), one_v);
+    const uint32x4_t hn_shift = vshlq_n_u32(hn, 1);
+    vp = vorrq_u32(hn_shift, vmvnq_u32(vorrq_u32(d0, hp_shift)));
+    vn = vandq_u32(d0, hp_shift);
+  }
+
+  alignas(16) std::uint32_t scores[lanes];
+  vst1q_u32(scores, score);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    out[l] = static_cast<Score>(scores[l]);
+  }
+}
+#endif  // __ARM_NEON
 
 template <typename Ops>
 inline void levenshtein_scores_simd_raw_per_pair(
@@ -644,6 +729,37 @@ inline void levenshtein_scores_simd_raw_per_pair(
           batch_lens32[l] = 0;
         }
         myers_batch_single_word_u32_avx512(
+            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
+            batch_count, q_len, out + b);
+      }
+      return;
+    }
+  }
+#endif
+
+#if defined(__ARM_NEON)
+  // uint32 fast path: 4-lane NEON for q_len <= 32 with no per-pair cutoff.
+  // Doubles per-batch parallelism vs the 2-lane uint64 path below (mirrors
+  // the AVX-512 uint32 path above). Gated to the NEON uint64 bundle so any
+  // other 2-lane bundle keeps the uint64 path.
+  if constexpr (Ops::lanes == 2U &&
+                std::is_same_v<typename Ops::Vec, uint64x2_t>) {
+    if (q_len > 0U && q_len <= 32U && !has_cutoff) {
+      const auto peq32 = build_peq_u32_lev(pattern_span);
+      constexpr std::size_t lanes32 = 4;
+      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
+      std::array<std::size_t, lanes32> batch_lens32{};
+      for (std::size_t b = 0; b < count; b += lanes32) {
+        const std::size_t batch_count = std::min(lanes32, count - b);
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_ptrs32[l] = t_ptrs[b + l];
+          batch_lens32[l] = t_lens[b + l];
+        }
+        for (std::size_t l = batch_count; l < lanes32; ++l) {
+          batch_ptrs32[l] = nullptr;
+          batch_lens32[l] = 0;
+        }
+        myers_batch_single_word_u32_neon(
             peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
             batch_count, q_len, out + b);
       }

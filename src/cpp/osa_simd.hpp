@@ -106,16 +106,11 @@ inline void osa_batch_single_word(
   const Vec top_bit_mask = Ops::set1(std::uint64_t{1} << (m - 1U));
   const Vec zero_v = Ops::zero();
 
-  // Pre-transpose target characters; SIMD-compare for active mask.
-  // Same pattern as the Levenshtein single-word batch kernel — avoids
-  // the per-text-position scalar branch over lanes.
-  alignas(64) std::uint64_t indices_matrix[lanes * 64U] = {};
-  for (std::size_t k = 0; k < max_len; ++k) {
-    for (std::size_t l = 0; l < lanes; ++l) {
-      indices_matrix[k * lanes + l] =
-          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
-    }
-  }
+  // Per-column PEQ gather scratch, rebuilt at each text position. (Was a
+  // fixed [lanes*64] transpose that overflowed for targets longer than 64;
+  // the target/text length is unbounded even when the pattern fits one
+  // 64-bit word.)
+  alignas(64) std::uint64_t indices[lanes];
   alignas(64) std::uint64_t target_lengths_padded[lanes] = {};
   for (std::size_t l = 0; l < batch_count; ++l) {
     target_lengths_padded[l] = static_cast<std::uint64_t>(target_lengths[l]);
@@ -145,7 +140,10 @@ inline void osa_batch_single_word(
   }
 
   for (std::size_t k = 0; k < max_len; ++k) {
-    const Vec pm = Ops::gather64(peq, &indices_matrix[k * lanes]);
+    for (std::size_t l = 0; l < lanes; ++l) {
+      indices[l] = (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+    const Vec pm = Ops::gather64(peq, indices);
     const Vec k_v = Ops::set1(static_cast<std::uint64_t>(k));
     const Vec active_v = Ops::gt_u64(target_lens_v, k_v);
     Vec eff_active = active_v;
@@ -252,7 +250,9 @@ inline void osa_batch_single_word_u32_avx512(
       _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
   const __m512i minus_one = _mm512_set1_epi32(-1);
 
-  alignas(64) std::uint8_t bytes_matrix[lanes * 64U] = {};
+  // Per-column gather scratch (16 bytes), rebuilt each text position — was
+  // a fixed [lanes*64] transpose that overflowed for targets longer than 64.
+  alignas(16) std::uint8_t bytes_col[lanes];
   alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
   for (std::size_t l = 0; l < batch_count; ++l) {
     target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
@@ -261,14 +261,11 @@ inline void osa_batch_single_word_u32_avx512(
       _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      bytes_matrix[k * lanes + l] =
+      bytes_col[l] =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
     }
-  }
-
-  for (std::size_t k = 0; k < max_len; ++k) {
     const __m128i bytes16 = _mm_load_si128(
-        reinterpret_cast<const __m128i*>(&bytes_matrix[k * lanes]));
+        reinterpret_cast<const __m128i*>(bytes_col));
     const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
     const __m512i pm = _mm512_i32gather_epi32(
         indices, reinterpret_cast<const int*>(peq32), 4);

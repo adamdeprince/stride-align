@@ -116,16 +116,17 @@ inline void indel_batch_single_word(
   // lanes; the bench corpora exercise random ASCII so the precondition
   // holds. (Future hardening: bail to the active-mask form when
   // ``peq[0] != 0``.)
-  alignas(64) std::uint64_t indices_matrix[lanes * 64U] = {};  // m <= 64 → max_len <= 64
+  // Per-column PEQ gather scratch, rebuilt at each text position. (Was a
+  // fixed [lanes*64] transpose that overflowed for targets longer than 64 —
+  // the target/text length is unbounded even when the pattern fits one
+  // 64-bit word. Index 0 for inactive/past-end lanes keeps the peq[0]==0
+  // no-op described above.)
+  alignas(64) std::uint64_t indices[lanes];
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      indices_matrix[k * lanes + l] =
-          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+      indices[l] = (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
     }
-  }
-
-  for (std::size_t k = 0; k < max_len; ++k) {
-    const Vec pm = Ops::gather64(peq, &indices_matrix[k * lanes]);
+    const Vec pm = Ops::gather64(peq, indices);
 
     const Vec U = Ops::and_(V, pm);
     const Vec sum = Ops::add(V, U);
@@ -167,19 +168,17 @@ inline void indel_batch_single_word_u32_avx512(
   const __m512i mask_v = _mm512_set1_epi32(static_cast<int>(mask_bits));
   __m512i V = mask_v;
 
-  // Pre-transpose batch's target bytes into [max_len][16] uint8 matrix.
-  // Inner loop widens 16 bytes -> 16 uint32 indices then gathers PEQ.
-  alignas(64) std::uint8_t bytes_matrix[lanes * 64U] = {};
+  // Per-column gather scratch (16 bytes), rebuilt at each text position.
+  // (Was a fixed [lanes*64] transpose that overflowed for targets longer
+  // than 64; the target/text length is unbounded even when m <= 32.)
+  alignas(16) std::uint8_t bytes_col[lanes];
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      bytes_matrix[k * lanes + l] =
+      bytes_col[l] =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
     }
-  }
-
-  for (std::size_t k = 0; k < max_len; ++k) {
     const __m128i bytes16 = _mm_load_si128(
-        reinterpret_cast<const __m128i*>(&bytes_matrix[k * lanes]));
+        reinterpret_cast<const __m128i*>(bytes_col));
     const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
     const __m512i pm = _mm512_i32gather_epi32(
         indices, reinterpret_cast<const int*>(peq32), 4);
