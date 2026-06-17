@@ -1,0 +1,660 @@
+{
+  "host": "ip-172-31-38-190",
+  "arch": "x86_64",
+  "backend": "_avx10_512",
+  "platform": "Linux-7.0.0-1004-aws-x86_64-with-glibc2.43",
+  "python": "3.14.4",
+  "rapidfuzz_version": "3.14.5",
+  "timestamp": "2026-06-17T20:23:11.306903+00:00",
+  "seed": 12648430,
+  "timings": {
+    "fuzz.ratio_short": {
+      "shim_ms": 0.489694,
+      "upstream_ms": 0.8416773333333334,
+      "ratio": 0.5818072800661536,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_ratio_short": {
+      "shim_ms": 3.9295593333333336,
+      "upstream_ms": 3.6242216666666667,
+      "ratio": 1.0842491698217502,
+      "n_pairs": 5000
+    },
+    "fuzz.token_sort_ratio_short": {
+      "shim_ms": 1.5594243333333333,
+      "upstream_ms": 1.7595323333333333,
+      "ratio": 0.8862720529716513,
+      "n_pairs": 5000
+    },
+    "fuzz.token_set_ratio_short": {
+      "shim_ms": 2.4433526666666667,
+      "upstream_ms": 2.3793226666666665,
+      "ratio": 1.0269110200550073,
+      "n_pairs": 5000
+    },
+    "fuzz.token_ratio_short": {
+      "shim_ms": 3.8226113333333336,
+      "upstream_ms": 2.890233,
+      "ratio": 1.3225962520438088,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_token_sort_ratio_short": {
+      "shim_ms": 5.320322333333333,
+      "upstream_ms": 4.6231963333333335,
+      "ratio": 1.1507887508418597,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_token_set_ratio_short": {
+      "shim_ms": 6.172853666666667,
+      "upstream_ms": 5.162167,
+      "ratio": 1.1957872859724736,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_token_ratio_short": {
+      "shim_ms": 10.636291333333334,
+      "upstream_ms": 5.2535066666666665,
+      "ratio": 2.0246079444079257,
+      "n_pairs": 5000
+    },
+    "fuzz.WRatio_short": {
+      "shim_ms": 10.361958,
+      "upstream_ms": 6.114851,
+      "ratio": 1.6945560897559073,
+      "n_pairs": 5000
+    },
+    "fuzz.QRatio_short": {
+      "shim_ms": 0.5035366666666666,
+      "upstream_ms": 0.844782,
+      "ratio": 0.5960551558469127,
+      "n_pairs": 5000
+    },
+    "fuzz.ratio_medium": {
+      "shim_ms": 0.17662166666666665,
+      "upstream_ms": 0.2714346666666667,
+      "ratio": 0.6506967913702989,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_ratio_medium": {
+      "shim_ms": 4.473733333333333,
+      "upstream_ms": 3.2117143333333336,
+      "ratio": 1.3929424814971607,
+      "n_pairs": 1000
+    },
+    "fuzz.token_sort_ratio_medium": {
+      "shim_ms": 0.6402606666666666,
+      "upstream_ms": 0.6617703333333333,
+      "ratio": 0.967496780101455,
+      "n_pairs": 1000
+    },
+    "fuzz.token_set_ratio_medium": {
+      "shim_ms": 0.904405,
+      "upstream_ms": 0.8265716666666666,
+      "ratio": 1.094164047077991,
+      "n_pairs": 1000
+    },
+    "fuzz.token_ratio_medium": {
+      "shim_ms": 1.5194513333333333,
+      "upstream_ms": 1.1202233333333333,
+      "ratio": 1.356382507059604,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_token_sort_ratio_medium": {
+      "shim_ms": 5.039617333333333,
+      "upstream_ms": 3.649209,
+      "ratio": 1.3810163608972064,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_token_set_ratio_medium": {
+      "shim_ms": 5.263009666666667,
+      "upstream_ms": 3.83159,
+      "ratio": 1.3735837254681913,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_token_ratio_medium": {
+      "shim_ms": 10.171171,
+      "upstream_ms": 3.843172,
+      "ratio": 2.6465562821544286,
+      "n_pairs": 1000
+    },
+    "fuzz.WRatio_medium": {
+      "shim_ms": 5.053245666666667,
+      "upstream_ms": 2.9032486666666664,
+      "ratio": 1.7405486910869734,
+      "n_pairs": 1000
+    },
+    "fuzz.QRatio_medium": {
+      "shim_ms": 0.176642,
+      "upstream_ms": 0.27302,
+      "ratio": 0.6469928942934584,
+      "n_pairs": 1000
+    },
+    "distance.Indel.distance_short": {
+      "shim_ms": 0.439119,
+      "upstream_ms": 0.498709,
+      "ratio": 0.8805114806430202,
+      "n_pairs": 5000
+    },
+    "distance.Indel.distance_medium": {
+      "shim_ms": 0.16299333333333335,
+      "upstream_ms": 0.20153966666666664,
+      "ratio": 0.8087407110924402,
+      "n_pairs": 1000
+    },
+    "distance.Indel.similarity_short": {
+      "shim_ms": 0.4556383333333333,
+      "upstream_ms": 0.497366,
+      "ratio": 0.9161026956674427,
+      "n_pairs": 5000
+    },
+    "distance.Indel.similarity_medium": {
+      "shim_ms": 0.16305233333333335,
+      "upstream_ms": 0.20451566666666665,
+      "ratio": 0.7972608455423954,
+      "n_pairs": 1000
+    },
+    "distance.Indel.normalized_distance_short": {
+      "shim_ms": 0.529281,
+      "upstream_ms": 0.81528,
+      "ratio": 0.6492015013246982,
+      "n_pairs": 5000
+    },
+    "distance.Indel.normalized_distance_medium": {
+      "shim_ms": 0.17806333333333335,
+      "upstream_ms": 0.27277033333333334,
+      "ratio": 0.652795819682248,
+      "n_pairs": 1000
+    },
+    "distance.Indel.normalized_similarity_short": {
+      "shim_ms": 0.458185,
+      "upstream_ms": 0.812692,
+      "ratio": 0.5637867728487546,
+      "n_pairs": 5000
+    },
+    "distance.Indel.normalized_similarity_medium": {
+      "shim_ms": 0.16739333333333334,
+      "upstream_ms": 0.2707236666666667,
+      "ratio": 0.6183180635605063,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.distance_short": {
+      "shim_ms": 0.6643663333333334,
+      "upstream_ms": 0.787135,
+      "ratio": 0.8440309900250064,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.distance_medium": {
+      "shim_ms": 0.3459816666666667,
+      "upstream_ms": 0.3718966666666667,
+      "ratio": 0.9303166650234383,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.similarity_short": {
+      "shim_ms": 0.655711,
+      "upstream_ms": 0.7846696666666666,
+      "ratio": 0.8356522851017139,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.similarity_medium": {
+      "shim_ms": 0.347009,
+      "upstream_ms": 0.37048766666666666,
+      "ratio": 0.9366276700169057,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.normalized_distance_short": {
+      "shim_ms": 0.7526053333333333,
+      "upstream_ms": 1.1198236666666668,
+      "ratio": 0.6720748594049479,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.normalized_distance_medium": {
+      "shim_ms": 0.3695013333333333,
+      "upstream_ms": 0.441912,
+      "ratio": 0.8361423390478948,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.normalized_similarity_short": {
+      "shim_ms": 0.7015053333333334,
+      "upstream_ms": 1.1451036666666667,
+      "ratio": 0.612612948289107,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.normalized_similarity_medium": {
+      "shim_ms": 0.3537063333333333,
+      "upstream_ms": 0.4479543333333333,
+      "ratio": 0.7896035533383983,
+      "n_pairs": 1000
+    },
+    "distance.OSA.distance_short": {
+      "shim_ms": 0.698336,
+      "upstream_ms": 0.694239,
+      "ratio": 1.0059014258778316,
+      "n_pairs": 5000
+    },
+    "distance.OSA.distance_medium": {
+      "shim_ms": 0.3662763333333333,
+      "upstream_ms": 0.3410573333333333,
+      "ratio": 1.0739435793786383,
+      "n_pairs": 1000
+    },
+    "distance.OSA.similarity_short": {
+      "shim_ms": 0.783622,
+      "upstream_ms": 0.6989873333333334,
+      "ratio": 1.1210818317165498,
+      "n_pairs": 5000
+    },
+    "distance.OSA.similarity_medium": {
+      "shim_ms": 0.380029,
+      "upstream_ms": 0.3440056666666667,
+      "ratio": 1.1047172672543184,
+      "n_pairs": 1000
+    },
+    "distance.OSA.normalized_distance_short": {
+      "shim_ms": 0.8821266666666666,
+      "upstream_ms": 1.0274713333333334,
+      "ratio": 0.8585413899625423,
+      "n_pairs": 5000
+    },
+    "distance.OSA.normalized_distance_medium": {
+      "shim_ms": 0.40138033333333334,
+      "upstream_ms": 0.4100456666666667,
+      "ratio": 0.9788673944446837,
+      "n_pairs": 1000
+    },
+    "distance.OSA.normalized_similarity_short": {
+      "shim_ms": 0.9267606666666667,
+      "upstream_ms": 1.026622,
+      "ratio": 0.9027282355790804,
+      "n_pairs": 5000
+    },
+    "distance.OSA.normalized_similarity_medium": {
+      "shim_ms": 0.409524,
+      "upstream_ms": 0.41017566666666666,
+      "ratio": 0.998411249814104,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.distance_short": {
+      "shim_ms": 4.196913333333333,
+      "upstream_ms": 3.4682673333333334,
+      "ratio": 1.2100893414406155,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.distance_medium": {
+      "shim_ms": 8.828067666666666,
+      "upstream_ms": 8.182243666666666,
+      "ratio": 1.0789299397952419,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.similarity_short": {
+      "shim_ms": 4.257807666666667,
+      "upstream_ms": 3.4937573333333334,
+      "ratio": 1.2186901551643734,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.similarity_medium": {
+      "shim_ms": 8.935208333333334,
+      "upstream_ms": 8.249821,
+      "ratio": 1.0830790550889933,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.normalized_distance_short": {
+      "shim_ms": 4.401376333333333,
+      "upstream_ms": 3.8532143333333333,
+      "ratio": 1.1422609677478794,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.normalized_distance_medium": {
+      "shim_ms": 8.896178333333333,
+      "upstream_ms": 8.328194333333332,
+      "ratio": 1.068200137660893,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.normalized_similarity_short": {
+      "shim_ms": 4.446037666666667,
+      "upstream_ms": 3.829243,
+      "ratio": 1.1610748303689966,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.normalized_similarity_medium": {
+      "shim_ms": 8.912392666666666,
+      "upstream_ms": 8.300533666666666,
+      "ratio": 1.0737132122549067,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.distance_short": {
+      "shim_ms": 0.7792773333333334,
+      "upstream_ms": 0.985213,
+      "ratio": 0.7909734578546298,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.distance_medium": {
+      "shim_ms": 0.5062573333333333,
+      "upstream_ms": 0.742361,
+      "ratio": 0.6819557241467875,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.similarity_short": {
+      "shim_ms": 0.774926,
+      "upstream_ms": 1.014267,
+      "ratio": 0.7640256461069915,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.similarity_medium": {
+      "shim_ms": 0.5052036666666667,
+      "upstream_ms": 0.754279,
+      "ratio": 0.6697835504722612,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.normalized_distance_short": {
+      "shim_ms": 0.7813973333333334,
+      "upstream_ms": 1.0019023333333335,
+      "ratio": 0.7799136775474123,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.normalized_distance_medium": {
+      "shim_ms": 0.509831,
+      "upstream_ms": 0.742502,
+      "ratio": 0.6866392279078036,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.normalized_similarity_short": {
+      "shim_ms": 0.7829393333333333,
+      "upstream_ms": 0.9911436666666666,
+      "ratio": 0.7899352633372021,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.normalized_similarity_medium": {
+      "shim_ms": 0.508803,
+      "upstream_ms": 0.740958,
+      "ratio": 0.6866826459799341,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.distance_short": {
+      "shim_ms": 0.8041553333333333,
+      "upstream_ms": 1.0210246666666667,
+      "ratio": 0.7875963819352716,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.distance_medium": {
+      "shim_ms": 0.5138303333333333,
+      "upstream_ms": 0.7630633333333334,
+      "ratio": 0.6733783565365914,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.similarity_short": {
+      "shim_ms": 0.788599,
+      "upstream_ms": 1.0107916666666665,
+      "ratio": 0.7801795622243293,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.similarity_medium": {
+      "shim_ms": 0.512894,
+      "upstream_ms": 0.7385363333333334,
+      "ratio": 0.694473618765766,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.normalized_distance_short": {
+      "shim_ms": 0.8052636666666666,
+      "upstream_ms": 1.0138606666666665,
+      "ratio": 0.7942547661052702,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.normalized_distance_medium": {
+      "shim_ms": 0.5127556666666667,
+      "upstream_ms": 0.747464,
+      "ratio": 0.6859937959107953,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.normalized_similarity_short": {
+      "shim_ms": 0.788304,
+      "upstream_ms": 1.020467,
+      "ratio": 0.7724933780318227,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.normalized_similarity_medium": {
+      "shim_ms": 0.5078693333333333,
+      "upstream_ms": 0.7570973333333334,
+      "ratio": 0.6708111506578633,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.distance_short": {
+      "shim_ms": 0.44363733333333333,
+      "upstream_ms": 0.5012726666666667,
+      "ratio": 0.8850219906930227,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.distance_medium": {
+      "shim_ms": 0.162493,
+      "upstream_ms": 0.19882533333333335,
+      "ratio": 0.8172650701788503,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.similarity_short": {
+      "shim_ms": 0.4360196666666667,
+      "upstream_ms": 0.49449333333333334,
+      "ratio": 0.8817503437862324,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.similarity_medium": {
+      "shim_ms": 0.161532,
+      "upstream_ms": 0.19780066666666665,
+      "ratio": 0.8166403214010065,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.normalized_distance_short": {
+      "shim_ms": 0.5244653333333333,
+      "upstream_ms": 0.8391326666666666,
+      "ratio": 0.6250088384911723,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.normalized_distance_medium": {
+      "shim_ms": 0.178675,
+      "upstream_ms": 0.27151966666666666,
+      "ratio": 0.6580554631401777,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.normalized_similarity_short": {
+      "shim_ms": 0.5627736666666666,
+      "upstream_ms": 0.8149916666666667,
+      "ratio": 0.6905268970030368,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.normalized_similarity_medium": {
+      "shim_ms": 0.18506333333333333,
+      "upstream_ms": 0.2693973333333333,
+      "ratio": 0.6869531002534052,
+      "n_pairs": 1000
+    },
+    "distance.Hamming.distance_equal_short": {
+      "shim_ms": 0.127115,
+      "upstream_ms": 0.10880633333333332,
+      "ratio": 1.1682683912394807,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.distance_equal_medium": {
+      "shim_ms": 0.045322666666666664,
+      "upstream_ms": 0.032309,
+      "ratio": 1.4027876649437205,
+      "n_pairs": 500
+    },
+    "distance.Hamming.similarity_equal_short": {
+      "shim_ms": 0.13157766666666665,
+      "upstream_ms": 0.10956166666666667,
+      "ratio": 1.2009461946848805,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.similarity_equal_medium": {
+      "shim_ms": 0.045434,
+      "upstream_ms": 0.033478666666666664,
+      "ratio": 1.3571030307857743,
+      "n_pairs": 500
+    },
+    "distance.Hamming.normalized_distance_equal_short": {
+      "shim_ms": 0.13886733333333334,
+      "upstream_ms": 0.224805,
+      "ratio": 0.6177235085222007,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.normalized_distance_equal_medium": {
+      "shim_ms": 0.04738266666666666,
+      "upstream_ms": 0.062457,
+      "ratio": 0.7586446141612095,
+      "n_pairs": 500
+    },
+    "distance.Hamming.normalized_similarity_equal_short": {
+      "shim_ms": 0.13516633333333333,
+      "upstream_ms": 0.233648,
+      "ratio": 0.5785041315711383,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.normalized_similarity_equal_medium": {
+      "shim_ms": 0.048295333333333336,
+      "upstream_ms": 0.06372733333333333,
+      "ratio": 0.7578433116088336,
+      "n_pairs": 500
+    },
+    "distance.Indel.distance_K2": {
+      "shim_ms": 0.13960233333333336,
+      "upstream_ms": 0.155224,
+      "ratio": 0.8993604940816714,
+      "n_pairs": 500
+    },
+    "distance.Levenshtein.distance_K2": {
+      "shim_ms": 0.320981,
+      "upstream_ms": 0.48995833333333333,
+      "ratio": 0.6551189727017603,
+      "n_pairs": 500
+    },
+    "distance.OSA.distance_K2": {
+      "shim_ms": 0.340613,
+      "upstream_ms": 0.4323413333333333,
+      "ratio": 0.7878335327642357,
+      "n_pairs": 500
+    },
+    "distance.DamerauLevenshtein.distance_K2": {
+      "shim_ms": 13.460823666666666,
+      "upstream_ms": 12.482601666666666,
+      "ratio": 1.0783668361870609,
+      "n_pairs": 500
+    },
+    "distance.LCSseq.distance_K2": {
+      "shim_ms": 0.13649166666666665,
+      "upstream_ms": 0.15657766666666667,
+      "ratio": 0.8717186146172399,
+      "n_pairs": 500
+    },
+    "distance.Indel.distance_K3": {
+      "shim_ms": 0.197664,
+      "upstream_ms": 0.208929,
+      "ratio": 0.9460821618827449,
+      "n_pairs": 400
+    },
+    "distance.Levenshtein.distance_K3": {
+      "shim_ms": 0.49925533333333333,
+      "upstream_ms": 0.7511506666666666,
+      "ratio": 0.6646540507630072,
+      "n_pairs": 400
+    },
+    "distance.OSA.distance_K3": {
+      "shim_ms": 0.5452023333333333,
+      "upstream_ms": 0.665925,
+      "ratio": 0.8187143196806448,
+      "n_pairs": 400
+    },
+    "distance.DamerauLevenshtein.distance_K3": {
+      "shim_ms": 29.70231133333333,
+      "upstream_ms": 27.68515933333333,
+      "ratio": 1.0728604078348691,
+      "n_pairs": 400
+    },
+    "distance.LCSseq.distance_K3": {
+      "shim_ms": 0.19213633333333335,
+      "upstream_ms": 0.20827266666666666,
+      "ratio": 0.9225230387088721,
+      "n_pairs": 400
+    },
+    "distance.Indel.distance_K4": {
+      "shim_ms": 0.21280966666666665,
+      "upstream_ms": 0.25661266666666666,
+      "ratio": 0.8293030481737715,
+      "n_pairs": 300
+    },
+    "distance.Levenshtein.distance_K4": {
+      "shim_ms": 0.601431,
+      "upstream_ms": 0.9112323333333334,
+      "ratio": 0.6600193803482975,
+      "n_pairs": 300
+    },
+    "distance.OSA.distance_K4": {
+      "shim_ms": 1.1146493333333332,
+      "upstream_ms": 0.8319163333333334,
+      "ratio": 1.3398574936822572,
+      "n_pairs": 300
+    },
+    "distance.DamerauLevenshtein.distance_K4": {
+      "shim_ms": 43.671613666666666,
+      "upstream_ms": 40.576837,
+      "ratio": 1.0762695393597748,
+      "n_pairs": 300
+    },
+    "distance.LCSseq.distance_K4": {
+      "shim_ms": 0.21234733333333333,
+      "upstream_ms": 0.251508,
+      "ratio": 0.8442965366244148,
+      "n_pairs": 300
+    },
+    "process.cdist_50x100_fuzz_ratio": {
+      "shim_ms": 0.2189653,
+      "upstream_ms": 0.0369197,
+      "ratio": 5.930852634230506,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_Levenshtein_distance": {
+      "shim_ms": 0.240884,
+      "upstream_ms": 0.0764636,
+      "ratio": 3.1503094282769837,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_Indel_distance": {
+      "shim_ms": 0.21395979999999998,
+      "upstream_ms": 0.0328998,
+      "ratio": 6.503376920224438,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_OSA_distance": {
+      "shim_ms": 0.24649420000000002,
+      "upstream_ms": 0.0795498,
+      "ratio": 3.0986149556629936,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_Jaro_similarity": {
+      "shim_ms": 0.270625,
+      "upstream_ms": 0.12155089999999999,
+      "ratio": 2.2264335352514877,
+      "n_pairs": 5000
+    },
+    "process.extract_10k_fuzz_ratio": {
+      "shim_ms": 0.6937956999999999,
+      "upstream_ms": 0.4453775,
+      "ratio": 1.5577699816447843,
+      "n_pairs": 10000
+    },
+    "process.extract_10k_fuzz_WRatio": {
+      "shim_ms": 32.7531785,
+      "upstream_ms": 12.3597039,
+      "ratio": 2.6499970197506104,
+      "n_pairs": 10000
+    },
+    "process.extract_10k_Levenshtein_distance": {
+      "shim_ms": 0.8316,
+      "upstream_ms": 0.9784344,
+      "ratio": 0.8499292338862984,
+      "n_pairs": 10000
+    },
+    "process.extract_10k_Indel_distance": {
+      "shim_ms": 0.6648349,
+      "upstream_ms": 0.4315676,
+      "ratio": 1.540511613939508,
+      "n_pairs": 10000
+    }
+  }
+}

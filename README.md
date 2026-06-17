@@ -897,6 +897,30 @@ Careful attention has been, and continues to be, paid to `stride-align`'s
 performance story. The library includes SIMD optimization for a variety of
 common targets, including x86, Arm, and LoongArch.
 
+**rapidfuzz shim full-surface bench (v0.5.0).** Across 108 workloads
+covering every public entry point of `stride_align.rapidfuzz` (10
+`fuzz` methods, 8 distance classes × 4 methods, `process.cdist` +
+`process.extract` with several scorers), the cross-architecture
+geomeans against upstream `rapidfuzz` 3.14.5 are:
+
+| Host | Backend | Geomean | Wins / Ties / Losses |
+| --- | --- | ---: | ---: |
+| Mac M4 Max | `macos_arm64_neon` | 1.34x | 95 / 5 / 8 |
+| Intel AWS | `x86_avx10_512` | 1.02x | 68 / 13 / 27 |
+| Loongson | `linux_loongarch64_lasx` | 49.17x | 108 / 0 / 0 |
+
+(Ratio = upstream / shim, > 1.0 means shim is faster.) The Mac M4 Max
+backend wins or ties 100 of 108 workloads (geomean 1.34x); its 8
+losses are the bit-exact `partial_token_ratio` recipe (kept exact
+rather than fast), a few tiny-string Hamming cases, and the
+multithreaded `process.cdist` / `process.extract` throughput
+harnesses. Intel lands just past parity (1.02x) with a wider tail in
+those same cdist/throughput and token-composite workloads. Loongson
+is a clean sweep because upstream rapidfuzz ships no LoongArch wheel.
+Mac and Intel re-measured 2026-06-17; Loongson last measured
+2026-06-10 (pre the Jaro and token-ratio work, so unchanged or
+better today).
+
 **LoongArch / Loongson.** The Loongson optimization story is especially
 telling: for the checked benchmark case -- English text, 16-bit score width,
 score-only Smith-Waterman -- the LASX backend is 16x faster than the generic

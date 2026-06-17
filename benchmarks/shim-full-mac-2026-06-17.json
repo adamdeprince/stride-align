@@ -1,0 +1,660 @@
+{
+  "host": "wopr.local",
+  "arch": "arm64",
+  "backend": "_macos_arm64_neon",
+  "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.5",
+  "rapidfuzz_version": "3.14.5",
+  "timestamp": "2026-06-17T20:09:07.461255+00:00",
+  "seed": 12648430,
+  "timings": {
+    "fuzz.ratio_short": {
+      "shim_ms": 0.3632083333333333,
+      "upstream_ms": 0.7239026666666666,
+      "ratio": 0.5017364212868397,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_ratio_short": {
+      "shim_ms": 1.6380276666666667,
+      "upstream_ms": 2.2884166666666665,
+      "ratio": 0.7157908306325335,
+      "n_pairs": 5000
+    },
+    "fuzz.token_sort_ratio_short": {
+      "shim_ms": 0.5866806666666666,
+      "upstream_ms": 1.486,
+      "ratio": 0.3948052938537461,
+      "n_pairs": 5000
+    },
+    "fuzz.token_set_ratio_short": {
+      "shim_ms": 0.7576806666666667,
+      "upstream_ms": 2.2203053333333336,
+      "ratio": 0.34125066282175,
+      "n_pairs": 5000
+    },
+    "fuzz.token_ratio_short": {
+      "shim_ms": 1.2488613333333332,
+      "upstream_ms": 2.7755556666666665,
+      "ratio": 0.44995002201961476,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_token_sort_ratio_short": {
+      "shim_ms": 2.325278,
+      "upstream_ms": 3.1991526666666665,
+      "ratio": 0.7268418366613326,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_token_set_ratio_short": {
+      "shim_ms": 2.7551943333333333,
+      "upstream_ms": 3.6469026666666666,
+      "ratio": 0.7554888586734971,
+      "n_pairs": 5000
+    },
+    "fuzz.partial_token_ratio_short": {
+      "shim_ms": 4.7620276666666665,
+      "upstream_ms": 3.8236806666666667,
+      "ratio": 1.245404122833828,
+      "n_pairs": 5000
+    },
+    "fuzz.WRatio_short": {
+      "shim_ms": 4.221486,
+      "upstream_ms": 4.644208333333333,
+      "ratio": 0.9089786023811018,
+      "n_pairs": 5000
+    },
+    "fuzz.QRatio_short": {
+      "shim_ms": 0.389,
+      "upstream_ms": 0.7109303333333333,
+      "ratio": 0.5471703509626588,
+      "n_pairs": 5000
+    },
+    "fuzz.ratio_medium": {
+      "shim_ms": 0.12984733333333331,
+      "upstream_ms": 0.19265266666666667,
+      "ratio": 0.6739970724516313,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_ratio_medium": {
+      "shim_ms": 2.1980556666666664,
+      "upstream_ms": 2.2335556666666667,
+      "ratio": 0.9841060598892616,
+      "n_pairs": 1000
+    },
+    "fuzz.token_sort_ratio_medium": {
+      "shim_ms": 0.239861,
+      "upstream_ms": 0.513028,
+      "ratio": 0.46753978340363483,
+      "n_pairs": 1000
+    },
+    "fuzz.token_set_ratio_medium": {
+      "shim_ms": 0.2995276666666667,
+      "upstream_ms": 0.7038886666666666,
+      "ratio": 0.4255327310284866,
+      "n_pairs": 1000
+    },
+    "fuzz.token_ratio_medium": {
+      "shim_ms": 0.553611,
+      "upstream_ms": 0.956889,
+      "ratio": 0.5785529983101488,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_token_sort_ratio_medium": {
+      "shim_ms": 2.4830556666666665,
+      "upstream_ms": 2.5882916666666667,
+      "ratio": 0.9593415219176097,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_token_set_ratio_medium": {
+      "shim_ms": 2.5935693333333334,
+      "upstream_ms": 2.7222916666666666,
+      "ratio": 0.9527154511364506,
+      "n_pairs": 1000
+    },
+    "fuzz.partial_token_ratio_medium": {
+      "shim_ms": 5.064930333333333,
+      "upstream_ms": 2.7787776666666666,
+      "ratio": 1.8227188141356636,
+      "n_pairs": 1000
+    },
+    "fuzz.WRatio_medium": {
+      "shim_ms": 2.4731666666666663,
+      "upstream_ms": 2.1387776666666665,
+      "ratio": 1.1563458442696162,
+      "n_pairs": 1000
+    },
+    "fuzz.QRatio_medium": {
+      "shim_ms": 0.15631933333333334,
+      "upstream_ms": 0.219028,
+      "ratio": 0.7136956614375027,
+      "n_pairs": 1000
+    },
+    "distance.Indel.distance_short": {
+      "shim_ms": 0.3818056666666667,
+      "upstream_ms": 0.4704583333333333,
+      "ratio": 0.81156106633602,
+      "n_pairs": 5000
+    },
+    "distance.Indel.distance_medium": {
+      "shim_ms": 0.13909733333333335,
+      "upstream_ms": 0.153028,
+      "ratio": 0.9089665507837347,
+      "n_pairs": 1000
+    },
+    "distance.Indel.similarity_short": {
+      "shim_ms": 0.3837916666666667,
+      "upstream_ms": 0.4655556666666667,
+      "ratio": 0.8243733116054149,
+      "n_pairs": 5000
+    },
+    "distance.Indel.similarity_medium": {
+      "shim_ms": 0.138,
+      "upstream_ms": 0.15105533333333335,
+      "ratio": 0.9135725098529016,
+      "n_pairs": 1000
+    },
+    "distance.Indel.normalized_distance_short": {
+      "shim_ms": 0.4751666666666667,
+      "upstream_ms": 0.7501666666666666,
+      "ratio": 0.6334147967118419,
+      "n_pairs": 5000
+    },
+    "distance.Indel.normalized_distance_medium": {
+      "shim_ms": 0.13859733333333335,
+      "upstream_ms": 0.19545833333333335,
+      "ratio": 0.7090888936260925,
+      "n_pairs": 1000
+    },
+    "distance.Indel.normalized_similarity_short": {
+      "shim_ms": 0.376847,
+      "upstream_ms": 0.724361,
+      "ratio": 0.5202475009007939,
+      "n_pairs": 5000
+    },
+    "distance.Indel.normalized_similarity_medium": {
+      "shim_ms": 0.14970833333333333,
+      "upstream_ms": 0.196639,
+      "ratio": 0.7613359167476103,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.distance_short": {
+      "shim_ms": 0.436736,
+      "upstream_ms": 0.6031113333333333,
+      "ratio": 0.724138274083171,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.distance_medium": {
+      "shim_ms": 0.21784733333333334,
+      "upstream_ms": 0.283764,
+      "ratio": 0.7677060280138894,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.similarity_short": {
+      "shim_ms": 0.4445556666666667,
+      "upstream_ms": 0.6021803333333333,
+      "ratio": 0.7382434165623698,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.similarity_medium": {
+      "shim_ms": 0.24430566666666664,
+      "upstream_ms": 0.292611,
+      "ratio": 0.8349162084360008,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.normalized_distance_short": {
+      "shim_ms": 0.4983473333333333,
+      "upstream_ms": 0.951625,
+      "ratio": 0.5236803712947151,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.normalized_distance_medium": {
+      "shim_ms": 0.255,
+      "upstream_ms": 0.337014,
+      "ratio": 0.7566451245348859,
+      "n_pairs": 1000
+    },
+    "distance.Levenshtein.normalized_similarity_short": {
+      "shim_ms": 0.472264,
+      "upstream_ms": 0.887153,
+      "ratio": 0.5323365868119705,
+      "n_pairs": 5000
+    },
+    "distance.Levenshtein.normalized_similarity_medium": {
+      "shim_ms": 0.22080533333333335,
+      "upstream_ms": 0.3514446666666667,
+      "ratio": 0.6282790842370635,
+      "n_pairs": 1000
+    },
+    "distance.OSA.distance_short": {
+      "shim_ms": 0.4448473333333333,
+      "upstream_ms": 0.5852916666666667,
+      "ratio": 0.760043852779953,
+      "n_pairs": 5000
+    },
+    "distance.OSA.distance_medium": {
+      "shim_ms": 0.22365266666666667,
+      "upstream_ms": 0.2829583333333333,
+      "ratio": 0.7904084818141659,
+      "n_pairs": 1000
+    },
+    "distance.OSA.similarity_short": {
+      "shim_ms": 0.5386806666666666,
+      "upstream_ms": 0.5915973333333334,
+      "ratio": 0.910552898593187,
+      "n_pairs": 5000
+    },
+    "distance.OSA.similarity_medium": {
+      "shim_ms": 0.23905533333333334,
+      "upstream_ms": 0.2845833333333333,
+      "ratio": 0.8400187408491948,
+      "n_pairs": 1000
+    },
+    "distance.OSA.normalized_distance_short": {
+      "shim_ms": 0.53025,
+      "upstream_ms": 0.8633473333333334,
+      "ratio": 0.6141792295260077,
+      "n_pairs": 5000
+    },
+    "distance.OSA.normalized_distance_medium": {
+      "shim_ms": 0.24154166666666665,
+      "upstream_ms": 0.347028,
+      "ratio": 0.6960293309665694,
+      "n_pairs": 1000
+    },
+    "distance.OSA.normalized_similarity_short": {
+      "shim_ms": 0.5661803333333334,
+      "upstream_ms": 0.8688886666666666,
+      "ratio": 0.6516143610266909,
+      "n_pairs": 5000
+    },
+    "distance.OSA.normalized_similarity_medium": {
+      "shim_ms": 0.24752766666666665,
+      "upstream_ms": 0.3360973333333333,
+      "ratio": 0.7364761398483772,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.distance_short": {
+      "shim_ms": 1.7619583333333333,
+      "upstream_ms": 2.1327083333333334,
+      "ratio": 0.8261600078147895,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.distance_medium": {
+      "shim_ms": 4.590291666666667,
+      "upstream_ms": 5.596513666666667,
+      "ratio": 0.8202055672635721,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.similarity_short": {
+      "shim_ms": 1.7784026666666668,
+      "upstream_ms": 2.143361,
+      "ratio": 0.8297261481694715,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.similarity_medium": {
+      "shim_ms": 4.699958333333333,
+      "upstream_ms": 5.719083333333333,
+      "ratio": 0.8218027364525201,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.normalized_distance_short": {
+      "shim_ms": 1.828514,
+      "upstream_ms": 2.4561806666666666,
+      "ratio": 0.7444541946018629,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.normalized_distance_medium": {
+      "shim_ms": 4.711639,
+      "upstream_ms": 5.842444333333333,
+      "ratio": 0.8064499601850436,
+      "n_pairs": 1000
+    },
+    "distance.DamerauLevenshtein.normalized_similarity_short": {
+      "shim_ms": 1.845639,
+      "upstream_ms": 2.4025696666666665,
+      "ratio": 0.7681937492204528,
+      "n_pairs": 5000
+    },
+    "distance.DamerauLevenshtein.normalized_similarity_medium": {
+      "shim_ms": 4.733305666666667,
+      "upstream_ms": 5.809444333333333,
+      "ratio": 0.8147604822561058,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.distance_short": {
+      "shim_ms": 0.4757363333333333,
+      "upstream_ms": 0.7599583333333334,
+      "ratio": 0.6260031799989034,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.distance_medium": {
+      "shim_ms": 0.23363866666666666,
+      "upstream_ms": 0.300111,
+      "ratio": 0.7785075077776777,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.similarity_short": {
+      "shim_ms": 0.4659446666666667,
+      "upstream_ms": 0.767,
+      "ratio": 0.607489787049109,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.similarity_medium": {
+      "shim_ms": 0.222486,
+      "upstream_ms": 0.306611,
+      "ratio": 0.7256295436236794,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.normalized_distance_short": {
+      "shim_ms": 0.475375,
+      "upstream_ms": 0.7765416666666666,
+      "ratio": 0.6121693405591029,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.normalized_distance_medium": {
+      "shim_ms": 0.21406933333333333,
+      "upstream_ms": 0.3145556666666667,
+      "ratio": 0.6805451499310667,
+      "n_pairs": 1000
+    },
+    "distance.Jaro.normalized_similarity_short": {
+      "shim_ms": 0.4755833333333333,
+      "upstream_ms": 0.7747083333333333,
+      "ratio": 0.613886946700371,
+      "n_pairs": 5000
+    },
+    "distance.Jaro.normalized_similarity_medium": {
+      "shim_ms": 0.21504166666666666,
+      "upstream_ms": 0.3050416666666667,
+      "ratio": 0.7049583390247233,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.distance_short": {
+      "shim_ms": 0.488028,
+      "upstream_ms": 0.7995696666666666,
+      "ratio": 0.6103633246050272,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.distance_medium": {
+      "shim_ms": 0.22243066666666667,
+      "upstream_ms": 0.305361,
+      "ratio": 0.7284187131515376,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.similarity_short": {
+      "shim_ms": 0.4995276666666667,
+      "upstream_ms": 0.7728193333333334,
+      "ratio": 0.6463705618130671,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.similarity_medium": {
+      "shim_ms": 0.24394466666666667,
+      "upstream_ms": 0.298889,
+      "ratio": 0.8161714438024372,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.normalized_distance_short": {
+      "shim_ms": 0.490611,
+      "upstream_ms": 0.7841806666666666,
+      "ratio": 0.6256351640055736,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.normalized_distance_medium": {
+      "shim_ms": 0.253639,
+      "upstream_ms": 0.2920833333333333,
+      "ratio": 0.8683788873038517,
+      "n_pairs": 1000
+    },
+    "distance.JaroWinkler.normalized_similarity_short": {
+      "shim_ms": 0.515139,
+      "upstream_ms": 0.7841666666666667,
+      "ratio": 0.6569253985122211,
+      "n_pairs": 5000
+    },
+    "distance.JaroWinkler.normalized_similarity_medium": {
+      "shim_ms": 0.228889,
+      "upstream_ms": 0.305014,
+      "ratio": 0.75042129213741,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.distance_short": {
+      "shim_ms": 0.3590416666666667,
+      "upstream_ms": 0.443736,
+      "ratio": 0.809133508813048,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.distance_medium": {
+      "shim_ms": 0.12725,
+      "upstream_ms": 0.14722233333333334,
+      "ratio": 0.864338970310211,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.similarity_short": {
+      "shim_ms": 0.355236,
+      "upstream_ms": 0.4417083333333333,
+      "ratio": 0.804232053579851,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.similarity_medium": {
+      "shim_ms": 0.127,
+      "upstream_ms": 0.14004166666666665,
+      "ratio": 0.9068729544778341,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.normalized_distance_short": {
+      "shim_ms": 0.3864723333333333,
+      "upstream_ms": 0.7341806666666666,
+      "ratio": 0.526399496581677,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.normalized_distance_medium": {
+      "shim_ms": 0.13255566666666665,
+      "upstream_ms": 0.19725,
+      "ratio": 0.6720185889311364,
+      "n_pairs": 1000
+    },
+    "distance.LCSseq.normalized_similarity_short": {
+      "shim_ms": 0.421736,
+      "upstream_ms": 0.7340696666666666,
+      "ratio": 0.5745176774774783,
+      "n_pairs": 5000
+    },
+    "distance.LCSseq.normalized_similarity_medium": {
+      "shim_ms": 0.141778,
+      "upstream_ms": 0.203361,
+      "ratio": 0.6971739910799022,
+      "n_pairs": 1000
+    },
+    "distance.Hamming.distance_equal_short": {
+      "shim_ms": 0.083986,
+      "upstream_ms": 0.064778,
+      "ratio": 1.2965204236006052,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.distance_equal_medium": {
+      "shim_ms": 0.021708333333333333,
+      "upstream_ms": 0.01981933333333333,
+      "ratio": 1.095310975814861,
+      "n_pairs": 500
+    },
+    "distance.Hamming.similarity_equal_short": {
+      "shim_ms": 0.08620833333333333,
+      "upstream_ms": 0.06677766666666667,
+      "ratio": 1.290975525749627,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.similarity_equal_medium": {
+      "shim_ms": 0.02351366666666667,
+      "upstream_ms": 0.019597,
+      "ratio": 1.1998605228691468,
+      "n_pairs": 500
+    },
+    "distance.Hamming.normalized_distance_equal_short": {
+      "shim_ms": 0.09065266666666667,
+      "upstream_ms": 0.18141666666666667,
+      "ratio": 0.49969315571887923,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.normalized_distance_equal_medium": {
+      "shim_ms": 0.026139,
+      "upstream_ms": 0.04605566666666666,
+      "ratio": 0.5675523098858628,
+      "n_pairs": 500
+    },
+    "distance.Hamming.normalized_similarity_equal_short": {
+      "shim_ms": 0.092653,
+      "upstream_ms": 0.18656933333333334,
+      "ratio": 0.4966143060310019,
+      "n_pairs": 2000
+    },
+    "distance.Hamming.normalized_similarity_equal_medium": {
+      "shim_ms": 0.025305666666666667,
+      "upstream_ms": 0.04688866666666666,
+      "ratio": 0.5396968706012826,
+      "n_pairs": 500
+    },
+    "distance.Indel.distance_K2": {
+      "shim_ms": 0.09830533333333333,
+      "upstream_ms": 0.10288866666666667,
+      "ratio": 0.9554534675020896,
+      "n_pairs": 500
+    },
+    "distance.Levenshtein.distance_K2": {
+      "shim_ms": 0.17573633333333336,
+      "upstream_ms": 0.3008056666666667,
+      "ratio": 0.5842188256648534,
+      "n_pairs": 500
+    },
+    "distance.OSA.distance_K2": {
+      "shim_ms": 0.182528,
+      "upstream_ms": 0.3312916666666667,
+      "ratio": 0.5509586215570368,
+      "n_pairs": 500
+    },
+    "distance.DamerauLevenshtein.distance_K2": {
+      "shim_ms": 7.735930666666667,
+      "upstream_ms": 9.239444333333333,
+      "ratio": 0.8372722847366039,
+      "n_pairs": 500
+    },
+    "distance.LCSseq.distance_K2": {
+      "shim_ms": 0.09308333333333332,
+      "upstream_ms": 0.09981933333333333,
+      "ratio": 0.9325180826693559,
+      "n_pairs": 500
+    },
+    "distance.Indel.distance_K3": {
+      "shim_ms": 0.14394466666666667,
+      "upstream_ms": 0.127278,
+      "ratio": 1.1309469560070606,
+      "n_pairs": 400
+    },
+    "distance.Levenshtein.distance_K3": {
+      "shim_ms": 0.230375,
+      "upstream_ms": 0.4582776666666667,
+      "ratio": 0.5026974185228315,
+      "n_pairs": 400
+    },
+    "distance.OSA.distance_K3": {
+      "shim_ms": 0.24698633333333334,
+      "upstream_ms": 0.46956933333333334,
+      "ratio": 0.5259848030961704,
+      "n_pairs": 400
+    },
+    "distance.DamerauLevenshtein.distance_K3": {
+      "shim_ms": 18.22288866666667,
+      "upstream_ms": 21.6025,
+      "ratio": 0.8435546194499095,
+      "n_pairs": 400
+    },
+    "distance.LCSseq.distance_K3": {
+      "shim_ms": 0.129875,
+      "upstream_ms": 0.12720833333333334,
+      "ratio": 1.0209629872256796,
+      "n_pairs": 400
+    },
+    "distance.Indel.distance_K4": {
+      "shim_ms": 0.143861,
+      "upstream_ms": 0.14230533333333334,
+      "ratio": 1.0109318929250717,
+      "n_pairs": 300
+    },
+    "distance.Levenshtein.distance_K4": {
+      "shim_ms": 0.2753333333333333,
+      "upstream_ms": 0.5774446666666666,
+      "ratio": 0.47681336278108033,
+      "n_pairs": 300
+    },
+    "distance.OSA.distance_K4": {
+      "shim_ms": 0.438528,
+      "upstream_ms": 0.6675,
+      "ratio": 0.6569707865168539,
+      "n_pairs": 300
+    },
+    "distance.DamerauLevenshtein.distance_K4": {
+      "shim_ms": 26.566666666666666,
+      "upstream_ms": 31.015847,
+      "ratio": 0.8565513837705824,
+      "n_pairs": 300
+    },
+    "distance.LCSseq.distance_K4": {
+      "shim_ms": 0.14620833333333336,
+      "upstream_ms": 0.145,
+      "ratio": 1.0083333333333335,
+      "n_pairs": 300
+    },
+    "process.cdist_50x100_fuzz_ratio": {
+      "shim_ms": 0.0798542,
+      "upstream_ms": 0.0894,
+      "ratio": 0.8932237136465325,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_Levenshtein_distance": {
+      "shim_ms": 0.1273417,
+      "upstream_ms": 0.2346208,
+      "ratio": 0.542755373777602,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_Indel_distance": {
+      "shim_ms": 0.08047080000000001,
+      "upstream_ms": 0.07274169999999999,
+      "ratio": 1.1062540468534556,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_OSA_distance": {
+      "shim_ms": 0.1449875,
+      "upstream_ms": 0.2590375,
+      "ratio": 0.5597162572986537,
+      "n_pairs": 5000
+    },
+    "process.cdist_50x100_Jaro_similarity": {
+      "shim_ms": 0.21403329999999998,
+      "upstream_ms": 0.1679,
+      "ratio": 1.2747665276950566,
+      "n_pairs": 5000
+    },
+    "process.extract_10k_fuzz_ratio": {
+      "shim_ms": 0.3069,
+      "upstream_ms": 0.28696659999999996,
+      "ratio": 1.069462439182818,
+      "n_pairs": 10000
+    },
+    "process.extract_10k_fuzz_WRatio": {
+      "shim_ms": 16.2691583,
+      "upstream_ms": 9.539625,
+      "ratio": 1.7054295425658768,
+      "n_pairs": 10000
+    },
+    "process.extract_10k_Levenshtein_distance": {
+      "shim_ms": 0.4222666,
+      "upstream_ms": 0.6351167,
+      "ratio": 0.6648645831545604,
+      "n_pairs": 10000
+    },
+    "process.extract_10k_Indel_distance": {
+      "shim_ms": 0.2938625,
+      "upstream_ms": 0.272325,
+      "ratio": 1.079087487377215,
+      "n_pairs": 10000
+    }
+  }
+}
