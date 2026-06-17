@@ -43,6 +43,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "stride_align/indel.hpp"
@@ -132,7 +133,16 @@ inline double indel_normalized(
   if (a.empty() && b.empty()) return 1.0;
   const std::size_t total = a.size() + b.size();
   if (total == 0U) return 1.0;
-  const std::size_t d = ::stride_align::indel::indel_distance<Token>(a, b);
+  std::size_t d;
+  if constexpr (std::is_same_v<Token, std::uint8_t>) {
+    // Flat 256-entry PEQ + direct indexing — the bit-parallel byte path
+    // fuzz.ratio already uses. The generic indel_distance<Token> builds an
+    // unordered_map PEQ and hash-looks-up per text char; that kernel (not
+    // the tokenise/sort/join) was the token-ratio gap vs rapidfuzz.
+    d = ::stride_align::indel::indel_distance_u8(a, b);
+  } else {
+    d = ::stride_align::indel::indel_distance<Token>(a, b);
+  }
   return 1.0 - static_cast<double>(d) / static_cast<double>(total);
 }
 

@@ -22,7 +22,7 @@
 //     score      = max(base, token_sort, token_set)
 //   else:
 //     # length-mismatched regime — partial variants dominate
-//     partial_scale = 0.9 if len_ratio < 8 else 0.6
+//     partial_scale = 0.6 if len_ratio > 8 else 0.9
 //     partial             = partial_ratio(a, b)             * partial_scale
 //     partial_token_sort  = partial_token_sort_ratio(a, b)  * UNBASE_SCALE * partial_scale
 //     partial_token_set   = partial_token_set_ratio(a, b)   * UNBASE_SCALE * partial_scale
@@ -48,6 +48,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "stride_align/indel.hpp"
@@ -77,11 +78,17 @@ inline double partial_token_sort_ratio_engine(
   if (ja.empty() && jb.empty()) return 1.0;
   if (ja.empty() || jb.empty()) return 0.0;
 
-  // partial_ratio operates on codepoint vectors. For the byte fast
-  // path we already have Token = uint8_t, so widen-by-copy is cheap.
-  std::vector<Codepoint> ja_cp(ja.begin(), ja.end());
-  std::vector<Codepoint> jb_cp(jb.begin(), jb.end());
-  return ::stride_align::partial_ratio::partial_ratio(ja_cp, jb_cp);
+  // Byte inputs go straight through partial_ratio_bytes (the fast path
+  // fuzz.partial_ratio already uses) — no uint8->codepoint widening, and
+  // the byte partial_ratio kernel rather than the codepoint one.
+  if constexpr (std::is_same_v<Token, std::uint8_t>) {
+    return ::stride_align::partial_ratio::partial_ratio_bytes(
+        std::span<const std::uint8_t>(ja), std::span<const std::uint8_t>(jb));
+  } else {
+    std::vector<Codepoint> ja_cp(ja.begin(), ja.end());
+    std::vector<Codepoint> jb_cp(jb.begin(), jb.end());
+    return ::stride_align::partial_ratio::partial_ratio(ja_cp, jb_cp);
+  }
 }
 
 // Combined ``partial_token_set_ratio``. Builds the three set
@@ -128,9 +135,14 @@ inline double partial_token_set_ratio_engine(
   auto pr = [](const std::vector<Token>& x, const std::vector<Token>& y) -> double {
     if (x.empty() && y.empty()) return 1.0;
     if (x.empty() || y.empty()) return 0.0;
-    std::vector<Codepoint> xc(x.begin(), x.end());
-    std::vector<Codepoint> yc(y.begin(), y.end());
-    return ::stride_align::partial_ratio::partial_ratio(xc, yc);
+    if constexpr (std::is_same_v<Token, std::uint8_t>) {
+      return ::stride_align::partial_ratio::partial_ratio_bytes(
+          std::span<const std::uint8_t>(x), std::span<const std::uint8_t>(y));
+    } else {
+      std::vector<Codepoint> xc(x.begin(), x.end());
+      std::vector<Codepoint> yc(y.begin(), y.end());
+      return ::stride_align::partial_ratio::partial_ratio(xc, yc);
+    }
   };
   const double r0 = pr(t0, t1);
   if (r0 >= 1.0) return 1.0;
@@ -183,7 +195,10 @@ inline double wratio_engine(
 
   // Length-mismatched regime. The dominant variant is ``partial`` (no
   // unbase penalty), so its scaling factor caps the achievable score.
-  const double partial_scale = (len_ratio < 8.0) ? 0.9 : 0.6;
+  // rapidfuzz/fuzzywuzzy: ``partial_scale = 0.6 if len_ratio > 8 else 0.9`` —
+  // len_ratio == 8 stays in the 0.9 bucket. (Was ``< 8.0``, which put the
+  // exact-8 boundary in the 0.6 bucket and diverged from rapidfuzz, ~30 pts.)
+  const double partial_scale = (len_ratio > 8.0) ? 0.6 : 0.9;
   // partial_token_* are scaled by UNBASE_SCALE * partial_scale, which
   // is strictly less than ``partial_scale``. So ``partial_scale`` is
   // the true ceiling for any non-base component here.
