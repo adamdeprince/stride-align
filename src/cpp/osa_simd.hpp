@@ -17,7 +17,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #include <nanobind/nanobind.h>
 
@@ -315,6 +320,10 @@ inline void osa_batch_single_word_u32_avx512(
   }
 }
 
+#endif  // __AVX512F__
+
+// uint32 PEQ for the short-pattern OSA fast paths — AVX-512 16-lane and
+// NEON 4-lane both use it. Pure scalar; outside any ISA guard.
 inline std::array<std::uint32_t, 256> build_peq_u32_osa(
     std::span<const std::uint8_t> pattern) {
   std::array<std::uint32_t, 256> peq{};
@@ -324,7 +333,87 @@ inline std::array<std::uint32_t, 256> build_peq_u32_osa(
   }
   return peq;
 }
-#endif  // __AVX512F__
+
+#if defined(__ARM_NEON)
+// 4-lane uint32 OSA batch kernel — the NEON twin of
+// osa_batch_single_word_u32_avx512. Standard Myers d0 plus the Hyyrö 2002
+// transposition term; four targets per 128-bit vector at 32-bit width,
+// doubling the 2-lane uint64 path for m <= 32. No cutoff variant (cutoff
+// calls stay on the uint64 path), matching the AVX-512 specialization.
+inline void osa_batch_single_word_u32_neon(
+    const std::uint32_t* peq32,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    Score* out) {
+  constexpr std::size_t lanes = 4;
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+  const std::uint32_t init_vp =
+      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
+  uint32x4_t vp = vdupq_n_u32(init_vp);
+  uint32x4_t vn = vdupq_n_u32(0);
+  uint32x4_t pm_old = vdupq_n_u32(0);
+  uint32x4_t d0_prev = vdupq_n_u32(0);
+  uint32x4_t score = vdupq_n_u32(static_cast<std::uint32_t>(m));
+  const uint32x4_t one_v = vdupq_n_u32(1U);
+  const uint32x4_t top_bit_mask = vdupq_n_u32(std::uint32_t{1} << (m - 1U));
+  const uint32x4_t zero_v = vdupq_n_u32(0);
+
+  alignas(16) std::uint32_t target_lengths_padded[lanes] = {};
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
+  }
+  const uint32x4_t target_lens_v = vld1q_u32(target_lengths_padded);
+
+  for (std::size_t k = 0; k < max_len; ++k) {
+    alignas(16) std::uint32_t e[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      e[l] = (l < batch_count && k < target_lengths[l]) ? peq32[targets[l][k]] : 0U;
+    }
+    const uint32x4_t pm = vld1q_u32(e);
+    const uint32x4_t k_v = vdupq_n_u32(static_cast<std::uint32_t>(k));
+    const uint32x4_t active_v = vcgtq_u32(target_lens_v, k_v);
+
+    // trans = (((~d0_prev) & pm) << 1) & pm_old   (vbicq(a,b) = a & ~b)
+    const uint32x4_t not_d0p_and_pm = vbicq_u32(pm, d0_prev);
+    const uint32x4_t trans =
+        vandq_u32(vshlq_n_u32(not_d0p_and_pm, 1), pm_old);
+
+    const uint32x4_t pm_and_vp = vandq_u32(pm, vp);
+    const uint32x4_t sum = vaddq_u32(pm_and_vp, vp);
+    uint32x4_t d0 = vorrq_u32(vorrq_u32(veorq_u32(sum, vp), pm), vn);
+    d0 = vorrq_u32(d0, trans);
+
+    const uint32x4_t hp = vorrq_u32(vn, vmvnq_u32(vorrq_u32(d0, vp)));
+    const uint32x4_t hn = vandq_u32(d0, vp);
+
+    const uint32x4_t hp_eq_zero = vceqq_u32(vandq_u32(hp, top_bit_mask), zero_v);
+    const uint32x4_t hn_eq_zero = vceqq_u32(vandq_u32(hn, top_bit_mask), zero_v);
+    const uint32x4_t hp_set = vbicq_u32(one_v, hp_eq_zero);
+    const uint32x4_t hn_set = vbicq_u32(one_v, hn_eq_zero);
+    const uint32x4_t delta = vandq_u32(vsubq_u32(hp_set, hn_set), active_v);
+    score = vaddq_u32(score, delta);
+
+    const uint32x4_t hp_shift = vorrq_u32(vshlq_n_u32(hp, 1), one_v);
+    const uint32x4_t hn_shift = vshlq_n_u32(hn, 1);
+    vp = vorrq_u32(hn_shift, vmvnq_u32(vorrq_u32(d0, hp_shift)));
+    vn = vandq_u32(d0, hp_shift);
+
+    d0_prev = d0;
+    pm_old = pm;
+  }
+
+  alignas(16) std::uint32_t score_out[lanes];
+  vst1q_u32(score_out, score);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    out[l] = static_cast<Score>(score_out[l]);
+  }
+}
+#endif  // __ARM_NEON
 
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64] (single-word OSA path). Writes OSA
@@ -369,6 +458,35 @@ inline void osa_scores_simd_raw_per_pair(
           batch_lens32[l] = 0;
         }
         osa_batch_single_word_u32_avx512(
+            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
+            batch_count, q_len, out + b);
+      }
+      return;
+    }
+  }
+#endif
+
+#if defined(__ARM_NEON)
+  // 4-lane uint32 path: 2x the 2-lane uint64 path for q_len <= 32, no cutoff.
+  if constexpr (Ops::lanes == 2U &&
+                std::is_same_v<typename Ops::Vec, uint64x2_t>) {
+    if (q_len > 0U && q_len <= 32U && cutoffs_per_pair == nullptr) {
+      const auto peq32 = build_peq_u32_osa(
+          std::span<const std::uint8_t>(q_ptr, q_len));
+      constexpr std::size_t lanes32 = 4;
+      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
+      std::array<std::size_t, lanes32> batch_lens32{};
+      for (std::size_t b = 0; b < count; b += lanes32) {
+        const std::size_t batch_count = std::min(lanes32, count - b);
+        for (std::size_t l = 0; l < batch_count; ++l) {
+          batch_ptrs32[l] = t_ptrs[b + l];
+          batch_lens32[l] = t_lens[b + l];
+        }
+        for (std::size_t l = batch_count; l < lanes32; ++l) {
+          batch_ptrs32[l] = nullptr;
+          batch_lens32[l] = 0;
+        }
+        osa_batch_single_word_u32_neon(
             peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
             batch_count, q_len, out + b);
       }
