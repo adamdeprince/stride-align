@@ -535,9 +535,14 @@ inline void myers_batch_single_word_u32_avx512(
   const __m512i top_bit_mask =
       _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
 
-  // Per-column gather scratch (16 bytes), rebuilt each text position — was
-  // a fixed [lanes*64] transpose that overflowed for targets longer than 64.
-  alignas(16) std::uint8_t bytes_col[lanes];
+  // Per-column PEQ scratch, rebuilt each text position via scalar L1
+  // lookups into the 1 KB peq32 table instead of _mm512_i32gather_epi32:
+  // the gather is microcoded and was ~2x slower per pair on avx10_512
+  // (see indel_batch_single_word_u32_avx512). Bit-identical: the epi32
+  // ops are lane-independent and padding lanes are dropped from `out`.
+  // (Per-column rebuild also avoids the old [lanes*64] transpose that
+  // overflowed for targets longer than 64.)
+  alignas(64) std::uint32_t eq_col[lanes];
   alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
   for (std::size_t l = 0; l < batch_count; ++l) {
     target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
@@ -546,14 +551,12 @@ inline void myers_batch_single_word_u32_avx512(
       _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      bytes_col[l] =
+      const std::uint8_t c =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+      eq_col[l] = peq32[c];
     }
-    const __m128i bytes16 = _mm_load_si128(
-        reinterpret_cast<const __m128i*>(bytes_col));
-    const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
-    const __m512i eq = _mm512_i32gather_epi32(
-        indices, reinterpret_cast<const int*>(peq32), 4);
+    const __m512i eq =
+        _mm512_load_si512(reinterpret_cast<const __m512i*>(eq_col));
 
     const __m512i k_v = _mm512_set1_epi32(static_cast<int>(k));
     const __mmask16 active_mask =

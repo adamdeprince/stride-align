@@ -222,7 +222,7 @@ def cdist(
     score_hint=None,
     score_multiplier: float = 1,
     dtype=None,
-    workers: int = 1,
+    workers: int = -1,
     **kwargs,
 ) -> np.ndarray:
     """All-pairs ``(len(queries), len(choices))`` score matrix.
@@ -231,8 +231,15 @@ def cdist(
     ``distance.Jaro.similarity`` etc.) dispatch through ``sa.cdist``
     with the multi-threaded C++ kernel; arbitrary callable scorers
     fall back to a Python loop calling ``scorer`` per pair.
-    ``workers=`` maps to ``sa.cdist``'s ``cpu_count=`` on the fast
-    path.
+
+    ``workers`` defaults to ``-1`` (all cores) rather than upstream
+    rapidfuzz's ``1`` — cdist is an embarrassingly parallel all-pairs
+    matrix and the native kernel already gates parallelism by matrix
+    size, so small matrices stay single-threaded automatically while
+    large ones use every core. Results are identical regardless of the
+    worker count. Pass ``workers=1`` to force single-threaded.
+    ``workers <= 0`` maps to ``sa.cdist``'s ``cpu_count=0`` (all
+    cores); a positive ``workers`` caps the thread count.
     """
     queries_list = list(queries)
     choices_list = list(choices)
@@ -252,7 +259,8 @@ def cdist(
     fast_path = _resolve_fast_path(scorer)
     if fast_path is not None:
         sa_scorer, _top_k_fn, scale, higher_is_better = fast_path
-        cpu_count = max(1, int(workers))
+        # workers <= 0 -> cpu_count=0 (all cores); positive -> cap.
+        cpu_count = 0 if int(workers) <= 0 else int(workers)
         sa_result = _sa.cdist(
             queries_list, choices_list,
             scorer=sa_scorer,
@@ -263,6 +271,13 @@ def cdist(
         # that introspects ``result.dtype`` keeps working.
         if out_dtype is None:
             out_dtype = np.float32 if higher_is_better else np.uint32
+        # Fast common case (distance scorers with no scaling/cutoff):
+        # convert the native result straight to the target dtype,
+        # skipping the float64 round-trip. The intermediate copy
+        # otherwise dominates for cheap scorers like Indel on small
+        # matrices.
+        if scale == 1.0 and score_multiplier == 1 and score_cutoff is None:
+            return sa_result.astype(out_dtype, copy=False)
         # Apply rapidfuzz's score scaling ([0, 1] -> [0, 100] for the
         # similarity scorers) and the user-supplied ``score_multiplier``.
         scaled = sa_result.astype(np.float64)

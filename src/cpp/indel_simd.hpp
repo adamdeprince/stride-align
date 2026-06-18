@@ -168,21 +168,27 @@ inline void indel_batch_single_word_u32_avx512(
   const __m512i mask_v = _mm512_set1_epi32(static_cast<int>(mask_bits));
   __m512i V = mask_v;
 
-  // Per-column gather scratch (16 bytes), rebuilt at each text position.
-  // (Was a fixed [lanes*64] transpose that overflowed for targets longer
-  // than 64; the target/text length is unbounded even when m <= 32.)
-  alignas(16) std::uint8_t bytes_col[lanes];
+  // Per-column PEQ scratch (16 lanes), rebuilt at each text position.
+  // We fetch each lane's PEQ row with a scalar lookup into the
+  // L1-resident 1 KB peq32 table rather than _mm512_i32gather_epi32:
+  // the gather is microcoded and turned out ~7x slower per pair than
+  // upstream's per-pair scalar Myers on avx10_512 (it also forced a
+  // separate 16-byte transpose). Sixteen scalar L1 loads pipeline far
+  // better than one wide gather. Result is bit-identical: the epi32 ops
+  // are lane-independent so padding lanes (l >= batch_count, or k past a
+  // target's end -> peq32[0]) can't perturb a real lane, and padding
+  // lanes are never read into `out` below. (The per-column rebuild also
+  // avoids the old fixed [lanes*64] transpose that overflowed for
+  // targets longer than 64.)
+  alignas(64) std::uint32_t pm_col[lanes];
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      bytes_col[l] =
+      const std::uint8_t c =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+      pm_col[l] = peq32[c];
     }
-    const __m128i bytes16 = _mm_load_si128(
-        reinterpret_cast<const __m128i*>(bytes_col));
-    const __m512i indices = _mm512_cvtepu8_epi32(bytes16);
-    const __m512i pm = _mm512_i32gather_epi32(
-        indices, reinterpret_cast<const int*>(peq32), 4);
-
+    const __m512i pm =
+        _mm512_load_si512(reinterpret_cast<const __m512i*>(pm_col));
     const __m512i U = _mm512_and_si512(V, pm);
     const __m512i sum = _mm512_add_epi32(V, U);
     const __m512i diff = _mm512_sub_epi32(V, U);

@@ -38,6 +38,7 @@
 
 #include "byte_view.hpp"
 #include "cdist_runtime.hpp"
+#include "thread_pool.hpp"
 #include "hamming_simd.hpp"
 #include "indel_simd.hpp"
 #include "jaro_simd.hpp"
@@ -410,8 +411,41 @@ inline nb::object cdist_impl(
   // atomic row index, which keeps the symmetric-upper-triangle's
   // decreasing-row-size case load-balanced.
 
+  // Work-aware thread gate. The pool wakeup is cheap but not free
+  // (~tens of microseconds on a 16-core box); only parallelize once the
+  // estimated work amortizes it, otherwise run single-threaded so tiny
+  // matrices keep upstream-beating latency. The estimate is exact for
+  // the q_len*t_len cost model and O(N+M): non-symmetric work is
+  // (Sum q_len)*(Sum t_len); symmetric upper-triangle work is
+  // (S^2 - Sum q_len^2)/2 with S = Sum q_len. The threshold is divided
+  // by the scorer weight (rather than multiplying est_cost) to stay
+  // overflow-safe on huge inputs.
+  std::uint64_t est_cost = 0;
+  {
+    std::uint64_t sum_q = 0;
+    for (std::size_t i = 0; i < N; ++i) {
+      sum_q += q_lens[i];
+    }
+    if (symmetric) {
+      std::uint64_t sum_sq = 0;
+      for (std::size_t i = 0; i < N; ++i) {
+        sum_sq += static_cast<std::uint64_t>(q_lens[i]) * q_lens[i];
+      }
+      est_cost = (sum_q * sum_q - sum_sq) / 2U;
+    } else {
+      std::uint64_t sum_t = 0;
+      for (std::size_t j = 0; j < M; ++j) {
+        sum_t += t_lens[j];
+      }
+      est_cost = sum_q * sum_t;
+    }
+  }
+  constexpr std::uint64_t kThreadWorkThreshold = 2500000ULL;
+  const std::uint64_t weight = runtime::scorer_thread_weight(scorer);
   const std::size_t num_threads =
-      std::max<std::size_t>(1U, std::min(cpu_count, N));
+      (est_cost < kThreadWorkThreshold / weight)
+          ? 1U
+          : std::max<std::size_t>(1U, std::min(cpu_count, N));
 
   auto process_row = [&](std::size_t i) {
     const std::size_t j_start = symmetric ? i + 1U : 0U;
@@ -508,12 +542,23 @@ inline nb::object cdist_impl(
       }
     }
     PyEval_RestoreThread(saved_state);
+  } else if (!have_tqdm) {
+    // Multi-threaded, no progress bar: dispatch the row loop through
+    // the persistent pool so we never pay thread spawn/join per call.
+    // The calling thread participates as a worker; process_row writes
+    // disjoint output rows (and, for the symmetric case, disjoint
+    // mirror cells), so concurrent rows do not race.
+    PyThreadState* saved_state = PyEval_SaveThread();
+    ::stride_align::threading::ThreadPool::instance().parallel_for(
+        N, num_threads, process_row);
+    PyEval_RestoreThread(saved_state);
   } else {
-    // Multi-threaded: workers run with no GIL, main thread polls the
-    // done queue and dispatches the tqdm updates. The main thread
-    // sleeps on the cv with the GIL released so other Python threads
-    // can run; it re-acquires the GIL only for the brief tqdm.update
-    // call.
+    // Multi-threaded with tqdm: workers run with no GIL, main thread
+    // polls the done queue and dispatches the tqdm updates. The main
+    // thread sleeps on the cv with the GIL released so other Python
+    // threads can run; it re-acquires the GIL only for the brief
+    // tqdm.update call. Spawn-per-call is fine here: a run long enough
+    // to want a progress bar dwarfs the spawn cost.
     std::vector<std::thread> threads;
     threads.reserve(num_threads);
     {

@@ -92,6 +92,35 @@ inline std::uint64_t pair_cost(std::size_t q_len, std::size_t t_len) noexcept {
       std::max<std::size_t>(1U, q_len) * std::max<std::size_t>(1U, t_len));
 }
 
+// Relative per-pair compute weight, used by the cdist thread gate to
+// decide when a matrix is heavy enough to amortize the thread pool's
+// wakeup cost. The cost model pair_cost() = q_len*t_len captures the
+// DP-matrix area but not the scorer's per-cell constant: Jaro's
+// bit-parallel window + flag/transposition counting is ~3x the cost of
+// the Myers-based distance kernels per cell, so it pays to parallelize
+// Jaro/Jaro-Winkler at smaller matrices than Levenshtein/Indel/etc.
+inline std::uint64_t scorer_thread_weight(Scorer scorer) noexcept {
+  switch (scorer) {
+    // Jaro's bit-parallel window + flag/transposition counting is the
+    // heaviest per-cell, ~3x the Myers-based distance kernels.
+    case Scorer::Jaro:
+    case Scorer::JaroWinkler:
+      return 3U;
+    // Levenshtein / OSA / true-Damerau carry a bigger per-cell
+    // constant than Indel (extra min/transposition work), ~2x.
+    case Scorer::Levenshtein:
+    case Scorer::LevenshteinNormalized:
+    case Scorer::DamerauLevenshtein:
+    case Scorer::DamerauLevenshteinNormalized:
+    case Scorer::TrueDamerauLevenshtein:
+    case Scorer::TrueDamerauLevenshteinNormalized:
+      return 2U;
+    // Indel and Hamming are the cheapest per cell.
+    default:
+      return 1U;
+  }
+}
+
 // Tuple-snapshot a Python sequence into our state. Shallow: a new
 // tuple holding new refs to the same string objects, so the byte
 // pointers returned by byte_view stay valid for the snapshot's
