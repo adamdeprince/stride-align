@@ -226,6 +226,280 @@ inline void indel_batch_single_word_u32(
   }
 }
 
+
+// ---- Packed-PEQ cdist fast path (upstream rapidfuzz's layout) -----
+//
+// A naive per-row batch gathers a *scattered* PEQ column per step (each
+// lane a different target with a different char), which on x86 is a
+// store-forwarding-bound bottleneck. Upstream rapidfuzz instead packs
+// ONE dimension's PEQ char-major and iterates the other dimension's
+// characters, so each step's PEQ vector is a single contiguous load
+// (the iterated char is shared across lanes). We pack the CHOICES
+// (targets, which must fit the lane bit width) as Myers patterns and
+// iterate each QUERY's characters as the text. Output is a contiguous
+// matrix row per query, amortizing the one-time pack over all queries.
+template <typename UOps>
+struct PackedChoicePeq {
+  using Lane = typename UOps::Lane;
+  // peq[(g*256 + ch)*lanes + l] = PEQ bitmask of char `ch` in the choice
+  // at group g, lane l. masks[g*lanes + l] = (1<<len)-1 for that choice
+  // (the Myers init vp). clens = choice length (also the Myers score
+  // init). topbit[g*lanes + l] = 1<<(len-1), the per-lane Myers/OSA
+  // score-delta test bit (0 for empty choices). clens is stored as the
+  // lane type so it can be SIMD-loaded for the per-lane score init.
+  std::vector<Lane> peq;
+  std::vector<Lane> masks;
+  std::vector<Lane> topbit;
+  std::vector<Lane> clens;
+  std::size_t num_groups = 0;
+  std::size_t count = 0;
+};
+
+template <typename UOps>
+inline PackedChoicePeq<UOps> build_packed_choice_peq(
+    const std::uint8_t* const* t_ptrs, const std::size_t* t_lens,
+    std::size_t count) {
+  using Lane = typename UOps::Lane;
+  constexpr std::size_t lanes = UOps::lanes;
+  constexpr std::size_t W = sizeof(Lane) * 8U;
+  PackedChoicePeq<UOps> p;
+  p.count = count;
+  p.num_groups = (count + lanes - 1U) / lanes;
+  p.peq.assign(p.num_groups * 256U * lanes, Lane{0});
+  p.masks.assign(p.num_groups * lanes, Lane{0});
+  p.topbit.assign(p.num_groups * lanes, Lane{0});
+  p.clens.assign(p.num_groups * lanes, Lane{0});
+  for (std::size_t c = 0; c < count; ++c) {
+    const std::size_t g = c / lanes;
+    const std::size_t l = c % lanes;
+    const std::size_t len = t_lens[c];
+    p.clens[g * lanes + l] = static_cast<Lane>(len);
+    p.masks[g * lanes + l] =
+        (len >= W) ? ~Lane{0} : ((Lane{1} << len) - Lane{1});
+    p.topbit[g * lanes + l] =
+        (len == 0U) ? Lane{0} : (Lane{1} << (len - 1U));
+    const std::uint8_t* tp = t_ptrs[c];
+    Lane* col0 = p.peq.data() + g * 256U * lanes + l;
+    for (std::size_t i = 0; i < len; ++i) {
+      col0[static_cast<std::size_t>(tp[i]) * lanes] |= (Lane{1} << i);
+    }
+  }
+  return p;
+}
+
+// One query row vs the packed choices. Iterates the query's chars; each
+// step is a single contiguous PEQ load per choice-group. IC choice
+// groups are interleaved for ILP. Bit-identical to the per-pair Indel.
+// `Normalized` writes the [0,1] similarity (1 - dist/(qlen+clen)) into a
+// double row instead of the raw int distance — used by fuzz.ratio.
+template <typename UOps, std::size_t IC, bool Normalized, typename OutT>
+inline void indel_query_row_packed(
+    const std::uint8_t* q, std::size_t q_len,
+    const PackedChoicePeq<UOps>& p, OutT* out) {
+  using Vec = typename UOps::Vec;
+  using Lane = typename UOps::Lane;
+  constexpr std::size_t lanes = UOps::lanes;
+  for (std::size_t gb = 0; gb < p.num_groups; gb += IC) {
+    const std::size_t nb = std::min(IC, p.num_groups - gb);
+    Vec V[IC];
+    for (std::size_t g = 0; g < IC; ++g) {
+      const std::size_t grp = gb + (g < nb ? g : 0U);
+      V[g] = UOps::load_unaligned(p.masks.data() + grp * lanes);
+    }
+    for (std::size_t k = 0; k < q_len; ++k) {
+      const std::size_t ch = q[k];
+      for (std::size_t g = 0; g < IC; ++g) {
+        const std::size_t grp = gb + (g < nb ? g : 0U);
+        const Vec pm = UOps::load_unaligned(
+            p.peq.data() + (grp * 256U + ch) * lanes);
+        const Vec U = UOps::and_(V[g], pm);
+        V[g] = UOps::or_(UOps::add(V[g], U), UOps::sub(V[g], U));
+      }
+    }
+    for (std::size_t g = 0; g < nb; ++g) {
+      const std::size_t grp = gb + g;
+      alignas(64) Lane vo[lanes];
+      UOps::store_aligned(vo, V[g]);
+      const std::size_t base = grp * lanes;
+      const std::size_t hi = std::min(lanes, p.count - base);
+      for (std::size_t l = 0; l < hi; ++l) {
+        const std::size_t clen = p.clens[base + l];
+        const std::size_t lcs =
+            clen -
+            static_cast<std::size_t>(std::popcount(vo[l] & p.masks[base + l]));
+        const std::size_t dist = clen + q_len - 2U * lcs;
+        if constexpr (Normalized) {
+          const std::size_t total = q_len + clen;
+          out[base + l] = static_cast<OutT>(
+              total == 0U ? 1.0
+                          : 1.0 - static_cast<double>(dist) /
+                                      static_cast<double>(total));
+        } else {
+          out[base + l] = static_cast<OutT>(dist);
+        }
+      }
+    }
+  }
+}
+
+// Myers (Levenshtein) flip: one query row vs packed choices. Same
+// packed-PEQ + iterate-query structure as indel_query_row_packed, but
+// the Myers distance recurrence with the score tracked via the per-lane
+// top bit. The choices are the patterns, so the init vp, score, and top
+// bit are per-lane (loaded from the packed struct). No active mask: the
+// query text length is uniform across lanes. `Normalized` writes the
+// Levenshtein similarity 1 - dist/max(qlen,clen) (clamped) as a double.
+template <typename UOps, std::size_t IC, bool Normalized, typename OutT>
+inline void myers_query_row_packed(
+    const std::uint8_t* q, std::size_t q_len,
+    const PackedChoicePeq<UOps>& p, OutT* out) {
+  using Vec = typename UOps::Vec;
+  using Lane = typename UOps::Lane;
+  constexpr std::size_t lanes = UOps::lanes;
+  const Vec one = UOps::set1(Lane{1});
+  const Vec zero = UOps::zero();
+  for (std::size_t gb = 0; gb < p.num_groups; gb += IC) {
+    const std::size_t nb = std::min(IC, p.num_groups - gb);
+    Vec vp[IC], vn[IC], score[IC], topbit[IC];
+    const Lane* peqbase[IC];
+    for (std::size_t g = 0; g < IC; ++g) {
+      const std::size_t grp = gb + (g < nb ? g : 0U);
+      vp[g] = UOps::load_unaligned(p.masks.data() + grp * lanes);
+      vn[g] = zero;
+      score[g] = UOps::load_unaligned(p.clens.data() + grp * lanes);
+      topbit[g] = UOps::load_unaligned(p.topbit.data() + grp * lanes);
+      peqbase[g] = p.peq.data() + grp * 256U * lanes;
+    }
+    for (std::size_t k = 0; k < q_len; ++k) {
+      const std::size_t ch = q[k];
+      for (std::size_t g = 0; g < IC; ++g) {
+        const Vec eq = UOps::load_unaligned(peqbase[g] + ch * lanes);
+        const Vec x = UOps::or_(eq, vn[g]);
+        const Vec xv = UOps::and_(x, vp[g]);
+        const Vec sum = UOps::add(xv, vp[g]);
+        const Vec d0 = UOps::or_(UOps::xor_(sum, vp[g]), x);
+        const Vec hp = UOps::or_(vn[g], UOps::not_(UOps::or_(d0, vp[g])));
+        const Vec hn = UOps::and_(d0, vp[g]);
+        const Vec hp_set =
+            UOps::andnot_(UOps::cmpeq(UOps::and_(hp, topbit[g]), zero), one);
+        const Vec hn_set =
+            UOps::andnot_(UOps::cmpeq(UOps::and_(hn, topbit[g]), zero), one);
+        score[g] = UOps::add(score[g], UOps::sub(hp_set, hn_set));
+        const Vec hp_shift = UOps::or_(UOps::shl1(hp), one);
+        const Vec hn_shift = UOps::shl1(hn);
+        vp[g] = UOps::or_(hn_shift, UOps::not_(UOps::or_(d0, hp_shift)));
+        vn[g] = UOps::and_(hp_shift, d0);
+      }
+    }
+    for (std::size_t g = 0; g < nb; ++g) {
+      const std::size_t grp = gb + g;
+      alignas(64) Lane so[lanes];
+      UOps::store_aligned(so, score[g]);
+      const std::size_t base = grp * lanes;
+      const std::size_t hi = std::min(lanes, p.count - base);
+      for (std::size_t l = 0; l < hi; ++l) {
+        const std::size_t clen = p.clens[base + l];
+        // Myers' score recurrence can't represent an empty pattern
+        // (its incremental score stays 0); Lev/OSA(empty, query) is just
+        // |query|.
+        const std::size_t dist =
+            (clen == 0U) ? q_len : static_cast<std::size_t>(so[l]);
+        if constexpr (Normalized) {
+          const std::size_t longer = (q_len > clen) ? q_len : clen;
+          out[base + l] = static_cast<OutT>(
+              longer == 0U
+                  ? 1.0
+                  : (dist >= longer ? 0.0
+                                    : 1.0 - static_cast<double>(dist) /
+                                                static_cast<double>(longer)));
+        } else {
+          out[base + l] = static_cast<OutT>(dist);
+        }
+      }
+    }
+  }
+}
+
+// OSA flip: Myers flip plus the Hyyro 2002 transposition term
+// trans = (((~d0_prev) & eq) << 1) & pm_old, with per-lane pm_old/d0_prev.
+// Normalized uses the same 1 - dist/max(qlen,clen) clamp as Levenshtein.
+template <typename UOps, std::size_t IC, bool Normalized, typename OutT>
+inline void osa_query_row_packed(
+    const std::uint8_t* q, std::size_t q_len,
+    const PackedChoicePeq<UOps>& p, OutT* out) {
+  using Vec = typename UOps::Vec;
+  using Lane = typename UOps::Lane;
+  constexpr std::size_t lanes = UOps::lanes;
+  const Vec one = UOps::set1(Lane{1});
+  const Vec zero = UOps::zero();
+  for (std::size_t gb = 0; gb < p.num_groups; gb += IC) {
+    const std::size_t nb = std::min(IC, p.num_groups - gb);
+    Vec vp[IC], vn[IC], score[IC], topbit[IC], pm_old[IC], d0_prev[IC];
+    const Lane* peqbase[IC];
+    for (std::size_t g = 0; g < IC; ++g) {
+      const std::size_t grp = gb + (g < nb ? g : 0U);
+      vp[g] = UOps::load_unaligned(p.masks.data() + grp * lanes);
+      vn[g] = zero;
+      score[g] = UOps::load_unaligned(p.clens.data() + grp * lanes);
+      topbit[g] = UOps::load_unaligned(p.topbit.data() + grp * lanes);
+      pm_old[g] = zero;
+      d0_prev[g] = zero;
+      peqbase[g] = p.peq.data() + grp * 256U * lanes;
+    }
+    for (std::size_t k = 0; k < q_len; ++k) {
+      const std::size_t ch = q[k];
+      for (std::size_t g = 0; g < IC; ++g) {
+        const Vec eq = UOps::load_unaligned(peqbase[g] + ch * lanes);
+        const Vec trans = UOps::and_(
+            UOps::shl1(UOps::andnot_(d0_prev[g], eq)), pm_old[g]);
+        const Vec pm_and_vp = UOps::and_(eq, vp[g]);
+        const Vec sum = UOps::add(pm_and_vp, vp[g]);
+        Vec d0 = UOps::or_(UOps::or_(UOps::xor_(sum, vp[g]), eq), vn[g]);
+        d0 = UOps::or_(d0, trans);
+        const Vec hp = UOps::or_(vn[g], UOps::not_(UOps::or_(d0, vp[g])));
+        const Vec hn = UOps::and_(d0, vp[g]);
+        const Vec hp_set =
+            UOps::andnot_(UOps::cmpeq(UOps::and_(hp, topbit[g]), zero), one);
+        const Vec hn_set =
+            UOps::andnot_(UOps::cmpeq(UOps::and_(hn, topbit[g]), zero), one);
+        score[g] = UOps::add(score[g], UOps::sub(hp_set, hn_set));
+        const Vec hp_shift = UOps::or_(UOps::shl1(hp), one);
+        const Vec hn_shift = UOps::shl1(hn);
+        vp[g] = UOps::or_(hn_shift, UOps::not_(UOps::or_(d0, hp_shift)));
+        vn[g] = UOps::and_(hp_shift, d0);
+        pm_old[g] = eq;
+        d0_prev[g] = d0;
+      }
+    }
+    for (std::size_t g = 0; g < nb; ++g) {
+      const std::size_t grp = gb + g;
+      alignas(64) Lane so[lanes];
+      UOps::store_aligned(so, score[g]);
+      const std::size_t base = grp * lanes;
+      const std::size_t hi = std::min(lanes, p.count - base);
+      for (std::size_t l = 0; l < hi; ++l) {
+        const std::size_t clen = p.clens[base + l];
+        // Myers' score recurrence can't represent an empty pattern
+        // (its incremental score stays 0); Lev/OSA(empty, query) is just
+        // |query|.
+        const std::size_t dist =
+            (clen == 0U) ? q_len : static_cast<std::size_t>(so[l]);
+        if constexpr (Normalized) {
+          const std::size_t longer = (q_len > clen) ? q_len : clen;
+          out[base + l] = static_cast<OutT>(
+              longer == 0U
+                  ? 1.0
+                  : (dist >= longer ? 0.0
+                                    : 1.0 - static_cast<double>(dist) /
+                                                static_cast<double>(longer)));
+        } else {
+          out[base + l] = static_cast<OutT>(dist);
+        }
+      }
+    }
+  }
+}
+
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64]. Writes Indel distances into
 // `out[0..count)`.

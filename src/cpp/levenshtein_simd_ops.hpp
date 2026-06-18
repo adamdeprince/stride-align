@@ -228,6 +228,11 @@ struct Avx512Ops {
   using Vec = __m512i;
   using Lane = std::uint64_t;
   using U32 = Avx512OpsU32;
+  // Best Ops for the pre-transposed cdist path on this backend. x86
+  // prefers the 64-bit/8-lane self: assembling 16 narrow uint32 stores
+  // into one 512-bit load triggers a store-forwarding stall, so 8 wide
+  // stores win despite half the lanes.
+  using CdistTransposeOps = Avx512Ops;
 
   static Vec set1(std::uint64_t v) {
     return _mm512_set1_epi64(static_cast<long long>(v));
@@ -253,6 +258,9 @@ struct Avx512Ops {
   }
   static Vec load_aligned(const std::uint64_t* data) {
     return _mm512_load_si512(reinterpret_cast<const void*>(data));
+  }
+  static Vec load_unaligned(const std::uint64_t* data) {
+    return _mm512_loadu_si512(reinterpret_cast<const void*>(data));
   }
   static void store_aligned(std::uint64_t* dst, Vec v) {
     _mm512_store_si512(reinterpret_cast<void*>(dst), v);
@@ -307,6 +315,8 @@ struct NeonOpsU32 {
     return out;
   }
   static Vec load_aligned(const std::uint32_t* data) { return vld1q_u32(data); }
+  // NEON vld1q has no alignment requirement, so unaligned == aligned.
+  static Vec load_unaligned(const std::uint32_t* data) { return vld1q_u32(data); }
   static void store_aligned(std::uint32_t* dst, Vec v) { vst1q_u32(dst, v); }
 };
 
@@ -320,6 +330,11 @@ struct NeonOps {
   using Vec = uint64x2_t;
   using Lane = std::uint64_t;
   using U32 = NeonOpsU32;
+  // Best Ops for the pre-transposed cdist path. NEON inserts lanes via
+  // register moves (vsetq_lane, no memory round-trip), so there's no
+  // store-forwarding penalty — the 32-bit/4-lane sibling's extra
+  // parallelism wins outright.
+  using CdistTransposeOps = NeonOpsU32;
 
   static Vec set1(std::uint64_t v) { return vdupq_n_u64(v); }
   static Vec zero() { return vdupq_n_u64(0); }
@@ -376,9 +391,51 @@ struct NeonOps {
 //   * No native gather — scalar lane inserts
 //   * Unsigned cmpgt via vslt_du with operands swapped
 // Used by the linux_loongarch64_lsx backend.
+// 4-lane uint32 sibling of LsxOps (128-bit / 32), reached via
+// LsxOps::U32 for the bit-parallel batch + packed-PEQ cdist paths.
+struct LsxOpsU32 {
+  static constexpr std::size_t lanes = 4;
+  using Vec = __m128i;
+  using Lane = std::uint32_t;
+
+  static Vec set1(std::uint32_t v) {
+    return __lsx_vreplgr2vr_w(static_cast<int>(v));
+  }
+  static Vec zero() { return __lsx_vreplgr2vr_w(0); }
+  static Vec and_(Vec a, Vec b) { return __lsx_vand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lsx_vor_v(a, b); }
+  static Vec xor_(Vec a, Vec b) { return __lsx_vxor_v(a, b); }
+  static Vec not_(Vec a) { return __lsx_vnor_v(a, a); }
+  static Vec add(Vec a, Vec b) { return __lsx_vadd_w(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lsx_vsub_w(a, b); }
+  static Vec shl1(Vec a) { return __lsx_vslli_w(a, 1); }
+  static Vec cmpeq(Vec a, Vec b) { return __lsx_vseq_w(a, b); }
+  static Vec andnot_(Vec a, Vec b) { return __lsx_vandn_v(a, b); }
+  static Vec gt(Vec a, Vec b) { return __lsx_vslt_wu(b, a); }
+  static Vec gather(const std::uint32_t* base, const std::uint32_t* idx) {
+    Vec out = __lsx_vreplgr2vr_w(static_cast<int>(base[idx[0]]));
+    out = __lsx_vinsgr2vr_w(out, static_cast<int>(base[idx[1]]), 1);
+    out = __lsx_vinsgr2vr_w(out, static_cast<int>(base[idx[2]]), 2);
+    out = __lsx_vinsgr2vr_w(out, static_cast<int>(base[idx[3]]), 3);
+    return out;
+  }
+  static Vec load_aligned(const std::uint32_t* data) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  static Vec load_unaligned(const std::uint32_t* data) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  static void store_aligned(std::uint32_t* dst, Vec v) {
+    __lsx_vst(v, reinterpret_cast<void*>(dst), 0);
+  }
+};
+
 struct LsxOps {
   static constexpr std::size_t lanes = 2;
   using Vec = __m128i;
+  using Lane = std::uint64_t;
+  using U32 = LsxOpsU32;
+  using CdistTransposeOps = LsxOpsU32;
 
   static Vec set1(std::uint64_t v) {
     return __lsx_vreplgr2vr_d(static_cast<long>(v));
@@ -428,11 +485,63 @@ struct LsxOps {
 
 #if defined(__loongarch_asx)
 
+// 8-lane uint32 sibling of LasxOps (256-bit / 32), reached via
+// LasxOps::U32 for the bit-parallel batch + packed-PEQ cdist paths when
+// the pattern fits 32 bits — 2x the lane count of the 64-bit struct.
+// `_w` (word) intrinsics replace the `_d` (doubleword) ones; bitwise ops
+// are width-agnostic.
+struct LasxOpsU32 {
+  static constexpr std::size_t lanes = 8;
+  using Vec = __m256i;
+  using Lane = std::uint32_t;
+
+  static Vec set1(std::uint32_t v) {
+    return __lasx_xvreplgr2vr_w(static_cast<int>(v));
+  }
+  static Vec zero() { return __lasx_xvreplgr2vr_w(0); }
+  static Vec and_(Vec a, Vec b) { return __lasx_xvand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lasx_xvor_v(a, b); }
+  static Vec xor_(Vec a, Vec b) { return __lasx_xvxor_v(a, b); }
+  static Vec not_(Vec a) { return __lasx_xvnor_v(a, a); }
+  static Vec add(Vec a, Vec b) { return __lasx_xvadd_w(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lasx_xvsub_w(a, b); }
+  static Vec shl1(Vec a) { return __lasx_xvslli_w(a, 1); }
+  static Vec cmpeq(Vec a, Vec b) { return __lasx_xvseq_w(a, b); }
+  static Vec andnot_(Vec a, Vec b) { return __lasx_xvandn_v(a, b); }
+  static Vec gt(Vec a, Vec b) { return __lasx_xvslt_wu(b, a); }
+  static Vec gather(const std::uint32_t* base, const std::uint32_t* idx) {
+    Vec out = __lasx_xvreplgr2vr_w(static_cast<int>(base[idx[0]]));
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[1]]), 1);
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[2]]), 2);
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[3]]), 3);
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[4]]), 4);
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[5]]), 5);
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[6]]), 6);
+    out = __lasx_xvinsgr2vr_w(out, static_cast<int>(base[idx[7]]), 7);
+    return out;
+  }
+  static Vec load_aligned(const std::uint32_t* data) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  // LoongArch vector loads tolerate unaligned addresses.
+  static Vec load_unaligned(const std::uint32_t* data) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  static void store_aligned(std::uint32_t* dst, Vec v) {
+    __lasx_xvst(v, reinterpret_cast<void*>(dst), 0);
+  }
+};
+
 // LoongArch LASX: 256-bit, 4x 64-bit lanes. Same lane count as AVX2.
 // Same semantics as LSX but with `xv*` intrinsics.
 struct LasxOps {
   static constexpr std::size_t lanes = 4;
   using Vec = __m256i;
+  using Lane = std::uint64_t;
+  using U32 = LasxOpsU32;
+  // The packed-PEQ cdist path loads contiguous PEQ columns, so more
+  // lanes wins (no store-forwarding penalty); use the 8-lane sibling.
+  using CdistTransposeOps = LasxOpsU32;
 
   static Vec set1(std::uint64_t v) {
     return __lasx_xvreplgr2vr_d(static_cast<long>(v));

@@ -447,6 +447,100 @@ inline nb::object cdist_impl(
           ? 1U
           : std::max<std::size_t>(1U, std::min(cpu_count, N));
 
+  // Pre-transposed Indel fast path. A non-symmetric Indel cdist shares
+  // one target block across every query row; transposing it once (lane-
+  // major, column-major) and reusing it amortizes the choice setup the
+  // way upstream rapidfuzz does, instead of re-gathering scattered
+  // target columns on every row. Isolated early return; gated on a
+  // 32-bit Ops sibling, short queries (the u32 LCS width), and no tqdm.
+  // Everything else uses the generic per-row path below.
+  if constexpr (requires { typename Ops::CdistTransposeOps; }) {
+    // Each SIMD backend names its fastest packed-PEQ Ops: x86 uses the
+    // 64-bit/8-lane self (one contiguous 512-bit PEQ load per column),
+    // NEON its 32-bit/4-lane sibling (more lanes, cheap vld1q).
+    using U = typename Ops::CdistTransposeOps;
+    constexpr std::size_t W = sizeof(typename U::Lane) * 8U;
+    // Pack the choices (they must fit the lane bit width, as Myers
+    // patterns) once and iterate each query's chars. The one-time pack
+    // amortizes over the N query rows, so require enough rows (N >= 4)
+    // and a non-trivial choice count (M >= lanes).
+    // Which flip family does this scorer want? 0=Indel, 1=Myers
+    // (Levenshtein), 2=OSA; each with a raw-int or normalized-double
+    // output. fam = -1 means not a packed-flip scorer.
+    int fam = -1;
+    switch (scorer) {
+      case Scorer::Indel: if (!returns_double) fam = 0; break;
+      case Scorer::IndelNormalized: if (returns_double) fam = 0; break;
+      case Scorer::Levenshtein: if (!returns_double) fam = 1; break;
+      case Scorer::LevenshteinNormalized: if (returns_double) fam = 1; break;
+      case Scorer::DamerauLevenshtein: if (!returns_double) fam = 2; break;
+      case Scorer::DamerauLevenshteinNormalized:
+        if (returns_double) fam = 2;
+        break;
+      default: break;
+    }
+    if (fam >= 0 && !symmetric && !have_tqdm && N >= 4U && M >= U::lanes) {
+      bool choices_fit = true;
+      for (std::size_t j = 0; j < M; ++j) {
+        if (t_lens[j] > W) {
+          choices_fit = false;
+          break;
+        }
+      }
+      if (choices_fit) {
+        constexpr std::size_t IC = 4;  // interleaved choice groups (ILP)
+        namespace isimd = ::stride_align::indel_simd;
+        const auto packed = isimd::build_packed_choice_peq<U>(
+            t_ptrs, t_lens, M);
+        auto& pool = ::stride_align::threading::ThreadPool::instance();
+        PyThreadState* saved_state = PyEval_SaveThread();
+        if (returns_double) {
+          if (fam == 0) {
+            pool.parallel_for(N, num_threads, [&](std::size_t i) {
+              isimd::indel_query_row_packed<U, IC, true, double>(
+                  q_ptrs[i], q_lens[i], packed, dbl_data + i * M);
+            });
+          } else if (fam == 1) {
+            pool.parallel_for(N, num_threads, [&](std::size_t i) {
+              isimd::myers_query_row_packed<U, IC, true, double>(
+                  q_ptrs[i], q_lens[i], packed, dbl_data + i * M);
+            });
+          } else {
+            pool.parallel_for(N, num_threads, [&](std::size_t i) {
+              isimd::osa_query_row_packed<U, IC, true, double>(
+                  q_ptrs[i], q_lens[i], packed, dbl_data + i * M);
+            });
+          }
+        } else {
+          if (fam == 0) {
+            pool.parallel_for(N, num_threads, [&](std::size_t i) {
+              isimd::indel_query_row_packed<U, IC, false, Score>(
+                  q_ptrs[i], q_lens[i], packed, int_data + i * M);
+            });
+          } else if (fam == 1) {
+            pool.parallel_for(N, num_threads, [&](std::size_t i) {
+              isimd::myers_query_row_packed<U, IC, false, Score>(
+                  q_ptrs[i], q_lens[i], packed, int_data + i * M);
+            });
+          } else {
+            pool.parallel_for(N, num_threads, [&](std::size_t i) {
+              isimd::osa_query_row_packed<U, IC, false, Score>(
+                  q_ptrs[i], q_lens[i], packed, int_data + i * M);
+            });
+          }
+        }
+        PyEval_RestoreThread(saved_state);
+        const std::size_t shape[2] = {N, M};
+        if (returns_double) {
+          NormalizedMatrix mat(dbl_data, 2, shape, data_owner);
+          return mat.cast();
+        }
+        ScoreMatrix mat(int_data, 2, shape, data_owner);
+        return mat.cast();
+      }
+    }
+  }
+
   auto process_row = [&](std::size_t i) {
     const std::size_t j_start = symmetric ? i + 1U : 0U;
     const std::size_t row_count = M - j_start;
