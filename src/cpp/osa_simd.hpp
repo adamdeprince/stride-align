@@ -223,20 +223,24 @@ inline void osa_batch_single_word(
   }
 }
 
-#if defined(__AVX512F__)
-// 16-lane uint32 OSA batch kernel. Adds the Hyyrö 2002 transposition
-// term ``trans = (((~d0_prev) & pm) << 1) & pm_old`` to the standard
-// Myers d0; cross-column state is pm_old + d0_prev per lane (4 state
-// vectors per lane total: vp, vn, pm_old, d0_prev). Same pre-
-// transpose + SIMD-mask active gate as the indel / Lev uint32 paths.
-inline void osa_batch_single_word_u32_avx512(
+// 32-bit-lane OSA batch kernel, templated on a 32-bit Ops sibling
+// (Avx512OpsU32 -> 16 lanes, NeonOpsU32 -> 4). Adds the Hyyro 2002
+// transposition term ``trans = (((~d0_prev) & pm) << 1) & pm_old`` to
+// the standard Myers d0; cross-column state is pm_old + d0_prev per
+// lane. Mirrors the no-cutoff branch of osa_batch_single_word but goes
+// entirely through Ops primitives — no raw intrinsics, no #ifdef. Only
+// instantiated when a backend exposes Ops::U32. No score-cutoff variant
+// (cutoff calls stay on the 64-bit path).
+template <typename UOps>
+inline void osa_batch_single_word_u32(
     const std::uint32_t* peq32,
     const std::uint8_t* const* targets,
     const std::size_t* target_lengths,
     std::size_t batch_count,
     std::size_t m,
     Score* out) {
-  constexpr std::size_t lanes = 16;
+  using Vec = typename UOps::Vec;
+  constexpr std::size_t lanes = UOps::lanes;
 
   std::size_t max_len = 0;
   for (std::size_t l = 0; l < batch_count; ++l) {
@@ -245,85 +249,66 @@ inline void osa_batch_single_word_u32_avx512(
 
   const std::uint32_t init_vp =
       (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
-  __m512i vp = _mm512_set1_epi32(static_cast<int>(init_vp));
-  __m512i vn = _mm512_setzero_si512();
-  __m512i pm_old = _mm512_setzero_si512();
-  __m512i d0_prev = _mm512_setzero_si512();
-  __m512i score = _mm512_set1_epi32(static_cast<int>(m));
-  const __m512i one_v = _mm512_set1_epi32(1);
-  const __m512i top_bit_mask =
-      _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
-  const __m512i minus_one = _mm512_set1_epi32(-1);
+  Vec vp = UOps::set1(init_vp);
+  Vec vn = UOps::zero();
+  Vec pm_old = UOps::zero();
+  Vec d0_prev = UOps::zero();
+  Vec score = UOps::set1(static_cast<std::uint32_t>(m));
+  const Vec one_v = UOps::set1(1U);
+  const Vec top_bit_mask = UOps::set1(std::uint32_t{1} << (m - 1U));
+  const Vec zero_v = UOps::zero();
 
-  // Per-column PEQ scratch, rebuilt each text position via scalar L1
-  // lookups into the 1 KB peq32 table instead of _mm512_i32gather_epi32
-  // (microcoded; ~2x slower per pair on avx10_512 — see
-  // indel_batch_single_word_u32_avx512). Bit-identical: the epi32 ops
-  // are lane-independent and padding lanes are dropped from `out`.
-  // (Per-column rebuild also avoids the old [lanes*64] transpose that
-  // overflowed for targets longer than 64.)
-  alignas(64) std::uint32_t pm_col[lanes];
+  alignas(64) std::uint32_t indices[lanes];
   alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
   for (std::size_t l = 0; l < batch_count; ++l) {
     target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
   }
-  const __m512i target_lens_v =
-      _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
+  const Vec target_lens_v = UOps::load_aligned(target_lengths_padded);
+
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      const std::uint8_t c =
+      indices[l] =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
-      pm_col[l] = peq32[c];
     }
-    const __m512i pm =
-        _mm512_load_si512(reinterpret_cast<const __m512i*>(pm_col));
+    const Vec pm = UOps::gather(peq32, indices);
+    const Vec k_v = UOps::set1(static_cast<std::uint32_t>(k));
+    const Vec active_v = UOps::gt(target_lens_v, k_v);
 
-    const __m512i k_v = _mm512_set1_epi32(static_cast<int>(k));
-    const __mmask16 active_mask =
-        _mm512_cmpgt_epu32_mask(target_lens_v, k_v);
+    // trans = (((~d0_prev) & pm) << 1) & pm_old, gated by active_v.
+    const Vec not_d0_prev_and_pm = UOps::andnot_(d0_prev, pm);
+    const Vec trans = UOps::and_(
+        UOps::and_(UOps::shl1(not_d0_prev_and_pm), pm_old), active_v);
 
-    // trans = (((~d0_prev) & pm) << 1) & pm_old
-    const __m512i not_d0_prev = _mm512_xor_si512(d0_prev, minus_one);
-    const __m512i not_d0p_and_pm = _mm512_and_si512(not_d0_prev, pm);
-    const __m512i trans_shift = _mm512_add_epi32(not_d0p_and_pm, not_d0p_and_pm);
-    const __m512i trans = _mm512_and_si512(trans_shift, pm_old);
+    const Vec pm_and_vp = UOps::and_(pm, vp);
+    const Vec sum = UOps::add(pm_and_vp, vp);
+    Vec d0 = UOps::or_(UOps::or_(UOps::xor_(sum, vp), pm), vn);
+    d0 = UOps::or_(d0, trans);
 
-    // Standard d0 = (((pm & vp) + vp) ^ vp) | pm | vn, then |= trans
-    const __m512i pm_and_vp = _mm512_and_si512(pm, vp);
-    const __m512i sum = _mm512_add_epi32(pm_and_vp, vp);
-    __m512i d0 = _mm512_or_si512(
-        _mm512_or_si512(_mm512_xor_si512(sum, vp), pm), vn);
-    d0 = _mm512_or_si512(d0, trans);
+    const Vec hp = UOps::or_(vn, UOps::not_(UOps::or_(d0, vp)));
+    const Vec hn = UOps::and_(d0, vp);
 
-    const __m512i hp = _mm512_or_si512(
-        vn, _mm512_xor_si512(_mm512_or_si512(d0, vp), minus_one));
-    const __m512i hn = _mm512_and_si512(d0, vp);
+    const Vec hp_eq_zero = UOps::cmpeq(UOps::and_(hp, top_bit_mask), zero_v);
+    const Vec hn_eq_zero = UOps::cmpeq(UOps::and_(hn, top_bit_mask), zero_v);
+    const Vec hp_set = UOps::andnot_(hp_eq_zero, one_v);
+    const Vec hn_set = UOps::andnot_(hn_eq_zero, one_v);
+    const Vec delta = UOps::and_(UOps::sub(hp_set, hn_set), active_v);
+    score = UOps::add(score, delta);
 
-    const __mmask16 hp_set_mask = _mm512_test_epi32_mask(hp, top_bit_mask);
-    const __mmask16 hn_set_mask = _mm512_test_epi32_mask(hn, top_bit_mask);
-    score = _mm512_mask_add_epi32(score, active_mask & hp_set_mask, score, one_v);
-    score = _mm512_mask_sub_epi32(score, active_mask & hn_set_mask, score, one_v);
+    const Vec hp_shift = UOps::or_(UOps::shl1(hp), one_v);
+    const Vec hn_shift = UOps::shl1(hn);
+    vp = UOps::or_(hn_shift, UOps::not_(UOps::or_(d0, hp_shift)));
+    vn = UOps::and_(hp_shift, d0);
 
-    const __m512i hp_shift =
-        _mm512_or_si512(_mm512_add_epi32(hp, hp), one_v);
-    const __m512i hn_shift = _mm512_add_epi32(hn, hn);
-    vp = _mm512_or_si512(
-        hn_shift,
-        _mm512_xor_si512(_mm512_or_si512(d0, hp_shift), minus_one));
-    vn = _mm512_and_si512(d0, hp_shift);
-
-    d0_prev = d0;
     pm_old = pm;
+    d0_prev = d0;
   }
 
-  alignas(64) std::uint32_t score_out[lanes];
-  _mm512_store_si512(reinterpret_cast<__m512i*>(score_out), score);
+  alignas(64) std::uint32_t scores[lanes];
+  UOps::store_aligned(scores, score);
   for (std::size_t l = 0; l < batch_count; ++l) {
-    out[l] = static_cast<Score>(score_out[l]);
+    out[l] = static_cast<Score>(scores[l]);
   }
 }
-
-#endif  // __AVX512F__
 
 // uint32 PEQ for the short-pattern OSA fast paths — AVX-512 16-lane and
 // NEON 4-lane both use it. Pure scalar; outside any ISA guard.
@@ -336,87 +321,6 @@ inline std::array<std::uint32_t, 256> build_peq_u32_osa(
   }
   return peq;
 }
-
-#if defined(__ARM_NEON)
-// 4-lane uint32 OSA batch kernel — the NEON twin of
-// osa_batch_single_word_u32_avx512. Standard Myers d0 plus the Hyyrö 2002
-// transposition term; four targets per 128-bit vector at 32-bit width,
-// doubling the 2-lane uint64 path for m <= 32. No cutoff variant (cutoff
-// calls stay on the uint64 path), matching the AVX-512 specialization.
-inline void osa_batch_single_word_u32_neon(
-    const std::uint32_t* peq32,
-    const std::uint8_t* const* targets,
-    const std::size_t* target_lengths,
-    std::size_t batch_count,
-    std::size_t m,
-    Score* out) {
-  constexpr std::size_t lanes = 4;
-  std::size_t max_len = 0;
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    max_len = std::max(max_len, target_lengths[l]);
-  }
-  const std::uint32_t init_vp =
-      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
-  uint32x4_t vp = vdupq_n_u32(init_vp);
-  uint32x4_t vn = vdupq_n_u32(0);
-  uint32x4_t pm_old = vdupq_n_u32(0);
-  uint32x4_t d0_prev = vdupq_n_u32(0);
-  uint32x4_t score = vdupq_n_u32(static_cast<std::uint32_t>(m));
-  const uint32x4_t one_v = vdupq_n_u32(1U);
-  const uint32x4_t top_bit_mask = vdupq_n_u32(std::uint32_t{1} << (m - 1U));
-  const uint32x4_t zero_v = vdupq_n_u32(0);
-
-  alignas(16) std::uint32_t target_lengths_padded[lanes] = {};
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
-  }
-  const uint32x4_t target_lens_v = vld1q_u32(target_lengths_padded);
-
-  for (std::size_t k = 0; k < max_len; ++k) {
-    alignas(16) std::uint32_t e[lanes];
-    for (std::size_t l = 0; l < lanes; ++l) {
-      e[l] = (l < batch_count && k < target_lengths[l]) ? peq32[targets[l][k]] : 0U;
-    }
-    const uint32x4_t pm = vld1q_u32(e);
-    const uint32x4_t k_v = vdupq_n_u32(static_cast<std::uint32_t>(k));
-    const uint32x4_t active_v = vcgtq_u32(target_lens_v, k_v);
-
-    // trans = (((~d0_prev) & pm) << 1) & pm_old   (vbicq(a,b) = a & ~b)
-    const uint32x4_t not_d0p_and_pm = vbicq_u32(pm, d0_prev);
-    const uint32x4_t trans =
-        vandq_u32(vshlq_n_u32(not_d0p_and_pm, 1), pm_old);
-
-    const uint32x4_t pm_and_vp = vandq_u32(pm, vp);
-    const uint32x4_t sum = vaddq_u32(pm_and_vp, vp);
-    uint32x4_t d0 = vorrq_u32(vorrq_u32(veorq_u32(sum, vp), pm), vn);
-    d0 = vorrq_u32(d0, trans);
-
-    const uint32x4_t hp = vorrq_u32(vn, vmvnq_u32(vorrq_u32(d0, vp)));
-    const uint32x4_t hn = vandq_u32(d0, vp);
-
-    const uint32x4_t hp_eq_zero = vceqq_u32(vandq_u32(hp, top_bit_mask), zero_v);
-    const uint32x4_t hn_eq_zero = vceqq_u32(vandq_u32(hn, top_bit_mask), zero_v);
-    const uint32x4_t hp_set = vbicq_u32(one_v, hp_eq_zero);
-    const uint32x4_t hn_set = vbicq_u32(one_v, hn_eq_zero);
-    const uint32x4_t delta = vandq_u32(vsubq_u32(hp_set, hn_set), active_v);
-    score = vaddq_u32(score, delta);
-
-    const uint32x4_t hp_shift = vorrq_u32(vshlq_n_u32(hp, 1), one_v);
-    const uint32x4_t hn_shift = vshlq_n_u32(hn, 1);
-    vp = vorrq_u32(hn_shift, vmvnq_u32(vorrq_u32(d0, hp_shift)));
-    vn = vandq_u32(d0, hp_shift);
-
-    d0_prev = d0;
-    pm_old = pm;
-  }
-
-  alignas(16) std::uint32_t score_out[lanes];
-  vst1q_u32(score_out, score);
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    out[l] = static_cast<Score>(score_out[l]);
-  }
-}
-#endif  // __ARM_NEON
 
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64] (single-word OSA path). Writes OSA
@@ -439,64 +343,34 @@ inline void osa_scores_simd_raw_per_pair(
     return;
   }
 
-#if defined(__AVX512F__)
-  // uint32 fast path: 16-lane SIMD for q_len <= 32, no cutoff.
-  const bool has_cutoff_check = cutoffs_per_pair != nullptr;
-  if constexpr (Ops::lanes == 8U &&
-                std::is_same_v<typename Ops::Vec, __m512i>) {
-    if (q_len > 0U && q_len <= 32U && !has_cutoff_check) {
-      const auto peq32 = build_peq_u32_osa(
-          std::span<const std::uint8_t>(q_ptr, q_len));
-      constexpr std::size_t lanes32 = 16;
-      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
-      std::array<std::size_t, lanes32> batch_lens32{};
-      for (std::size_t b = 0; b < count; b += lanes32) {
-        const std::size_t batch_count = std::min(lanes32, count - b);
-        for (std::size_t l = 0; l < batch_count; ++l) {
-          batch_ptrs32[l] = t_ptrs[b + l];
-          batch_lens32[l] = t_lens[b + l];
-        }
-        for (std::size_t l = batch_count; l < lanes32; ++l) {
-          batch_ptrs32[l] = nullptr;
-          batch_lens32[l] = 0;
-        }
-        osa_batch_single_word_u32_avx512(
-            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
-            batch_count, q_len, out + b);
-      }
-      return;
-    }
-  }
-#endif
-
-#if defined(__ARM_NEON)
-  // 4-lane uint32 path: 2x the 2-lane uint64 path for q_len <= 32, no cutoff.
-  if constexpr (Ops::lanes == 2U &&
-                std::is_same_v<typename Ops::Vec, uint64x2_t>) {
+  // uint32 fast path: a 32-bit Ops sibling (Ops::U32 — Avx512OpsU32
+  // 16-lane / NeonOpsU32 4-lane) doubles the lane count for q_len <= 32
+  // when no per-pair cutoff is requested. Trait-selected, no #ifdef;
+  // backends without a U32 sibling use the 64-bit path below.
+  if constexpr (requires { typename Ops::U32; }) {
     if (q_len > 0U && q_len <= 32U && cutoffs_per_pair == nullptr) {
       const auto peq32 = build_peq_u32_osa(
           std::span<const std::uint8_t>(q_ptr, q_len));
-      constexpr std::size_t lanes32 = 4;
-      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
-      std::array<std::size_t, lanes32> batch_lens32{};
-      for (std::size_t b = 0; b < count; b += lanes32) {
-        const std::size_t batch_count = std::min(lanes32, count - b);
-        for (std::size_t l = 0; l < batch_count; ++l) {
-          batch_ptrs32[l] = t_ptrs[b + l];
-          batch_lens32[l] = t_lens[b + l];
+      using U = typename Ops::U32;
+      constexpr std::size_t ulanes = U::lanes;
+      std::array<const std::uint8_t*, ulanes> bptr{};
+      std::array<std::size_t, ulanes> blen{};
+      for (std::size_t b = 0; b < count; b += ulanes) {
+        const std::size_t bc = std::min(ulanes, count - b);
+        for (std::size_t l = 0; l < bc; ++l) {
+          bptr[l] = t_ptrs[b + l];
+          blen[l] = t_lens[b + l];
         }
-        for (std::size_t l = batch_count; l < lanes32; ++l) {
-          batch_ptrs32[l] = nullptr;
-          batch_lens32[l] = 0;
+        for (std::size_t l = bc; l < ulanes; ++l) {
+          bptr[l] = nullptr;
+          blen[l] = 0;
         }
-        osa_batch_single_word_u32_neon(
-            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
-            batch_count, q_len, out + b);
+        osa_batch_single_word_u32<U>(
+            peq32.data(), bptr.data(), blen.data(), bc, q_len, out + b);
       }
       return;
     }
   }
-#endif
 
   const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
 

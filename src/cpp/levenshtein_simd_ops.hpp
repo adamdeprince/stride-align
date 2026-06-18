@@ -174,9 +174,60 @@ struct Avx2Ops {
 
 #if defined(__AVX512F__)
 
+// 16-lane uint32 sibling of Avx512Ops, used by the bit-parallel batch
+// kernels when the query fits in 32 bits (m <= 32) for 2x the lane
+// count. Reached generically via Avx512Ops::U32 — the kernels stay
+// free of raw intrinsics and #ifdefs; the arch code lives here in the
+// Ops layer like every other backend primitive. Bitwise ops are
+// width-agnostic (same _si512 intrinsic); only set1/add/sub and the
+// PEQ gather differ from the 64-bit struct. The gather is scalar L1
+// lookups assembled into a register (the microcoded _mm512_i32gather
+// was ~2x slower per pair on avx10_512).
+struct Avx512OpsU32 {
+  static constexpr std::size_t lanes = 16;
+  using Vec = __m512i;
+  using Lane = std::uint32_t;
+
+  static Vec set1(std::uint32_t v) { return _mm512_set1_epi32(static_cast<int>(v)); }
+  static Vec zero() { return _mm512_setzero_si512(); }
+  static Vec and_(Vec a, Vec b) { return _mm512_and_si512(a, b); }
+  static Vec or_(Vec a, Vec b) { return _mm512_or_si512(a, b); }
+  static Vec xor_(Vec a, Vec b) { return _mm512_xor_si512(a, b); }
+  static Vec not_(Vec a) { return _mm512_xor_si512(a, _mm512_set1_epi32(-1)); }
+  static Vec add(Vec a, Vec b) { return _mm512_add_epi32(a, b); }
+  static Vec sub(Vec a, Vec b) { return _mm512_sub_epi32(a, b); }
+  static Vec gather(const std::uint32_t* base, const std::uint32_t* indices) {
+    alignas(64) std::uint32_t tmp[lanes];
+    for (std::size_t l = 0; l < lanes; ++l) {
+      tmp[l] = base[indices[l]];
+    }
+    return _mm512_load_si512(reinterpret_cast<const void*>(tmp));
+  }
+  static void store_aligned(std::uint32_t* dst, Vec v) {
+    _mm512_store_si512(reinterpret_cast<void*>(dst), v);
+  }
+  // Additional primitives for the Myers / OSA score recurrences. The
+  // u32 kernels expand AVX-512's compare masks back to all-ones/zero
+  // vectors (as the 64-bit struct does) so the kernel logic stays
+  // vector-only and identical across backends.
+  static Vec load_aligned(const std::uint32_t* data) {
+    return _mm512_load_si512(reinterpret_cast<const void*>(data));
+  }
+  static Vec andnot_(Vec a, Vec b) { return _mm512_andnot_si512(a, b); }
+  static Vec shl1(Vec a) { return _mm512_add_epi32(a, a); }
+  static Vec gt(Vec a, Vec b) {
+    return _mm512_maskz_set1_epi32(_mm512_cmpgt_epu32_mask(a, b), -1);
+  }
+  static Vec cmpeq(Vec a, Vec b) {
+    return _mm512_maskz_set1_epi32(_mm512_cmpeq_epi32_mask(a, b), -1);
+  }
+};
+
 struct Avx512Ops {
   static constexpr std::size_t lanes = 8;
   using Vec = __m512i;
+  using Lane = std::uint64_t;
+  using U32 = Avx512OpsU32;
 
   static Vec set1(std::uint64_t v) {
     return _mm512_set1_epi64(static_cast<long long>(v));
@@ -224,6 +275,41 @@ struct Avx512Ops {
 
 #if defined(__ARM_NEON)
 
+// 4-lane uint32 NEON sibling of NeonOps (uint32x4_t), reached via
+// NeonOps::U32 for the bit-parallel batch kernels when the query fits
+// in 32 bits (m <= 32) — 2x the lane count of the 64-bit struct. NEON
+// has native unsigned cmpgt_u32 and a real vmvnq_u32 NOT, so the u32
+// struct is actually a touch simpler than its 64-bit sibling. No
+// native gather: four scalar lane inserts.
+struct NeonOpsU32 {
+  static constexpr std::size_t lanes = 4;
+  using Vec = uint32x4_t;
+  using Lane = std::uint32_t;
+
+  static Vec set1(std::uint32_t v) { return vdupq_n_u32(v); }
+  static Vec zero() { return vdupq_n_u32(0); }
+  static Vec and_(Vec a, Vec b) { return vandq_u32(a, b); }
+  static Vec or_(Vec a, Vec b) { return vorrq_u32(a, b); }
+  static Vec xor_(Vec a, Vec b) { return veorq_u32(a, b); }
+  static Vec not_(Vec a) { return vmvnq_u32(a); }
+  static Vec add(Vec a, Vec b) { return vaddq_u32(a, b); }
+  static Vec sub(Vec a, Vec b) { return vsubq_u32(a, b); }
+  static Vec shl1(Vec a) { return vshlq_n_u32(a, 1); }
+  static Vec gt(Vec a, Vec b) { return vcgtq_u32(a, b); }
+  static Vec cmpeq(Vec a, Vec b) { return vceqq_u32(a, b); }
+  // ~a & b. vbicq computes a & ~b, so swap operands.
+  static Vec andnot_(Vec a, Vec b) { return vbicq_u32(b, a); }
+  static Vec gather(const std::uint32_t* base, const std::uint32_t* indices) {
+    Vec out = vdupq_n_u32(base[indices[0]]);
+    out = vsetq_lane_u32(base[indices[1]], out, 1);
+    out = vsetq_lane_u32(base[indices[2]], out, 2);
+    out = vsetq_lane_u32(base[indices[3]], out, 3);
+    return out;
+  }
+  static Vec load_aligned(const std::uint32_t* data) { return vld1q_u32(data); }
+  static void store_aligned(std::uint32_t* dst, Vec v) { vst1q_u32(dst, v); }
+};
+
 // 128-bit NEON: 2 lanes of 64-bit. Same lane count as SseOps; the
 // difference is NEON's native unsigned cmpgt_u64 (no XOR-sign trick
 // needed) and the slightly weirder ~a (uint32 lane reinterpret).
@@ -232,6 +318,8 @@ struct Avx512Ops {
 struct NeonOps {
   static constexpr std::size_t lanes = 2;
   using Vec = uint64x2_t;
+  using Lane = std::uint64_t;
+  using U32 = NeonOpsU32;
 
   static Vec set1(std::uint64_t v) { return vdupq_n_u64(v); }
   static Vec zero() { return vdupq_n_u64(0); }

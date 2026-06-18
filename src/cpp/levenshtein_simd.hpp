@@ -503,100 +503,84 @@ inline constexpr std::size_t kLevMaxSimdPatternLen = 256U;
 //   * a length-`count` array: each pair gets its own cutoff. Pairs
 //     whose distance provably exceeds their cutoff get the per-pair
 //     sentinel `cutoffs_per_pair[i] + 1` instead of the true distance.
-#if defined(__AVX512F__)
-// 16-lane uint32 Myers (Levenshtein) batch kernel: same architecture
-// as ``indel_batch_single_word_u32_avx512`` — pre-transposed bytes,
-// SIMD-mask active gate, gather PEQ at 32-bit width. Doubles the
-// per-batch parallelism vs the 8-lane uint64 path when q_len <= 32
-// AND no per-pair score-cutoff is requested (the cutoff variant
-// stays on the uint64 path for now).
-inline void myers_batch_single_word_u32_avx512(
+// 32-bit-lane Myers (Levenshtein) batch kernel, templated on a 32-bit
+// Ops sibling (Avx512OpsU32 -> 16 lanes, NeonOpsU32 -> 4 lanes). When
+// the query fits in 32 bits (m <= 32) this doubles the lane count vs
+// the 64-bit path. It mirrors the no-cutoff branch of
+// myers_batch_single_word but goes entirely through Ops primitives —
+// no raw intrinsics, no #ifdef. Only instantiated when a backend
+// exposes Ops::U32. No score-cutoff variant: cutoff calls stay on the
+// 64-bit path (top-k, not the cdist hot path).
+template <typename UOps>
+inline void myers_batch_single_word_u32(
     const std::uint32_t* peq32,
     const std::uint8_t* const* targets,
     const std::size_t* target_lengths,
     std::size_t batch_count,
     std::size_t m,
     Score* out) {
-  constexpr std::size_t lanes = 16;
+  using Vec = typename UOps::Vec;
+  constexpr std::size_t lanes = UOps::lanes;
 
   std::size_t max_len = 0;
   for (std::size_t l = 0; l < batch_count; ++l) {
     max_len = std::max(max_len, target_lengths[l]);
   }
 
-  // ``init_vp`` is the all-ones m-bit pattern. ``score`` starts at m
-  // (the Levenshtein distance of pattern-vs-empty).
   const std::uint32_t init_vp =
       (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
-  __m512i vp = _mm512_set1_epi32(static_cast<int>(init_vp));
-  __m512i vn = _mm512_setzero_si512();
-  __m512i score = _mm512_set1_epi32(static_cast<int>(m));
-  const __m512i one_v = _mm512_set1_epi32(1);
-  const __m512i top_bit_mask =
-      _mm512_set1_epi32(static_cast<int>(std::uint32_t{1} << (m - 1U)));
+  Vec vp = UOps::set1(init_vp);
+  Vec vn = UOps::zero();
+  Vec score = UOps::set1(static_cast<std::uint32_t>(m));
+  const Vec one_v = UOps::set1(1U);
+  const Vec top_bit_mask = UOps::set1(std::uint32_t{1} << (m - 1U));
+  const Vec zero_v = UOps::zero();
 
-  // Per-column PEQ scratch, rebuilt each text position via scalar L1
-  // lookups into the 1 KB peq32 table instead of _mm512_i32gather_epi32:
-  // the gather is microcoded and was ~2x slower per pair on avx10_512
-  // (see indel_batch_single_word_u32_avx512). Bit-identical: the epi32
-  // ops are lane-independent and padding lanes are dropped from `out`.
-  // (Per-column rebuild also avoids the old [lanes*64] transpose that
-  // overflowed for targets longer than 64.)
-  alignas(64) std::uint32_t eq_col[lanes];
+  alignas(64) std::uint32_t indices[lanes];
   alignas(64) std::uint32_t target_lengths_padded[lanes] = {};
   for (std::size_t l = 0; l < batch_count; ++l) {
     target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
   }
-  const __m512i target_lens_v =
-      _mm512_load_si512(reinterpret_cast<const __m512i*>(target_lengths_padded));
+  const Vec target_lens_v = UOps::load_aligned(target_lengths_padded);
+
   for (std::size_t k = 0; k < max_len; ++k) {
     for (std::size_t l = 0; l < lanes; ++l) {
-      const std::uint8_t c =
+      indices[l] =
           (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
-      eq_col[l] = peq32[c];
     }
-    const __m512i eq =
-        _mm512_load_si512(reinterpret_cast<const __m512i*>(eq_col));
+    const Vec eq = UOps::gather(peq32, indices);
+    const Vec k_v = UOps::set1(static_cast<std::uint32_t>(k));
+    const Vec active_v = UOps::gt(target_lens_v, k_v);
 
-    const __m512i k_v = _mm512_set1_epi32(static_cast<int>(k));
-    const __mmask16 active_mask =
-        _mm512_cmpgt_epu32_mask(target_lens_v, k_v);
+    const Vec x = UOps::or_(eq, vn);
+    const Vec xv = UOps::and_(x, vp);
+    const Vec sum = UOps::add(xv, vp);
+    const Vec d0 = UOps::or_(UOps::xor_(sum, vp), x);
+    const Vec hp = UOps::or_(vn, UOps::not_(UOps::or_(d0, vp)));
+    const Vec hn = UOps::and_(d0, vp);
 
-    const __m512i x = _mm512_or_si512(eq, vn);
-    const __m512i xv = _mm512_and_si512(x, vp);
-    const __m512i sum = _mm512_add_epi32(xv, vp);
-    const __m512i d0 = _mm512_or_si512(_mm512_xor_si512(sum, vp), x);
-    const __m512i hp = _mm512_or_si512(
-        vn, _mm512_xor_si512(_mm512_or_si512(d0, vp),
-                              _mm512_set1_epi32(-1)));
-    const __m512i hn = _mm512_and_si512(d0, vp);
+    // +1 per lane where hp's bit m-1 is set, -1 where hn's is, gated by
+    // active_v. hp_set/hn_set are 1/0 per lane; their difference (as a
+    // wrapping uint) added to score does the +1 / -1.
+    const Vec hp_eq_zero = UOps::cmpeq(UOps::and_(hp, top_bit_mask), zero_v);
+    const Vec hn_eq_zero = UOps::cmpeq(UOps::and_(hn, top_bit_mask), zero_v);
+    const Vec hp_set = UOps::andnot_(hp_eq_zero, one_v);
+    const Vec hn_set = UOps::andnot_(hn_eq_zero, one_v);
+    const Vec delta = UOps::and_(UOps::sub(hp_set, hn_set), active_v);
+    score = UOps::add(score, delta);
 
-    // Score delta: +1 per lane if hp's top bit is set, -1 if hn's
-    // top bit is set. Combine via mask-driven score add (lanes
-    // outside active_mask don't update).
-    const __mmask16 hp_set_mask = _mm512_test_epi32_mask(hp, top_bit_mask);
-    const __mmask16 hn_set_mask = _mm512_test_epi32_mask(hn, top_bit_mask);
-    score = _mm512_mask_add_epi32(score, active_mask & hp_set_mask, score, one_v);
-    score = _mm512_mask_sub_epi32(score, active_mask & hn_set_mask, score, one_v);
-
-    const __m512i hp_shift =
-        _mm512_or_si512(_mm512_add_epi32(hp, hp), one_v);
-    const __m512i hn_shift = _mm512_add_epi32(hn, hn);
-    vp = _mm512_or_si512(
-        hn_shift,
-        _mm512_xor_si512(_mm512_or_si512(d0, hp_shift),
-                          _mm512_set1_epi32(-1)));
-    vn = _mm512_and_si512(d0, hp_shift);
+    const Vec hp_shift = UOps::or_(UOps::shl1(hp), one_v);
+    const Vec hn_shift = UOps::shl1(hn);
+    vp = UOps::or_(hn_shift, UOps::not_(UOps::or_(d0, hp_shift)));
+    vn = UOps::and_(d0, hp_shift);
   }
 
-  alignas(64) std::uint32_t score_out[lanes];
-  _mm512_store_si512(reinterpret_cast<__m512i*>(score_out), score);
+  alignas(64) std::uint32_t scores[lanes];
+  UOps::store_aligned(scores, score);
   for (std::size_t l = 0; l < batch_count; ++l) {
-    out[l] = static_cast<Score>(score_out[l]);
+    out[l] = static_cast<Score>(scores[l]);
   }
 }
-
-#endif  // __AVX512F__
 
 // uint32 Peq bitmask table for the short-pattern (m <= 32) Myers fast
 // paths — the AVX-512 16-lane kernel and the NEON 4-lane kernel both use
@@ -610,85 +594,6 @@ inline std::array<std::uint32_t, 256> build_peq_u32_lev(
   }
   return peq;
 }
-
-#if defined(__ARM_NEON)
-// 4-lane uint32 Myers (Levenshtein) batch kernel — the NEON twin of
-// myers_batch_single_word_u32_avx512. Each 128-bit vector holds four
-// targets' Myers state at 32-bit width, doubling per-batch parallelism
-// versus the 2-lane uint64 path for patterns of length m <= 32. No
-// score-cutoff variant (cutoff calls stay on the uint64 path), matching
-// the AVX-512 specialization.
-inline void myers_batch_single_word_u32_neon(
-    const std::uint32_t* peq32,
-    const std::uint8_t* const* targets,
-    const std::size_t* target_lengths,
-    std::size_t batch_count,
-    std::size_t m,
-    Score* out) {
-  constexpr std::size_t lanes = 4;
-
-  std::size_t max_len = 0;
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    max_len = std::max(max_len, target_lengths[l]);
-  }
-
-  // init_vp is the all-ones m-bit pattern; guard 1u<<32 (UB) at m==32.
-  const std::uint32_t init_vp =
-      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
-  uint32x4_t vp = vdupq_n_u32(init_vp);
-  uint32x4_t vn = vdupq_n_u32(0);
-  uint32x4_t score = vdupq_n_u32(static_cast<std::uint32_t>(m));
-  const uint32x4_t one_v = vdupq_n_u32(1U);
-  const uint32x4_t top_bit_mask = vdupq_n_u32(std::uint32_t{1} << (m - 1U));
-  const uint32x4_t zero_v = vdupq_n_u32(0);
-
-  alignas(16) std::uint32_t target_lengths_padded[lanes] = {};
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    target_lengths_padded[l] = static_cast<std::uint32_t>(target_lengths[l]);
-  }
-  const uint32x4_t target_lens_v = vld1q_u32(target_lengths_padded);
-
-  // Per-column PEQ gather, rebuilt at each text position from the live
-  // targets. No fixed-size transpose: the target (text) length is
-  // unbounded even though the pattern fits in 32 bits.
-  for (std::size_t k = 0; k < max_len; ++k) {
-    alignas(16) std::uint32_t e[lanes];
-    for (std::size_t l = 0; l < lanes; ++l) {
-      e[l] = (l < batch_count && k < target_lengths[l]) ? peq32[targets[l][k]] : 0U;
-    }
-    const uint32x4_t eq = vld1q_u32(e);
-
-    const uint32x4_t k_v = vdupq_n_u32(static_cast<std::uint32_t>(k));
-    const uint32x4_t active_v = vcgtq_u32(target_lens_v, k_v);
-
-    const uint32x4_t x = vorrq_u32(eq, vn);
-    const uint32x4_t xv = vandq_u32(x, vp);
-    const uint32x4_t sum = vaddq_u32(xv, vp);
-    const uint32x4_t d0 = vorrq_u32(veorq_u32(sum, vp), x);
-    const uint32x4_t hp = vorrq_u32(vn, vmvnq_u32(vorrq_u32(d0, vp)));
-    const uint32x4_t hn = vandq_u32(d0, vp);
-
-    // +1 where hp's bit m-1 is set, -1 where hn's is, gated by active_v.
-    const uint32x4_t hp_eq_zero = vceqq_u32(vandq_u32(hp, top_bit_mask), zero_v);
-    const uint32x4_t hn_eq_zero = vceqq_u32(vandq_u32(hn, top_bit_mask), zero_v);
-    const uint32x4_t hp_set = vbicq_u32(one_v, hp_eq_zero);
-    const uint32x4_t hn_set = vbicq_u32(one_v, hn_eq_zero);
-    const uint32x4_t delta = vandq_u32(vsubq_u32(hp_set, hn_set), active_v);
-    score = vaddq_u32(score, delta);
-
-    const uint32x4_t hp_shift = vorrq_u32(vshlq_n_u32(hp, 1), one_v);
-    const uint32x4_t hn_shift = vshlq_n_u32(hn, 1);
-    vp = vorrq_u32(hn_shift, vmvnq_u32(vorrq_u32(d0, hp_shift)));
-    vn = vandq_u32(d0, hp_shift);
-  }
-
-  alignas(16) std::uint32_t scores[lanes];
-  vst1q_u32(scores, score);
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    out[l] = static_cast<Score>(scores[l]);
-  }
-}
-#endif  // __ARM_NEON
 
 template <typename Ops>
 inline void levenshtein_scores_simd_raw_per_pair(
@@ -710,66 +615,34 @@ inline void levenshtein_scores_simd_raw_per_pair(
 
   const std::span<const std::uint8_t> pattern_span(q_ptr, q_len);
 
-#if defined(__AVX512F__)
-  // uint32 fast path: 16-lane SIMD for q_len <= 32, when no per-pair
-  // cutoff is requested (the cutoff variant stays on the 8-lane
-  // uint64 path).
-  if constexpr (Ops::lanes == 8U &&
-                std::is_same_v<typename Ops::Vec, __m512i>) {
+  // uint32 fast path: a 32-bit Ops sibling (Ops::U32 — Avx512OpsU32
+  // gives 16 lanes, NeonOpsU32 gives 4) doubles the lane count for
+  // q_len <= 32 when no per-pair cutoff is requested (the cutoff variant
+  // stays on the 64-bit path). Selected on the Ops trait, not #ifdef;
+  // backends without a U32 sibling fall through to the 64-bit path.
+  if constexpr (requires { typename Ops::U32; }) {
     if (q_len > 0U && q_len <= 32U && !has_cutoff) {
       const auto peq32 = build_peq_u32_lev(pattern_span);
-      constexpr std::size_t lanes32 = 16;
-      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
-      std::array<std::size_t, lanes32> batch_lens32{};
-      for (std::size_t b = 0; b < count; b += lanes32) {
-        const std::size_t batch_count = std::min(lanes32, count - b);
-        for (std::size_t l = 0; l < batch_count; ++l) {
-          batch_ptrs32[l] = t_ptrs[b + l];
-          batch_lens32[l] = t_lens[b + l];
+      using U = typename Ops::U32;
+      constexpr std::size_t ulanes = U::lanes;
+      std::array<const std::uint8_t*, ulanes> bptr{};
+      std::array<std::size_t, ulanes> blen{};
+      for (std::size_t b = 0; b < count; b += ulanes) {
+        const std::size_t bc = std::min(ulanes, count - b);
+        for (std::size_t l = 0; l < bc; ++l) {
+          bptr[l] = t_ptrs[b + l];
+          blen[l] = t_lens[b + l];
         }
-        for (std::size_t l = batch_count; l < lanes32; ++l) {
-          batch_ptrs32[l] = nullptr;
-          batch_lens32[l] = 0;
+        for (std::size_t l = bc; l < ulanes; ++l) {
+          bptr[l] = nullptr;
+          blen[l] = 0;
         }
-        myers_batch_single_word_u32_avx512(
-            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
-            batch_count, q_len, out + b);
+        myers_batch_single_word_u32<U>(
+            peq32.data(), bptr.data(), blen.data(), bc, q_len, out + b);
       }
       return;
     }
   }
-#endif
-
-#if defined(__ARM_NEON)
-  // uint32 fast path: 4-lane NEON for q_len <= 32 with no per-pair cutoff.
-  // Doubles per-batch parallelism vs the 2-lane uint64 path below (mirrors
-  // the AVX-512 uint32 path above). Gated to the NEON uint64 bundle so any
-  // other 2-lane bundle keeps the uint64 path.
-  if constexpr (Ops::lanes == 2U &&
-                std::is_same_v<typename Ops::Vec, uint64x2_t>) {
-    if (q_len > 0U && q_len <= 32U && !has_cutoff) {
-      const auto peq32 = build_peq_u32_lev(pattern_span);
-      constexpr std::size_t lanes32 = 4;
-      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
-      std::array<std::size_t, lanes32> batch_lens32{};
-      for (std::size_t b = 0; b < count; b += lanes32) {
-        const std::size_t batch_count = std::min(lanes32, count - b);
-        for (std::size_t l = 0; l < batch_count; ++l) {
-          batch_ptrs32[l] = t_ptrs[b + l];
-          batch_lens32[l] = t_lens[b + l];
-        }
-        for (std::size_t l = batch_count; l < lanes32; ++l) {
-          batch_ptrs32[l] = nullptr;
-          batch_lens32[l] = 0;
-        }
-        myers_batch_single_word_u32_neon(
-            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
-            batch_count, q_len, out + b);
-      }
-      return;
-    }
-  }
-#endif
 
   if (q_len <= 64U) {
     const auto peq = build_peq(pattern_span);

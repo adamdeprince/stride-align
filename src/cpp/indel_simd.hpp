@@ -143,67 +143,6 @@ inline void indel_batch_single_word(
   }
 }
 
-#if defined(__AVX512F__)
-// 16-lane uint32 variant of the indel SIMD batch kernel. Used when
-// the query length is small enough that the per-lane bit-parallel
-// state fits in 32 bits (m <= 32), which is the common case for the
-// short-string workload the cdist hot path serves. Doubles the
-// per-batch parallelism vs the 8-lane uint64 path.
-inline void indel_batch_single_word_u32_avx512(
-    const std::uint32_t* peq32,
-    const std::uint8_t* const* targets,
-    const std::size_t* target_lengths,
-    std::size_t batch_count,
-    std::size_t m,
-    Score* out) {
-  constexpr std::size_t lanes = 16;
-
-  std::size_t max_len = 0;
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    max_len = std::max(max_len, target_lengths[l]);
-  }
-
-  const std::uint32_t mask_bits =
-      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
-  const __m512i mask_v = _mm512_set1_epi32(static_cast<int>(mask_bits));
-  __m512i V = mask_v;
-
-  // Per-column PEQ scratch (16 lanes), rebuilt at each text position.
-  // We fetch each lane's PEQ row with a scalar lookup into the
-  // L1-resident 1 KB peq32 table rather than _mm512_i32gather_epi32:
-  // the gather is microcoded and turned out ~7x slower per pair than
-  // upstream's per-pair scalar Myers on avx10_512 (it also forced a
-  // separate 16-byte transpose). Sixteen scalar L1 loads pipeline far
-  // better than one wide gather. Result is bit-identical: the epi32 ops
-  // are lane-independent so padding lanes (l >= batch_count, or k past a
-  // target's end -> peq32[0]) can't perturb a real lane, and padding
-  // lanes are never read into `out` below. (The per-column rebuild also
-  // avoids the old fixed [lanes*64] transpose that overflowed for
-  // targets longer than 64.)
-  alignas(64) std::uint32_t pm_col[lanes];
-  for (std::size_t k = 0; k < max_len; ++k) {
-    for (std::size_t l = 0; l < lanes; ++l) {
-      const std::uint8_t c =
-          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
-      pm_col[l] = peq32[c];
-    }
-    const __m512i pm =
-        _mm512_load_si512(reinterpret_cast<const __m512i*>(pm_col));
-    const __m512i U = _mm512_and_si512(V, pm);
-    const __m512i sum = _mm512_add_epi32(V, U);
-    const __m512i diff = _mm512_sub_epi32(V, U);
-    V = _mm512_and_si512(_mm512_or_si512(sum, diff), mask_v);
-  }
-
-  alignas(64) std::uint32_t v_out[lanes];
-  _mm512_store_si512(reinterpret_cast<__m512i*>(v_out), V);
-  for (std::size_t l = 0; l < batch_count; ++l) {
-    const std::size_t lcs =
-        m - static_cast<std::size_t>(std::popcount(v_out[l]));
-    out[l] = static_cast<Score>(m + target_lengths[l] - 2U * lcs);
-  }
-}
-
 inline std::array<std::uint32_t, 256> build_peq_u32(
     std::span<const std::uint8_t> pattern) {
   std::array<std::uint32_t, 256> peq{};
@@ -213,7 +152,79 @@ inline std::array<std::uint32_t, 256> build_peq_u32(
   }
   return peq;
 }
-#endif  // __AVX512F__
+
+// Scalar per-pair Indel (LCS via Myers single word) using a prebuilt
+// peq32 (so the query pattern is processed once per cdist row, not per
+// target). For short targets this beats the wide batch: each target is
+// read sequentially with no per-column transpose and no padding to the
+// batch's max length, mirroring upstream rapidfuzz's tight per-pair
+// loop. `m` = query length, `mask` = (1<<m)-1. Arch-neutral.
+inline Score indel_single_word_scalar_u32(
+    const std::uint32_t* peq32, const std::uint8_t* t, std::size_t n,
+    std::size_t m, std::uint32_t mask) noexcept {
+  std::uint32_t V = mask;
+  for (std::size_t k = 0; k < n; ++k) {
+    const std::uint32_t U = V & peq32[t[k]];
+    V = ((V + U) | (V - U)) & mask;
+  }
+  const std::size_t lcs = m - static_cast<std::size_t>(std::popcount(V));
+  return static_cast<Score>(m + n - 2U * lcs);
+}
+
+// 32-bit-lane Indel batch kernel, templated on a 32-bit Ops sibling
+// (e.g. Avx512OpsU32). When the query fits in 32 bits (m <= 32) this
+// doubles the lane count vs the 64-bit path. It mirrors
+// indel_batch_single_word but goes entirely through Ops primitives —
+// no raw intrinsics and no #ifdef; the arch-specific code lives in the
+// Ops layer. Only instantiated when a backend exposes Ops::U32, so the
+// __m512i / NEON types never reach a TU that lacks them.
+template <typename UOps>
+inline void indel_batch_single_word_u32(
+    const std::uint32_t* peq32,
+    const std::uint8_t* const* targets,
+    const std::size_t* target_lengths,
+    std::size_t batch_count,
+    std::size_t m,
+    Score* out) {
+  using Vec = typename UOps::Vec;
+  constexpr std::size_t lanes = UOps::lanes;
+
+  std::size_t max_len = 0;
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    max_len = std::max(max_len, target_lengths[l]);
+  }
+
+  const std::uint32_t mask_bits =
+      (m == 32U) ? ~std::uint32_t{0} : ((std::uint32_t{1} << m) - 1U);
+  const Vec mask_v = UOps::set1(mask_bits);
+  Vec V = mask_v;
+
+  // Per-column character indices into peq32; UOps::gather assembles the
+  // PEQ rows (scalar L1 lookups on the wide backends). Padding lanes
+  // (l >= batch_count, or k past a target's end) index peq32[0]; the
+  // lane-independent ops keep them from perturbing real lanes, and they
+  // are never read into `out`.
+  alignas(64) std::uint32_t indices[lanes];
+  for (std::size_t k = 0; k < max_len; ++k) {
+    for (std::size_t l = 0; l < lanes; ++l) {
+      indices[l] =
+          (l < batch_count && k < target_lengths[l]) ? targets[l][k] : 0U;
+    }
+    const Vec pm = UOps::gather(peq32, indices);
+    const Vec U = UOps::and_(V, pm);
+    const Vec sum = UOps::add(V, U);
+    const Vec diff = UOps::sub(V, U);
+    V = UOps::and_(UOps::or_(sum, diff), mask_v);
+  }
+
+  alignas(64) std::uint32_t v_out[lanes];
+  UOps::store_aligned(v_out, V);
+  for (std::size_t l = 0; l < batch_count; ++l) {
+    const std::size_t lcs =
+        m - static_cast<std::size_t>(std::popcount(v_out[l]));
+    out[l] = static_cast<Score>(m + target_lengths[l] - 2U * lcs);
+  }
+}
 
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64]. Writes Indel distances into
@@ -229,36 +240,54 @@ inline void indel_scores_simd_raw(
     return;
   }
 
-#if defined(__AVX512F__)
-  // 16-lane uint32 path: 2× batch parallelism vs the 8-lane uint64
-  // path. Gated on (a) Avx512Ops being the requested ops type (so
-  // AVX-512 hardware is available) and (b) q_len <= 32 (state fits
-  // in a 32-bit lane). Disabled for non-AVX-512 backends.
-  if constexpr (Ops::lanes == 8U &&
-                std::is_same_v<typename Ops::Vec, __m512i>) {
+  // Wide 32-bit-lane path: 2x the batch parallelism of the 64-bit path,
+  // available when the backend exposes a 32-bit Ops sibling (Ops::U32,
+  // e.g. Avx512OpsU32) and the query fits in 32 bits. Selected purely on
+  // the Ops trait — no #ifdef, no architecture macro. Backends without a
+  // U32 sibling fall through to the generic 64-bit path below.
+  if constexpr (requires { typename Ops::U32; }) {
     if (q_len <= 32U) {
-      const auto peq32 = build_peq_u32(std::span<const std::uint8_t>(q_ptr, q_len));
-      constexpr std::size_t lanes32 = 16;
-      std::array<const std::uint8_t*, lanes32> batch_ptrs32{};
-      std::array<std::size_t, lanes32> batch_lens32{};
-      for (std::size_t b = 0; b < count; b += lanes32) {
-        const std::size_t batch_count = std::min(lanes32, count - b);
-        for (std::size_t l = 0; l < batch_count; ++l) {
-          batch_ptrs32[l] = t_ptrs[b + l];
-          batch_lens32[l] = t_lens[b + l];
+      const auto peq32 =
+          build_peq_u32(std::span<const std::uint8_t>(q_ptr, q_len));
+      // Short-target fast path: per-pair scalar Myers. The wide batch
+      // pays a per-column transpose and pads every target to the batch
+      // max length, which only amortizes once targets are long enough;
+      // below the threshold the sequential scalar loop wins.
+      std::size_t max_t_len = 0;
+      for (std::size_t i = 0; i < count; ++i) {
+        max_t_len = std::max(max_t_len, t_lens[i]);
+      }
+      constexpr std::size_t kScalarRowMaxTargetLen = 64;
+      if (max_t_len <= kScalarRowMaxTargetLen) {
+        const std::uint32_t mask_bits =
+            (q_len == 32U) ? ~std::uint32_t{0}
+                           : ((std::uint32_t{1} << q_len) - 1U);
+        for (std::size_t i = 0; i < count; ++i) {
+          out[i] = indel_single_word_scalar_u32(
+              peq32.data(), t_ptrs[i], t_lens[i], q_len, mask_bits);
         }
-        for (std::size_t l = batch_count; l < lanes32; ++l) {
-          batch_ptrs32[l] = nullptr;
-          batch_lens32[l] = 0;
+        return;
+      }
+      using U = typename Ops::U32;
+      constexpr std::size_t ulanes = U::lanes;
+      std::array<const std::uint8_t*, ulanes> bptr{};
+      std::array<std::size_t, ulanes> blen{};
+      for (std::size_t b = 0; b < count; b += ulanes) {
+        const std::size_t bc = std::min(ulanes, count - b);
+        for (std::size_t l = 0; l < bc; ++l) {
+          bptr[l] = t_ptrs[b + l];
+          blen[l] = t_lens[b + l];
         }
-        indel_batch_single_word_u32_avx512(
-            peq32.data(), batch_ptrs32.data(), batch_lens32.data(),
-            batch_count, q_len, out + b);
+        for (std::size_t l = bc; l < ulanes; ++l) {
+          bptr[l] = nullptr;
+          blen[l] = 0;
+        }
+        indel_batch_single_word_u32<U>(
+            peq32.data(), bptr.data(), blen.data(), bc, q_len, out + b);
       }
       return;
     }
   }
-#endif
 
   const auto peq = build_peq(std::span<const std::uint8_t>(q_ptr, q_len));
 
