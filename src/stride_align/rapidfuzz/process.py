@@ -112,6 +112,26 @@ _POSTPROCESS_FAST_PATH: dict[Callable, Tuple[str, object]] = {
 }
 
 
+# Native C++ all-pairs loop for the per-pair fuzz scorers whose work is
+# irreducible (no per-string preprocess): partial_ratio (sliding window),
+# token_set_ratio (per-pair set intersection), WRatio (weighted blend),
+# and the partial-token variants. Routing them through the C++
+# `_shim_fuzz_cdist` loops over byte spans in-thread-pool instead of the
+# per-cell Python loop. token_sort_ratio is NOT here — its preprocess
+# fast path (sort-join + batched Indel flip) is faster still. Scorer ids
+# must match ``FuzzScorer`` in src/cpp/fuzz_cdist.hpp.
+_BACKEND = _sa._LEVENSHTEIN_BACKEND
+_NATIVE_FUZZ_CDIST: dict[Callable, int] = {}
+for _name, _fid in (
+    ("partial_ratio", 0), ("token_set_ratio", 1), ("WRatio", 2),
+    ("partial_token_sort_ratio", 3), ("partial_token_set_ratio", 4),
+    ("token_ratio", 5), ("partial_token_ratio", 6),
+):
+    _fn = getattr(_fuzz, _name, None)
+    if _fn is not None:
+        _NATIVE_FUZZ_CDIST[_fn] = _fid
+
+
 def _materialize_choices(choices) -> Tuple[list, list]:
     """Return ``(items, keys)``. If ``choices`` is a mapping, ``items``
     is the values (the strings to score) and ``keys`` is the matching
@@ -381,6 +401,29 @@ def cdist(
         if score_cutoff is not None:
             out = np.where(out >= score_cutoff, out, 0)
         return out.astype(out_dtype if out_dtype is not None else default_dtype)
+
+    # Native C++ fuzz cdist: per-pair scorers (partial_ratio,
+    # token_set_ratio, WRatio, partial-token variants) looped in C++ over
+    # byte spans instead of the per-cell Python loop. Wide-unicode input
+    # raises NotImplementedError -> fall through to the per-pair loop.
+    native_fuzz_id = _NATIVE_FUZZ_CDIST.get(scorer)
+    if native_fuzz_id is not None and not kwargs:
+        cpu_count = 0 if int(workers) <= 0 else int(workers)
+        try:
+            mat = _BACKEND._shim_fuzz_cdist(
+                queries_list, choices_list,
+                scorer_id=native_fuzz_id, cpu_count=cpu_count,
+            )
+        except NotImplementedError:
+            mat = None
+        if mat is not None:
+            out = np.asarray(mat)
+            if score_multiplier != 1:
+                out = out * score_multiplier
+            if score_cutoff is not None:
+                out = np.where(out >= score_cutoff, out, 0)
+            return out.astype(out_dtype if out_dtype is not None else np.float32,
+                              copy=False)
 
     # Slow path: arbitrary callable scorer, Python loop.
     out_dtype = out_dtype or np.float64

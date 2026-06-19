@@ -26,6 +26,7 @@
 #include "token_ratios_dispatch.hpp"
 #include "wratio_dispatch.hpp"
 #include "fuzz_shim_dispatch.hpp"
+#include "fuzz_cdist.hpp"
 #include "dist_shim_dispatch.hpp"
 #include "ratcliff_obershelp_dispatch.hpp"
 #include "levenshtein_dispatch.hpp"
@@ -3352,6 +3353,15 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         "rapidfuzz.fuzz.QRatio (== ratio since rapidfuzz 3.0) in [0,100].",
         nb::arg("s1"), nb::arg("s2"), nb::kw_only(),
         nb::arg("processor") = nb::none(), nb::arg("score_cutoff") = nb::none());
+  m.def("_shim_fuzz_cdist",
+        &::stride_align::fuzz_cdist::fuzz_cdist,
+        "Native all-pairs matrix for the per-pair fuzz scorers "
+        "(partial_ratio / token_set_ratio / WRatio / partial-token "
+        "variants). Loops in C++ over byte spans, thread-pooled; "
+        "returns a float64 (N, M) matrix in [0, 100]. Raises "
+        "NotImplementedError on wide-unicode input.",
+        nb::arg("queries"), nb::arg("targets"), nb::kw_only(),
+        nb::arg("scorer_id"), nb::arg("cpu_count") = std::size_t{0});
 
   // ---- rapidfuzz-shim distance bindings -----------------------------
   //
