@@ -62,6 +62,56 @@ def _resolve_fast_path(scorer: Callable):
     return _FAST_PATH_SCORERS.get(scorer)
 
 
+def _sort_join(s: str) -> str:
+    """Whitespace-tokenise, lexicographically sort, single-space join —
+    the token_sort preprocessing rapidfuzz applies before its Indel
+    ratio. ASCII sort order matches the C++ kernel's byte sort."""
+    return " ".join(sorted(s.split()))
+
+
+# Preprocess-then-fast-path scorers. ``token_sort_ratio(a, b)`` is
+# exactly ``indel_normalized(sort_join(a), sort_join(b)) * 100`` — a
+# per-string preprocessing followed by the same Indel ratio the SIMD
+# flip already accelerates. In a cdist we sort-join each input ONCE
+# (O(N+M)) and run one batched INDEL_NORMALIZED matrix, instead of the
+# per-pair slow loop that re-sorts both strings on every one of the
+# N*M cells. Maps scorer -> (preprocess_fn, sa.Scorer, scale).
+_PREPROCESS_FAST_PATH: dict[Callable, Tuple[Callable, "_sa.Scorer", float]] = {
+    _fuzz.token_sort_ratio: (_sort_join, _sa.Scorer.INDEL_NORMALIZED, 100.0),
+}
+
+
+def _lcsseq_post(indel, la, lb, kind: str):
+    """LCSseq scorers from the INDEL distance matrix + input lengths.
+    ``LCS = (|a| + |b| - indel) / 2`` (Indel = |a|+|b|-2·LCS), then:
+    similarity = LCS; distance = max(|a|,|b|) - LCS; normalized_distance
+    = distance / max(|a|,|b|) (0 when both empty); normalized_similarity
+    = 1 - normalized_distance. ``la``/``lb`` broadcast as (N,1)/(1,M)."""
+    lcs = (la + lb - indel) / 2.0
+    if kind == "similarity":
+        return lcs
+    mx = np.maximum(la, lb)
+    dist = mx - lcs
+    if kind == "distance":
+        return dist
+    # 0/0 (both inputs empty) -> 0.0 without evaluating the divide.
+    nd = np.divide(dist, mx, out=np.zeros_like(dist), where=mx > 0)
+    if kind == "normalized_distance":
+        return nd
+    return 1.0 - nd  # normalized_similarity
+
+
+# Post-process-then-fast-path scorers: derivable from the INDEL flip
+# matrix + input lengths via one vectorised numpy pass, instead of the
+# per-pair Python loop. Maps scorer -> (kind, default dtype).
+_POSTPROCESS_FAST_PATH: dict[Callable, Tuple[str, object]] = {
+    _distance.LCSseq.distance:              ("distance", np.uint32),
+    _distance.LCSseq.similarity:            ("similarity", np.uint32),
+    _distance.LCSseq.normalized_distance:   ("normalized_distance", np.float32),
+    _distance.LCSseq.normalized_similarity: ("normalized_similarity", np.float32),
+}
+
+
 def _materialize_choices(choices) -> Tuple[list, list]:
     """Return ``(items, keys)``. If ``choices`` is a mapping, ``items``
     is the values (the strings to score) and ``keys`` is the matching
@@ -288,6 +338,49 @@ def cdist(
         if score_cutoff is not None:
             scaled = np.where(scaled >= score_cutoff, scaled, 0)
         return scaled.astype(out_dtype)
+
+    # Preprocess-then-fast-path (e.g. token_sort_ratio): apply the
+    # per-string preprocessing once, then route through the batched
+    # SIMD scorer instead of the per-pair Python loop below.
+    preprocess_fp = _PREPROCESS_FAST_PATH.get(scorer)
+    if preprocess_fp is not None and not kwargs:
+        pre_fn, sa_scorer, scale = preprocess_fp
+        q_pre = [pre_fn(q) for q in queries_list]
+        c_pre = [pre_fn(c) for c in choices_list]
+        cpu_count = 0 if int(workers) <= 0 else int(workers)
+        sa_result = _sa.cdist(
+            q_pre, c_pre, scorer=sa_scorer, cpu_count=cpu_count,
+        )
+        if out_dtype is None:
+            out_dtype = np.float32
+        scaled = sa_result.astype(np.float64) * scale
+        if score_multiplier != 1:
+            scaled = scaled * score_multiplier
+        if score_cutoff is not None:
+            scaled = np.where(scaled >= score_cutoff, scaled, 0)
+        return scaled.astype(out_dtype)
+
+    # Post-process-then-fast-path (e.g. LCSseq.*): one batched INDEL
+    # matrix, then a vectorised numpy transform using the input lengths
+    # instead of the per-pair Python loop.
+    postprocess_fp = _POSTPROCESS_FAST_PATH.get(scorer)
+    if postprocess_fp is not None and not kwargs:
+        kind, default_dtype = postprocess_fp
+        cpu_count = 0 if int(workers) <= 0 else int(workers)
+        indel = _sa.cdist(
+            queries_list, choices_list,
+            scorer=_sa.Scorer.INDEL, cpu_count=cpu_count,
+        ).astype(np.float64)
+        la = np.fromiter((len(q) for q in queries_list),
+                         dtype=np.float64, count=len(queries_list))[:, None]
+        lb = np.fromiter((len(c) for c in choices_list),
+                         dtype=np.float64, count=len(choices_list))[None, :]
+        out = _lcsseq_post(indel, la, lb, kind)
+        if score_multiplier != 1:
+            out = out * score_multiplier
+        if score_cutoff is not None:
+            out = np.where(out >= score_cutoff, out, 0)
+        return out.astype(out_dtype if out_dtype is not None else default_dtype)
 
     # Slow path: arbitrary callable scorer, Python loop.
     out_dtype = out_dtype or np.float64
