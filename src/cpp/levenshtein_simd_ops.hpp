@@ -213,6 +213,9 @@ struct Avx512OpsU32 {
   static Vec load_aligned(const std::uint32_t* data) {
     return _mm512_load_si512(reinterpret_cast<const void*>(data));
   }
+  static Vec load_unaligned(const std::uint32_t* data) {
+    return _mm512_loadu_si512(reinterpret_cast<const void*>(data));
+  }
   static Vec andnot_(Vec a, Vec b) { return _mm512_andnot_si512(a, b); }
   static Vec shl1(Vec a) { return _mm512_add_epi32(a, a); }
   static Vec gt(Vec a, Vec b) {
@@ -223,15 +226,73 @@ struct Avx512OpsU32 {
   }
 };
 
+// 32-lane uint16 / 64-lane uint8 siblings, reached via Avx512Ops::U16 /
+// ::U8 for the packed-PEQ Indel/LCS cdist flip when the longest choice
+// fits 16 / 8 bits. The Allison-Dix recurrence (U = V & PEQ;
+// V = (V+U) | (V-U)) only needs and/or/add/sub: the add's carry-out of
+// the top lane bit is discarded exactly as it is for the 64-bit struct,
+// so a len<=W choice is bit-identical at any lane width W. Packing into
+// the narrowest lane that fits doubles/quadruples the lane count (32/64
+// vs 16) for the common short-string case — matching rapidfuzz's
+// element-width dispatch. Needs AVX-512BW for the epi16/epi8 add/sub.
+struct Avx512OpsU16 {
+  static constexpr std::size_t lanes = 32;
+  using Vec = __m512i;
+  using Lane = std::uint16_t;
+
+  static Vec set1(std::uint16_t v) { return _mm512_set1_epi16(static_cast<short>(v)); }
+  static Vec zero() { return _mm512_setzero_si512(); }
+  static Vec and_(Vec a, Vec b) { return _mm512_and_si512(a, b); }
+  static Vec or_(Vec a, Vec b) { return _mm512_or_si512(a, b); }
+  static Vec add(Vec a, Vec b) { return _mm512_add_epi16(a, b); }
+  static Vec sub(Vec a, Vec b) { return _mm512_sub_epi16(a, b); }
+  static Vec load_aligned(const std::uint16_t* d) {
+    return _mm512_load_si512(reinterpret_cast<const void*>(d));
+  }
+  static Vec load_unaligned(const std::uint16_t* d) {
+    return _mm512_loadu_si512(reinterpret_cast<const void*>(d));
+  }
+  static void store_aligned(std::uint16_t* dst, Vec v) {
+    _mm512_store_si512(reinterpret_cast<void*>(dst), v);
+  }
+};
+
+struct Avx512OpsU8 {
+  static constexpr std::size_t lanes = 64;
+  using Vec = __m512i;
+  using Lane = std::uint8_t;
+
+  static Vec set1(std::uint8_t v) { return _mm512_set1_epi8(static_cast<char>(v)); }
+  static Vec zero() { return _mm512_setzero_si512(); }
+  static Vec and_(Vec a, Vec b) { return _mm512_and_si512(a, b); }
+  static Vec or_(Vec a, Vec b) { return _mm512_or_si512(a, b); }
+  static Vec add(Vec a, Vec b) { return _mm512_add_epi8(a, b); }
+  static Vec sub(Vec a, Vec b) { return _mm512_sub_epi8(a, b); }
+  static Vec load_aligned(const std::uint8_t* d) {
+    return _mm512_load_si512(reinterpret_cast<const void*>(d));
+  }
+  static Vec load_unaligned(const std::uint8_t* d) {
+    return _mm512_loadu_si512(reinterpret_cast<const void*>(d));
+  }
+  static void store_aligned(std::uint8_t* dst, Vec v) {
+    _mm512_store_si512(reinterpret_cast<void*>(dst), v);
+  }
+};
+
 struct Avx512Ops {
   static constexpr std::size_t lanes = 8;
   using Vec = __m512i;
   using Lane = std::uint64_t;
   using U32 = Avx512OpsU32;
-  // Best Ops for the pre-transposed cdist path on this backend. x86
-  // prefers the 64-bit/8-lane self: assembling 16 narrow uint32 stores
-  // into one 512-bit load triggers a store-forwarding stall, so 8 wide
-  // stores win despite half the lanes.
+  using U16 = Avx512OpsU16;
+  using U8 = Avx512OpsU8;
+  // Fallback transpose Ops for the packed-PEQ cdist flip when the
+  // longest choice needs the full 64 bits. The Indel flip dispatches on
+  // the max choice length and prefers the narrowest of U8/U16/U32 that
+  // fits (more lanes per 512-bit op), falling back to this 64-bit/8-lane
+  // self only for choices in (32, 64]. (The old scattered-gather path
+  // preferred the 8-lane self to dodge a store-forwarding stall; the
+  // flip's loads are contiguous, so lane count wins instead.)
   using CdistTransposeOps = Avx512Ops;
 
   static Vec set1(std::uint64_t v) {

@@ -324,9 +324,12 @@ inline void indel_query_row_packed(
       const std::size_t hi = std::min(lanes, p.count - base);
       for (std::size_t l = 0; l < hi; ++l) {
         const std::size_t clen = p.clens[base + l];
+        // Cast to Lane before popcount: for u8/u16 lanes the `&` would
+        // integer-promote to signed int, which std::popcount rejects.
         const std::size_t lcs =
             clen -
-            static_cast<std::size_t>(std::popcount(vo[l] & p.masks[base + l]));
+            static_cast<std::size_t>(std::popcount(
+                static_cast<Lane>(vo[l] & p.masks[base + l])));
         const std::size_t dist = clen + q_len - 2U * lcs;
         if constexpr (Normalized) {
           const std::size_t total = q_len + clen;
