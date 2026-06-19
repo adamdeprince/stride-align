@@ -381,6 +381,42 @@ struct NeonOpsU32 {
   static void store_aligned(std::uint32_t* dst, Vec v) { vst1q_u32(dst, v); }
 };
 
+// Narrow Indel-only NEON siblings (8/16 lanes), reached via NeonOps::U8
+// / ::U16 for the packed-PEQ Indel/LCS flip when the longest choice fits
+// 8 / 16 bits. The Allison-Dix recurrence needs only and/or/add/sub, and
+// is bit-identical at any lane width (carry past bit `len` is discarded
+// the same way), so packing into the narrowest lane quadruples/doubles
+// the lane count vs the 4-lane u32 sibling for short strings.
+struct NeonOpsU16 {
+  static constexpr std::size_t lanes = 8;
+  using Vec = uint16x8_t;
+  using Lane = std::uint16_t;
+  static Vec set1(std::uint16_t v) { return vdupq_n_u16(v); }
+  static Vec zero() { return vdupq_n_u16(0); }
+  static Vec and_(Vec a, Vec b) { return vandq_u16(a, b); }
+  static Vec or_(Vec a, Vec b) { return vorrq_u16(a, b); }
+  static Vec add(Vec a, Vec b) { return vaddq_u16(a, b); }
+  static Vec sub(Vec a, Vec b) { return vsubq_u16(a, b); }
+  static Vec load_aligned(const std::uint16_t* d) { return vld1q_u16(d); }
+  static Vec load_unaligned(const std::uint16_t* d) { return vld1q_u16(d); }
+  static void store_aligned(std::uint16_t* dst, Vec v) { vst1q_u16(dst, v); }
+};
+
+struct NeonOpsU8 {
+  static constexpr std::size_t lanes = 16;
+  using Vec = uint8x16_t;
+  using Lane = std::uint8_t;
+  static Vec set1(std::uint8_t v) { return vdupq_n_u8(v); }
+  static Vec zero() { return vdupq_n_u8(0); }
+  static Vec and_(Vec a, Vec b) { return vandq_u8(a, b); }
+  static Vec or_(Vec a, Vec b) { return vorrq_u8(a, b); }
+  static Vec add(Vec a, Vec b) { return vaddq_u8(a, b); }
+  static Vec sub(Vec a, Vec b) { return vsubq_u8(a, b); }
+  static Vec load_aligned(const std::uint8_t* d) { return vld1q_u8(d); }
+  static Vec load_unaligned(const std::uint8_t* d) { return vld1q_u8(d); }
+  static void store_aligned(std::uint8_t* dst, Vec v) { vst1q_u8(dst, v); }
+};
+
 // 128-bit NEON: 2 lanes of 64-bit. Same lane count as SseOps; the
 // difference is NEON's native unsigned cmpgt_u64 (no XOR-sign trick
 // needed) and the slightly weirder ~a (uint32 lane reinterpret).
@@ -391,6 +427,8 @@ struct NeonOps {
   using Vec = uint64x2_t;
   using Lane = std::uint64_t;
   using U32 = NeonOpsU32;
+  using U16 = NeonOpsU16;
+  using U8 = NeonOpsU8;
   // Best Ops for the pre-transposed cdist path. NEON inserts lanes via
   // register moves (vsetq_lane, no memory round-trip), so there's no
   // store-forwarding penalty — the 32-bit/4-lane sibling's extra
@@ -491,11 +529,57 @@ struct LsxOpsU32 {
   }
 };
 
+// Narrow Indel-only LSX siblings (8/16 lanes) for the packed-PEQ flip
+// when the longest choice fits 16 / 8 bits — and/or/add/sub only.
+struct LsxOpsU16 {
+  static constexpr std::size_t lanes = 8;
+  using Vec = __m128i;
+  using Lane = std::uint16_t;
+  static Vec set1(std::uint16_t v) { return __lsx_vreplgr2vr_h(static_cast<int>(v)); }
+  static Vec zero() { return __lsx_vreplgr2vr_h(0); }
+  static Vec and_(Vec a, Vec b) { return __lsx_vand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lsx_vor_v(a, b); }
+  static Vec add(Vec a, Vec b) { return __lsx_vadd_h(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lsx_vsub_h(a, b); }
+  static Vec load_aligned(const std::uint16_t* d) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static Vec load_unaligned(const std::uint16_t* d) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static void store_aligned(std::uint16_t* dst, Vec v) {
+    __lsx_vst(v, reinterpret_cast<void*>(dst), 0);
+  }
+};
+
+struct LsxOpsU8 {
+  static constexpr std::size_t lanes = 16;
+  using Vec = __m128i;
+  using Lane = std::uint8_t;
+  static Vec set1(std::uint8_t v) { return __lsx_vreplgr2vr_b(static_cast<int>(v)); }
+  static Vec zero() { return __lsx_vreplgr2vr_b(0); }
+  static Vec and_(Vec a, Vec b) { return __lsx_vand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lsx_vor_v(a, b); }
+  static Vec add(Vec a, Vec b) { return __lsx_vadd_b(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lsx_vsub_b(a, b); }
+  static Vec load_aligned(const std::uint8_t* d) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static Vec load_unaligned(const std::uint8_t* d) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static void store_aligned(std::uint8_t* dst, Vec v) {
+    __lsx_vst(v, reinterpret_cast<void*>(dst), 0);
+  }
+};
+
 struct LsxOps {
   static constexpr std::size_t lanes = 2;
   using Vec = __m128i;
   using Lane = std::uint64_t;
   using U32 = LsxOpsU32;
+  using U16 = LsxOpsU16;
+  using U8 = LsxOpsU8;
   using CdistTransposeOps = LsxOpsU32;
 
   static Vec set1(std::uint64_t v) {
@@ -593,6 +677,50 @@ struct LasxOpsU32 {
   }
 };
 
+// Narrow Indel-only LASX siblings (16/32 lanes) for the packed-PEQ flip
+// when the longest choice fits 16 / 8 bits — and/or/add/sub only.
+struct LasxOpsU16 {
+  static constexpr std::size_t lanes = 16;
+  using Vec = __m256i;
+  using Lane = std::uint16_t;
+  static Vec set1(std::uint16_t v) { return __lasx_xvreplgr2vr_h(static_cast<int>(v)); }
+  static Vec zero() { return __lasx_xvreplgr2vr_h(0); }
+  static Vec and_(Vec a, Vec b) { return __lasx_xvand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lasx_xvor_v(a, b); }
+  static Vec add(Vec a, Vec b) { return __lasx_xvadd_h(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lasx_xvsub_h(a, b); }
+  static Vec load_aligned(const std::uint16_t* d) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static Vec load_unaligned(const std::uint16_t* d) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static void store_aligned(std::uint16_t* dst, Vec v) {
+    __lasx_xvst(v, reinterpret_cast<void*>(dst), 0);
+  }
+};
+
+struct LasxOpsU8 {
+  static constexpr std::size_t lanes = 32;
+  using Vec = __m256i;
+  using Lane = std::uint8_t;
+  static Vec set1(std::uint8_t v) { return __lasx_xvreplgr2vr_b(static_cast<int>(v)); }
+  static Vec zero() { return __lasx_xvreplgr2vr_b(0); }
+  static Vec and_(Vec a, Vec b) { return __lasx_xvand_v(a, b); }
+  static Vec or_(Vec a, Vec b) { return __lasx_xvor_v(a, b); }
+  static Vec add(Vec a, Vec b) { return __lasx_xvadd_b(a, b); }
+  static Vec sub(Vec a, Vec b) { return __lasx_xvsub_b(a, b); }
+  static Vec load_aligned(const std::uint8_t* d) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static Vec load_unaligned(const std::uint8_t* d) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(d)), 0);
+  }
+  static void store_aligned(std::uint8_t* dst, Vec v) {
+    __lasx_xvst(v, reinterpret_cast<void*>(dst), 0);
+  }
+};
+
 // LoongArch LASX: 256-bit, 4x 64-bit lanes. Same lane count as AVX2.
 // Same semantics as LSX but with `xv*` intrinsics.
 struct LasxOps {
@@ -600,8 +728,11 @@ struct LasxOps {
   using Vec = __m256i;
   using Lane = std::uint64_t;
   using U32 = LasxOpsU32;
+  using U16 = LasxOpsU16;
+  using U8 = LasxOpsU8;
   // The packed-PEQ cdist path loads contiguous PEQ columns, so more
-  // lanes wins (no store-forwarding penalty); use the 8-lane sibling.
+  // lanes wins (no store-forwarding penalty); use the 8-lane sibling
+  // (or the narrower u8/u16 above, chosen by the longest choice).
   using CdistTransposeOps = LasxOpsU32;
 
   static Vec set1(std::uint64_t v) {
