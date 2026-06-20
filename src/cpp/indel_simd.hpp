@@ -322,23 +322,36 @@ inline void indel_query_row_packed(
       UOps::store_aligned(vo, V[g]);
       const std::size_t base = grp * lanes;
       const std::size_t hi = std::min(lanes, p.count - base);
-      for (std::size_t l = 0; l < hi; ++l) {
-        const std::size_t clen = p.clens[base + l];
-        // Cast to Lane before popcount: for u8/u16 lanes the `&` would
-        // integer-promote to signed int, which std::popcount rejects.
-        const std::size_t lcs =
-            clen -
-            static_cast<std::size_t>(std::popcount(
-                static_cast<Lane>(vo[l] & p.masks[base + l])));
-        const std::size_t dist = clen + q_len - 2U * lcs;
-        if constexpr (Normalized) {
+      // Cast to Lane before popcount: for u8/u16 lanes the `&` would
+      // integer-promote to signed int, which std::popcount rejects.
+      if constexpr (Normalized) {
+        // Two passes so the divide loop is branchless and the compiler
+        // auto-vectorizes it (vdivpd, 8 cells/op) instead of a scalar
+        // double divide per cell — the cost that dominated fuzz.ratio /
+        // token_sort at scale. total==0 only when q_len==clen==0 (both
+        // empty); force total=1 there so 1 - 0/1 = 1.0 keeps the both-
+        // empty convention without a per-cell branch in the divide loop.
+        alignas(64) double dd[lanes];
+        alignas(64) double tt[lanes];
+        for (std::size_t l = 0; l < hi; ++l) {
+          const std::size_t clen = p.clens[base + l];
+          const std::size_t lcs =
+              clen - static_cast<std::size_t>(std::popcount(
+                         static_cast<Lane>(vo[l] & p.masks[base + l])));
+          dd[l] = static_cast<double>(clen + q_len - 2U * lcs);
           const std::size_t total = q_len + clen;
-          out[base + l] = static_cast<OutT>(
-              total == 0U ? 1.0
-                          : 1.0 - static_cast<double>(dist) /
-                                      static_cast<double>(total));
-        } else {
-          out[base + l] = static_cast<OutT>(dist);
+          tt[l] = (total == 0U) ? 1.0 : static_cast<double>(total);
+        }
+        for (std::size_t l = 0; l < hi; ++l) {
+          out[base + l] = static_cast<OutT>(1.0 - dd[l] / tt[l]);
+        }
+      } else {
+        for (std::size_t l = 0; l < hi; ++l) {
+          const std::size_t clen = p.clens[base + l];
+          const std::size_t lcs =
+              clen - static_cast<std::size_t>(std::popcount(
+                         static_cast<Lane>(vo[l] & p.masks[base + l])));
+          out[base + l] = static_cast<OutT>(clen + q_len - 2U * lcs);
         }
       }
     }
