@@ -200,8 +200,13 @@ def run_benchmarks(corpus: dict) -> dict:
         ("OSA.distance",          sh_dist.OSA.distance,          up_dist.OSA.distance),
         ("Jaro.similarity",       sh_dist.Jaro.similarity,       up_dist.Jaro.similarity),
     ]:
-        sh = _time_call(lambda: sh_proc.cdist(cq, cc, scorer=sh_s), iters=10)
-        up = _time_call(lambda: up_proc.cdist(cq, cc, scorer=up_s), iters=10)
+        # Matched workers=1: honest per-thread KERNEL comparison. The shim
+        # defaults to workers=-1 (auto-threaded) and rapidfuzz to workers=1,
+        # so comparing defaults conflates kernel speed with the shim's zero-
+        # config threading. workers=1 on both isolates the kernel; the shim's
+        # default-threaded advantage on multicore is noted separately.
+        sh = _time_call(lambda: sh_proc.cdist(cq, cc, scorer=sh_s, workers=1), iters=10)
+        up = _time_call(lambda: up_proc.cdist(cq, cc, scorer=up_s, workers=1), iters=10)
         name = f"process.cdist_50x100_{scorer_name.replace('.', '_')}"
         results[name] = {"shim_ms": sh, "upstream_ms": up,
                          "ratio": sh / up if up > 0 else float("inf"),

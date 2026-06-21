@@ -47,9 +47,26 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Damerau-Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 7 | **1.99x** | 2.22x | 1.46x | 2.57x |
 | Jaro batch (cross-arch, N=1000) | `x86_avx512bwvl` / `*_neon` / `*_lasx` / `*_vsx` | rapidfuzz | 10 | **5.1x** | 3.7x | 1.54x | 263x |
 | cdist pruning (cross-arch, T=0.99) | `x86_avx512bwvl` / `*_neon` / `*_lasx` | own T=0 baseline | 24 | **426x** | 512x | 145x | 1,408x |
-| rapidfuzz shim full surface (Mac M4 Max) | `macos_arm64_neon` | rapidfuzz | 108 | **1.34x** | 1.34x | 0.55x | 2.93x |
-| rapidfuzz shim full surface (Intel avx10) | `x86_avx10_512` | rapidfuzz | 108 | **1.02x** | 1.13x | 0.15x | 1.77x |
-| rapidfuzz shim full surface (Loongson) | `linux_loongarch64_lasx` | rapidfuzz (scalar fallback) | 108 | **49.17x** | 53.07x | 8.51x | 314.31x |
+| rapidfuzz shim full surface (Mac M4 Max) | `macos_arm64_neon` | rapidfuzz, matched `workers=1` | 108 | **1.51x** | 1.41x | 0.48x | 5.71x |
+| ↳ cdist 50×100 only (matched `workers=1`, kernel) | `macos_arm64_neon` | rapidfuzz | 5 | **4.64x** | 4.81x | 3.30x | 5.71x |
+| rapidfuzz shim full surface (Intel avx10) | `x86_avx10_512` | rapidfuzz, matched `workers=1` | 108 | **1.10x** | 1.16x | 0.38x | 2.42x |
+| ↳ cdist 50×100 only (matched `workers=1`, kernel) | `x86_avx10_512` | rapidfuzz | 5 | **1.36x** | 1.29x | 0.89x | 2.42x |
+| rapidfuzz shim full surface (Loongson) | `linux_loongarch64_lasx` | pure-Python (no rapidfuzz wheel) | 108 | 49.17x | 53.07x | 8.51x | 314.31x |
+
+> **Methodology note — rapidfuzz-shim rows.** The shim's `cdist` defaults
+> to `workers=-1` (zero-config multi-threading) while rapidfuzz defaults to
+> `workers=1`, so comparing *defaults* conflates kernel speed with
+> threading. The rows above use **matched `workers=1`** — the honest
+> per-thread *kernel* comparison. On that footing the SIMD cdist scorers
+> win outright (the `↳ cdist` rows: Indel, Levenshtein, OSA, fuzz.ratio,
+> and — since the symmetry-flip kernel — Jaro all win or reach parity).
+> The 108-scorer "full surface" geomean is diluted by single-pair calls
+> (which are per-call-overhead-bound and unchanged by SIMD), so the
+> dedicated cdist rows are the better read of the all-pairs kernels. On a
+> multi-core host the shim's default auto-threading widens the gap
+> further. The Loongson row compares against a pure-Python reference (no
+> LoongArch rapidfuzz wheel exists), so its ratios are not comparable to
+> the rapidfuzz-baseline rows above.
 
 ## Intel x86 - 2026-05-18
 
