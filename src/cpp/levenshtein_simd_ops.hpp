@@ -224,6 +224,10 @@ struct Avx512OpsU32 {
   static Vec cmpeq(Vec a, Vec b) {
     return _mm512_maskz_set1_epi32(_mm512_cmpeq_epi32_mask(a, b), -1);
   }
+  // Jaro flip primitives (u32 lanes): unsigned gt + per-lane var shift.
+  static Vec gt_u64(Vec a, Vec b) { return gt(a, b); }
+  static Vec shl_var_u64(Vec a, Vec s) { return _mm512_sllv_epi32(a, s); }
+  static Vec shr_var_u64(Vec a, Vec s) { return _mm512_srlv_epi32(a, s); }
 };
 
 // 32-lane uint16 / 64-lane uint8 siblings, reached via Avx512Ops::U16 /
@@ -255,6 +259,18 @@ struct Avx512OpsU16 {
   static void store_aligned(std::uint16_t* dst, Vec v) {
     _mm512_store_si512(reinterpret_cast<void*>(dst), v);
   }
+  // Jaro flip primitives (u16 lanes; AVX-512BW): the variable-width
+  // window mask + the lowest-set-bit / matched-lane logic.
+  static Vec not_(Vec a) { return _mm512_xor_si512(a, _mm512_set1_epi16(-1)); }
+  static Vec andnot_(Vec a, Vec b) { return _mm512_andnot_si512(a, b); }
+  static Vec cmpeq(Vec a, Vec b) {
+    return _mm512_maskz_set1_epi16(_mm512_cmpeq_epi16_mask(a, b), -1);
+  }
+  static Vec gt_u64(Vec a, Vec b) {
+    return _mm512_maskz_set1_epi16(_mm512_cmpgt_epu16_mask(a, b), -1);
+  }
+  static Vec shl_var_u64(Vec a, Vec s) { return _mm512_sllv_epi16(a, s); }
+  static Vec shr_var_u64(Vec a, Vec s) { return _mm512_srlv_epi16(a, s); }
 };
 
 struct Avx512OpsU8 {

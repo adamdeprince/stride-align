@@ -516,6 +516,117 @@ inline void osa_query_row_packed(
   }
 }
 
+// Jaro flip: one query row vs the packed choices. Jaro is symmetric
+// (jaro(a,b) == jaro(b,a)), so we iterate the QUERY's characters and look
+// up, for each query char, the bitmask of TARGET positions where it
+// occurs — one contiguous PEQ load across all lanes, exactly like the
+// Indel flip. This removes the per-position char-indexed GATHER that
+// dominates the per-pair jaro_simd_inner. used_t / q_matched are the
+// matched TARGET / QUERY position sets (bit width = clen / q_len <= W).
+// Writes the base Jaro similarity; the Winkler prefix is applied by the
+// caller. Bit-identical to the per-pair Jaro by symmetry.
+template <typename UOps, std::size_t IC>
+inline void jaro_query_row_packed(
+    const std::uint8_t* q, std::size_t q_len,
+    const PackedChoicePeq<UOps>& p,
+    const std::uint8_t* const* t_ptrs,
+    double* out) {
+  using Vec = typename UOps::Vec;
+  using Lane = typename UOps::Lane;
+  constexpr std::size_t lanes = UOps::lanes;
+  constexpr std::size_t W = sizeof(Lane) * 8U;
+  const Vec zero = UOps::zero();
+  const Vec all_ones = UOps::set1(static_cast<Lane>(~Lane{0}));
+  const Vec wbits_v = UOps::set1(static_cast<Lane>(W));
+  const Vec one_v = UOps::set1(static_cast<Lane>(1U));
+  auto match_window = [](std::size_t n, std::size_t m) -> std::size_t {
+    const std::size_t mx = (n > m) ? n : m;
+    return mx >= 2U ? mx / 2U - 1U : 0U;
+  };
+  for (std::size_t gb = 0; gb < p.num_groups; gb += IC) {
+    const std::size_t nb = std::min(IC, p.num_groups - gb);
+    Vec used_t[IC], q_matched[IC], clen_v[IC], window_v[IC];
+    const Lane* peqbase[IC];
+    for (std::size_t g = 0; g < IC; ++g) {
+      const std::size_t grp = gb + (g < nb ? g : 0U);
+      used_t[g] = zero;
+      q_matched[g] = zero;
+      clen_v[g] = UOps::load_unaligned(p.clens.data() + grp * lanes);
+      alignas(64) Lane win[lanes];
+      for (std::size_t l = 0; l < lanes; ++l) {
+        win[l] = static_cast<Lane>(match_window(
+            q_len, static_cast<std::size_t>(p.clens[grp * lanes + l])));
+      }
+      window_v[g] = UOps::load_aligned(win);
+      peqbase[g] = p.peq.data() + grp * 256U * lanes;
+    }
+    for (std::size_t i = 0; i < q_len; ++i) {
+      const std::size_t ch = q[i];
+      const Vec i_v = UOps::set1(static_cast<Lane>(i));
+      const Vec i_bit = UOps::set1(static_cast<Lane>(Lane{1} << i));
+      for (std::size_t g = 0; g < IC; ++g) {
+        const Vec window = window_v[g];
+        // lo = (i > window) ? i - window : 0  (over target positions)
+        const Vec i_gt_w = UOps::gt_u64(i_v, window);
+        const Vec lo_v = UOps::and_(i_gt_w, UOps::sub(i_v, window));
+        // hi = min(clen, i + window + 1)
+        const Vec i_plus = UOps::add(UOps::add(i_v, window), one_v);
+        const Vec hi_lt = UOps::gt_u64(clen_v[g], i_plus);
+        const Vec hi_v = UOps::or_(UOps::and_(hi_lt, i_plus),
+                                   UOps::andnot_(hi_lt, clen_v[g]));
+        const Vec hi_comp = UOps::sub(wbits_v, hi_v);
+        const Vec window_mask = UOps::and_(
+            UOps::shl_var_u64(all_ones, lo_v),
+            UOps::shr_var_u64(all_ones, hi_comp));
+        const Vec eq = UOps::load_unaligned(peqbase[g] + ch * lanes);
+        const Vec candidate =
+            UOps::andnot_(used_t[g], UOps::and_(eq, window_mask));
+        const Vec lowest = UOps::and_(candidate, UOps::sub(zero, candidate));
+        used_t[g] = UOps::or_(used_t[g], lowest);
+        const Vec nonzero = UOps::not_(UOps::cmpeq(candidate, zero));
+        q_matched[g] = UOps::or_(q_matched[g], UOps::and_(nonzero, i_bit));
+      }
+    }
+    for (std::size_t g = 0; g < nb; ++g) {
+      const std::size_t grp = gb + g;
+      alignas(64) Lane ut[lanes], qm[lanes];
+      UOps::store_aligned(ut, used_t[g]);
+      UOps::store_aligned(qm, q_matched[g]);
+      const std::size_t base = grp * lanes;
+      const std::size_t hi = std::min(lanes, p.count - base);
+      for (std::size_t l = 0; l < hi; ++l) {
+        const std::size_t n = q_len;
+        const std::size_t m = p.clens[base + l];
+        if (n == 0U && m == 0U) { out[base + l] = 1.0; continue; }
+        if (n == 0U || m == 0U) { out[base + l] = 0.0; continue; }
+        const Lane uta = ut[l];
+        const std::size_t matches =
+            static_cast<std::size_t>(std::popcount(static_cast<Lane>(uta)));
+        if (matches == 0U) { out[base + l] = 0.0; continue; }
+        // Half-transpositions: walk matched query positions (q_matched)
+        // and matched target positions (used_t) in parallel, compare chars.
+        Lane a_bits = qm[l];
+        Lane b_bits = uta;
+        std::size_t half_trans = 0U;
+        while (a_bits != Lane{0}) {
+          const std::size_t qi =
+              static_cast<std::size_t>(std::countr_zero(a_bits));
+          const std::size_t tj =
+              static_cast<std::size_t>(std::countr_zero(b_bits));
+          if (q[qi] != t_ptrs[base + l][tj]) ++half_trans;
+          a_bits &= static_cast<Lane>(a_bits - Lane{1});
+          b_bits &= static_cast<Lane>(b_bits - Lane{1});
+        }
+        const double md = static_cast<double>(matches);
+        const double td = static_cast<double>(half_trans / 2U);
+        out[base + l] = (md / static_cast<double>(n)
+                         + md / static_cast<double>(m)
+                         + (md - td) / md) / 3.0;
+      }
+    }
+  }
+}
+
 // Raw SIMD batch: caller has byte-viewed query and all targets and
 // confirmed q_len in (0, 64]. Writes Indel distances into
 // `out[0..count)`.

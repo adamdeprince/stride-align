@@ -581,6 +581,87 @@ inline nb::object cdist_impl(
     }
   }
 
+  // Jaro / JaroWinkler flip. Jaro is symmetric, so build the target PEQ
+  // once (char-major) and iterate each query's chars — contiguous PEQ
+  // loads instead of the per-position char-indexed gather that dominates
+  // jaro_simd_inner. Uses the backend's native (u64) Ops directly; gated
+  // on it exposing load_unaligned + the variable-shift primitive, so
+  // backends without them keep the generic per-row path below. Single-
+  // word only (q_len and every t_len <= 64); longer falls through.
+  if constexpr (requires(typename Ops::Vec v, const typename Ops::Lane* pp) {
+                  Ops::load_unaligned(pp);
+                  Ops::shl_var_u64(v, v);
+                }) {
+    if ((scorer == Scorer::Jaro || scorer == Scorer::JaroWinkler) &&
+        returns_double && !symmetric && !have_tqdm &&
+        N >= 4U && M >= Ops::lanes) {
+      constexpr std::size_t JBITS = sizeof(typename Ops::Lane) * 8U;
+      bool fits = true;
+      for (std::size_t i = 0; i < N && fits; ++i) {
+        if (q_lens[i] > JBITS) fits = false;
+      }
+      for (std::size_t j = 0; j < M && fits; ++j) {
+        if (t_lens[j] > JBITS) fits = false;
+      }
+      std::size_t max_len = 0;
+      for (std::size_t i = 0; i < N; ++i) max_len = std::max(max_len, q_lens[i]);
+      for (std::size_t j = 0; j < M; ++j) max_len = std::max(max_len, t_lens[j]);
+      if (fits) {
+        const bool jw = (scorer == Scorer::JaroWinkler);
+        namespace isimd = ::stride_align::indel_simd;
+        // Build the packed (char-major) target PEQ + run each query row
+        // through the Jaro flip for lane Ops U. Pick the narrowest lane
+        // that holds the longest string (u16/u32/u64) — more targets per
+        // SIMD op now that the gather is gone.
+        auto run_jaro = [&]<typename U>() -> nb::object {
+          constexpr std::size_t IC = 4;
+          const auto packed = isimd::build_packed_choice_peq<U>(t_ptrs, t_lens, M);
+          auto& pool = ::stride_align::threading::ThreadPool::instance();
+          PyThreadState* saved_state = PyEval_SaveThread();
+          pool.parallel_for(N, num_threads, [&](std::size_t i) {
+            double* row = dbl_data + i * M;
+            isimd::jaro_query_row_packed<U, IC>(
+                q_ptrs[i], q_lens[i], packed, t_ptrs, row);
+            if (jw) {
+              for (std::size_t j = 0; j < M; ++j) {
+                if (row[j] < jw_prefix_threshold) continue;
+                const std::size_t limit =
+                    std::min({q_lens[i], t_lens[j], jw_prefix_cap});
+                std::size_t L = 0;
+                while (L < limit && q_ptrs[i][L] == t_ptrs[j][L]) ++L;
+                row[j] += static_cast<double>(L) * jw_prefix_weight *
+                          (1.0 - row[j]);
+              }
+            }
+          });
+          PyEval_RestoreThread(saved_state);
+          const std::size_t shape[2] = {N, M};
+          NormalizedMatrix mat(dbl_data, 2, shape, data_owner);
+          return mat.cast();
+        };
+        if constexpr (requires { typename Ops::U16; }) {
+          using JU16 = typename Ops::U16;
+          if constexpr (requires(typename JU16::Vec v,
+                                 const typename JU16::Lane* p) {
+                          JU16::shl_var_u64(v, v); JU16::load_unaligned(p);
+                        }) {
+            if (max_len <= 16U) return run_jaro.template operator()<JU16>();
+          }
+        }
+        if constexpr (requires { typename Ops::U32; }) {
+          using JU32 = typename Ops::U32;
+          if constexpr (requires(typename JU32::Vec v,
+                                 const typename JU32::Lane* p) {
+                          JU32::shl_var_u64(v, v); JU32::load_unaligned(p);
+                        }) {
+            if (max_len <= 32U) return run_jaro.template operator()<JU32>();
+          }
+        }
+        return run_jaro.template operator()<Ops>();
+      }
+    }
+  }
+
   auto process_row = [&](std::size_t i) {
     const std::size_t j_start = symmetric ? i + 1U : 0U;
     const std::size_t row_count = M - j_start;
