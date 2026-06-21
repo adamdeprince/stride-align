@@ -308,8 +308,16 @@ bool backend_is_available(BackendKind kind) noexcept {
 
 BackendKind detect_best_backend() noexcept {
   constexpr std::array priority = {
+      // AVX10.1 backends are de-selected unless explicitly built
+      // (STRIDE_ALIGN_ENABLE_X86_AVX10): current toolchains compile their
+      // alignment kernels slower than the classic avx512bwvl backend, which
+      // is preferred here. See CMakeLists.txt.
+#ifdef STRIDE_ALIGN_HAVE_X86_AVX10_512
       BackendKind::x86_avx10_512,
+#endif
+#ifdef STRIDE_ALIGN_HAVE_X86_AVX10_256
       BackendKind::x86_avx10_256,
+#endif
       BackendKind::x86_avx512bwvl,
       BackendKind::x86_avx2,
       BackendKind::x86_sse41,

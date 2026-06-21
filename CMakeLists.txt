@@ -249,17 +249,31 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
     STRIDE_ALIGN_HAVE_X86_AVX512BWVL=1
   )
 
-  check_cxx_compiler_flag("-mavx10.1-256" STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_256)
-  check_cxx_compiler_flag("-mavx10.1-512" STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_512)
+  # AVX10.1 backends are kept in-tree but NOT built by default. GCC's
+  # avx10.1-256/512 target codegen (through GCC 16-trunk) compiles the SW/NW
+  # alignment kernels ~2x slower than the classic avx512f/bw/vl backend on
+  # AVX-512 hardware -- measured on a Granite Rapids Xeon 6975P-C, sw-score is
+  # 0.55x avx2 under avx10.1-512 but 1.28x avx2 under avx512bwvl -- and AVX10.1
+  # exposes no instruction these kernels use beyond AVX-512. detect_best_backend()
+  # dispatches avx512bwvl instead; its #ifdef'd priority entries reappear
+  # automatically when this option is turned back on for a toolchain whose
+  # AVX10 codegen has caught up.
+  option(STRIDE_ALIGN_ENABLE_X86_AVX10
+    "Build the x86 AVX10.1 backends (off: classic AVX-512 is faster on current toolchains)" OFF)
 
-  if(STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_256)
-    add_stride_align_backend(_avx10_256 src/cpp/backends/x86_avx10_256.cpp)
-    list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_X86_AVX10_256=1)
-  endif()
+  if(STRIDE_ALIGN_ENABLE_X86_AVX10)
+    check_cxx_compiler_flag("-mavx10.1-256" STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_256)
+    check_cxx_compiler_flag("-mavx10.1-512" STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_512)
 
-  if(STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_512)
-    add_stride_align_backend(_avx10_512 src/cpp/backends/x86_avx10_512.cpp)
-    list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_X86_AVX10_512=1)
+    if(STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_256)
+      add_stride_align_backend(_avx10_256 src/cpp/backends/x86_avx10_256.cpp)
+      list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_X86_AVX10_256=1)
+    endif()
+
+    if(STRIDE_ALIGN_COMPILER_SUPPORTS_X86_AVX10_512)
+      add_stride_align_backend(_avx10_512 src/cpp/backends/x86_avx10_512.cpp)
+      list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_X86_AVX10_512=1)
+    endif()
   endif()
 endif()
 
