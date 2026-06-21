@@ -6,6 +6,54 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## [0.5.1] - 2026-06-21
+
+### Performance
+
+* **All-pairs `cdist` now wins the per-thread kernel across
+  architectures.** The `cdist` batch for the rapidfuzz-shim scorers was
+  rebuilt around a packed char-major PEQ "flip": pack one dimension's
+  PEQ char-major once and iterate the other dimension's characters, so
+  each step is a single contiguous SIMD load instead of a scattered
+  per-position gather. Element-width lane dispatch then packs the
+  bit-parallel state into the narrowest lane (u8/u16/u32/u64) that holds
+  the longest string — matching rapidfuzz's sub-word packing — so short
+  strings run at full lane count. Covers Indel, Levenshtein, OSA and
+  their normalized variants; `token_sort_ratio` and `LCSseq` route
+  through the same Indel flip; `fuzz.ratio`'s normalized-extract divide
+  is now auto-vectorized. The per-pair fuzz scorers with irreducible
+  per-pair work — `WRatio`, `token_set_ratio`, `partial_ratio`, and the
+  partial-token variants — get a native C++ all-pairs loop over byte
+  spans in the thread pool instead of a per-cell Python loop. Jaro /
+  JaroWinkler `cdist` uses the same flip via Jaro's symmetry
+  (`jaro(a, b) == jaro(b, a)`), replacing its per-position gather with
+  contiguous loads and the element-width dispatch. A persistent thread
+  pool with a work-aware gate replaces per-call thread spawning, and a
+  scalar L1 PEQ lookup replaces the microcoded `avx10_512` gather.
+
+  Matched `workers=1` (the honest per-thread kernel comparison) vs
+  rapidfuzz 3.14.5, bit-exact: x86 `avx10_512` cdist geomean **1.36×**,
+  Mac M4 NEON **4.64×** — every common scorer wins or reaches parity.
+  Validated bit-exact on x86, Apple NEON, and LoongArch (LASX / LSX).
+
+* Single-pair kernels: NEON `uint32x4` Levenshtein fast path, OSA 4-lane
+  `uint32` NEON batch (`m <= 32`), and arbitrary-length bit-parallel
+  Jaro / JaroWinkler.
+
+### Fixed
+
+* `fuzz.WRatio` bit-exactness against rapidfuzz.
+* Single-word batch-kernel target-length-over-64 overflow.
+
+### Changed
+
+* The generated `html/` documentation site is no longer tracked in git
+  (it is produced by a separate generation script); the served
+  LoongArch release wheels under `html/wheels/` are kept under git-lfs.
+* Benchmark comparisons report matched `workers=1` — the honest
+  per-thread kernel comparison — since the shim's `cdist` defaults to
+  `workers=-1` (auto-threaded) while rapidfuzz defaults to `workers=1`.
+
 ## [0.5.0] - 2026-06-10
 
 ### Performance
