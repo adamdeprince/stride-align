@@ -395,6 +395,14 @@ struct NeonOpsU32 {
   // NEON vld1q has no alignment requirement, so unaligned == aligned.
   static Vec load_unaligned(const std::uint32_t* data) { return vld1q_u32(data); }
   static void store_aligned(std::uint32_t* dst, Vec v) { vst1q_u32(dst, v); }
+  // Jaro flip primitives (u32 lanes).
+  static Vec gt_u64(Vec a, Vec b) { return vcgtq_u32(a, b); }
+  static Vec shl_var_u64(Vec a, Vec s) {
+    return vshlq_u32(a, vreinterpretq_s32_u32(s));
+  }
+  static Vec shr_var_u64(Vec a, Vec s) {
+    return vshlq_u32(a, vnegq_s32(vreinterpretq_s32_u32(s)));
+  }
 };
 
 // Narrow Indel-only NEON siblings (8/16 lanes), reached via NeonOps::U8
@@ -416,6 +424,17 @@ struct NeonOpsU16 {
   static Vec load_aligned(const std::uint16_t* d) { return vld1q_u16(d); }
   static Vec load_unaligned(const std::uint16_t* d) { return vld1q_u16(d); }
   static void store_aligned(std::uint16_t* dst, Vec v) { vst1q_u16(dst, v); }
+  // Jaro flip primitives (u16 lanes).
+  static Vec not_(Vec a) { return vmvnq_u16(a); }
+  static Vec andnot_(Vec a, Vec b) { return vbicq_u16(b, a); }
+  static Vec cmpeq(Vec a, Vec b) { return vceqq_u16(a, b); }
+  static Vec gt_u64(Vec a, Vec b) { return vcgtq_u16(a, b); }
+  static Vec shl_var_u64(Vec a, Vec s) {
+    return vshlq_u16(a, vreinterpretq_s16_u16(s));
+  }
+  static Vec shr_var_u64(Vec a, Vec s) {
+    return vshlq_u16(a, vnegq_s16(vreinterpretq_s16_u16(s)));
+  }
 };
 
 struct NeonOpsU8 {
@@ -475,6 +494,8 @@ struct NeonOps {
     return out;
   }
   static Vec load_aligned(const std::uint64_t* data) { return vld1q_u64(data); }
+  // vld1q has no alignment requirement, so unaligned == aligned.
+  static Vec load_unaligned(const std::uint64_t* data) { return vld1q_u64(data); }
   static void store_aligned(std::uint64_t* dst, Vec v) { vst1q_u64(dst, v); }
   // NEON has native unsigned cmpgt for 64-bit lanes (ARMv8+).
   static Vec gt_u64(Vec a, Vec b) { return vcgtq_u64(a, b); }
@@ -525,6 +546,9 @@ struct LsxOpsU32 {
   static Vec sub(Vec a, Vec b) { return __lsx_vsub_w(a, b); }
   static Vec shl1(Vec a) { return __lsx_vslli_w(a, 1); }
   static Vec cmpeq(Vec a, Vec b) { return __lsx_vseq_w(a, b); }
+  static Vec gt_u64(Vec a, Vec b) { return gt(a, b); }
+  static Vec shl_var_u64(Vec a, Vec s) { return __lsx_vsll_w(a, s); }
+  static Vec shr_var_u64(Vec a, Vec s) { return __lsx_vsrl_w(a, s); }
   static Vec andnot_(Vec a, Vec b) { return __lsx_vandn_v(a, b); }
   static Vec gt(Vec a, Vec b) { return __lsx_vslt_wu(b, a); }
   static Vec gather(const std::uint32_t* base, const std::uint32_t* idx) {
@@ -566,6 +590,13 @@ struct LsxOpsU16 {
   static void store_aligned(std::uint16_t* dst, Vec v) {
     __lsx_vst(v, reinterpret_cast<void*>(dst), 0);
   }
+  // Jaro flip primitives (u16 lanes).
+  static Vec not_(Vec a) { return __lsx_vnor_v(a, a); }
+  static Vec andnot_(Vec a, Vec b) { return __lsx_vandn_v(a, b); }
+  static Vec cmpeq(Vec a, Vec b) { return __lsx_vseq_h(a, b); }
+  static Vec gt_u64(Vec a, Vec b) { return __lsx_vslt_hu(b, a); }
+  static Vec shl_var_u64(Vec a, Vec s) { return __lsx_vsll_h(a, s); }
+  static Vec shr_var_u64(Vec a, Vec s) { return __lsx_vsrl_h(a, s); }
 };
 
 struct LsxOpsU8 {
@@ -627,6 +658,9 @@ struct LsxOps {
   static Vec load_aligned(const std::uint64_t* data) {
     return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
   }
+  static Vec load_unaligned(const std::uint64_t* data) {
+    return __lsx_vld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
   static void store_aligned(std::uint64_t* dst, Vec v) {
     __lsx_vst(v, reinterpret_cast<void*>(dst), 0);
   }
@@ -668,6 +702,9 @@ struct LasxOpsU32 {
   static Vec sub(Vec a, Vec b) { return __lasx_xvsub_w(a, b); }
   static Vec shl1(Vec a) { return __lasx_xvslli_w(a, 1); }
   static Vec cmpeq(Vec a, Vec b) { return __lasx_xvseq_w(a, b); }
+  static Vec gt_u64(Vec a, Vec b) { return gt(a, b); }
+  static Vec shl_var_u64(Vec a, Vec s) { return __lasx_xvsll_w(a, s); }
+  static Vec shr_var_u64(Vec a, Vec s) { return __lasx_xvsrl_w(a, s); }
   static Vec andnot_(Vec a, Vec b) { return __lasx_xvandn_v(a, b); }
   static Vec gt(Vec a, Vec b) { return __lasx_xvslt_wu(b, a); }
   static Vec gather(const std::uint32_t* base, const std::uint32_t* idx) {
@@ -714,6 +751,13 @@ struct LasxOpsU16 {
   static void store_aligned(std::uint16_t* dst, Vec v) {
     __lasx_xvst(v, reinterpret_cast<void*>(dst), 0);
   }
+  // Jaro flip primitives (u16 lanes).
+  static Vec not_(Vec a) { return __lasx_xvnor_v(a, a); }
+  static Vec andnot_(Vec a, Vec b) { return __lasx_xvandn_v(a, b); }
+  static Vec cmpeq(Vec a, Vec b) { return __lasx_xvseq_h(a, b); }
+  static Vec gt_u64(Vec a, Vec b) { return __lasx_xvslt_hu(b, a); }
+  static Vec shl_var_u64(Vec a, Vec s) { return __lasx_xvsll_h(a, s); }
+  static Vec shr_var_u64(Vec a, Vec s) { return __lasx_xvsrl_h(a, s); }
 };
 
 struct LasxOpsU8 {
@@ -776,6 +820,9 @@ struct LasxOps {
     return out;
   }
   static Vec load_aligned(const std::uint64_t* data) {
+    return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
+  }
+  static Vec load_unaligned(const std::uint64_t* data) {
     return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(data)), 0);
   }
   static void store_aligned(std::uint64_t* dst, Vec v) {
