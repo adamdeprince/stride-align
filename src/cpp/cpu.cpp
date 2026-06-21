@@ -85,7 +85,14 @@ bool x86_supports_avx512bwvl() noexcept {
 }
 
 bool x86_supports_avx10_256() noexcept {
-#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)) && \
+  // Gated on the backend actually being built: the
+  // __builtin_cpu_supports("avx10.1-256") string is not accepted by every
+  // GCC that defines __GNUC__ >= 14 (the GCC 16.1 release rejects it, the
+  // 16.0 trunk accepted it), and an unbuilt backend can never be selected
+  // regardless of CPU support. STRIDE_ALIGN_HAVE_X86_AVX10_256 is only
+  // defined when the flag check + STRIDE_ALIGN_ENABLE_X86_AVX10 succeeded.
+#if defined(STRIDE_ALIGN_HAVE_X86_AVX10_256) && \
+    (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)) && \
     defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 14)
   __builtin_cpu_init();
   return x86_supports_avx512bwvl() != 0 && __builtin_cpu_supports("avx10.1-256") != 0;
@@ -95,7 +102,11 @@ bool x86_supports_avx10_256() noexcept {
 }
 
 bool x86_supports_avx10_512() noexcept {
-#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)) && \
+  // See x86_supports_avx10_256() above: gated on the backend being built so
+  // the avx10.1-512 builtin string is only referenced where the toolchain
+  // that compiled the backend is known to accept it.
+#if defined(STRIDE_ALIGN_HAVE_X86_AVX10_512) && \
+    (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)) && \
     defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 14)
   __builtin_cpu_init();
   return x86_supports_avx512bwvl() != 0 && __builtin_cpu_supports("avx10.1-512") != 0;
