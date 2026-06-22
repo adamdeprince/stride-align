@@ -20,8 +20,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 
 | Family | Best stride-align backend | Baseline | Rows | Geomean | Median | Worst | Best |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Intel x86 | `x86_avx512bwvl` | parasail | 80 | **1.752x** | 1.678x | 0.909x | 3.794x |
-| Intel x86 | `x86_avx2` | parasail | 80 | 1.377x | 1.302x | 0.474x | 3.513x |
+| Intel x86 | `x86_avx512bwvl` | parasail | 80 | **1.677x** | 1.620x | 0.856x | 3.528x |
+| Intel x86 | `x86_avx2` | parasail | 80 | 1.325x | 1.223x | 0.532x | 3.483x |
 | ARM Graviton4 (Linux) | `linux_aarch64_neon`/`asimd` | parasail | 80 | **1.138x** | 1.138x | 0.260x | 2.637x |
 | ARM Graviton4 (Linux) | `linux_aarch64_sve2` | parasail | 80 | 1.081x | 1.108x | 0.261x | 2.635x |
 | ARM Graviton4 (Linux) | `linux_aarch64_sve` | parasail | 80 | 1.042x | 1.101x | 0.259x | 2.647x |
@@ -29,14 +29,13 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | patched parasail (1:1 score) | 16 | **7.517x** | 6.502x | 4.315x | 22.365x |
 | Loongson LoongArch64 | `linux_loongarch64_lasx` | generic (native) | 80 | **4.909x** | 5.149x | 0.499x | 29.707x |
 | Power8 VSX (Linux) | `linux_powerpc64_vsx` | generic (no parasail) | 80 | **3.772x** | 4.128x | 0.915x | 16.797x |
-| Levenshtein (Intel x86) | `x86_avx512bwvl` | python-Levenshtein | 14 | **1.159x** | 1.151x | 1.039x | 1.353x |
-| Levenshtein (Intel x86) | `x86_avx512bwvl` | rapidfuzz | 14 | 1.075x | 1.070x | 0.898x | 1.364x |
-| Levenshtein (Intel x86) | `x86_avx512bwvl` | editdistance | 14 | 13.564x | 13.758x | 11.099x | 15.880x |
-| Lev (long, >64 chars) | `x86_avx512bwvl` | rapidfuzz | 5 | **2.35x** | 2.55x | 1.45x | 2.88x |
-| Lev (1-vs-1, q>=100) | `x86_avx512bwvl` | rapidfuzz | 2 | **1.36x** | 1.36x | 1.34x | 1.39x |
-| Lev (cutoff, q=50) | `x86_avx512bwvl` | rapidfuzz | 3 | **3.91x** | 2.41x | 2.41x | 6.03x |
-| Damerau-Lev (short tgts) | `x86_avx512bwvl` | rapidfuzz | 4 | **3.13x** | 3.03x | 2.38x | 4.22x |
-| Damerau-Lev (medium tgts) | `x86_avx512bwvl` | rapidfuzz | 3 | 0.98x | 0.87x | 0.85x | 1.25x |
+| Levenshtein (Intel x86) | `x86_avx512bwvl` | rapidfuzz | 14 | **3.433x** | 3.440x | 3.367x | 3.529x |
+| Levenshtein (Intel x86) | `x86_avx512bwvl` | editdistance | 14 | 38.279x | 37.299x | 35.516x | 43.222x |
+| Lev (long, >64 chars) | `x86_avx512bwvl` | rapidfuzz | 5 | **3.61x** | 3.60x | 3.45x | 3.76x |
+| Lev (1-vs-1, q>=100) | `x86_avx512bwvl` | rapidfuzz | 2 | **1.70x** | 1.71x | 1.52x | 1.91x |
+| Lev (cutoff, q=50) | `x86_avx512bwvl` | rapidfuzz | 3 | **2.62x** | 2.53x | 1.93x | 3.67x |
+| Damerau-Lev (short tgts) | `x86_avx512bwvl` | rapidfuzz | 4 | **6.40x** | 6.40x | 6.01x | 6.84x |
+| Damerau-Lev (medium tgts) | `x86_avx512bwvl` | rapidfuzz | 3 | **4.29x** | 5.31x | 2.71x | 5.47x |
 | Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | python-Levenshtein | 4 | **6.61x** | 6.42x | 5.49x | 8.54x |
 | Damerau-Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | rapidfuzz OSA | 4 | **5.49x** | 5.43x | 4.35x | 7.45x |
 | Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 7 | **2.17x** | 2.18x | 1.54x | 3.34x |
@@ -49,8 +48,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 | cdist pruning (cross-arch, T=0.99) | `x86_avx512bwvl` / `*_neon` / `*_lasx` | own T=0 baseline | 24 | **426x** | 512x | 145x | 1,408x |
 | rapidfuzz shim full surface (Mac M4 Max) | `macos_arm64_neon` | rapidfuzz, matched `workers=1` | 108 | **1.51x** | 1.41x | 0.48x | 5.71x |
 | ↳ cdist 50×100 only (matched `workers=1`, kernel) | `macos_arm64_neon` | rapidfuzz | 5 | **4.64x** | 4.81x | 3.30x | 5.71x |
-| rapidfuzz shim full surface (Intel avx10) | `x86_avx10_512` | rapidfuzz, matched `workers=1` | 108 | **1.10x** | 1.16x | 0.38x | 2.42x |
-| ↳ cdist 50×100 only (matched `workers=1`, kernel) | `x86_avx10_512` | rapidfuzz | 5 | **1.36x** | 1.29x | 0.89x | 2.42x |
+| rapidfuzz shim full surface (Intel Granite Rapids) | `x86_avx512bwvl` | rapidfuzz, matched `workers=1` | 108 | **1.24x** | 1.28x | 0.42x | 2.00x |
+| ↳ cdist 50×100 only (matched `workers=1`, kernel) | `x86_avx512bwvl` | rapidfuzz | 5 | **1.32x** | 1.28x | 0.85x | 2.00x |
 | rapidfuzz shim full surface (Loongson) | `linux_loongarch64_lasx` | pure-Python (no rapidfuzz wheel) | 108 | 49.17x | 53.07x | 8.51x | 314.31x |
 
 > **Methodology note — rapidfuzz-shim rows.** The shim's `cdist` defaults
@@ -68,19 +67,19 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 > LoongArch rapidfuzz wheel exists), so its ratios are not comparable to
 > the rapidfuzz-baseline rows above.
 
-## Intel x86 - 2026-05-18
+## Intel x86 - 2026-06-21
 
-Raw artifacts: [`benchmark.csv`](benchmark.csv) and the focused linear
-`sw-farrar-score` exact-fill follow-up
-[`benchmarks/x86-sw-farrar-exactfill-study-2026-05-14.csv`](benchmarks/x86-sw-farrar-exactfill-study-2026-05-14.csv).
+Raw artifact: [`benchmark.csv`](benchmark.csv).
 
-Build context: 11th Gen Intel Core i7-1195G7, Python 3.13 in the project
-virtualenv, host pinned with `taskset -c 2`, regenerated 2026-05-18 after the
-CIGAR builder rework (`to_chars`-based digit emission + capacity reservation
-in `build_cigar` and `ReverseCigarBuilder`). Parasail is the bundled
+Build context: Intel Xeon 6975P-C (Granite Rapids, 4 vCPU on AWS), Python
+3.14 in the project virtualenv, host pinned with `taskset -c 2`, compiled
+with GCC 16.1, regenerated 2026-06-21. Parasail is the bundled
 `parasail==1.3.4` wheel. The CSV contains 320 data rows: English and Chinese
 workloads, linear and affine scoring, widths 16 and 32, `1:1` and `1:many`
 shapes, and `generic`/`x86_avx2`/`x86_avx512bwvl`/`parasail` backends.
+`x86_avx512bwvl` is the auto-selected backend here; the AVX10.1 backends are
+de-selected because current GCC AVX10 codegen compiles the alignment kernels
+~2x slower than the classic `avx512f/bw/vl` path (see `CMakeLists.txt`).
 
 Command:
 
@@ -102,116 +101,109 @@ taskset -c 2 .venv/bin/python -m stride_align.benchmark \
 
 | Backend | Rows | Wins | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `x86_avx512bwvl` | 80 | 77 | 1.752x | 1.678x | 0.909x | 3.794x |
-| `x86_avx2` | 80 | 66 | 1.377x | 1.302x | 0.474x | 3.513x |
-| `generic` | 80 |  8 | 0.222x | 0.176x | 0.058x | 1.615x |
+| `x86_avx512bwvl` | 80 | 78 | 1.677x | 1.620x | 0.856x | 3.528x |
+| `x86_avx2` | 80 | 55 | 1.325x | 1.223x | 0.532x | 3.483x |
+| `generic` | 80 |  8 | 0.250x | 0.198x | 0.071x | 1.805x |
 
 Score-only rows (16 sw-farrar-score + 16 sw-score + 16 nw-score):
 
 | Backend | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `x86_avx512bwvl` | 48 | 48 | 1.767x | 1.762x |
-| `x86_avx2` | 48 | 40 | 1.297x | 1.173x |
+| `x86_avx512bwvl` | 48 | 47 | 1.564x | 1.475x |
+| `x86_avx2` | 48 | 29 | 1.147x | 1.109x |
 
 Path/CIGAR rows (8 each of sw-path-info, nw-path-info, sw-cigar, nw-cigar):
 
 | Backend | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `x86_avx512bwvl` | 32 | 29 | 1.730x | 1.524x |
-| `x86_avx2` | 32 | 26 | 1.508x | 1.524x |
+| `x86_avx512bwvl` | 32 | 31 | 1.862x | 1.751x |
+| `x86_avx2` | 32 | 26 | 1.644x | 1.672x |
 
 ### By variant
 
-AVX2:
-
-| Variant | Rows | Wins | Geomean | Median |
-| --- | ---: | ---: | ---: | ---: |
-| `nw-path-info`    |  8 |  8 | 2.172x | 2.170x |
-| `nw-cigar`        |  8 |  8 | 2.153x | 2.231x |
-| `sw-score`        | 16 | 16 | 1.763x | 1.708x |
-| `nw-score`        | 16 | 13 | 1.122x | 1.143x |
-| `sw-farrar-score` | 16 | 11 | 1.103x | 1.045x |
-| `sw-path-info`    |  8 |  5 | 1.060x | 1.061x |
-| `sw-cigar`        |  8 |  5 | 1.043x | 1.051x |
-
 AVX512BWVL:
 
 | Variant | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `sw-score`        | 16 | 16 | 2.295x | 2.274x |
-| `nw-path-info`    |  8 |  8 | 2.210x | 2.337x |
-| `nw-cigar`        |  8 |  8 | 2.193x | 2.327x |
-| `nw-score`        | 16 | 16 | 1.673x | 1.694x |
-| `sw-farrar-score` | 16 | 16 | 1.436x | 1.314x |
-| `sw-path-info`    |  8 |  7 | 1.373x | 1.412x |
-| `sw-cigar`        |  8 |  6 | 1.346x | 1.414x |
+| `nw-path-info`    |  8 |  8 | 2.377x | 2.453x |
+| `nw-cigar`        |  8 |  8 | 2.362x | 2.495x |
+| `sw-score`        | 16 | 16 | 1.990x | 1.912x |
+| `sw-cigar`        |  8 |  8 | 1.468x | 1.507x |
+| `sw-path-info`    |  8 |  7 | 1.460x | 1.503x |
+| `nw-score`        | 16 | 15 | 1.396x | 1.433x |
+| `sw-farrar-score` | 16 | 16 | 1.378x | 1.281x |
+
+AVX2:
+
+| Variant | Rows | Wins | Geomean | Median |
+| --- | ---: | ---: | ---: | ---: |
+| `nw-cigar`        |  8 |  8 | 2.325x | 2.388x |
+| `nw-path-info`    |  8 |  8 | 2.318x | 2.358x |
+| `sw-score`        | 16 | 16 | 1.573x | 1.473x |
+| `sw-cigar`        |  8 |  5 | 1.165x | 1.216x |
+| `sw-path-info`    |  8 |  5 | 1.163x | 1.211x |
+| `sw-farrar-score` | 16 |  5 | 1.015x | 0.994x |
+| `nw-score`        | 16 |  8 | 0.945x | 0.992x |
 
 ### Worst rows vs parasail
 
-AVX2:
-
-| Ratio | Pass | Case | Shape | Variant | Width |
-| ---: | --- | --- | --- | --- | ---: |
-| 0.474x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
-| 0.493x | chinese | linear | 1:1 | `sw-path-info` | 16 |
-| 0.763x | english | linear | 1:1 | `sw-cigar`     | 16 |
-| 0.799x | english | linear | 1:1 | `sw-path-info` | 16 |
-| 0.888x | chinese | linear | 1:1 | `nw-score`     | 32 |
-
 AVX512BWVL:
 
 | Ratio | Pass | Case | Shape | Variant | Width |
 | ---: | --- | --- | --- | --- | ---: |
-| 0.909x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
-| 0.943x | chinese | linear | 1:1 | `sw-path-info` | 16 |
-| 0.951x | chinese | linear | 1:1 | `sw-cigar`     | 32 |
-| 1.034x | chinese | linear | 1:1 | `sw-path-info` | 32 |
-| 1.079x | chinese | affine | 1:1 | `sw-cigar`     | 16 |
+| 0.856x | chinese | linear | 1:1 | `nw-score`     | 16 |
+| 0.990x | chinese | linear | 1:1 | `sw-path-info` | 16 |
+| 1.004x | chinese | linear | 1:1 | `sw-cigar`     | 32 |
+| 1.007x | chinese | linear | 1:1 | `sw-path-info` | 32 |
+| 1.017x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
+
+AVX2:
+
+| Ratio | Pass | Case | Shape | Variant | Width |
+| ---: | --- | --- | --- | --- | ---: |
+| 0.532x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
+| 0.533x | chinese | linear | 1:1 | `sw-path-info` | 16 |
+| 0.663x | chinese | linear | 1:1 | `nw-score`     | 32 |
+| 0.721x | chinese | linear | 1:1 | `nw-score`     | 16 |
+| 0.748x | english | linear | 1:1 | `nw-score`     | 32 |
 
 ### Takeaways
 
-AVX512BWVL is the strongest Intel backend, winning **77 of 80** comparable
-rows (every score-only row) at 1.752x parasail geomean. AVX2 wins 66 of 80 at
-1.377x geomean. Both backends now beat parasail on every variant by geomean —
-`sw-cigar` is the historically weakest variant but is positive (1.043x AVX2,
-1.346x AVX512BWVL) instead of losing.
+AVX512BWVL is the strongest Intel backend, winning **78 of 80** comparable
+rows (47 of 48 score-only) at 1.677x parasail geomean. Only two short Chinese
+1:1 rows dip below parity — `nw-score` at 0.856x and `sw-path-info` at
+0.990x. AVX2 wins 55 of 80 at 1.325x geomean. Both backends beat parasail on
+every path/CIGAR variant by geomean; AVX2's remaining sub-parity rows are
+short linear Chinese 1:1 cigar/path-info and `nw-score`.
 
-The 2026-05-18 sweep folded in the CIGAR builder rework (`to_chars` digit
-emission and capacity reservation in `build_cigar` / `ReverseCigarBuilder`),
-which dropped the path/CIGAR floor. AVX2 went from 1.237x → 1.377x overall
-parasail geomean (`1.11x`), AVX512BWVL went from 1.451x → 1.752x (`1.21x`).
-`sw-cigar` specifically moved from 0.760x → 1.043x on AVX2 and 1.090x →
-1.346x on AVX512BWVL.
+This sweep ran on a Granite Rapids Xeon 6975P-C (4 vCPU, AWS) compiled with
+GCC 16.1. The `x86_avx10_512` / `x86_avx10_256` backends are **de-selected**:
+current GCC AVX10.1 target codegen compiles these striped SW/NW kernels ~2x
+slower than the classic `avx512f/bw/vl` backend on this hardware, so the
+dispatcher prefers `avx512bwvl` — which is also the fastest measured backend
+here. See the AVX10 note in `CMakeLists.txt`.
 
-The 2026-05-14 focused linear `sw-farrar-score` exact-fill run still applies:
-SSE4.1 reaches `6.04x` generic, AVX2 `10.67x`, and AVX512BWVL `14.41x` by
-focused geomean.
+`generic` is for correctness/baseline reference, not as a parasail competitor;
+it loses every score-only row, though a handful of linear NW path/CIGAR rows
+are competitive.
 
-AVX2's only remaining sub-parity rows are short linear SW 1:1 cigar/path-info
-at width 16 (`sw-cigar` and `sw-path-info`); AVX512BWVL's worst row is
-0.909x. Both backends now have only a handful of rows below 1.0x.
+## Levenshtein (Intel x86) - 2026-06-21
 
-`generic` is for correctness/baseline reference, not as a parasail competitor.
-It loses every score-only row badly; a handful of linear NW path/CIGAR rows
-are competitive but not consistently.
+Raw artifact: [`benchmarks/intel-levenshtein-2026-06-21.csv`](benchmarks/intel-levenshtein-2026-06-21.csv).
 
-## Levenshtein (Intel x86) - 2026-05-19
-
-Raw artifact: [`benchmarks/intel-levenshtein-2026-05-19.csv`](benchmarks/intel-levenshtein-2026-05-19.csv).
-
-Build context: same host as Intel x86 above (11th Gen Core i7-1195G7,
-Python 3.13, `taskset -c 2`), running on the `x86_avx512bwvl` backend. The
-multi-target Myers kernel runs one target per SIMD lane (8x 64-bit lanes
-under AVX512) and reads bytes / 1-byte unicode strings zero-copy from
-CPython buffers. Patterns over 64 chars fall through to the scalar
-Hyyrö multi-word dispatch in `levenshtein_dispatch.hpp`.
+Build context: same host as Intel x86 above (Granite Rapids Xeon 6975P-C,
+Python 3.14, `taskset -c 2`, GCC 16.1), running on the `x86_avx512bwvl`
+backend. The multi-target Myers kernel runs one target per SIMD lane (8x
+64-bit lanes under AVX512) and reads bytes / 1-byte unicode strings
+zero-copy from CPython buffers. Patterns over 64 chars fall through to the
+scalar Hyyrö multi-word dispatch in `levenshtein_dispatch.hpp`.
 
 Command:
 
 ```bash
 taskset -c 2 .venv/bin/python tools/benchmark_libs.py \
   --input-file kjv_subset.txt --levenshtein \
-  --iterations 25 --warmups 3 < lev_queries.txt > intel-levenshtein-2026-05-19.csv
+  --iterations 25 --warmups 3 < lev_queries.txt > intel-levenshtein-2026-06-21.csv
 ```
 
 Corpus: first 1000 lines of `demo/kjv.txt`. Queries: 14 single words and
@@ -222,37 +214,33 @@ SIMD fast path.
 
 | Backend | Rows | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `stride_align` vs `python-Levenshtein` | 14 | **1.159x** | 1.151x | 1.039x | 1.353x |
-| `stride_align` vs `rapidfuzz`          | 14 | 1.075x | 1.070x | 0.898x | 1.364x |
-| `stride_align` vs `editdistance`       | 14 | 13.564x | 13.758x | 11.099x | 15.880x |
+| `stride_align` vs `rapidfuzz`    | 14 | **3.433x** | 3.440x | 3.367x | 3.529x |
+| `stride_align` vs `editdistance` | 14 | 38.279x | 37.299x | 35.516x | 43.222x |
 
 Per-call wall time at 1000 targets (median across 14 queries):
 
 | Library | µs/call | ns/target |
 | --- | ---: | ---: |
-| `stride_align` (`x86_avx512bwvl`) | **496** | **496** |
-| `rapidfuzz`                       | 540  | 540  |
-| `python-Levenshtein`              | 567  | 567  |
-| `editdistance`                    | 6806 | 6806 |
+| `stride_align` (`x86_avx512bwvl`) | **156** | **156** |
+| `rapidfuzz`                       | 532  | 532  |
+| `editdistance`                    | 5836 | 5836 |
 
 ### Takeaways
 
-The multi-target Myers kernel keeps stride-align ahead of every popular
-Python Levenshtein library on this corpus. python-Levenshtein loses by
-1.16x geomean across all 14 queries; rapidfuzz loses by 1.07x with one
-sub-parity row (0.898x on a 26-char query). editdistance is roughly
-13.5x slower, reflecting its pure-C scalar DP loop with no batching.
+On a server Granite Rapids part the 8-lane AVX512 multi-target Myers kernel
+pulls well ahead of rapidfuzz on this batch corpus — **3.4x** geomean (156
+µs/call vs 532), with all 14 queries between 3.37x and 3.53x. The margin is
+wider than the older laptop sweep because the 8-lane batch scales on a
+server AVX-512 datapath: stride-align's per-call time roughly thirds while
+rapidfuzz's scalar-per-target loop is unchanged. editdistance is ~38x
+slower, reflecting its pure-C scalar DP loop with no batching.
 
-The "vs rapidfuzz" worst row is the only sub-parity result of the
-sweep. rapidfuzz also uses bit-parallel Myers in its hot path, so the
-remaining headroom is mostly per-call overhead — list traversal, the
-Python ABI, the ndarray allocation — rather than the inner loop. The
-SIMD multi-target kernel pulls ahead on shorter queries where the
-per-target setup dominates.
+(python-Levenshtein is omitted from this run — `benchmark_libs.py
+--levenshtein` compares against rapidfuzz and editdistance.)
 
-## Levenshtein extended (Intel x86) - 2026-05-19
+## Levenshtein extended (Intel x86) - 2026-06-21
 
-Raw artifact: [`benchmarks/intel-levenshtein-v2-2026-05-19.csv`](benchmarks/intel-levenshtein-v2-2026-05-19.csv).
+Raw artifact: [`benchmarks/intel-levenshtein-v2-2026-06-21.csv`](benchmarks/intel-levenshtein-v2-2026-06-21.csv).
 
 Three follow-up workloads that exercise the multi-word SIMD batch
 kernel (patterns 65-256 chars, in 64-char blocks W = 2/3/4), the
@@ -263,38 +251,39 @@ build host and pinning as the section above.
 
 ### Long patterns (1-vs-200, no cutoff)
 
-| `q_len` | stride_align | python-Lev | rapidfuzz | vs Lev | vs rf |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 40  |  95 µs | 110 µs |  95 µs | 1.16x | 1.00x |
-| 65  | 118 µs | 187 µs | 171 µs | **1.59x** | **1.45x** |
-| 100 | 118 µs | 324 µs | 357 µs | **2.75x** | **3.03x** |
-| 128 | 118 µs | 320 µs | 300 µs | **2.71x** | **2.54x** |
-| 180 | 135 µs | 405 µs | 384 µs | **3.00x** | **2.85x** |
-| 200 | 166 µs | 456 µs | 440 µs | **2.75x** | **2.65x** |
+| `q_len` | stride_align | rapidfuzz | vs rf |
+| ---: | ---: | ---: | ---: |
+| 40  |  21 µs |  44 µs | **2.15x** |
+| 65  |  40 µs | 149 µs | **3.76x** |
+| 100 |  60 µs | 215 µs | **3.60x** |
+| 128 |  76 µs | 262 µs | **3.45x** |
+| 180 | 123 µs | 435 µs | **3.54x** |
+| 200 | 150 µs | 556 µs | **3.70x** |
 
 Each lane in the AVX-512 kernel runs Hyyrö's wide-add carry chain over
 W blocks in parallel across 8 targets. The wide add uses two chained
 64-bit adds + `gt_u64` overflow detection (AVX-512 native unsigned
 `cmpgt`, AVX2 sign-bit-XOR + signed `cmpgt`, SSE4.1 sub-and-sign-bit
-emulation). q_len = 40 is the single-word kernel, which hits parity
-with rapidfuzz.
+emulation). q_len = 40 is the single-word kernel; on this server part it
+already runs 2.15x rapidfuzz, and the multi-word blocks (q ≥ 65) hold
+3.4–3.8x as the 8-lane batch amortizes the per-target setup.
 
 ### 1-vs-1 singular (zero-copy dispatch)
 
-| `q_len` | stride_align | python-Lev | rapidfuzz |
-| ---: | ---: | ---: | ---: |
-| 10  | 0.20 µs | 0.25 µs | **0.17 µs** |
-| 30  | 0.27 µs | 0.31 µs | **0.24 µs** |
-| 60  | 0.36 µs | 0.40 µs | **0.32 µs** |
-| 100 | **0.90 µs** | 1.30 µs | 1.21 µs |
-| 200 | **2.35 µs** | 3.24 µs | 3.14 µs |
+| `q_len` | stride_align | rapidfuzz |
+| ---: | ---: | ---: |
+| 10  | **0.12 µs** | 0.13 µs |
+| 30  | **0.18 µs** | 0.21 µs |
+| 60  | **0.28 µs** | 0.32 µs |
+| 100 | **0.57 µs** | 1.09 µs |
+| 200 | **1.80 µs** | 2.73 µs |
 
 When both inputs are bytes or 1-byte unicode the singular path skips
 the prepare\_alignment vector copy and runs scalar Myers directly on
 the CPython buffer (`PyBytes_AsStringAndSize` / `PyUnicode_1BYTE_DATA`).
-We trail rapidfuzz by ~10% under 60 chars (Python ABI overhead, no
-algorithmic gap) and pull ~1.35x ahead from 100 chars onward, where
-the multi-word inner loop dominates.
+On this part stride-align edges rapidfuzz at every length — a hair ahead
+under 60 chars (0.12 vs 0.13 µs at q=10, Python ABI bound) and ~1.5–1.9x
+from 100 chars onward, where the multi-word inner loop dominates.
 
 ### score_cutoff (5000 targets, short query)
 
@@ -302,21 +291,22 @@ stride_align vs rapidfuzz with matching cutoff:
 
 | `q_len` | cutoff | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: | ---: |
-| 10 |  2 | **277 µs** |  353 µs | 1.27x |
-| 10 |  5 | **301 µs** |  472 µs | 1.57x |
-| 10 | 10 | **342 µs** |  556 µs | 1.62x |
-| 30 |  7 | **190 µs** |  486 µs | 2.56x |
-| 30 | 15 | **328 µs** |  682 µs | 2.08x |
-| 30 | 30 | **410 µs** |  866 µs | 2.11x |
-| 50 | 12 | **49 µs**  |  297 µs | **6.03x** |
-| 50 | 25 | **204 µs** |  491 µs | 2.41x |
-| 50 | 50 | **410 µs** | 1119 µs | 2.73x |
+| 10 |  2 | **131 µs** |  413 µs | **3.14x** |
+| 10 |  5 | **171 µs** |  595 µs | **3.48x** |
+| 10 | 10 | **190 µs** |  596 µs | **3.14x** |
+| 30 |  7 | **241 µs** |  970 µs | **4.02x** |
+| 30 | 15 | **348 µs** |  971 µs | 2.79x |
+| 30 | 30 | **434 µs** |  971 µs | 2.24x |
+| 50 | 12 | **358 µs** | 1312 µs | **3.67x** |
+| 50 | 25 | **518 µs** | 1312 µs | 2.53x |
+| 50 | 50 | **680 µs** | 1312 µs | 1.93x |
 
 Per-lane done masks freeze score updates once a lane crosses
 `cutoff + remaining_chars`, and the column loop breaks as soon as every
-batch lane is settled (target exhausted or bailed). The biggest win
-(`q_len=50`, `cutoff=12`, 6x) is where most targets exceed cutoff after
-a handful of columns and the whole batch can short-circuit.
+batch lane is settled (target exhausted or bailed). The tightest cutoffs
+win most (3–4x) — most targets exceed cutoff after a handful of columns so
+the whole batch short-circuits — while looser cutoffs settle toward the
+no-cutoff batch ratio.
 
 ### Where rapidfuzz still wins
 
@@ -337,21 +327,22 @@ stride-align yet — see "Future work" below.
 - **Pattern lengths > 256**: the multi-word SIMD kernel currently caps
   at W=4. Extending to W=8 (pattern up to 512) is a recompile.
 
-## Damerau-Levenshtein / OSA (Intel x86) - 2026-05-19
+## Damerau-Levenshtein / OSA (Intel x86) - 2026-06-21
 
-Raw artifact: [`benchmarks/intel-damerau-levenshtein-2026-05-19.csv`](benchmarks/intel-damerau-levenshtein-2026-05-19.csv).
+Raw artifact: [`benchmarks/intel-damerau-levenshtein-2026-06-21.csv`](benchmarks/intel-damerau-levenshtein-2026-06-21.csv).
 
-Build context: same host as the Levenshtein section (11th Gen Core
-i7-1195G7, Python 3.13, `taskset -c 2`). The algorithm is OSA-restricted
-(Optimal String Alignment) Damerau-Levenshtein: like Levenshtein but
-adjacent transpositions cost 1 instead of two substitutions, and each
-character can participate in at most one edit. Hyyrö's bit-parallel
-recurrence (the `TR = (((~D0_prev) & PM) << 1) & PM_old` formulation
-that rapidfuzz also uses), wrapped in the same multi-target SIMD batch
-architecture as our Levenshtein kernel — one target per SIMD lane
-(2/4/8 lanes for SSE4.1/AVX2/AVX-512).
+Build context: same host as the Levenshtein section (Granite Rapids Xeon
+6975P-C, Python 3.14, `taskset -c 2`, GCC 16.1). The algorithm is
+OSA-restricted (Optimal String Alignment) Damerau-Levenshtein: like
+Levenshtein but adjacent transpositions cost 1 instead of two
+substitutions, and each character can participate in at most one edit.
+Hyyrö's bit-parallel recurrence (the `TR = (((~D0_prev) & PM) << 1) &
+PM_old` formulation that rapidfuzz also uses), wrapped in the same
+multi-target SIMD batch architecture as our Levenshtein kernel — one
+target per SIMD lane (2/4/8 lanes for SSE4.1/AVX2/AVX-512). Query and
+targets are equal-length random byte strings (single-word regime, q ≤ 64).
 
-### Short targets (1-vs-1000, 3-15 char corpus)
+### Short targets (1-vs-1000)
 
 This is the SIMD batch sweet spot: short alignments amortize the
 gather + state-shift cost across 8 lanes, and rapidfuzz's per-pair
@@ -359,34 +350,33 @@ overhead dominates its loop.
 
 | `q_len` | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: |
-|  5 | **41 µs** |  99 µs | 2.38x |
-| 10 | **42 µs** | 108 µs | 2.59x |
-| 20 | **42 µs** | 176 µs | **4.22x** |
-| 30 | **47 µs** | 163 µs | 3.47x |
+|  5 | **12.4 µs** |  84.5 µs | **6.84x** |
+| 10 | **15.4 µs** | 100.6 µs | **6.54x** |
+| 20 | **21.5 µs** | 134.5 µs | **6.25x** |
+| 30 | **28.4 µs** | 170.8 µs | **6.01x** |
 
-### Medium targets (1-vs-200, 30-250 char corpus)
+### Medium batch (1-vs-200)
 
 | `q_len` | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: |
-| 10 | 117 µs | **100 µs** | 0.85x |
-| 30 | 117 µs | **102 µs** | 0.87x |
-| 64 | **117 µs** | 147 µs | 1.25x |
+| 10 | **3.7 µs** | 20.2 µs | **5.47x** |
+| 30 | **6.5 µs** | 34.3 µs | **5.31x** |
+| 64 | **31.4 µs** | 85.1 µs | **2.71x** |
 
-For medium-target workloads we trail rapidfuzz by ~15% under 60 chars
-(their inner loop is slightly tighter — fewer SIMD ops per column),
-then pull ahead at q_len=64 where their bit-parallel fallback path
-kicks in.
+The win narrows toward q=64 as each lane's single-word OSA recurrence
+lengthens, but the 200-target batch still amortizes setup across 8 lanes.
+(Long, multi-word targets — q > 64 — are not exercised by this sweep.)
 
 ### 1-vs-1 singular
 
 | `q_len` | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: |
-| 10 | 0.18 µs | 0.15 µs | 0.85x |
-| 30 | 0.23 µs | 0.21 µs | 0.92x |
-| 60 | 0.35 µs | 0.32 µs | 0.90x |
+| 10 | **0.107 µs** | 0.119 µs | **1.11x** |
+| 30 | **0.171 µs** | 0.199 µs | **1.16x** |
+| 60 | **0.290 µs** | 0.305 µs | **1.05x** |
 
-Per-call Python ABI dominates; we're within 15% of rapidfuzz on every
-length.
+Per-call Python ABI dominates; stride-align now edges rapidfuzz at every
+length (the scalar OSA path runs directly on the CPython buffer).
 
 ### API
 
@@ -1251,10 +1241,15 @@ corpus. Generated by `tools/rapidfuzz_shim_full_bench.py`.
 
 `ratio = upstream_ms / shim_ms` (BENCHMARK.md convention): values
 > 1.0 mean shim is faster than upstream. Min-of-5 wall time per
-workload. `rapidfuzz 3.14.5` on all three hosts. Mac (M4 Max) and
-avx10 (Intel) re-measured 2026-06-17 on `main`; Loongson last
-measured 2026-06-10 (pre the arbitrary-length-Jaro and token-ratio
-work, so its current numbers would be unchanged or better).
+workload. `rapidfuzz 3.14.5` on all three hosts. Mac (M4 Max)
+re-measured 2026-06-17 on `main`; Loongson last measured 2026-06-10
+(pre the arbitrary-length-Jaro and token-ratio work, so its current
+numbers would be unchanged or better). **The Intel column below is the
+2026-06-17 `_avx10_512` run.** AVX10 has since been de-selected (current
+GCC AVX10 codegen compiles the kernels slower than classic AVX-512); the
+production Intel x86 backend is now `avx512bwvl` on a Granite Rapids Xeon
+— see the top-of-document At a glance (full surface **1.24x**, cdist
+**1.32x**, GCC 16.1, 2026-06-21).
 
 ### At a glance
 

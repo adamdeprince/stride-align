@@ -1,0 +1,15 @@
+query,query_length,n_targets,mode,stride_align_s,rapidfuzz_s,editdistance_s
+b'god',3,1000,lev,0.000155,0.000530,0.005505
+b'love',4,1000,lev,0.000156,0.000530,0.005563
+b'mercy',5,1000,lev,0.000156,0.000531,0.005622
+b'blessed',7,1000,lev,0.000155,0.000532,0.005681
+b'forgive',7,1000,lev,0.000153,0.000531,0.005732
+b'peace',5,1000,lev,0.000156,0.000531,0.005603
+b'And God said',12,1000,lev,0.000157,0.000533,0.005830
+b'Blessed are the meek',20,1000,lev,0.000156,0.000538,0.006236
+b'The earth was without form',26,1000,lev,0.000156,0.000538,0.006517
+b'in the beginning was the Word',29,1000,lev,0.000153,0.000540,0.006613
+b'a man after mine own heart',26,1000,lev,0.000156,0.000538,0.006433
+b'thou shalt not',14,1000,lev,0.000154,0.000532,0.005939
+b'the lord is my shepherd',23,1000,lev,0.000155,0.000535,0.006336
+b'jesus wept',10,1000,lev,0.000158,0.000532,0.005842
