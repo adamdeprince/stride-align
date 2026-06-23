@@ -47,6 +47,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+* The x86 **AVX10.1 backends** (`x86_avx10_256` / `x86_avx10_512`) are no
+  longer built or auto-selected by default. Current GCC AVX10 target codegen
+  compiles the striped SW/NW alignment kernels ~2x slower than the classic
+  `avx512f/bw/vl` backend (measured on a Granite Rapids Xeon 6975P-C), so
+  `detect_best_backend()` dispatches `avx512bwvl` on AVX-512 hardware. The
+  sources stay in-tree behind the `STRIDE_ALIGN_ENABLE_X86_AVX10` CMake
+  option (default off); re-enable when a toolchain ships competitive AVX10
+  codegen.
 * The generated `html/` documentation site is no longer tracked in git
   (it is produced by a separate generation script); the served
   LoongArch release wheels under `html/wheels/` are kept under git-lfs.
