@@ -10,7 +10,7 @@ from pathlib import Path
 
 import markdown
 
-REPO = Path("/home/adam/dev/stride-align")
+REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "html"
 OUT.mkdir(exist_ok=True)
 
