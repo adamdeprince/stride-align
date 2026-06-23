@@ -6,7 +6,6 @@ through a single generic builder."""
 
 import html as _html
 import re
-import shutil
 from pathlib import Path
 
 import markdown
@@ -59,6 +58,27 @@ def rewrite_local_links(html_body: str, *, is_readme: bool) -> str:
         return f'{prefix}{target}{anchor}"'
 
     return re.sub(r'(href=")([^"]+\.md(?:#[^"]*)?)"', replace, html_body)
+
+
+def rewrite_llms_md_links(text: str) -> str:
+    """Rewrite Markdown link targets in the llms*.txt files from their
+    repo-relative .md sources to the .html pages this build produces, so the
+    copies served on the website resolve. README*.md maps to index*.html
+    (the README's built filename), everything else .md -> .html. The repo
+    copies keep their .md links (correct for GitHub / source consumption)."""
+    def site_target(target: str) -> str:
+        base, _, anchor = target.partition("#")
+        anchor = "#" + anchor if anchor else ""
+        for suffix, *_ in LANGS:
+            if base == readme_filename(suffix):
+                return html_filename(suffix) + anchor
+        if base.endswith(".md"):
+            return base[:-3] + ".html" + anchor
+        return target
+
+    return re.sub(r"(\]\()([^)\s]+)(\))",
+                  lambda m: m.group(1) + site_target(m.group(2)) + m.group(3),
+                  text)
 
 
 def strip_top_h1_and_lang_line(html_body: str, *, suffix: str) -> tuple[str, str | None]:
@@ -277,8 +297,10 @@ def main() -> None:
     for name in ("llms.txt", "llms-full.txt"):
         src = REPO / name
         if src.exists():
-            shutil.copy2(src, OUT / name)
-            print(f"copied {OUT / name}")
+            (OUT / name).write_text(
+                rewrite_llms_md_links(src.read_text(encoding="utf-8")),
+                encoding="utf-8")
+            print(f"copied {OUT / name} (.md links rewritten to .html)")
         else:
             print(f"WARNING: {src} not found; not copied into html/")
 
