@@ -1,0 +1,2149 @@
+# stride-align — full LLM context bundle
+
+This file is a single-page concatenation of the project README and
+the full API reference under docs/api/. Generated from the source
+markdown — see llms.txt for the brief index version.
+
+---
+
+# stride-align
+
+**Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
+
+`stride-align` is a SIMD-accelerated Python library for fuzzy string
+matching, sequence alignment, phonetic encoding, and time-series
+distance. It ships Smith-Waterman and Needleman-Wunsch alignment,
+Levenshtein and Damerau-Levenshtein edit distance, Jaro and
+Jaro-Winkler similarity, Hamming and Indel distance, Dynamic Time
+Warping (`int16` / `float32` / `float64`), and the standard phonetic
+encoders — Soundex, Metaphone (Philips and jellyfish variants),
+Double Metaphone (Apache Commons and Python-package variants),
+NYSIIS, Match Rating Approach, Caverphone 2, Cologne Phonetic,
+Daitch-Mokotoff Soundex, and Beider-Morse Phonetic Matching
+(GENERIC). Scoring kernels are
+hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
+AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
+LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
+bindings use nanobind with vectorcall on every entry point, target
+Python 3.12+, and accept `bytes`, `str` (UCS-1/UCS-2/UCS-4
+zero-copy), and NumPy `ndarray`.
+
+Built for high-throughput fuzzy-match workloads — record linkage,
+deduplication, search-as-you-type, NLP token similarity,
+bioinformatics local alignment — with first-class CJK: UCS-2 inputs
+route to a 16-bit-token Farrar kernel rather than being downconverted
+to bytes, so Chinese, Japanese and Korean strings hit the same SIMD
+path as ASCII. The all-pairs surface (`cdist`,
+`cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`)
+combines per-target SIMD scoring with closed-form length-difference
+pruning that skips work when a target's max possible similarity
+provably can't clear the running heap minimum or threshold.
+Substitution matrices (BLOSUM, PAM) and affine gaps are supported on
+the alignment path. Correctness is validated on real x86, Apple
+Silicon, Graviton ARM, Loongson LoongArch, and POWER8 hardware —
+benchmarks at
+[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html).
+
+Instead of giving you a lecture, we're going to learn by doing.
+Let's dive right into how it works.
+
+## Installation
+
+```bash
+pip install stride-align
+```
+
+Prebuilt wheels cover Linux x86_64 (glibc and musl), macOS arm64,
+Linux aarch64, and Linux ppc64le on CPython 3.12 / 3.13 / 3.14.
+Other (platform, Python) pairs fall back to the PyPI source
+distribution and compile locally; you'll need a C++20 compiler and
+CMake ≥ 3.26.
+
+**Loongson / LoongArch64 users:** wheels live on GitHub Releases
+rather than PyPI, and you pick between the old-world and new-world
+binary worlds — see
+[LoongArch installation](#loongarch-installation) further down.
+
+First, just a disclaimer: I'm not using religious texts here to push
+an agenda - for this demo I need multiple largish public domain
+documents that have the same meaning but are phrased differently. The
+Bible just happens to fit that demo requirement freakishly well.
+
+Imagine we have two sentences - let's use the first sentence in
+Genesis for this:
+
+In the American Standard Version we have: "In the beginning God
+created the heavens and the earth."
+
+In the King James Version we have: "In the beginning God created the
+heaven and the earth."
+
+We can see with our eyes there's a difference - heavens vs heaven.
+But how do we quantify this difference? We'd use this little bit of
+code:
+
+```python
+import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      "In the beginning God created the heavens and the earth.",
+      "In the beginning God created the heaven and the earth."))
+```
+
+When we run this it prints:
+
+```python
+0.9907407407407407
+```
+
+Normalized scores are between `0` and `1`. A score of `1` means the
+inputs are an exact match under the default scoring model. Scores near
+`0` mean the inputs have little in common, though Smith-Waterman may
+still find small local matches inside otherwise unrelated strings.
+
+Now let's change the text and see what happens to the score.
+
+```python
+import stride_align as sa
+
+print(sa.smith_waterman_normalized_score(
+      "In the beginning God created the heavens and the earth.",
+      "The quick brown fox jumped over the lazy dog."))
+```
+
+and Python prints
+
+```
+0.12222222222222222
+```
+
+Starting to get the idea? The more similar the strings, the higher the score.
+
+Let's build a bigger example, something that gives us a feel for the
+library's performance. You'll probably notice that we switch between
+Smith-Waterman and Needleman-Wunsch and may be wondering which to use
+when. Use Needleman-Wunsch when you want to compare the whole input
+against the whole input. Use Smith-Waterman when you want to find the
+best matching region inside larger inputs.
+
+Okay, let's move on to the demo code. You need `requests` for this
+part of the demo:
+
+```bash
+pip install requests
+```
+
+```python
+import os, time, requests
+import stride_align as sa
+
+if not os.path.exists("kjv.txt"):
+    response = requests.get("https://openbible.com/textfiles/kjv.txt")
+    response.raise_for_status()
+    response.encoding = "utf-8-sig"
+    open("kjv.txt", "w", encoding="utf-8").write(response.text)
+
+lines = [line.strip().lower() for line in open("kjv.txt")][2:]
+
+while True:
+    if not (query := input("Enter a snippet to match.  Press enter to end.\n")):
+        break
+    t = time.perf_counter()
+    scores = sa.needleman_wunsch_normalized_scores(query.lower(), lines)
+    best = int(scores.argmax())
+    print()
+    print("Score:", float(scores[best]))
+    print(lines[best])
+    print("Search time: %0.2fms" % ((time.perf_counter() - t) * 1000))
+    print()
+    print()
+```
+
+Now how can we use this? Suppose we have a random Bible verse and
+want to know what chapter and verse it comes from. `grep` you say?
+Oh, heavens, no, we made a mistake. The verse we have is from a
+different translation, say the Catholic Public Domain, and what we
+have on our computer is the King James Bible. `grep`'s exact string
+matching won't work here. How do we find the chapter and verse? We
+search for the "closest" or "most similar" string using `stride-align`,
+of course.
+
+In our demo the first part concerns itself with downloading and
+caching. The good folks at [Open Bible](https://openbible.com) put
+this text where it's HTTP-reachable, but we want to be respectful of
+their IT budget so we cache what we download. It's just good
+citizenship.
+
+In the next part we load all of the lines into a list. We remove
+newlines and make everything lower case because we don't want to get
+all fiddly about whether we're holding the shift key.
+
+Lastly that `while True:` loop collects a line of text, presumably the
+Bible verse from the Catholic version of the Bible we want to look up
+the chapter and verse for, and matches it against all of the lines in
+the King James Bible using the batch form of Needleman-Wunsch. It
+returns an array of scores. We use `argmax()` to find the best-scoring
+line and then print the line associated with that index. Let's try it.
+
+I'm going to use Jeremiah 4:28 from the Catholic Bible - it's actually
+quite different from the same verse in the King James Bible. Let's see
+what happens ...
+
+```
+$ python3 demo2.py
+Enter a snippet to match.  Press enter to end.
+The earth will mourn, and the heavens will lament from above. For I have spoken, I have decided, and I have not regretted. Neither will I be turned away from it.
+
+Score: 0.3598901098901099
+jeremiah 4:28	for this shall the earth mourn, and the heavens above be black: because i have spoken [it], i have purposed [it], and will not repent, neither will i turn back from it.
+Search time: 206.51ms
+
+```
+
+... and we found it! And pretty quickly too.
+
+
+Now let's do another demo: spell checking.
+
+This is a toy spell checker, not a production one. It ignores punctuation,
+capitalization, word frequency, proper nouns, and context. The point is to
+show the same one-query-against-many-candidates pattern on a familiar task.
+
+```python
+import os, sys
+import stride_align as sa
+
+paths = ['/usr/share/dict/words',
+         '/usr/dict/words',
+         '/var/lib/dict/words',
+         '/etc/dictionaries-common/words']
+
+for path in paths:
+    if os.path.exists(path):
+        break
+else:
+    print("Sorry, I can't find your dictionary", file=sys.stderr)
+    exit(1)
+
+
+words = [line.strip().lower() for line in open(path)]
+
+
+for line in sys.stdin:
+    new_line = []
+    for word in line.split():
+        scores = sa.needleman_wunsch_normalized_scores(word.lower(), words)
+        word = words[int(scores.argmax())]
+        new_line.append(word)
+    print(' '.join(new_line), flush=True)
+```
+
+The first thing this script does is try to find our operating system's
+list of correctly spelled words. Its location can vary from
+distribution to distribution. Once we've found it, we load it, strip
+off newlines and start the act of spell checking.
+
+The spell checking looks a lot like the matching we did before. For
+each candidate word, we match it against all of the words in our list
+of correctly spelled words, use `argmax()` to find the highest-scoring
+candidate, and replace the word with that candidate. We could speed
+things up with some optimizations, like not searching for a match for
+correctly spelled words, but this is a demo and that optimization is
+left as an exercise for the reader.
+
+Let's see how it works!
+
+```bash
+$ cat - | python3 demo3.py
+this is a demonstrtion of a spel checker
+it doesn't matter that I can't spell corectly
+
+this is a demonstration of a spell checker
+it doesn't matter that i can't spell correctly
+```
+
+
+## Details
+
+The current scaffold provides:
+
+- Needleman-Wunsch score-only alignment
+- Needleman-Wunsch alignment with traceback
+- Smith-Waterman score-only alignment
+- Smith-Waterman alignment with traceback
+- A backend layout that matches the specialization pattern used in `massive-speedup`
+- CPU/backend detection and Python-side backend dispatch
+
+The native boundary accepts:
+
+- `bytes` against `bytes`
+- `str` against `str`
+- sequences of immutable hashable Python objects
+- mixed sequence/object inputs where a `str` or `bytes` side is treated as a sequence
+
+Direct `bytes` versus `str` pairs raise `TypeError`.
+
+The current implementations are generic dynamic-programming kernels with preprocessing
+that serializes Python inputs into 8, 16, 32, or 64-bit token streams. SIMD-specialized
+backends can replace the backend translation units later without changing the Python API.
+
+Score-only functions return numeric scores. The normalized variants return
+scores between `0` and `1`. Path functions return alignment result objects
+containing the score, aligned values, operations, and CIGAR-style summaries
+where available.
+
+## API
+
+```python
+import stride_align
+
+score = stride_align.needleman_wunsch_score("ACGT", "ACCT")
+scores = stride_align.Scores("ACGT", variant="needleman_wunsch").compare(["ACCT", "AGGT"])
+result = stride_align.smith_waterman_path("ACCGT", "CCG")
+wide_result = stride_align.smith_waterman_path("ACCGT", "CCG", width=64)
+object_result = stride_align.needleman_wunsch_path(
+    [frozenset({1}), frozenset({2})],
+    [frozenset({1}), frozenset({3})],
+)
+
+print(score)
+print(scores)
+print(result.score, result.aligned_query, result.aligned_target, result.operations)
+print(wide_result.score)
+print(object_result.aligned_query, object_result.aligned_target)
+```
+
+Use `Scores(...).compare([...])` or the `*_scores()` functions for one-query
+against many-target score workloads. That path prepares the query/profile once
+and is the preferred performance API for repeated English/Chinese text
+comparisons.
+
+Traceback outputs preserve the paired fast-path type:
+
+- `str` inputs return aligned `str`
+- `bytes` inputs return aligned `bytes`
+- sequence/object inputs return aligned `tuple` values with `None` gaps
+
+Pass `width=8`, `16`, `32`, or `64` to force the internal token/scoring width
+instead of using automatic selection.
+
+Some functions expose CIGAR strings, short for "Concise Idiosyncratic
+Gapped Alignment Report". CIGAR is the compact alignment-operation notation
+used by SAM/BAM tooling. If you want the full formal version, see the
+[SAM specification](https://samtools.github.io/hts-specs/SAMv1.pdf).
+
+### Substitution matrices (BLOSUM, PAM)
+
+For protein alignment, `stride_align.matrices` ships the canonical
+BLOSUM and PAM substitution matrices. Pass any of them via the
+`matrix=` kwarg on `smith_waterman_score`, `needleman_wunsch_score`,
+or their `_scores` batch counterparts:
+
+```python
+import stride_align
+from stride_align.matrices import blosum62, pam250
+
+# Local alignment, NCBI standard BLOSUM62 with affine gaps (open=-11,
+# extend=-1). matrix= is mutually exclusive with match_score / mismatch_score.
+stride_align.smith_waterman_score(
+    "HEAGAWGHEE", "PAWHEAE",
+    matrix=blosum62,
+    gap_open_score=-11, gap_extend_score=-1,
+)
+
+# Batch (1 query × N targets) with profile reuse — the recommended
+# path for "score one query against a library".
+stride_align.smith_waterman_scores(
+    "HEAGAWGHEE",
+    ["PAWHEAE", "HEAGAWGHEE", "MEEPS"],
+    matrix=pam250, gap_open_score=-14, gap_extend_score=-2,
+)
+
+# Custom matrices: parse any NCBI-format text file
+custom = stride_align.matrices.SubstitutionMatrix.from_ncbi_text(
+    open("/path/to/BLOSUM62").read(),
+    name="BLOSUM62",
+    gap_open=-11, gap_extend=-1,
+)
+```
+
+Each built-in `SubstitutionMatrix` exposes its alphabet, matrix data
+(`int8` ndarray), and recommended gap defaults via `.gap_score`
+(linear), `.gap_open`, and `.gap_extend`. Both linear gaps (`gap_score=`)
+and affine gaps (`gap_open_score=` + `gap_extend_score=`) are
+supported on the AVX-512 backend; other SIMD backends currently fall
+back to the scalar generic kernel for matrix-mode.
+
+The shipped matrix values come from the NCBI BLAST distribution
+[`ftp.ncbi.nih.gov/blast/matrices/`](https://ftp.ncbi.nih.gov/blast/matrices/),
+which carries the canonical reference scores. The original
+publications are:
+
+- **BLOSUM45 / 50 / 62 / 80 / 90** — Henikoff S., Henikoff J.G. (1992).
+  *Amino acid substitution matrices from protein blocks*. PNAS
+  89(22):10915–10919.
+  [doi:10.1073/pnas.89.22.10915](https://doi.org/10.1073/pnas.89.22.10915)
+  &nbsp;·&nbsp;
+  [PDF (open access)](https://www.pnas.org/doi/pdf/10.1073/pnas.89.22.10915)
+- **PAM30 / 70 / 250** — Dayhoff M.O., Schwartz R.M., Orcutt B.C.
+  (1978). *A model of evolutionary change in proteins*. In *Atlas of
+  Protein Sequence and Structure*, vol. 5, supplement 3, pages 345–352.
+  National Biomedical Research Foundation, Washington, D.C. (Book
+  chapter; not available online as an open PDF. A widely cited
+  follow-on derivation appears in Schwartz R.M., Dayhoff M.O. (1978),
+  *Matrices for detecting distant relationships*, same volume,
+  pages 353–358.)
+
+### rapidfuzz compatibility (drop-in shim)
+
+Replace one import line and most rapidfuzz code keeps working:
+
+```python
+# Before:
+# import rapidfuzz
+
+# After:
+import stride_align.rapidfuzz as rapidfuzz
+
+# fuzz: full token-ratio family, scores in [0, 100]
+rapidfuzz.fuzz.ratio("hello", "hallo")                  # 80.0
+rapidfuzz.fuzz.WRatio("foo bar baz", "foo bar")         # 90.0
+rapidfuzz.fuzz.token_set_ratio("the cat", "cat the")    # 100.0
+
+# distance: classes with distance / normalized / similarity methods,
+# plus editops / opcodes for Levenshtein.
+rapidfuzz.distance.Levenshtein.distance("kitten", "sitting")          # 3
+rapidfuzz.distance.JaroWinkler.normalized_similarity("MARTHA", "MARHTA")
+rapidfuzz.distance.Levenshtein.editops("kitten", "sitting")
+# -> Editops([Editop(tag='replace', src_pos=0, dest_pos=0), ...], src_len=6, dest_len=7)
+
+# process: extract / extractOne / cdist
+rapidfuzz.process.extract("hello", ["hallo", "world", "helo"], limit=2)
+# -> [('helo', 88.88, 2), ('hallo', 80.0, 0)]
+
+# utils: default_process (matches upstream bit-exactly, does NOT
+# collapse internal whitespace runs)
+rapidfuzz.utils.default_process("Hello, World!")        # 'hello  world'
+```
+
+Known divergences: the `partial_ratio` family inherits stride-align's
+Phase D.3 conservative-underestimate — never overshoots upstream, but
+can underestimate by a few points on pairs where rapidfuzz finds a
+shifted optimal window. `Levenshtein.distance` does not yet support
+the `weights=(insert, delete, replace)` kwarg.
+
+### parasail compatibility (drop-in shim)
+
+Replace one import line and most parasail code keeps working:
+
+```python
+# Before:
+# import parasail
+
+# After:
+import stride_align.parasail as parasail
+
+# Same parasail signature: (s1, s2, open, extend, matrix)
+# Gap penalties are positive numbers (BLAST convention:
+# cost(N) = open + (N-1)*extend).
+r = parasail.sw_trace("HEAGAWGHEE", "PAWHEAE", 11, 1, parasail.blosum62)
+print(r.score)               # int
+print(r.cigar.decode)        # bytes, e.g. b'2=1X3='
+print(r.traceback.query)     # 'HEAGAWGHEE' aligned with gaps
+print(r.traceback.ref)       # 'PAWHEAE'    aligned with gaps
+print(r.traceback.comp)      # '|.| ||'-style match annotation
+
+# matrix_create + stats
+m = parasail.matrix_create("ACGT", 2, -1)
+r = parasail.sw_stats("ACGTAC", "ACATAC", 5, 2, m)
+print(r.matches, r.similar, r.length)
+
+# The 2000+ kernel-suffix variants (sw_striped_avx2_16, nw_scan_64,
+# sw_trace_diag_sat, ...) all alias to the matching core entry —
+# stride-align picks the kernel based on score range and hardware.
+parasail.sw_striped_avx2_16("ACGT", "ACGT", 5, 2, m)
+```
+
+Known divergences: SW with multiple optimal alignments may pick a
+different path than upstream parasail (both score-correct); the
+`sg_qb`/`sg_qe`/`sg_qb_de` style semi-global mode selectors and the
+`dnafull` / `nuc44` matrices are not yet provided.
+
+### Edit-distance scorers
+
+Beyond Smith-Waterman and Needleman-Wunsch, `stride-align` exposes
+six unit-cost edit-distance and similarity metrics — each with its
+own SIMD-batched code path:
+
+```python
+import stride_align
+
+# Levenshtein (Myers 1999 bit-parallel) — inserts, deletes, substitutes
+stride_align.levenshtein_score("kitten", "sitting")               # -> 3
+stride_align.levenshtein_normalized_score("kitten", "sitting")    # -> 0.571...
+stride_align.levenshtein_scores("kitten", ["kit", "sitting"])     # -> ndarray[int64]
+
+# Optional `score_cutoff` (rapidfuzz convention): bail early per-target,
+# results that exceed the cutoff come back as `cutoff + 1`.
+stride_align.levenshtein_scores(query, targets, score_cutoff=3)
+
+# Damerau-Levenshtein (OSA-restricted, Hyyrö 2002) — adds adjacent
+# transposition at unit cost. This is what rapidfuzz exposes as
+# OSA.distance and is what most callers asking for
+# "Damerau-Levenshtein" actually want.
+stride_align.damerau_levenshtein_score("ab", "ba")                # -> 1
+
+# True Damerau-Levenshtein — the unrestricted form, where one
+# character may participate in more than one edit. Slower (no
+# bit-parallel kernel yet) but matches rapidfuzz.distance.DamerauLevenshtein
+# exactly. Diverges from OSA on overlapping transpositions, e.g.
+# "ca" -> "abc": OSA=3, true-DL=2.
+stride_align.true_damerau_levenshtein_score("ca", "abc")          # -> 2
+
+# Indel — Levenshtein restricted to insertions and deletions, no
+# substitutions. Equivalent to |a| + |b| - 2 * LCS(a, b). Bit-
+# parallel Allison-Dix (1986) inner loop.
+stride_align.indel_score("kitten", "sitting")                     # -> 5
+
+# Hamming — count of positions where two equal-length strings differ.
+# Cutoff variant bails the byte loop once mismatches exceed the cap.
+stride_align.hamming_score("100", "110")                          # -> 1
+
+# Jaro / Jaro-Winkler — similarities in [0, 1]; Winkler adds a
+# capped prefix bonus.
+stride_align.jaro_similarity("martha", "marhta")                  # -> 0.944...
+stride_align.jaro_winkler_similarity("martha", "marhta")          # -> 0.961...
+```
+
+The batch variants (`*_scores`, `*_similarities`) pack one target
+per SIMD lane on every supported backend:
+
+- x86: SSE4.1 / AVX2 / AVX-512 / AVX10-256 / AVX10-512
+- ARM: NEON (Linux + macOS), SVE / SVE2
+- LoongArch: LSX / LASX
+- PowerPC: VSX
+
+For Lev / OSA, patterns up to 64 chars run a single-word Myers;
+65–256 chars use the multi-word kernel (W=2/3/4). Indel and OSA
+fall back to scalar bit-parallel for patterns >64 (multi-word
+generalization deferred); true-DL is scalar DP only.
+
+### Longest Common Subsequence + Substring
+
+Two related but distinct dynamic programs, both shipped:
+
+```python
+import stride_align as sa
+
+# Longest Common Subsequence — characters need not be contiguous.
+# "ABCBDAB" and "BDCAB" share "BCAB" (length 4).
+sa.lcs_length("ABCBDAB", "BDCAB")                    # -> 4
+
+# Closed-form relation to Indel distance: indel = |a| + |b| - 2·LCS.
+sa.indel_score("kitten", "sitting") == \
+    len("kitten") + len("sitting") - 2 * sa.lcs_length("kitten", "sitting")
+# -> True
+
+# Longest Common Substring — characters MUST be contiguous.
+sa.lcs_substring_length("ABCBDAB", "BDCAB")          # -> 2
+sa.lcs_substring("ABCBDAB", "BDCAB")                 # -> "AB"
+
+# Result type matches inputs: bytes in, bytes out.
+sa.lcs_substring(b"hello world", b"world hello")     # -> b"hello"
+
+# Codepoint engine — non-ASCII is first-class.
+sa.lcs_substring("Müller", "Mueller")                # -> "ller"
+```
+
+Both DPs are scalar `O(m·n)` time with two rolling rows for
+`O(min(m,n))` (subsequence) or `O(|b|)` (substring) space. When
+multiple substrings tie at the maximum length, the first occurrence
+in `a` is returned (matches `str.find` convention).
+
+### Ratcliff-Obershelp similarity
+
+The algorithm Python's `difflib.SequenceMatcher().ratio()` ships,
+which `rapidfuzz` does not — recursive longest-matching-substring
+split, summed match lengths divided by total length:
+
+```python
+import stride_align as sa
+
+sa.ratcliff_obershelp_similarity("kitten", "sitting")
+# -> 0.6153846153846154
+
+# Bit-exact with difflib at autojunk=False (we have no junk
+# character heuristic):
+import difflib
+sa.ratcliff_obershelp_similarity("ABCBDAB", "BDCAB") == \
+    difflib.SequenceMatcher(None, "ABCBDAB", "BDCAB", autojunk=False).ratio()
+# -> True
+
+# Batch form: one query against many targets, returned as
+# ndarray[float64].
+sa.ratcliff_obershelp_similarities("kitten",
+                                    ["sitting", "kitten", "kit"])
+# -> array([0.61538462, 1.        , 0.66666667])
+```
+
+Not commutative — the inner longest-common-substring tiebreak
+(`earliest in a, then earliest in b`) means the recursion splits
+leftover ranges differently for `(a, b)` vs `(b, a)`, and the total
+match length can differ. Faithful to difflib, which has the same
+property; `sa.ratcliff_obershelp_similarity("ABCBDAB", "BDCAB")`
+gives `0.333…` while the reverse gives `0.667…`. Pin both
+directions if your tests need an order-independent metric.
+
+### N-gram set similarity
+
+Four metrics over character n-gram **multisets** (each n-gram counted
+with multiplicity), keyword-only `n=` (default 2 — character bigrams):
+
+```python
+import stride_align as sa
+
+# Jaccard: |A ∩ B| / |A ∪ B|
+sa.jaccard("ABCBDAB", "BDCAB")                  # -> 0.25
+
+# Sørensen-Dice: 2 * |A ∩ B| / (|A| + |B|)
+sa.dice("ABCBDAB", "BDCAB")                     # -> 0.4
+
+# Overlap coefficient: |A ∩ B| / min(|A|, |B|)
+sa.overlap("ABCBDAB", "BDCAB")                  # -> 0.5
+
+# Cosine over multiset frequency vectors: ⟨A, B⟩ / (‖A‖ · ‖B‖)
+sa.cosine("ABCBDAB", "BDCAB")                   # -> ~0.5303
+
+# Trigrams.
+sa.jaccard("hello", "help", n=3)                # -> 0.25
+
+# Batch — query multiset built once and reused across targets.
+sa.jaccard_similarities("kitten", ["sitting", "kitten", "kit"])
+# -> array([0.25, 1.0, 0.111...])
+```
+
+All four metrics are symmetric and bounded in `[0, 1]`. Identity
+convention: both inputs empty (or both shorter than `n`) → `1.0`;
+one empty → `0.0`. Dice and Jaccard satisfy the closed-form
+relation `D = 2·J / (1 + J)`.
+
+### Token-ratio family (rapidfuzz `fuzz.*` parity)
+
+Drop-in replacements for the `rapidfuzz.fuzz.*` token-ratio API,
+returning values in `[0, 1]` (multiply by 100 for rapidfuzz's
+`[0, 100]` convention). The base ratio is `sa.indel_normalized_score`
+— algebraically identical to `rapidfuzz.fuzz.ratio / 100` (both
+reduce to `2 · LCS / (|a| + |b|)`).
+
+```python
+import stride_align as sa
+
+# Token sort: split on whitespace, sort, join, compute the ratio.
+sa.token_sort_ratio("fuzzy wuzzy bear", "bear wuzzy fuzzy")     # -> 1.0
+
+# Token set: set intersection + per-side differences, max of three
+# pairwise ratios.
+sa.token_set_ratio("the quick brown fox", "the quick brown dog") # -> ~0.895
+
+# Partial ratio: best match of the shorter string within the longer
+# (sliding-window + LCS-substring candidate).
+sa.partial_ratio("apple", "an apple a day")                     # -> 1.0
+sa.partial_ratio("java language",
+                 "python programming language")                 # -> ~0.818
+
+# Token-sort / token-set combined with partial ratio.
+sa.partial_token_sort_ratio("apple bear", "an apple and a bear") # -> 1.0
+sa.partial_token_set_ratio("the cat",     "a cat sat down")      # -> 1.0
+
+# rapidfuzz's weighted blend.
+sa.WRatio("fuzzy wuzzy was a bear", "wuzzy fuzzy was a bear")    # -> 1.0
+
+# Case-insensitive: pass a processor callable.
+sa.token_sort_ratio("FOO BAR", "bar foo", processor=str.lower)   # -> 1.0
+```
+
+`token_set_ratio` and `partial_token_set_ratio` follow rapidfuzz's
+convention of returning `0.0` when either side has no tokens after
+whitespace splitting. The implementations are pure Python on top of
+stride-align's own kernels — no third-party code is imported into
+the production path.
+
+### Monge-Elkan multi-token similarity
+
+Classic record-linkage hybrid (Monge & Elkan, 1996). For each token
+in `s1`, find the best-matching token in `s2` under a configurable
+inner similarity, then average across `s1`'s tokens. Asymmetric by
+definition — pass `symmetric=True` to average both directions when
+an order-independent score is wanted.
+
+```python
+import stride_align as sa
+
+# Default inner is Jaro.
+sa.monge_elkan("paul johnson", "paul jones")      # -> ~0.94
+
+# Asymmetric: |s1| tokens drive the average.
+sa.monge_elkan("paul",         "paul johnson")    # -> 1.0
+sa.monge_elkan("paul johnson", "paul")            # -> 0.5
+
+# Symmetric variant.
+sa.monge_elkan("paul",         "paul johnson",
+               symmetric=True)                    # -> 0.75
+
+# Inner similarity selection.
+sa.monge_elkan("hello world", "hallo world",
+               inner="jaro_winkler")              # boost common prefixes
+sa.monge_elkan("hello world", "hallo world",
+               inner="levenshtein_ratio")         # bit-parallel Levenshtein
+sa.monge_elkan("a b c", "a c d",
+               inner=lambda x, y: 1.0 if x == y else 0.0)  # custom callable
+
+# Preprocessor (e.g. case-insensitive).
+sa.monge_elkan("PAUL JOHNSON", "paul Johnson",
+               processor=str.lower)               # -> 1.0
+```
+
+Returns `1.0` when both inputs have no tokens after whitespace
+splitting (vacuously identical); `0.0` when exactly one side has no
+tokens. The implementation is pure Python on top of stride-align's
+Jaro / Jaro-Winkler / Levenshtein / Indel kernels — no new C++
+kernels and no third-party code in the production path.
+
+### Phonetic encoders
+
+For name matching, deduplication, and search-as-you-type, `stride-align`
+ships the full standard phonetic-encoder family. Each encoder maps a
+string to a short code such that names that *sound* similar share a
+code, regardless of spelling:
+
+```python
+import stride_align as sa
+
+# American Soundex (Russell & Odell, 1918). 4-character code.
+sa.soundex("Robert")                                     # -> "R163"
+sa.soundex("Rupert")                                     # -> "R163"
+sa.soundex_equal("Robert", "Rupert")                     # -> True
+
+# Metaphone (Lawrence Philips, 1990) — two-letter and longer
+# spec-correct variants. The published 1990 spec and the popular
+# jellyfish library disagree on a handful of edge cases; the variant
+# kwarg picks the rule family.
+sa.metaphone("Schmidt")                                  # -> "SKMTT"  (PHILIPS, spec)
+sa.metaphone("Schmidt", variant=sa.MetaphoneVariant.JELLYFISH)  # -> "SXMTT"
+sa.metaphone_equal("Schmidt", "Smith")                   # -> False
+
+# Double Metaphone (Lawrence Philips, 2000) — primary and alternate
+# codes; the alternate captures plausible non-English pronunciations.
+# COMMONS is the faithful Apache Commons Codec port; PYTHON is bug-
+# compat with the metaphone PyPI package.
+sa.double_metaphone("Schwartz")                          # -> ("XRTS", "XFRTS")
+sa.double_metaphone("Hugh")                              # -> ("H", "")
+sa.double_metaphone("Hugh",
+    variant=sa.DoubleMetaphoneVariant.PYTHON)            # -> ("HH", "")
+
+# NYSIIS (Taft, 1970). More discriminative than Soundex for English
+# names — "Watkins" / "Wilkins" / "Wilkinson" don't collide.
+sa.nysiis("Watkins"), sa.nysiis("Wilkins")               # -> ("WATCAN", "WALCAN")
+
+# Match Rating Approach (Moore, Western Airlines, 1977). A codex plus
+# a pairwise comparator with length-difference + rating-threshold rules.
+sa.match_rating_codex("Christopher")                     # -> "CHRPHR"
+sa.match_rating_compare("Robert", "Rupert")              # -> True
+
+# Caverphone 2.0 (Hood, 2004). Fixed-length 10-character code,
+# right-padded with '1'. Designed for late-19th-century New Zealand
+# electoral rolls but widely applied to general English-language
+# name matching.
+sa.caverphone("Stevenson")                               # -> "STFNSN1111"
+
+# Cologne Phonetic / Kölner Phonetik (Postel, 1969). German-language
+# encoder that maps letters to digits 0-8 with context-sensitive rules
+# for C, X, D, T, P. Umlauts and ß preprocess to their Latin-letter
+# equivalents so callers don't have to NFKD-fold first.
+sa.cologne_phonetic("Müller")                            # -> "657"
+sa.cologne_phonetic("Schmidt")                           # -> "862"
+
+# Daitch-Mokotoff Soundex (Daitch & Mokotoff, 1985). Six-digit
+# Soundex tuned for Slavic and Yiddish surnames. The leading letter
+# is encoded (not preserved verbatim); multi-character clusters like
+# 'sch', 'tsch', 'rz' fire before any single-letter rule; several
+# rules emit '|'-joined alternative codes via branching.
+sa.daitch_mokotoff("LEWINSKY")                           # -> "876450"
+sa.daitch_mokotoff("Goldman")                            # -> "583660"
+sa.daitch_mokotoff("AUERBACH")                           # -> "097400|097500"
+sa.daitch_mokotoff("AUERBACH", branching=False)          # -> "097400"
+
+# Beider-Morse Phonetic Matching (Beider & Morse, 2008). Multi-
+# language phonetic encoder returning a '|'-separated set of plausible
+# pronunciation codes across European languages, optimised for family
+# names. stride-align ships the GENERIC name-type only — the broad
+# general-purpose rule set; the Ashkenazi and Sephardic rule sets from
+# the upstream Apache Commons Codec distribution are not included.
+sa.beider_morse("Renault")
+# -> "rinD|rinDlt|rina|rinalt|rino|rinolt|rinu|rinult"
+sa.beider_morse("Renault", rule_type=sa.BmpmRuleType.EXACT)
+# -> "renau|renault|reno|renolt"
+sa.beider_morse("Müller", rule_type=sa.BmpmRuleType.EXACT)
+# -> "mQler|muler"
+sa.beider_morse("d'ortley", rule_type=sa.BmpmRuleType.EXACT)
+# -> "(ortlaj|ortlej)-(dortlaj|dortlej)"   (d' prefix handler)
+```
+
+The first seven encoders are dispatched through the same byte-
+extraction helper, accept `str` and `bytes` inputs interchangeably,
+and skip non-letter / non-ASCII codepoints before encoding — pre-
+normalise with `unicodedata.normalize("NFKD", s)` if you want accent
+folding. Cologne Phonetic re-encodes `str` inputs through UTF-8 so its
+ß / Ä / Ö / Ü preprocessing fires correctly. Beider-Morse ships its
+GENERIC rule data (the 63 `gen_*.txt` files from Apache Commons Codec)
+as package resources loaded once at first call via
+`importlib.resources`, runs the language guesser plus a rule-based
+phonetic engine entirely in C++, and returns a `|`-separated UTF-8
+string of phonetic codes. Cross-checked against the canonical Apache
+Commons Codec reference data and the `jellyfish`, `metaphone`, and
+`doublemetaphone` PyPI packages.
+
+### Dynamic Time Warping
+
+For aligning numeric sequences whose timing or speed varies — audio
+signals, gesture / sensor traces, financial time series —
+`stride-align` exposes Dynamic Time Warping with optional Sakoe-Chiba
+band:
+
+```python
+import numpy as np
+import stride_align as sa
+
+q = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+t = np.array([1.0, 2.0, 2.5, 4.0, 5.0])
+
+# Default distance follows the dtype:
+#   float32 / float64 -> L2-squared, (x - y)^2
+#   int16             -> L1, |x - y|  (audio convention)
+sa.dtw(q, t)                                              # -> 0.25
+
+# Sakoe-Chiba band: int radius or fraction of max(|q|, |t|).
+sa.dtw(q, t, window=2)
+sa.dtw(q, t, window=0.2)
+
+# Explicit distance.
+sa.dtw(q.astype(np.int16), t.astype(np.int16), distance="l1")
+
+# Batch.
+sa.dtw_distances(q, [t, t * 2, t + 0.5], window=2)
+```
+
+Inputs must be NumPy `ndarray` with matching dtype (`float32`,
+`float64`, or `int16` — the natural audio dtype). Other dtypes and
+non-ndarray inputs raise `TypeError`.
+
+### `cdist`, `cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`
+
+For all-pairs scoring across two lists of strings, `stride-align`
+ships three matrix-style entry points:
+
+```python
+qs = ["kitten", "sitting", "kit"]
+ts = ["kitten", "kit", "sitting", "biting"]
+
+# Full N×M similarity matrix — ndarray[float64] (similarity scorers)
+# or ndarray[int64] (distance scorers).
+sa.cdist(qs, ts, scorer=sa.Scorer.JARO)
+
+# Streaming filter — yields only pairs whose similarity exceeds the
+# threshold. Workers feed a bounded queue; the caller drains it.
+# Length pruning + per-pair cutoff push-down into the kernel skip
+# most of the work at high thresholds.
+for score, q, t in sa.cdist_above_threshold(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, threshold=0.7,
+):
+    ...
+
+# Top-k by score — returns at most k highest-scoring (or lowest, for
+# distance scorers) (score, query, target) tuples. Heaps are
+# per-thread; a shared atomic global-min bound lets the per-pair
+# cutoff push-down lift the prune threshold as work progresses.
+sa.cdist_top_k(qs, ts, scorer=sa.Scorer.JARO, k=10)
+
+# Top-k targets PER QUERY, yielded as a generator. Differs from
+# cdist_top_k (which returns the k highest pairs globally) by keeping
+# a separate top-k heap per query. With pruning=True, the worst-in-
+# heap score adapts as scoring progresses and targets whose closed-
+# form length-difference upper bound on similarity can't beat it
+# are skipped before the kernel runs — a big win on workloads with
+# wide length variation.
+for query, top in sa.cdist_top_k_per_query(
+    qs, ts, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED, k=5, pruning=True,
+):
+    # top is [(score, target), ...] sorted descending
+    ...
+
+# Smith-Waterman and Needleman-Wunsch on cdist. The SW / NW scorers
+# accept the same scoring parameters as the per-pair calls; both
+# raw-score and normalised-similarity variants are available. The
+# dispatch happens via a Python-level ThreadPoolExecutor over rows
+# because the SW / NW per-row kernels release the GIL.
+sa.cdist(qs, ts, scorer=sa.Scorer.SMITH_WATERMAN,
+         match_score=2, mismatch_score=-1, gap_score=-1)   # int64
+sa.cdist(qs, ts, scorer=sa.Scorer.SMITH_WATERMAN_NORMALIZED)  # float64 in [0, 1]
+sa.cdist(qs, ts, scorer=sa.Scorer.NEEDLEMAN_WUNSCH,
+         gap_open_score=-5, gap_extend_score=-1)            # int64, can be negative
+sa.cdist(qs, ts, scorer=sa.Scorer.NEEDLEMAN_WUNSCH_NORMALIZED)
+```
+
+At high thresholds the pruning is dramatic — see the cross-arch
+table in [BENCHMARK.md](https://stride-align.com/BENCHMARK.html) (the `cdist pruning` rows).
+Loongson LASX in particular flips the expected ranking against
+Tiger Lake AVX-512 at T=0.99; the comparison report lives at
+[docs/loongson-vs-tiger-lake-cdist-2026-05-24.md](docs/loongson-vs-tiger-lake-cdist-2026-05-24.md).
+
+See [BENCHMARK.md](https://stride-align.com/BENCHMARK.html) for full cross-architecture numbers.
+
+## Optimizations and Benchmarks
+
+Careful attention has been, and continues to be, paid to `stride-align`'s
+performance story. The library includes SIMD optimization for a variety of
+common targets, including x86, Arm, and LoongArch.
+
+**LoongArch / Loongson.** The Loongson optimization story is especially
+telling: for the checked benchmark case -- English text, 16-bit score width,
+score-only Smith-Waterman -- the LASX backend is 16x faster than the generic
+backend and **22.4x** faster than Parasail.
+
+If you are a researcher using Loongson servers and benefiting from this
+speedup, citations, bug reports, benchmark cases, and tiny inexpensive Chinese
+souvenirs are appreciated. Tea, calligraphy bookmarks, paper-cut ornaments,
+Chinese knot charms, panda keychains, and small dragon desk objects are all
+welcome. Please do not send anything expensive or anything that requires
+customs paperwork.
+
+See [complete benchmarks](https://stride-align.com/BENCHMARK.html).
+
+## Native Microbench
+
+For perf profiling without Python frames or benchmark orchestration, configure a
+native x86 microbench build:
+
+```bash
+nanobind_dir="$(.venv/bin/python -m nanobind --cmake_dir)"
+cmake -S . -B build/perf \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON \
+  -DSTRIDE_ALIGN_PERF_SYMBOLS=ON \
+  -DPython_EXECUTABLE=.venv/bin/python \
+  -Dnanobind_DIR="$nanobind_dir"
+cmake --build build/perf --target stride_align_x86_microbench
+build/perf/stride_align_x86_microbench --backend avx2 --shape 1:many --pass english --width 16
+python tools/x86_microbench_regression.py \
+  --binary build/perf/stride_align_x86_microbench \
+  --cpu 2 \
+  --backends avx2,avx512bwvl \
+  --shapes 1:1,1:many \
+  --passes english,chinese \
+  --widths 16,32 \
+  --write-json /tmp/stride-align-x86-microbench.json
+.venv/bin/python tools/pinned_benchmark_sweep.py \
+  --output-dir /tmp/stride-align-pinned \
+  --cpu 2 \
+  --iterations 15 \
+  --warmups 3
+```
+
+`STRIDE_ALIGN_PERF_SYMBOLS=ON` keeps nanobind modules unstripped and adds debug
+symbols plus frame pointers while preserving `-O3`.
+
+The checked-in native microbench baseline lives at
+`benchmarks/x86_microbench_baseline.json`. Treat it as a local guardrail with a
+loose threshold, not as a cross-machine SLA.
+
+
+## LoongArch installation
+
+LoongArch wheels are **not on PyPI** (PyPI doesn't index the
+`linux_loongarch64` platform tag), so they ship through a different
+channel:
+
+| Channel | URL prefix |
+| --- | --- |
+| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/` |
+| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.5.0/` |
+
+Same wheels on both, pick whichever loads faster from your network.
+The mirror is convenient when GitHub egress is slow from inside
+China; GitHub Releases is the canonical home.
+
+Install NumPy from your distro first (loongarch64 NumPy wheels are
+sparse on PyPI, and the distro one is usually ABI-compatible with
+the rest of the system):
+
+```bash
+sudo apt install python3-numpy
+PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+```
+
+### Old-world vs new-world: what to pick
+
+LoongArch hardware runs in one of two mutually incompatible binary
+**worlds**. They differ in two things:
+
+1. **Which dynamic loader the executable references** (this is the
+   filename baked into the ELF header at link time).
+2. **Which glibc ABI version the binary depends on**.
+
+A wheel built for one world will not load on the other — the loader
+filename doesn't exist on the wrong side, and the symbols would
+mismatch even if it did. We ship one wheel per world:
+
+| World | Loader | glibc | Typical hosts | Wheel build tag |
+| --- | --- | --- | --- | --- |
+| **Old-world** | `/lib64/ld.so.1` | 2.28-era | Stock Kylin, original Loongson distros | `1.oldworld` |
+| **New-world** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | Recent LoongArch distros, anything where the new loader has been installed | `1.newworld` |
+
+Both wheels are statically linked against libstdc++ / libgcc so the
+only thing separating them is the loader / glibc ABI.
+
+**Pick the right one with this one-liner**:
+
+```bash
+test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
+```
+
+If you see `new-world`, the loader is in place — use the new-world
+wheel. If you see `old-world`, either install the old-world wheel,
+or run the one-time sudo symlink below to enter new-world land
+(safe — it's a new filename, not a replacement, so existing
+old-world binaries keep working).
+
+### Old-world wheel
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+Mirror:
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### New-world wheel
+
+The new-world wheel needs the new loader available at the path the
+ELF references. One sudo step, once per box, leaves old-world
+binaries unaffected:
+
+```bash
+sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
+            /lib64/ld-linux-loongarch-lp64d.so.1
+```
+
+(Distro packagers usually drop an equivalent symlink as part of the
+new-world transition, in which case you can skip this.)
+
+Then:
+
+```bash
+pip install \
+  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+Mirror:
+
+```bash
+pip install \
+  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+```
+
+### Other notes
+
+Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
+and 3.14 — in both worlds — on both mirrors. The build details
+(toolchains, RPATH wrapper, static C++ runtime) live in
+[docs/loongson-build.md](docs/loongson-build.md). If you're on a
+different Python or want to build from source, `pip install
+stride-align` falls back to the PyPI source distribution and
+compiles the LSX/LASX kernels locally.
+
+
+## Citations
+
+If you use my software in your research, please cite me.
+
+```bibtex
+@software{deprince_stride_align,
+  author       = {DePrince, Adam},
+  title        = {stride-align: Fast Smith-Waterman and Needleman-Wunsch alignment for Python},
+  year         = {2026},
+  publisher    = {GitHub},
+  url          = {https://github.com/adamdeprince/stride-align},
+  note         = {Python/C++ library for sequence and string alignment}
+}
+```
+
+---
+
+# API reference
+
+# stride-align API reference
+
+Native `stride_align` API surface, grouped by what you're doing.
+Most pages share the same shape: a small "output-processing
+variants" table that explains the suffix family
+(`_scores` / `_normalized_scores` / `_best` / `_top_k`) once, then
+an algorithm list with one paragraph each.
+
+## Native API (primary)
+
+| Page | Covers |
+| --- | --- |
+| [edit-distance.md](edit-distance.md) | Levenshtein, Damerau-Levenshtein (OSA + unrestricted), Indel, Hamming |
+| [similarity.md](similarity.md) | Jaro, Jaro-Winkler, n-gram (Jaccard / Dice / cosine / overlap), Ratcliff-Obershelp, Monge-Elkan |
+| [alignment.md](alignment.md) | Smith-Waterman, Needleman-Wunsch, Farrar score-only, traceback, CIGAR |
+| [cdist.md](cdist.md) | All-pairs `cdist`, `cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`, `Scorer` enum, pruning |
+| [matrices.md](matrices.md) | `SubstitutionMatrix`, built-in BLOSUM and PAM, NCBI text loader |
+| [dtw.md](dtw.md) | Dynamic Time Warping with Sakoe-Chiba band and alternative local metrics |
+| [phonetic.md](phonetic.md) | Soundex, Metaphone, Double Metaphone, NYSIIS, MRA, Caverphone 2, Cologne Phonetic, Daitch-Mokotoff, Beider-Morse |
+
+## Compatibility shims (migration aids)
+
+| Page | Covers |
+| --- | --- |
+| [rapidfuzz-shim.md](rapidfuzz-shim.md) | `stride_align.rapidfuzz.{fuzz, distance, process, utils}` — drop-in replacement for `rapidfuzz`. |
+| [parasail-shim.md](parasail-shim.md) | `stride_align.parasail` — drop-in replacement for `parasail-python` (Smith-Waterman / Needleman-Wunsch / semi-global, BLOSUM/PAM, `Result` / `Cigar` / `Traceback`). |
+
+Both shims are migration aids; new code should call the native
+API directly.
+
+## Two dimensions
+
+The API has two orthogonal dimensions: **which algorithm** and
+**what shape you want the output in**. Rather than enumerating
+every (algorithm × shape) combination, each page documents the
+shape suffixes once at the top and then lists the algorithms.
+Common output suffixes:
+
+| Suffix | Returns |
+| --- | --- |
+| `_score(query, target)` | single int / float |
+| `_normalized_score(query, target)` | single float in `[0, 1]` |
+| `_scores(query, targets)` | `ndarray` of int / float, one per target |
+| `_normalized_scores(query, targets)` | `ndarray[float64]` in `[0, 1]`, one per target |
+| `_best(query, targets)` | `(target, score)` or `None` |
+| `_normalized_best(query, targets)` | `(target, normalised_score)` or `None` |
+| `_top_k(query, targets, k=…)` | list of top-k `(target, score)` |
+| `cdist*` family | full grid / threshold / top-k over many queries × many targets |
+
+Alignment and DTW have a richer variant family because they
+return paths, CIGARs, and per-target traceback — see
+[alignment.md](alignment.md).
+
+## Cross-cutting
+
+- **Inputs**: every kernel accepts `bytes`, `str` (UCS-1 / UCS-2
+  / UCS-4 — zero-copy, no `.encode("utf-8")` round-trip), and
+  NumPy integer `ndarray`. UCS-2 inputs go straight into a
+  16-bit-token SIMD path so Chinese / Japanese / Korean strings
+  use the same kernel as ASCII rather than being downcoded to
+  bytes.
+- **GIL**: every SIMD kernel releases the GIL while running. The
+  cdist family parallelises rows across `cpu_count` worker
+  threads.
+- **Backend dispatch**: the widest SIMD kernel for the current
+  CPU is chosen once at import. See
+  [edit-distance.md#simd-dispatch](edit-distance.md#simd-dispatch)
+  for the priority order.
+- **Cutoff push-down**: edit-distance entry points accept
+  `score_cutoff=k` and bail per lane when the lower bound on
+  distance exceeds `k` — saves work over full DP + filter.
+
+## See also
+
+- [../../README.md](../../README.md) — project overview, install,
+  quick start
+- [../../BENCHMARK.md](../../BENCHMARK.md) — performance numbers
+  vs parasail, rapidfuzz, python-Levenshtein, editdistance
+- [../../CHANGELOG.md](../../CHANGELOG.md) — version history
+- [../adding-a-new-algorithm.md](../adding-a-new-algorithm.md) —
+  internals if you want to add a new SIMD-backed kernel
+
+---
+
+# Edit distance
+
+Algorithms that count the cheapest sequence of single-character
+operations needed to transform one sequence into another:
+**Levenshtein**, **Damerau-Levenshtein** (two flavours),
+**Indel**, **Hamming**.
+
+All edit-distance scorers in this module accept `bytes`, `str`
+(UCS-1 / UCS-2 / UCS-4 — Chinese, Japanese, Korean, Arabic, emoji
+all route into the SIMD path without a UTF-8 round-trip), and any
+NumPy integer `ndarray`. Inputs at different widths are not mixed
+within one call.
+
+## Output-processing variants
+
+Every algorithm exposes the same family of entry points; the suffix
+controls how results are returned. `<algo>` below stands for any of
+`levenshtein`, `damerau_levenshtein`, `true_damerau_levenshtein`,
+`indel`, `hamming`.
+
+| Suffix | Signature | Return type | Use when |
+| --- | --- | --- | --- |
+| `<algo>_scores(query, targets)` | one-to-many distance | `ndarray[int64]` shape `(len(targets),)` | you have one query and want raw distances to every candidate |
+| `<algo>_normalized_scores(query, targets)` | one-to-many similarity | `ndarray[float64]` in `[0, 1]` | you want length-normalised similarity (1.0 == identical, 0.0 == fully different) |
+| `<algo>_best(query, targets)` | one-to-one | `(target, int_distance)` or `None` | you only need the single closest target — saves the heap step |
+| `<algo>_normalized_best(query, targets)` | one-to-one normalised | `(target, float_similarity)` or `None` | best target by normalised similarity rather than raw distance |
+
+Cross-product (queries × targets) and top-k workloads live on the
+`cdist` family — see [cdist.md](cdist.md).
+
+All variants release the GIL while the SIMD kernel runs, dispatch
+the best backend for the current CPU, and accept `score_cutoff` /
+`prefix_weight` / `n=` kwargs where the algorithm supports them.
+
+## Algorithms
+
+### `levenshtein_*` — classic Levenshtein
+
+Cost-1 insertions, deletions, and substitutions. Bit-parallel Myers
+backend (single-word for `len <= 64`, K-specialised multi-word
+kernels for K=2..K=4, generic K beyond). Supports `score_cutoff`
+for early bail.
+
+```python
+import stride_align as sa
+
+sa.levenshtein_scores("kitten", ["sitting", "kitchen", "mittens"])
+# array([3, 2, 2], dtype=int64)
+
+sa.levenshtein_normalized_best("北京大学", ["清华大学", "北京交通大学", "复旦大学"])
+# ('北京交通大学', 0.5)
+```
+
+### `damerau_levenshtein_*` — OSA (optimal-string-alignment) variant
+
+Adds cost-1 transposition of adjacent characters, with the
+restriction that a substring can be edited at most once. This is
+what most libraries (and `rapidfuzz.distance.OSA`) actually
+implement; what they call "Damerau-Levenshtein" is usually OSA.
+Cheap kernel, suitable for sub-100-char fuzzy matching.
+
+### `true_damerau_levenshtein_*` — unrestricted Damerau-Levenshtein
+
+The unrestricted version that allows multiple edits on the same
+substring — Damerau's original 1964 definition. Byte-specialised
+flat Lowrance-Wagner DP with an array-indexed last-occurrence
+table. Use when correctness on overlapping transpositions matters
+(linguistic analysis, OCR error models).
+
+### `indel_*` — insert-and-delete only
+
+Substitutions disallowed; matches the algorithm behind
+`rapidfuzz.distance.Indel` and the underlying engine for
+`fuzz.ratio`. Identity: `indel_normalized_score == fuzz.ratio /
+100`. Hyyrö fused single-step recurrence with kernel-level
+`score_cutoff` early-exit.
+
+### `hamming_*` — equal-length substitutions
+
+Cost-1 substitutions only, requires `len(query) == len(target)` —
+raises `ValueError` on the first mismatched target. Optional `pad`
+kwarg in the rapidfuzz shim form.
+
+## Cutoff push-down
+
+Edit-distance kernels accept `score_cutoff=k`. If a target's
+provable lower bound on the distance exceeds `k`, the per-target
+loop bails out and the lane reports `k + 1` (the cutoff sentinel)
+instead of finishing. Cheaper than computing the full DP and
+filtering afterwards.
+
+```python
+sa.levenshtein_scores("kitten", targets, score_cutoff=2)
+# Any target whose true distance is >= 3 returns 3 (the sentinel).
+```
+
+## SIMD dispatch
+
+The runtime picks the widest supported backend at first call
+(`stride_align._cpu.detect_best_backend()`) — x86 SSE4.1 / AVX2 /
+AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON / SVE / SVE2,
+LoongArch LSX / LASX, PowerPC VSX, with a scalar fallback. The
+choice is logged once at backend import. No per-call dispatch
+overhead.
+
+---
+
+# Similarity scorers
+
+Algorithms that score how *alike* two sequences are on a
+similarity scale (higher == more alike), as opposed to the cost
+metrics in [edit-distance.md](edit-distance.md). Covers
+**Jaro**, **Jaro-Winkler**, **n-gram** (Jaccard / Sørensen-Dice /
+cosine / overlap), **Ratcliff-Obershelp**, and the
+**Monge-Elkan** composite scorer.
+
+All scorers accept `bytes`, `str` (UCS-1 / UCS-2 / UCS-4), and
+NumPy `ndarray`. UCS-2 inputs route to a 16-bit-token SIMD path —
+Chinese, Japanese and Korean strings hit the same kernel as ASCII
+rather than being downcoded to bytes.
+
+## Output-processing variants
+
+| Suffix | Signature | Return type | Use when |
+| --- | --- | --- | --- |
+| `<algo>_similarities(query, targets)` | one-to-many | `ndarray[float64]` in `[0, 1]` | raw similarity scores per target |
+| `<algo>_best(query, targets)` | one-to-one | `(target, float_similarity)` or `None` | only need the closest match |
+
+Multi-query (queries × targets), thresholded, or top-k workloads
+live on the `cdist` family — see [cdist.md](cdist.md).
+
+## Algorithms
+
+### `jaro_similarities` — Jaro similarity
+
+Matching-character ratio with transposition penalty. SIMD path
+computes per-text-position window state in registers (`lo_v`,
+`hi_complement_v`, `active_v`); no scalar prologue.
+
+```python
+import stride_align as sa
+sa.jaro_similarities("dixon", ["dicksonx", "dickson"])
+# array([0.79166667, 0.76666667])
+```
+
+### `jaro_winkler_similarities` — Jaro-Winkler
+
+Jaro with a prefix bonus for shared leading characters. Tunable
+via `prefix_weight` (default `0.1`), `prefix_threshold`
+(`0.7`), and `prefix_cap` (`4` — maximum prefix length to
+score, per Winkler's spec).
+
+```python
+sa.jaro_winkler_similarities(
+    "martha", ["marhta", "marty"],
+    prefix_weight=0.1, prefix_cap=4,
+)
+```
+
+### n-gram similarities: `jaccard_similarities`, `dice_similarities`, `cosine_similarities`, `overlap_similarities`
+
+Token-set similarity over character n-grams. Tunable via
+`n=` (default 2 — character bigrams). UCS-2 inputs use a 32-bit
+n-gram representation that fits 4× more tokens per SIMD lane than
+the 64-bit fallback.
+
+| Function | Formula |
+| --- | --- |
+| `jaccard_similarities` | `|A ∩ B| / |A ∪ B|` |
+| `dice_similarities` | `2 |A ∩ B| / (|A| + |B|)` |
+| `cosine_similarities` | `|A ∩ B| / sqrt(|A| · |B|)` |
+| `overlap_similarities` | `|A ∩ B| / min(|A|, |B|)` |
+
+```python
+sa.dice_similarities("Stride-Align", ["StrideAlign", "Stride", "Alignment"], n=3)
+```
+
+### `ratcliff_obershelp_similarities` — Ratcliff-Obershelp
+
+Recursive longest-common-substring match ratio. Backs
+`difflib.SequenceMatcher.ratio()` semantics.
+
+### `MongeElkan` — composite token-level scorer
+
+Symmetric mean of best per-token match over two token lists. The
+inner scorer is any one-to-many similarity function — pass a
+`stride_align` `_similarities` function as `inner=` for full SIMD
+speed, or a Python callable as a fallback.
+
+```python
+from stride_align._monge_elkan import monge_elkan_similarity
+score = monge_elkan_similarity(
+    "Department of Computer Science",
+    "Computer Science Department",
+    inner=sa.jaro_winkler_similarities,
+)
+```
+
+## Algebraic identity with Indel
+
+`indel_normalized_score(a, b) == fuzz.ratio(a, b) / 100`. This
+lets one bit-parallel Indel kernel back four public surfaces
+(`indel_normalized_*`, `fuzz.ratio`, `fuzz.QRatio`, and the
+rapidfuzz `Indel` distance class) with no kernel duplication.
+
+## SIMD dispatch
+
+Same runtime backend selection as the edit-distance family — the
+widest available kernel for the current CPU is chosen once at
+import. See [edit-distance.md#simd-dispatch](edit-distance.md#simd-dispatch).
+
+---
+
+# Sequence alignment
+
+**Smith-Waterman** (local) and **Needleman-Wunsch** (global)
+dynamic-programming alignment with substitution matrices, linear
+or affine gaps, traceback to alignment path / CIGAR, and a
+Farrar-vectorised score-only fast path.
+
+Suitable for bioinformatics, fuzzy matching with custom
+character-similarity, and any workload that needs the actual
+alignment rather than just the score.
+
+## Output-processing variants
+
+The alignment surface has its own variant family because the
+outputs are richer than a single distance. `<algo>` below is
+`smith_waterman` or `needleman_wunsch`.
+
+| Suffix | Signature | Return type | Use when |
+| --- | --- | --- | --- |
+| `<algo>_score(query, target, …)` | one-to-one score | `int` | you only need the alignment score |
+| `<algo>_normalized_score(query, target, …)` | one-to-one normalised | `float` in `[0, 1]` | length-normalised score |
+| `<algo>_scores(query, targets, …)` | one-to-many | `ndarray[int64]` | score against every target |
+| `<algo>_normalized_scores(query, targets, …)` | one-to-many normalised | `ndarray[float64]` | normalised scores against every target |
+| `<algo>_path(query, target, …)` | traceback path | `AlignmentPath` | you need the path coordinates |
+| `<algo>_path_info(query, target, …)` | path + score | `AlignmentResult` | path plus pre-computed score |
+| `<algo>_cigar(query, target, …)` | CIGAR string | `str` | SAM/BAM-style CIGAR output |
+| `<algo>_trace_cigar(query, target, …)` | extended CIGAR | `str` | `=`/`X` distinguished from `M` |
+| `<algo>_trade_cigar(query, target, …)` | extended CIGAR + score | `(str, int)` | CIGAR plus the score that produced it |
+
+Smith-Waterman additionally exposes a top-k helper:
+
+```python
+sa.smith_waterman_top_k(query, targets, k=5, …)
+# -> list[tuple[target, score, target_index]]
+```
+
+There's also a **Farrar** score-only fast path:
+
+```python
+sa.smith_waterman_farrar_score(query, target, …)
+sa.smith_waterman_farrar_normalized_score(query, target, …)
+sa.smith_waterman_farrar_scores(query, targets, …)
+sa.smith_waterman_farrar_normalized_scores(query, targets, …)
+```
+
+The Farrar layout interleaves DP cells across SIMD lanes; it's
+the fastest path when you only need the score and have a small
+short-string query against many targets. For traceback or CIGAR
+output, use the non-Farrar entry points.
+
+## Scoring parameters
+
+Every alignment entry point accepts the same scoring kwargs:
+
+| Keyword | Default | Meaning |
+| --- | --- | --- |
+| `match_score` | `2` | bonus per matching position |
+| `mismatch_score` | `-1` | penalty per mismatched position |
+| `matrix` | `None` | `SubstitutionMatrix` overriding match/mismatch — see [matrices.md](matrices.md) |
+| `gap_score` | `-1` | linear gap penalty (per gap character) |
+| `gap_open_score` | `None` | when set together with `gap_extend_score`, switches to affine: cost is `gap_open + k * gap_extend` for a gap of length `k` |
+| `gap_extend_score` | `None` | per-character cost inside an open gap |
+| `width` | `None` | force a specific SIMD lane width (`0` = scalar, `8` / `16` / `32` / `64` bits). `None` = auto |
+
+If `matrix=` is set, `match_score` / `mismatch_score` are ignored;
+the matrix is the source of truth for per-pair substitution
+scores. Built-in BLOSUM and PAM tables and a NCBI-text loader are
+in [matrices.md](matrices.md).
+
+## Examples
+
+```python
+import stride_align as sa
+from stride_align.matrices import BLOSUM62
+
+# Local alignment with affine gaps and BLOSUM62
+sa.smith_waterman_score(
+    "MQNS", "RMQDL",
+    matrix=BLOSUM62,
+    gap_open_score=-10,
+    gap_extend_score=-1,
+)
+
+# Top-5 hits across a target list with custom match/mismatch
+sa.smith_waterman_top_k(
+    "kitten", ["sitting", "sitten", "smitten", "bitten", "kitty", "kit"],
+    k=5, match_score=3, mismatch_score=-2, gap_score=-1,
+)
+
+# CIGAR with score for use in downstream SAM tooling
+cigar, score = sa.smith_waterman_trade_cigar("ACGTAC", "ACGTAG")
+```
+
+## AlignmentResult / AlignmentPath
+
+`AlignmentResult` is returned by `_path_info` and carries `score`,
+`query_begin`, `query_end`, `target_begin`, `target_end`, and a
+nested `AlignmentPath` with the cell-by-cell traceback. Both are
+nanobind-bound C++ types but are pure value objects from Python's
+perspective.
+
+## SIMD dispatch
+
+Alignment runs on the same per-CPU backend the rest of the
+library uses. The internal selector picks a fixed-width kernel
+based on input size and the `width=` hint (defaulting to the
+narrowest width that won't overflow). See
+[edit-distance.md#simd-dispatch](edit-distance.md#simd-dispatch).
+
+---
+
+# All-pairs cdist
+
+`cdist` and its pruned variants compute every (query × target)
+score in one SIMD batch with the GIL released and per-row work
+parallelised across threads. Use these when you have many queries
+**and** many targets.
+
+The four entry points differ in what they return — full matrix,
+above-threshold pairs, top-k matches, or top-k *per query*. All
+share the same `scorer=` argument and pruning machinery.
+
+## Output-processing variants
+
+| Function | Returns | Use when |
+| --- | --- | --- |
+| `cdist(queries, targets, *, scorer, …)` | `ndarray` shape `(Q, T)` | you need the full score matrix |
+| `cdist_above_threshold(queries, targets, *, scorer, threshold, …)` | iterator of `(qi, ti, score)` | you only care about pairs above a similarity floor |
+| `cdist_top_k(queries, targets, *, scorer, k, …)` | iterator of `(qi, ti, score)` of the global top-`k` matches | global k-nearest-neighbours across the whole grid |
+| `cdist_top_k_per_query(queries, targets, *, scorer, k, …)` | per-query top-k, `list[list[(ti, score)]]` | every query gets its own top-k neighbour list |
+
+`cdist_top_k_per_query` accepts `cpu_count=` (default `0` =
+auto-detect, capped sensibly; `1` = single-threaded). Per-query
+rows run on a worker pool sharing one byte-snapshot of the target
+list under the released GIL.
+
+## The `Scorer` enum
+
+`scorer=` accepts a `stride_align.Scorer` enum value (cheapest;
+dispatches through the C++ batch kernel) or any Python callable
+that takes two sequences and returns a score (slower fallback).
+
+| Value | Algorithm |
+| --- | --- |
+| `Scorer.LEVENSHTEIN` / `LEVENSHTEIN_NORMALIZED` | edit distance |
+| `Scorer.DAMERAU_LEVENSHTEIN` / `..._NORMALIZED` | OSA |
+| `Scorer.HAMMING` / `HAMMING_NORMALIZED` | equal-length only |
+| `Scorer.JARO` / `JARO_WINKLER` | similarity |
+| `Scorer.INDEL` / `INDEL_NORMALIZED` | insert + delete only |
+| `Scorer.TRUE_DAMERAU_LEVENSHTEIN` / `..._NORMALIZED` | unrestricted DL |
+| `Scorer.SMITH_WATERMAN` / `..._NORMALIZED` | local alignment |
+| `Scorer.NEEDLEMAN_WUNSCH` / `..._NORMALIZED` | global alignment |
+
+`SMITH_WATERMAN` / `NEEDLEMAN_WUNSCH` row-loop through the SIMD
+single-query kernels (they accept the same `match_score` /
+`mismatch_score` / `matrix` / `gap_*` kwargs). Threading via
+`cpu_count` still parallelises rows because the per-row kernels
+release the GIL.
+
+## Pruning
+
+All four entry points share three correctness-preserving
+optimisations:
+
+1. **Length-difference pruning.** Each `(q, t)` pair is gated by
+   a closed-form upper bound on achievable normalised similarity
+   before any SIMD work runs. Bounds: `min/max` for
+   Levenshtein / OSA / true-DL, `(2 + min/max)/3` for Jaro,
+   `2 * min / (q + t)` for Indel, `1.0` if equal-length for
+   Hamming.
+2. **Row-sort by query length, descending.** `cdist_top_k`
+   processes the longest queries first so close-length
+   high-scoring pairs surface early and the shared
+   `global_min_bound` atomic reaches a useful value before the
+   short-query rows run.
+3. **Per-pair cutoff push-down into the SIMD kernel.** Levenshtein
+   / OSA / Hamming inner loops bail per lane once the running
+   score exceeds the per-pair cutoff plus the remaining-chars
+   allowance; bailed lanes return the `cutoff + 1` sentinel.
+
+The combination yields >100x speedup at `threshold=0.99` on
+random-ASCII benchmarks against an unpruned `cdist` — see
+[BENCHMARK.md](../../BENCHMARK.md) for the cross-arch numbers.
+
+## Examples
+
+```python
+import stride_align as sa
+
+# Full matrix
+M = sa.cdist(queries, targets, scorer=sa.Scorer.LEVENSHTEIN_NORMALIZED)
+# M.shape == (len(queries), len(targets)), dtype float64
+
+# Threshold filter — get every pair within 90% Jaro-Winkler similarity
+for qi, ti, score in sa.cdist_above_threshold(
+    queries, targets,
+    scorer=sa.Scorer.JARO_WINKLER, threshold=0.9,
+):
+    ...
+
+# Top-100 most-similar pairs across the whole grid
+matches = list(sa.cdist_top_k(
+    queries, targets,
+    scorer=sa.Scorer.INDEL_NORMALIZED, k=100,
+))
+
+# Per-query 5-nearest-neighbours, 8-way parallel
+nn = sa.cdist_top_k_per_query(
+    queries, targets,
+    scorer=sa.Scorer.JARO_WINKLER, k=5, cpu_count=8,
+)
+# nn[i] is a list of up to 5 (target_index, score) tuples for queries[i]
+```
+
+## Choosing the right entry point
+
+| You want… | Use |
+| --- | --- |
+| every pair's score | `cdist` |
+| only pairs above a similarity floor | `cdist_above_threshold` |
+| the global k most-similar pairs | `cdist_top_k` |
+| each query's own k nearest neighbours | `cdist_top_k_per_query` |
+
+Single-query workloads (one query × many targets) should use the
+per-algorithm `_scores` / `_best` / `_normalized_*` / `_top_k`
+entry points instead — they skip the cross-product setup. See
+[edit-distance.md](edit-distance.md) and
+[similarity.md](similarity.md).
+
+---
+
+# Substitution matrices
+
+`stride_align.matrices.SubstitutionMatrix` is the per-pair scoring
+table consumed by Smith-Waterman / Needleman-Wunsch and the
+matrix-aware `cdist` paths. Built-in BLOSUM and PAM matrices plus
+a NCBI-text parser cover the common bioinformatics workloads;
+custom matrices for text-similarity (case-sensitive, mixed
+alphabet) are first-class too.
+
+## The `SubstitutionMatrix` dataclass
+
+```python
+from stride_align.matrices import SubstitutionMatrix
+import numpy as np
+
+m = SubstitutionMatrix(
+    name="MyMatrix",
+    alphabet="ACGT",                       # str — codepoints → row/col indices
+    matrix=np.array([                      # int8 ndarray, shape (n, n)
+        [ 2, -1, -1, -1],
+        [-1,  2, -1, -1],
+        [-1, -1,  2, -1],
+        [-1, -1, -1,  2],
+    ], dtype=np.int8),
+    gap_score=-2,                          # default linear-gap penalty
+    wildcard="*",                          # optional sentinel for "not in alphabet"
+)
+```
+
+Required fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | human-readable identifier |
+| `alphabet` | `str` | each codepoint maps to row/col index by position |
+| `matrix` | `np.ndarray[int8]` shape `(n, n)` | symmetric or asymmetric per-pair score |
+| `gap_score` | `int` | default linear-gap penalty |
+| `wildcard` | `str` (single char) or `None` | codepoint that absorbs "outside the alphabet" |
+
+Optional `gap_open` / `gap_extend` fields override the alignment-
+call defaults; explicit `gap_open_score=` / `gap_extend_score=`
+keyword args on the alignment call still take precedence.
+
+## Methods
+
+| Method | Purpose |
+| --- | --- |
+| `encode(sequence: str) -> bytes` | translate a string to alphabet indices for direct kernel consumption (zero-copy when the alphabet is single-byte) |
+| `score(query: str, target: str) -> int` | look up the substitution score for two single characters |
+| `stride() -> int` | the alignment-kernel-internal stride (== `len(alphabet)`) |
+| `score_step_limit(*, gap_score=None, gap_open=None, gap_extend=None) -> int` | maximum DP step size given the scoring scheme; useful for choosing `width=` on the alignment call |
+| `from_ncbi_text(text, *, name=None, gap_score=-4, wildcard='X')` (classmethod) | parse an NCBI-format text dump (e.g. a saved BLOSUM62 table) into a `SubstitutionMatrix` |
+
+`encode` is a pure translation-table lookup since 0.5.0 — case-folding
+is no longer implicit. Pass `seq.upper()` if your alphabet is
+uppercase and the input might not be (see CHANGELOG `[0.5.0]
+SubstitutionMatrix.encode no longer case-folds`).
+
+## Built-in matrices
+
+```python
+from stride_align.matrices import (
+    blosum45, blosum50, blosum62, blosum80, blosum90,
+    pam30, pam70, pam250,
+)
+```
+
+All eight use the NCBI 24-letter alphabet `ARNDCQEGHILKMFPSTWYVBZX*`
+with `*` as the BLAST stop-character wildcard. Each is a
+`SubstitutionMatrix` instance ready to pass as `matrix=`:
+
+```python
+sa.smith_waterman_score(
+    "MQDRVKRPMNAFIVWSRDQRRKMALEN",
+    "KQDLRKLSVRNCAFRLRVKMWERPPNAFIVWSRDQRRKMALEN",
+    matrix=blosum62,
+    gap_open_score=-10,
+    gap_extend_score=-1,
+)
+```
+
+## Custom text matrices
+
+The built-ins are biological, but `SubstitutionMatrix` is
+alphabet-agnostic — pass any single-codepoint alphabet and any
+`(n, n)` int8 matrix. A roadmap item is a 128x128 case-sensitive
+ASCII matrix that maps `'a'` and `'A'` to distinct indices for
+text-similarity workloads where capitalisation is signal rather
+than noise.
+
+## Loading from NCBI text
+
+The `from_ncbi_text` classmethod handles the on-disk format NCBI
+distributes (whitespace-separated header line of letters, then one
+row per letter). Useful if you want to bundle a custom matrix
+without checking the values into Python source:
+
+```python
+import pathlib
+from stride_align.matrices import SubstitutionMatrix
+
+m = SubstitutionMatrix.from_ncbi_text(
+    pathlib.Path("/data/custom-matrix.txt").read_text(),
+    name="custom",
+    gap_score=-4,
+    wildcard="X",
+)
+```
+
+---
+
+# Dynamic Time Warping
+
+`dtw_distances` computes the DTW distance from one query
+time-series to every target time-series in a single SIMD batch.
+Multi-width: `int16`, `float32`, `float64`. Constrained or
+unconstrained warping window.
+
+## Function
+
+```python
+sa.dtw_distances(
+    query,                          # 1D ndarray
+    targets,                        # iterable of 1D ndarrays (any length)
+    *,
+    window: int | float | None = None,    # Sakoe-Chiba band; None = unconstrained
+    distance: str | None = None,          # local distance metric
+) -> np.ndarray                     # ndarray[float64], one row per target
+```
+
+Returned array has shape `(len(targets),)` regardless of
+individual target length. The query and all targets share a
+single ndarray dtype per call (int16 / float32 / float64); mixing
+dtypes raises.
+
+## `window=` parameter
+
+The Sakoe-Chiba band — restricts the warping path to within `w`
+cells of the diagonal. Common choices:
+
+| `window` | Effect |
+| --- | --- |
+| `None` (default) | unconstrained — full O(m·n) DP per target |
+| `int >= 0` | absolute band radius |
+| `float in (0, 1)` | fractional of the longer sequence |
+
+Constraining the window has two upsides: it reduces work
+quadratically when the band is tight, and it prevents the
+"pathological warp" failure mode where DTW collapses two
+dissimilar series via aggressive bending.
+
+## `distance=` parameter
+
+Local distance function applied at each cell:
+
+| Value | Local metric |
+| --- | --- |
+| `None` (default) | absolute difference (`|a − b|`) |
+| `"squared"` | squared difference (`(a − b)²`) — common for unbounded continuous data |
+| `"manhattan"` | alias for `None` |
+
+Per-cell cost is summed along the optimal warping path. The
+returned distance is the total path cost; there's no
+length-normalisation (caller does that if needed).
+
+## Examples
+
+```python
+import numpy as np
+import stride_align as sa
+
+# Float series, unconstrained warping
+query = np.array([1.0, 2.0, 3.0, 2.5, 1.5], dtype=np.float64)
+targets = [
+    np.array([1.0, 2.5, 3.0, 2.0, 1.5], dtype=np.float64),
+    np.array([0.5, 1.5, 3.5, 2.5], dtype=np.float64),
+]
+d = sa.dtw_distances(query, targets)
+
+# Int16 series with a 5-cell Sakoe-Chiba band, squared metric
+d2 = sa.dtw_distances(
+    query.astype(np.int16),
+    [t.astype(np.int16) for t in targets],
+    window=5,
+    distance="squared",
+)
+```
+
+## When to use DTW vs string distance
+
+DTW is for numeric time-series where the elements are continuous
+samples and elastic time alignment matters. For symbolic
+sequences (text), use [edit-distance.md](edit-distance.md) or
+[alignment.md](alignment.md) instead — they're orders of
+magnitude faster on those workloads.
+
+---
+
+# Phonetic encoders
+
+Hand-vectorised implementations of the standard phonetic codecs —
+**Soundex**, **Metaphone** (two variants), **Double Metaphone**
+(two variants), **NYSIIS**, **Match Rating Approach (MRA)**,
+**Caverphone 2**, **Cologne Phonetic**, **Daitch-Mokotoff
+Soundex**, and **Beider-Morse Phonetic Matching**. Bit-for-bit
+agreement with the reference implementation in each case; the
+variant kwarg picks which spec where multiple ports diverge.
+
+## Encoder / matcher pairs
+
+Each encoder family ships in two flavours: an `encode(name)` that
+returns the phonetic key as a string, and an
+`equal(a, b)` (or `compare(a, b)` for MRA) that returns whether
+two names encode to the same key, with the engine avoiding the
+allocation. Use the second when you only care about the match.
+
+| Family | Encoder | Matcher |
+| --- | --- | --- |
+| Soundex | `soundex` | `soundex_equal` |
+| Metaphone | `metaphone` | `metaphone_equal` |
+| Double Metaphone | `double_metaphone` | (use Python `==` on the two-element output) |
+| NYSIIS | `nysiis` | `nysiis_equal` |
+| MRA | `match_rating_codex` | `match_rating_compare` (returns the MRA *similarity*, not just equality) |
+| Caverphone 2 | `caverphone` | (use Python `==` on `caverphone` outputs) |
+| Cologne Phonetic | `cologne_phonetic` | (use `==`) |
+| Daitch-Mokotoff | `daitch_mokotoff` | (use `==` on the multi-code output set) |
+| Beider-Morse | `beider_morse` | (use `==` on the multi-code output set) |
+
+## Variant-selecting enums
+
+### `MetaphoneVariant`
+
+```python
+from stride_align import metaphone, MetaphoneVariant
+
+metaphone("school", MetaphoneVariant.PHILIPS)    # 'SXKL'  (Apache Commons branch)
+metaphone("school", MetaphoneVariant.JELLYFISH)  # 'SXKL'  (jellyfish branch)
+metaphone("rough",  MetaphoneVariant.PHILIPS)    # 'RF'    (Philips: GH silent)
+metaphone("rough",  MetaphoneVariant.JELLYFISH)  # 'RFKH'  (jellyfish: GH → KH at end)
+```
+
+- `PHILIPS` (default) — Lawrence Philips' 1990 spec, matches Apache
+  Commons Codec.
+- `JELLYFISH` — matches the `jellyfish` PyPI package (diverges on
+  `SCH` and word-final `GH`).
+
+### `DoubleMetaphoneVariant`
+
+```python
+from stride_align import double_metaphone, DoubleMetaphoneVariant
+
+double_metaphone("Hugh", DoubleMetaphoneVariant.COMMONS)  # ('H',  '')
+double_metaphone("Hugh", DoubleMetaphoneVariant.PYTHON)   # ('HH', '')  — bug-for-bug
+```
+
+- `COMMONS` (default) — Apache Commons Codec / `doublemetaphone`
+  PyPI package. Correct per the Philips spec.
+- `PYTHON` — bug-for-bug compatibility with the `metaphone` PyPI
+  package, which has a missing `else` in its GH branch that lets
+  the previous character's emission leak.
+
+## Examples
+
+```python
+import stride_align as sa
+
+sa.soundex("Robert")             # 'R163'
+sa.soundex_equal("Robert", "Rupert")  # True
+
+sa.nysiis("Knuth")               # 'NAT'
+sa.metaphone("Schwarzenegger")   # 'SWRSNKR'
+sa.caverphone("Catherine")       # 'KTRN111111'
+sa.cologne_phonetic("Müller")    # '657'   (Latin-1 / Unicode-aware)
+
+# Daitch-Mokotoff and Beider-Morse return MULTIPLE codes for a name
+# (one per pronunciation branch). Compare via set intersection:
+codes_a = set(sa.daitch_mokotoff("Goldberg").split())
+codes_b = set(sa.daitch_mokotoff("Goldburg").split())
+match = bool(codes_a & codes_b)
+
+# Beider-Morse with rule-family selection
+from stride_align import beider_morse, BmpmRuleType
+codes = beider_morse("Müller", rule_type=BmpmRuleType.GENERIC)
+```
+
+## Unicode behaviour
+
+Soundex and NYSIIS are pure-ASCII algorithms by definition;
+non-ASCII codepoints are skipped. Metaphone, Double Metaphone,
+Caverphone, MRA, and Daitch-Mokotoff follow their reference
+implementations on the ASCII subset.
+
+The encoders that **were designed for non-ASCII text** —
+**Cologne Phonetic** (German) and **Beider-Morse** (Jewish names,
+many rule families) — accept the full Unicode codepoint range
+through the UCS-1 / UCS-2 / UCS-4 zero-copy bridge and handle
+diacritics natively. No `.encode('utf-8')` round-trip needed.
+
+## When to use which
+
+| Workload | Recommended |
+| --- | --- |
+| US names, fast hash bucket | Soundex |
+| English-language record linkage | Metaphone or Double Metaphone |
+| Mixed-locale name matching | Double Metaphone (better at silent letters) |
+| Census-style name lookup | NYSIIS |
+| Personalisation / typing-error tolerance | MRA |
+| German names | Cologne Phonetic |
+| Jewish / Slavic / mixed-European genealogy | Beider-Morse Phonetic Matching |
+| Pre-filter for a slower edit-distance pass | any of the above followed by `levenshtein_normalized_best` |
+
+---
+
+# rapidfuzz compatibility shim
+
+`stride_align.rapidfuzz` is a **drop-in compatibility layer** for
+existing rapidfuzz codebases. It exposes the same module / class /
+function surface as upstream `rapidfuzz`, dispatching every call
+into the native `stride_align` kernels.
+
+This is a **migration aid**, not stride-align's primary API. New
+code should call the native entry points (the rest of `docs/api/`)
+directly — they're more explicit about return shape, give you the
+full SIMD vocabulary (`cdist_above_threshold`, `cdist_top_k_per_query`,
+substitution-matrix-aware alignment, phonetic encoders), and don't
+carry the rapidfuzz scale convention.
+
+If you already have a working rapidfuzz codebase, the one-line
+import swap below is the fastest way to pick up stride-align's
+SIMD kernels and pruning machinery without touching any call sites.
+
+## One-line migration
+
+```python
+# Before:
+# import rapidfuzz
+# from rapidfuzz import fuzz, distance, process
+
+# After:
+import stride_align.rapidfuzz as rapidfuzz
+from stride_align.rapidfuzz import fuzz, distance, process
+```
+
+The rest of your code stays unchanged.
+
+## What's covered
+
+| Upstream surface | Status |
+| --- | --- |
+| `rapidfuzz.fuzz.ratio` | covered (Indel kernel, `score_cutoff` push-down) |
+| `rapidfuzz.fuzz.partial_ratio` | covered (interior + boundary phase scan to match rapidfuzz semantics) |
+| `rapidfuzz.fuzz.token_sort_ratio` | covered |
+| `rapidfuzz.fuzz.token_set_ratio` | covered |
+| `rapidfuzz.fuzz.partial_token_sort_ratio` | covered |
+| `rapidfuzz.fuzz.partial_token_set_ratio` | covered |
+| `rapidfuzz.fuzz.WRatio` | covered |
+| `rapidfuzz.fuzz.QRatio` | covered |
+| `rapidfuzz.distance.Levenshtein` | `distance`, `similarity`, `normalized_distance`, `normalized_similarity`, `editops`, `opcodes` |
+| `rapidfuzz.distance.Indel` | same four methods |
+| `rapidfuzz.distance.Hamming` | same four methods (with `pad=` kwarg) |
+| `rapidfuzz.distance.Jaro` | same four methods |
+| `rapidfuzz.distance.JaroWinkler` | same four methods |
+| `rapidfuzz.distance.DamerauLevenshtein` | unrestricted DL variant |
+| `rapidfuzz.distance.OSA` | optimal-string-alignment variant |
+| `rapidfuzz.distance.LCSseq` | routed through Indel via `LCS = (m + n − indel) / 2` |
+| `rapidfuzz.process.extract` | fast-path dispatches built-in scorers through `sa.cdist_top_k_per_query` |
+| `rapidfuzz.process.extractOne` | fast-path on built-in scorers |
+| `rapidfuzz.process.extract_iter` | covered |
+| `rapidfuzz.process.cdist` | fast-path on built-in scorers (multi-threaded SIMD kernel, GIL released) |
+| `rapidfuzz.utils.default_process` | covered |
+| `score_cutoff=` plumbing | through to the kernel for Indel-based scorers |
+
+The shim returns scores on the rapidfuzz **0–100 scale** for
+`fuzz.*` and the **0–1 scale** for `distance.*.normalized_*` (matching
+upstream). The native API returns `[0, 1]` everywhere — multiply by
+100 if you're moving back and forth.
+
+## Performance
+
+Full-surface bench (108 workloads × 3 architectures) ships in
+[BENCHMARK.md](../../BENCHMARK.md#rapidfuzz-shim-full-surface-cross-arch-2026-06-10).
+Geomean (upstream / shim, > 1.0 = shim faster):
+
+| Host | Backend | Geomean | Wins/Ties/Losses |
+| --- | --- | ---: | ---: |
+| Intel AWS | `x86_avx10_512` | 0.94x | 60 / 4 / 44 |
+| Mac M-series | `macos_arm64_neon` | 0.98x | 76 / 1 / 31 |
+| Loongson | `linux_loongarch64_lasx` | 49.17x | 108 / 0 / 0 |
+
+Loongson is a clean sweep because upstream rapidfuzz ships no
+LoongArch wheel. Intel and Mac geomeans are near-parity with the
+losses concentrated in Jaro/JaroWinkler single-pair medium-length
+workloads and the cdist throughput ceiling — the wide majority of
+methods land at parity or better than upstream.
+
+## Limitations vs the native API
+
+| Native feature | Shim coverage |
+| --- | --- |
+| `cdist_above_threshold` | no — use `sa.cdist_above_threshold` |
+| `cdist_top_k_per_query` with `cpu_count` tuning | partial — `process.extract` uses sensible defaults |
+| Substitution matrices in `cdist` | no — use native `sa.cdist(..., matrix=…)` |
+| Smith-Waterman / Needleman-Wunsch scorers | no — use native `sa.smith_waterman_*` |
+| Phonetic encoders | no — use native `sa.soundex` etc. |
+| DTW | no — use native `sa.dtw_distances` |
+| Beider-Morse | no — use native `sa.beider_morse` |
+| Unicode wide-token Farrar | yes (UCS-2 / UCS-4 inputs route to the wide-token kernel automatically) |
+
+When in doubt, prefer the native API. The shim is here so you can
+swap one import and get most of the speedup; it's not a strict
+superset of stride-align's capabilities.
+
+## Migration recommendation
+
+If you're starting from a rapidfuzz codebase:
+
+1. Run the one-line import swap and your existing tests.
+2. Replace any `rapidfuzz.process.cdist` call where you need
+   threshold or per-query top-k with `sa.cdist_above_threshold` /
+   `sa.cdist_top_k_per_query` — those are faster and have a more
+   direct return shape.
+3. Replace any `rapidfuzz.fuzz.ratio` call inside a hot loop with
+   `sa.indel_normalized_score` (or the bulk `_normalized_scores`
+   form) — saves a Python frame per call.
+4. Phonetic / DTW / Smith-Waterman / matrix-aware alignment have
+   no rapidfuzz equivalent; use the native API from the start.
+
+---
+
+# parasail compatibility shim
+
+`stride_align.parasail` is a **drop-in compatibility layer** for
+existing parasail Python codebases. It exposes the same module
+surface as upstream `parasail-python` — `sw`, `nw`, `sg` and their
+`_trace` / `_stats` variants, `matrix_create`, the BLOSUM and PAM
+tables, the `Result` / `Cigar` / `Traceback` / `Matrix` classes,
+and the capability-detection helpers — dispatching every call into
+the native `stride_align` sequence-alignment kernels.
+
+This is a **migration aid**, not stride-align's primary alignment
+API. New code should call the native `smith_waterman_*`,
+`needleman_wunsch_*`, and `SubstitutionMatrix` entry points
+directly — see [alignment.md](alignment.md) and
+[matrices.md](matrices.md). They give you more output shapes
+(`_path`, `_path_info`, `_trade_cigar`), batch `_scores` over a
+target list, the `_top_k` helper, the Farrar score-only fast path,
+and substitution-matrix-aware `cdist`.
+
+## One-line migration
+
+```python
+# Before:
+# import parasail
+
+# After:
+import stride_align.parasail as parasail
+```
+
+Most call sites stay unchanged.
+
+## What's covered
+
+| Upstream surface | Status |
+| --- | --- |
+| `parasail.sw(s1, s2, open, extend, matrix)` | covered |
+| `parasail.sw_trace(...)` | covered (returns `Result` with `.cigar` and `.traceback`) |
+| `parasail.sw_stats(...)` | covered (stats fields: `.length`, `.matches`, `.mismatches`, `.similar`) |
+| `parasail.nw(...)` / `nw_trace` / `nw_stats` | covered |
+| `parasail.sg(...)` / `sg_trace` / `sg_stats` | covered (both ends free for both sequences) |
+| `parasail.matrix_create(alphabet, match, mismatch, case_sensitive=None)` | covered (returns a `Matrix` whose `.size`, `.matrix`, `.mapper`, `.name`, `.min`, `.max`, `.copy`, `.set_value` mirror upstream) |
+| `parasail.blosum45` / `50` / `62` / `80` / `90`, `pam30` / `70` / `250` | covered |
+| `Result.score`, `.end_query`, `.end_ref` (inclusive last index, parasail convention) | covered |
+| `Cigar.decode` (bytes), `.beg_query`, `.beg_ref`, `.len` | covered |
+| `Traceback.query`, `.ref`, `.comp` (the `|.|` matched-region annotation) | covered |
+| Kernel-suffix aliases (`sw_striped_avx2_16`, `nw_scan_64`, …) | covered via module-level `__getattr__` — they alias to the matching core entry. stride-align picks the kernel internally; explicit suffix has no effect |
+| `can_use_sse2` / `can_use_sse41` / `can_use_avx2` / `can_use_altivec` / `can_use_neon` | covered (report what the loaded stride-align backend supports) |
+
+The shim follows the **BLAST gap-cost convention** parasail uses:
+gap penalties are *positive* numbers and a length-`N` gap costs
+`open + (N − 1) * extend`. The native `stride_align` API uses
+*negative* `gap_open_score` / `gap_extend_score` matching the
+literature convention. The shim handles the sign / formula
+translation at the boundary.
+
+## Known divergences
+
+| Difference | Behaviour |
+| --- | --- |
+| Local-alignment CIGAR span | Native: CIGAR covers the local-alignment region only. Parasail: CIGAR is prepended with leading edits so it spans from position 0 of each sequence. `Cigar.beg_query` / `Cigar.beg_ref` carry the actual local-alignment start, so callers reading both fields together get the same information |
+| `sg_qb_de` style semi-global mode selectors | not yet supported — raises `AttributeError` from `__getattr__`. Plain `sg` (both ends free for both sequences) is supported |
+| `parasail.dnafull`, `parasail.nuc44` | not yet provided. Use `matrix_create("ACGTN", match, mismatch)` for a hand-rolled DNA matrix, or pass a `SubstitutionMatrix` to the native API |
+
+## Limitations vs the native API
+
+| Native feature | Shim coverage |
+| --- | --- |
+| `smith_waterman_normalized_score` / `_normalized_scores` | no — use native |
+| `smith_waterman_scores(query, targets)` batch | no — call `sw(...)` in a loop, or use native batch |
+| `smith_waterman_top_k` | no — use native |
+| `cdist(..., scorer=Scorer.SMITH_WATERMAN, matrix=…)` | no — use native |
+| Farrar score-only fast path | no — use native `smith_waterman_farrar_*` |
+| Built-in matrix as a regular `SubstitutionMatrix` | `parasail.blosum62` is a `parasail`-shim `Matrix`; for native use, import from `stride_align.matrices` instead |
+
+## Migration recommendation
+
+If you're starting from a parasail codebase:
+
+1. Run the one-line import swap and your existing tests.
+2. Replace any per-target loop over `parasail.sw(query, t,
+   open, extend, m)` with `sa.smith_waterman_scores(query,
+   targets, matrix=m, gap_open_score=-open,
+   gap_extend_score=-extend)` — saves the per-call Python frame
+   and runs the targets in one batch.
+3. Replace any "score-only" call site with the Farrar fast path
+   (`sa.smith_waterman_farrar_score` / `_scores`) — same SIMD
+   layout parasail uses internally, but without the
+   alignment-result object overhead.
+4. For top-k / threshold workloads, use
+   `sa.cdist_top_k(queries, targets, scorer=Scorer.SMITH_WATERMAN,
+   matrix=…, …)` or `sa.cdist_above_threshold(...)`. Parasail has
+   no equivalent.
+
+## See also
+
+- [alignment.md](alignment.md) — the native Smith-Waterman /
+  Needleman-Wunsch surface with the full variant family
+- [matrices.md](matrices.md) — `SubstitutionMatrix`, BLOSUM, PAM,
+  and the NCBI-text loader
+- [rapidfuzz-shim.md](rapidfuzz-shim.md) — the other compatibility
+  shim, for fuzzy-match codebases
+
+---
+

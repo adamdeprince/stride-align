@@ -1,0 +1,84 @@
+# stride-align
+
+> SIMD-accelerated Python library for fuzzy string matching,
+> sequence alignment, edit distance, phonetic encoding, and
+> dynamic time warping — built for high-throughput record
+> linkage, deduplication, search-as-you-type, NLP, and
+> bioinformatics. First-class CJK / Unicode. x86, ARM,
+> LoongArch, and PowerPC SIMD backends with runtime dispatch.
+
+`stride_align` is a from-scratch C++ kernel library with a thin
+nanobind Python binding. Every public entry point releases the
+GIL while a hand-vectorised SIMD kernel runs on the widest
+backend the current CPU supports — x86 SSE4.1 / AVX2 /
+AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON / SVE / SVE2,
+LoongArch LSX / LASX, PowerPC VSX, with a scalar fallback. The
+runtime backend pick happens once at import; there is no
+per-call dispatch overhead.
+
+The library is built for **sub-100-character fuzzy match** as
+the primary workload (record linkage, dedup, autocomplete) but
+ships full sequence-alignment with substitution matrices and
+affine gaps, dynamic time warping for numeric time-series, and
+ten phonetic encoders (Soundex, Metaphone, Double Metaphone,
+NYSIIS, Match Rating Approach, Caverphone 2, Cologne Phonetic,
+Daitch-Mokotoff, Beider-Morse Phonetic Matching). The same
+kernel set backs a one-line drop-in shim for the popular
+`rapidfuzz` Python library — existing code migrates by changing
+its import.
+
+## Why stride-align
+
+- **Unicode is a first-class input type.** `str` arguments at
+  UCS-1, UCS-2, and UCS-4 widths route directly to the
+  matching-width SIMD kernel. Chinese / Japanese / Korean
+  strings hit the same path as ASCII rather than being
+  downcoded to bytes through `.encode("utf-8")`. UCS-2 n-grams
+  use 32-bit lane tokens; the wide-token Farrar alignment path
+  fits 4× more cells per SIMD lane than its 64-bit fallback.
+- **Pruned cdist.** The all-pairs surface (`cdist`,
+  `cdist_above_threshold`, `cdist_top_k`,
+  `cdist_top_k_per_query`) combines per-pair SIMD scoring with
+  closed-form length-difference pruning and per-pair cutoff
+  push-down into the SIMD inner loop. >100× speedup at
+  `threshold=0.99` on random-ASCII benchmarks vs an unpruned
+  full grid.
+- **One library, every distance.** Levenshtein, both flavours of
+  Damerau-Levenshtein, Indel, Hamming, Jaro, Jaro-Winkler,
+  n-gram (Jaccard / Dice / cosine / overlap), Ratcliff-Obershelp,
+  Monge-Elkan, Smith-Waterman, Needleman-Wunsch, DTW. Avoids
+  the rapidfuzz + parasail + jellyfish + python-Levenshtein
+  patchwork.
+- **Compatibility shims for rapidfuzz and parasail.** `import
+  stride_align.rapidfuzz as rapidfuzz` is a drop-in replacement
+  covering `fuzz`, `distance`, `process`, and `utils`. `import
+  stride_align.parasail as parasail` covers `sw` / `nw` / `sg`
+  (with `_trace` / `_stats` variants), `matrix_create`, the
+  BLOSUM and PAM tables, and the `Result` / `Cigar` /
+  `Traceback` / `Matrix` classes. Both shims are migration
+  aids; new code should call the native `stride_align` API
+  directly.
+- **Real hardware coverage.** Builds and tests run on Intel x86,
+  Apple Silicon, AWS Graviton ARM, Loongson LoongArch, and
+  POWER8. No QEMU, no emulated SIMD — every backend is
+  validated on the chip it targets.
+
+## API reference
+
+- [docs/api/edit-distance.md](docs/api/edit-distance.md) — Levenshtein, Damerau-Levenshtein (OSA + unrestricted), Indel, Hamming
+- [docs/api/similarity.md](docs/api/similarity.md) — Jaro, Jaro-Winkler, n-gram (Jaccard / Dice / cosine / overlap), Ratcliff-Obershelp, Monge-Elkan
+- [docs/api/alignment.md](docs/api/alignment.md) — Smith-Waterman, Needleman-Wunsch, Farrar score-only, CIGAR
+- [docs/api/cdist.md](docs/api/cdist.md) — All-pairs `cdist`, `cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`, `Scorer` enum, pruning
+- [docs/api/matrices.md](docs/api/matrices.md) — `SubstitutionMatrix`, built-in BLOSUM / PAM, NCBI text loader
+- [docs/api/dtw.md](docs/api/dtw.md) — Dynamic Time Warping
+- [docs/api/phonetic.md](docs/api/phonetic.md) — Ten phonetic encoders including Beider-Morse and Cologne Phonetic
+- [docs/api/rapidfuzz-shim.md](docs/api/rapidfuzz-shim.md) — Compatibility shim for migrating rapidfuzz code (not the primary API)
+- [docs/api/parasail-shim.md](docs/api/parasail-shim.md) — Compatibility shim for migrating parasail-python code (not the primary API)
+- [docs/api/README.md](docs/api/README.md) — Index, including the output-suffix convention shared by every page
+
+## Optional
+
+- [README.md](README.md) — Full project overview and quick-start guide
+- [BENCHMARK.md](BENCHMARK.md) — Cross-architecture performance numbers vs parasail, rapidfuzz, python-Levenshtein
+- [CHANGELOG.md](CHANGELOG.md) — Version history
+- [llms-full.txt](llms-full.txt) — Self-contained single-file LLM context bundle (README + full API reference)
