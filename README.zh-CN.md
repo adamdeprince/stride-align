@@ -3,34 +3,23 @@
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
 `stride-align` 是一个 SIMD 加速的 Python 库，专注于模糊字符串匹配、
-序列比对、语音编码与时间序列距离。它实现了 Smith-Waterman 与
-Needleman-Wunsch 比对、Levenshtein 与 Damerau-Levenshtein 编辑距离、
-Jaro 与 Jaro-Winkler 相似度、Hamming 与 Indel 距离、面向
-`int16` / `float32` / `float64` 数值序列的动态时间规整（DTW），以及
-一整套标准语音编码器——Soundex、Metaphone（Philips 与 jellyfish 两种
-变体）、Double Metaphone（Apache Commons 与 Python 包两种变体）、
-NYSIIS、Match Rating Approach、Caverphone 2。评分内核都是手写矢量化，
-由运行时 CPU dispatch 调度：x86 SSE4.1 / AVX2 / AVX-512BW+VL /
-AVX10-256 / AVX10-512、ARM NEON 与 SVE/SVE2、龙架构 LSX 与 LASX、
-PowerPC VSX，外加标量回退。Python 绑定通过 nanobind，每个入口都走
-vectorcall，目标 Python 3.12+，输入支持 `bytes`、`str`（UCS-1/UCS-2/
-UCS-4 零拷贝）以及 NumPy `ndarray`。
+序列比对、语音编码与时间序列距离——把 Unicode/CJK 作为一等公民，
+并由运行时 CPU dispatch 自动选用当前机器支持的最宽 SIMD 后端
+（x86、ARM、龙架构、POWER），并带标量回退。
 
-本库面向高吞吐量的模糊匹配场景——记录链接、去重、即时搜索、NLP
-词项相似度、生物信息学局部比对——并把 CJK 文本作为一等公民：UCS-2
-输入会被路由到 16 位 token 的 Farrar 内核，而不是被降级为字节，
-所以中文、日文、韩文字符串走的是和 ASCII 同一条 SIMD 路径。全配对
-接口（`cdist`、`cdist_above_threshold`、`cdist_top_k`、
-`cdist_top_k_per_query`）把每个 target 的 SIMD 评分和长度差闭式
-剪枝结合起来：当一个 target 可能达到的最大相似度证明无法越过当前
-堆最小值或阈值时，直接跳过评分工作。替换矩阵（BLOSUM、PAM）和
-仿射 gap 罚分在比对路径上都已支持。正确性在真实 x86、Apple Silicon、
-Graviton ARM、龙芯 LoongArch、POWER8 硬件上验证——基准在
-[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html)。
+它同时是两个常用库的直接替代品：
+`import stride_align.rapidfuzz as rapidfuzz` 替代 `rapidfuzz`，
+`import stride_align.parasail as parasail` 替代 `parasail-python`——
+现有代码只需改一行 import，即可跑在原生 SIMD 内核上。
+（新代码应优先直接使用原生 `stride_align` API。）
+
+完整的功能清单、所支持的全部算法以及各后端的细节，请见
+[`docs/api/`](docs/api/README.md) 下的 API 参考，以及面向 LLM 的
+[`llms.txt`](llms.txt) 与 [`llms-full.txt`](llms-full.txt)。
 
 这里不讲理论，直接动手——边做边学。
 
-## 安装
+## 快速开始
 
 ```bash
 pip install stride-align

@@ -4,42 +4,25 @@
 
 `stride-align` is a SIMD-accelerated Python library for fuzzy string
 matching, sequence alignment, phonetic encoding, and time-series
-distance. It ships Smith-Waterman and Needleman-Wunsch alignment,
-Levenshtein and Damerau-Levenshtein edit distance, Jaro and
-Jaro-Winkler similarity, Hamming and Indel distance, Dynamic Time
-Warping (`int16` / `float32` / `float64`), and the standard phonetic
-encoders — Soundex, Metaphone (Philips and jellyfish variants),
-Double Metaphone (Apache Commons and Python-package variants),
-NYSIIS, Match Rating Approach, Caverphone 2, Cologne Phonetic,
-Daitch-Mokotoff Soundex, and Beider-Morse Phonetic Matching
-(GENERIC). Scoring kernels are
-hand-vectorised behind a runtime CPU dispatcher: x86 SSE4.1 / AVX2 /
-AVX-512BW+VL / AVX10-256 / AVX10-512, ARM NEON and SVE/SVE2,
-LoongArch LSX and LASX, PowerPC VSX, with a scalar fallback. Python
-bindings use nanobind with vectorcall on every entry point, target
-Python 3.12+, and accept `bytes`, `str` (UCS-1/UCS-2/UCS-4
-zero-copy), and NumPy `ndarray`.
+distance — with first-class Unicode/CJK and a runtime CPU dispatcher
+that picks the widest SIMD backend your machine supports (x86, ARM,
+LoongArch, POWER), with a scalar fallback.
 
-Built for high-throughput fuzzy-match workloads — record linkage,
-deduplication, search-as-you-type, NLP token similarity,
-bioinformatics local alignment — with first-class CJK: UCS-2 inputs
-route to a 16-bit-token Farrar kernel rather than being downconverted
-to bytes, so Chinese, Japanese and Korean strings hit the same SIMD
-path as ASCII. The all-pairs surface (`cdist`,
-`cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`)
-combines per-target SIMD scoring with closed-form length-difference
-pruning that skips work when a target's max possible similarity
-provably can't clear the running heap minimum or threshold.
-Substitution matrices (BLOSUM, PAM) and affine gaps are supported on
-the alignment path. Correctness is validated on real x86, Apple
-Silicon, Graviton ARM, Loongson LoongArch, and POWER8 hardware —
-benchmarks at
-[stride-align.com/BENCHMARK.html](https://stride-align.com/BENCHMARK.html).
+It also drops in for two popular libraries:
+`import stride_align.rapidfuzz as rapidfuzz` replaces `rapidfuzz`, and
+`import stride_align.parasail as parasail` replaces `parasail-python` —
+existing code runs on the native SIMD kernels by changing one import.
+(New code should prefer the native `stride_align` API.)
+
+The full feature list, every supported algorithm, and per-backend
+detail live in the API reference under
+[`docs/api/`](docs/api/README.md), with LLM-friendly bundles at
+[`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt).
 
 Instead of giving you a lecture, we're going to learn by doing.
 Let's dive right into how it works.
 
-## Installation
+## Getting Started
 
 ```bash
 pip install stride-align
@@ -255,36 +238,105 @@ it doesn't matter that i can't spell correctly
 ```
 
 
-## Details
+## Capabilities
 
-The current scaffold provides:
+The native `stride_align` API covers, in one library, the surface
+that's usually split across `parasail`, `rapidfuzz`,
+`python-Levenshtein`, `jellyfish`, `editdistance`, and `dtw-python`.
 
-- Needleman-Wunsch score-only alignment
-- Needleman-Wunsch alignment with traceback
-- Smith-Waterman score-only alignment
-- Smith-Waterman alignment with traceback
-- A backend layout that matches the specialization pattern used in `massive-speedup`
-- CPU/backend detection and Python-side backend dispatch
+**Edit distance and similarity scorers.** Levenshtein,
+Damerau-Levenshtein (both OSA and unrestricted variants), Indel,
+Hamming, Jaro, Jaro-Winkler, longest common subsequence / substring,
+Ratcliff-Obershelp, Monge-Elkan, character-n-gram Jaccard / Sørensen-
+Dice / cosine / overlap. Each algorithm exposes a consistent
+variant family: `_score`, `_normalized_score`, `_scores` (one query
+× N targets, batched), `_normalized_scores`, `_best`,
+`_normalized_best`, `_top_k`. Detail in
+[`docs/api/edit-distance.md`](docs/api/edit-distance.md) and
+[`docs/api/similarity.md`](docs/api/similarity.md).
+
+**Sequence alignment.** Smith-Waterman (local) and Needleman-Wunsch
+(global) DP with linear *or* affine gaps and substitution matrices.
+Score-only, normalised, batch-over-targets, top-k, traceback to
+alignment path, SAM/BAM-style CIGAR (`_cigar`, `_trace_cigar`,
+`_trade_cigar`). A Farrar score-only fast path uses an interleaved
+DP layout for the throughput-oriented case. Detail in
+[`docs/api/alignment.md`](docs/api/alignment.md).
+
+**All-pairs cdist family.** `cdist`, `cdist_above_threshold`,
+`cdist_top_k`, and `cdist_top_k_per_query` over any built-in scorer
+(via the `Scorer` enum) or any Python callable. Multi-threaded SIMD
+under a released GIL, with closed-form length-difference pruning and
+per-pair cutoff push-down into the kernel inner loop. Detail in
+[`docs/api/cdist.md`](docs/api/cdist.md).
+
+**Substitution matrices.** Built-in `blosum45` / `50` / `62` / `80`
+/ `90` and `pam30` / `70` / `250`, an NCBI-text loader, and a
+generic `SubstitutionMatrix` for custom alphabets (case-sensitive
+text included). Detail in
+[`docs/api/matrices.md`](docs/api/matrices.md).
+
+**Phonetic encoders.** Soundex, Metaphone (Apache Commons or
+jellyfish rule families), Double Metaphone (Apache Commons or
+Python-package bug-compat), NYSIIS, Match Rating Approach,
+Caverphone 2, Cologne Phonetic (Unicode-aware German),
+Daitch-Mokotoff Soundex, and Beider-Morse Phonetic Matching. Detail
+in [`docs/api/phonetic.md`](docs/api/phonetic.md).
+
+**Dynamic time warping.** `dtw_distances` for one query against many
+targets, `int16` / `float32` / `float64`, optional Sakoe-Chiba band,
+choice of local metric. Detail in
+[`docs/api/dtw.md`](docs/api/dtw.md).
+
+**Compatibility shims.** `stride_align.rapidfuzz` and
+`stride_align.parasail` are drop-in import-replacements for the two
+most popular libraries in the space. Detail in
+[`docs/api/rapidfuzz-shim.md`](docs/api/rapidfuzz-shim.md) and
+[`docs/api/parasail-shim.md`](docs/api/parasail-shim.md).
 
 The native boundary accepts:
 
 - `bytes` against `bytes`
-- `str` against `str`
+- `str` against `str` (UCS-1 / UCS-2 / UCS-4, zero-copy — Chinese,
+  Japanese, Korean, Arabic, emoji all hit the SIMD path without a
+  UTF-8 round-trip)
 - sequences of immutable hashable Python objects
-- mixed sequence/object inputs where a `str` or `bytes` side is treated as a sequence
+- mixed sequence/object inputs where a `str` or `bytes` side is
+  treated as a sequence
+- NumPy `ndarray` of integer dtype (8 / 16 / 32 / 64 bit)
 
 Direct `bytes` versus `str` pairs raise `TypeError`.
 
-The current implementations are generic dynamic-programming kernels with preprocessing
-that serializes Python inputs into 8, 16, 32, or 64-bit token streams. SIMD-specialized
-backends can replace the backend translation units later without changing the Python API.
+Score-only functions return numeric scores. The normalised variants
+return scores between `0` and `1`. Path functions return alignment
+result objects with the score, aligned sequences, operations, and
+CIGAR-style summaries where available.
 
-Score-only functions return numeric scores. The normalized variants return
-scores between `0` and `1`. Path functions return alignment result objects
-containing the score, aligned values, operations, and CIGAR-style summaries
-where available.
+## Documentation
 
-## API
+| File | Audience | Contents |
+| --- | --- | --- |
+| [`README.md`](README.md) | new users | this file — installation, quick start, capability overview |
+| [`docs/api/`](docs/api/README.md) | application developers | per-surface API reference (edit-distance, similarity, alignment, cdist, matrices, DTW, phonetic, shims) |
+| [`llms.txt`](llms.txt) | LLMs / agents | brief index for the [llmstxt.org](https://llmstxt.org/) convention |
+| [`llms-full.txt`](llms-full.txt) | LLMs / agents | single-page concatenation of `README.md` + every page under `docs/api/` |
+| [`BENCHMARK.md`](BENCHMARK.md) | perf-curious | cross-architecture performance numbers vs `parasail`, `rapidfuzz`, `python-Levenshtein`, `editdistance` |
+| [`CHANGELOG.md`](CHANGELOG.md) | upgraders | version history with breaking-change notes |
+| [`docs/adding-a-new-algorithm.md`](docs/adding-a-new-algorithm.md) | contributors | the internal kernel + binding pattern |
+| [`docs/loongson-build.md`](docs/loongson-build.md) | LoongArch packagers | dual-toolchain (old-world / new-world) build recipe |
+
+Both READMEs and every markdown file in the repo are rendered to
+HTML by [`tools/md_to_html.py`](tools/md_to_html.py); the generated
+site lives in [`html/`](html/) and is mirrored at
+[stride-align.com](https://stride-align.com).
+
+## API quick-start
+
+The full reference lives under
+[`docs/api/`](docs/api/README.md), grouped by surface (edit-distance,
+similarity, alignment, all-pairs cdist, substitution matrices, DTW,
+phonetic encoders, and the two compatibility shims). This section is
+a tour of the most common patterns to get you started.
 
 ```python
 import stride_align
