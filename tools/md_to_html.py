@@ -6,6 +6,7 @@ through a single generic builder."""
 
 import html as _html
 import re
+import shutil
 from pathlib import Path
 
 import markdown
@@ -269,6 +270,17 @@ def main() -> None:
             continue
         rel = md.relative_to(REPO)
         build_generic(rel)
+
+    # Copy the LLM context files verbatim into the site so they are served
+    # (and discoverable) at stride-align.com/llms.txt and /llms-full.txt.
+    # They are plain text, not markdown, so they bypass the HTML builders.
+    for name in ("llms.txt", "llms-full.txt"):
+        src = REPO / name
+        if src.exists():
+            shutil.copy2(src, OUT / name)
+            print(f"copied {OUT / name}")
+        else:
+            print(f"WARNING: {src} not found; not copied into html/")
 
 
 if __name__ == "__main__":
