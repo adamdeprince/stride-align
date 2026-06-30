@@ -6,16 +6,41 @@ import numpy as np
 import pytest
 
 import stride_align as sa
+from stride_align import matrices as _matrices
 from stride_align.matrices import (
     SubstitutionMatrix,
+    ascii_matrix,
+    ascii_text,
+    blosum30,
+    blosum35,
+    blosum40,
     blosum45,
     blosum50,
+    blosum55,
+    blosum60,
     blosum62,
+    blosum65,
+    blosum70,
+    blosum75,
     blosum80,
+    blosum85,
     blosum90,
+    blosum100,
+    dna_match,
+    identity_matrix,
+    nuc44,
+    pam10,
+    pam20,
     pam30,
+    pam40,
     pam70,
+    pam120,
+    pam160,
+    pam200,
     pam250,
+    pam300,
+    pam400,
+    pam500,
 )
 
 
@@ -656,3 +681,132 @@ def test_matrix_bytes_round_trip_through_dispatcher() -> None:
         gap_score=-1,
     )
     assert sa.smith_waterman_score("AAAAA", "AAAAA", matrix=m) == 5 * 5
+
+
+# --------------------------------------------------------------------
+# Extended catalog: full BLOSUM/PAM series + NUC.4.4 loaded from bundled
+# public-domain NCBI text, plus the rule-built factories (identity / DNA
+# / case-sensitive ASCII). The eight hand-written BLOSUM/PAM matrices are
+# covered by the tests above; everything here exercises the NCBI loader
+# and the generated-matrix factories.
+# --------------------------------------------------------------------
+
+
+# Every protein matrix in the catalog (15 BLOSUM + 50 PAM), discovered
+# from the module's __all__ so the whole series is covered automatically.
+_ALL_PROTEIN = [
+    getattr(_matrices, _name)
+    for _name in _matrices.__all__
+    if _name.startswith("blosum") or _name.startswith("pam")
+]
+
+
+def _cell(m: SubstitutionMatrix, a: str, b: str) -> int:
+    return int(m.matrix[m.alphabet.index(a), m.alphabet.index(b)])
+
+
+def test_full_pam_and_blosum_series_present() -> None:
+    # The complete NCBI PAM series (10-500 by 10) and BLOSUM set are exposed.
+    pam_levels = sorted(int(n[3:]) for n in _matrices.__all__ if n.startswith("pam"))
+    assert pam_levels == list(range(10, 501, 10))
+    blosum_levels = sorted(int(n[6:]) for n in _matrices.__all__ if n.startswith("blosum"))
+    assert blosum_levels == [30, 35, 40, 45, 50, 55, 60, 62, 65, 70, 75, 80, 85, 90, 100]
+
+
+@pytest.mark.parametrize("m", _ALL_PROTEIN, ids=lambda m: m.name)
+def test_catalog_protein_canonical_shape(m) -> None:
+    # Every BLOSUM/PAM uses the NCBI 24-letter protein alphabet and is a
+    # symmetric int8 matrix with affine gap defaults set.
+    assert m.alphabet == "ARNDCQEGHILKMFPSTWYVBZX*"
+    assert m.matrix.shape == (24, 24)
+    assert m.matrix.dtype == np.int8
+    assert m.matrix.flags["C_CONTIGUOUS"]
+    assert np.array_equal(m.matrix, m.matrix.T), f"{m.name} not symmetric"
+    assert m.wildcard == "X"
+    assert m.gap_score < 0
+    assert m.gap_open is not None and m.gap_open < 0
+    assert m.gap_extend is not None and m.gap_extend < 0
+
+
+def test_bundled_protein_known_values() -> None:
+    # Spot-check NCBI reference cells across the series, low to high distance.
+    assert _cell(blosum30, "A", "A") == 4
+    assert _cell(blosum30, "X", "X") == -1    # wildcard self-score (BLOSUM30)
+    assert _cell(blosum40, "C", "C") == 16
+    assert _cell(blosum100, "W", "W") == 17
+    assert _cell(pam10, "A", "A") == 7
+    assert _cell(pam20, "A", "A") == 6
+    assert _cell(pam120, "R", "R") == 6
+    assert _cell(pam400, "W", "W") == 26     # high end of the PAM range
+    assert _cell(pam500, "W", "W") == 34
+
+
+def test_nuc44_metadata_and_values() -> None:
+    # NCBI NUC.4.4 ("DNAfull"): 15-letter IUPAC alphabet, 'N' wildcard.
+    assert nuc44.name == "NUC.4.4"
+    assert nuc44.alphabet == "ATGCSWRYKMBVHDN"
+    assert nuc44.stride == 15
+    assert nuc44.wildcard == "N"
+    assert nuc44.matrix.dtype == np.int8
+    assert np.array_equal(nuc44.matrix, nuc44.matrix.T)
+    assert _cell(nuc44, "A", "A") == 5
+    assert _cell(nuc44, "A", "T") == -4
+    assert _cell(nuc44, "A", "N") == -2      # ambiguity vs base
+    assert nuc44.max_abs == 5
+
+
+def test_identity_matrix_factory() -> None:
+    m = identity_matrix("XYZ", match=3, mismatch=-2, wildcard="?")
+    assert m.alphabet == "XYZ?"              # wildcard appended
+    assert m.wildcard == "?"
+    assert _cell(m, "X", "X") == 3
+    assert _cell(m, "X", "Y") == -2
+    assert _cell(m, "?", "?") == -2          # wildcard never matches, even itself
+    assert _cell(m, "X", "?") == -2
+
+
+def test_identity_matrix_wildcard_already_present() -> None:
+    # If the wildcard is already in the alphabet it is not duplicated.
+    m = identity_matrix("AB*", wildcard="*")
+    assert m.alphabet == "AB*"
+    assert m.stride == 3
+
+
+def test_ascii_matrix_case_sensitive() -> None:
+    m = ascii_matrix()
+    assert m.stride == 128
+    assert m.matrix.shape == (128, 128)
+    assert m.wildcard == chr(127)
+    assert int(m.matrix[ord("a"), ord("a")]) == 1
+    assert int(m.matrix[ord("a"), ord("A")]) == -1    # case-sensitive
+    # Wildcard slot scores mismatch against everything, including itself.
+    assert int(m.matrix[127, 127]) == -1
+
+
+def test_dna_match_factory_instance() -> None:
+    # The ready-made +5/-4 nucleotide matrix over ACGT + an N wildcard.
+    assert dna_match.alphabet == "ACGTN"
+    assert dna_match.wildcard == "N"
+    assert _cell(dna_match, "A", "A") == 5
+    assert _cell(dna_match, "A", "C") == -4
+    assert _cell(dna_match, "N", "N") == -4
+    # Unknown input folds to the N wildcard index (4).
+    assert list(dna_match.encode("ACGTN-x")) == [0, 1, 2, 3, 4, 4, 4]
+
+
+def test_bundled_matrices_flow_through_kernels() -> None:
+    # Self-NW score == diagonal sum (no gaps) across 15 / 24 / 128-wide kernels.
+    peptide = "MKTAYIAKQR"
+    assert sa.needleman_wunsch_score(peptide, peptide, matrix=blosum30) == _diag_sum(peptide, blosum30)
+    assert sa.needleman_wunsch_score(peptide, peptide, matrix=pam120) == _diag_sum(peptide, pam120)
+    dna = "ACGTACGTAC"
+    assert sa.needleman_wunsch_score(dna, dna, matrix=nuc44) == _diag_sum(dna, nuc44)
+    text = "Hello, World!"
+    assert sa.needleman_wunsch_score(text, text, matrix=ascii_text) == _diag_sum(text, ascii_text)
+
+
+def test_ascii_text_alignment_distinguishes_case() -> None:
+    # 'Hello' vs 'hello': SW skips the H/h mismatch and matches 'ello' (4),
+    # while the exact pair matches all five (5).
+    assert sa.smith_waterman_score("Hello", "Hello", matrix=ascii_text) == 5
+    assert sa.smith_waterman_score("Hello", "hello", matrix=ascii_text) == 4

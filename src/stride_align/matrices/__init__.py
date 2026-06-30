@@ -19,6 +19,7 @@ of the `encode` step is amortised over the whole alignment.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -539,14 +540,207 @@ pam250 = SubstitutionMatrix(
 # fmt: on
 
 
+# ---------------------------------------------------------------------------
+# Additional standard matrices, loaded from bundled public-domain NCBI text.
+#
+# The eight matrices above predate this loader and stay as hand-written int8
+# arrays (zero-risk, no I/O at import). Everything below is parsed once at
+# import from ``matrix_data/`` — canonical NCBI BLAST text, kept verbatim so
+# the numbers are auditable against upstream rather than retyped. Numeric
+# matrix data is not copyrightable (Feist) and the NCBI set is public domain.
+# ---------------------------------------------------------------------------
+
+# ``matrices`` is a package (matrices/__init__.py); the bundled NCBI text
+# lives in ``stride_align/matrix_data/`` — a sibling of this package, next
+# to ``bmpm_data/`` — so step up one extra level from this file.
+_DATA_DIR = Path(__file__).resolve().parent.parent / "matrix_data"
+
+
+def _ncbi_gaps(name: str) -> tuple[int, int, int]:
+    """Default ``(gap_score, gap_open, gap_extend)`` for a standard matrix.
+
+    These mirror the affine penalties NCBI BLAST pairs with each matrix
+    family/level. They are only *defaults* stored on the object — every
+    alignment entry point lets the caller override the gap scoring per call.
+    """
+    if name.startswith("BLOSUM"):
+        level = int(name[len("BLOSUM"):])
+        if level >= 80:
+            return (-5, -10, -1)
+        if level >= 62:
+            return (-5, -11, -1)
+        if level >= 50:
+            return (-6, -13, -2)
+        return (-6, -14, -2)
+    if name.startswith("PAM"):
+        level = int(name[len("PAM"):])
+        if level <= 30:
+            return (-5, -9, -1)
+        if level <= 120:
+            return (-6, -10, -1)
+        if level <= 200:
+            return (-7, -12, -1)
+        return (-8, -14, -2)
+    # Nucleotide / anything else: NCBI DNAfull pairs NUC.4.4 with -5/-2 affine.
+    return (-5, -10, -2)
+
+
+def _load_ncbi(filename: str, *, name: str, wildcard: str = "X") -> SubstitutionMatrix:
+    text = (_DATA_DIR / filename).read_text(encoding="utf-8")
+    gap_score, gap_open, gap_extend = _ncbi_gaps(name)
+    return SubstitutionMatrix.from_ncbi_text(
+        text,
+        name=name,
+        wildcard=wildcard,
+        gap_score=gap_score,
+        gap_open=gap_open,
+        gap_extend=gap_extend,
+    )
+
+
+# Full BLOSUM series (complements the hand-written 45/50/62/80/90 above).
+blosum30 = _load_ncbi("BLOSUM30", name="BLOSUM30")
+blosum35 = _load_ncbi("BLOSUM35", name="BLOSUM35")
+blosum40 = _load_ncbi("BLOSUM40", name="BLOSUM40")
+blosum55 = _load_ncbi("BLOSUM55", name="BLOSUM55")
+blosum60 = _load_ncbi("BLOSUM60", name="BLOSUM60")
+blosum65 = _load_ncbi("BLOSUM65", name="BLOSUM65")
+blosum70 = _load_ncbi("BLOSUM70", name="BLOSUM70")
+blosum75 = _load_ncbi("BLOSUM75", name="BLOSUM75")
+blosum85 = _load_ncbi("BLOSUM85", name="BLOSUM85")
+blosum100 = _load_ncbi("BLOSUM100", name="BLOSUM100")
+
+# Full PAM series, 10-500 in steps of 10. PAM30/70/250 are the
+# hand-written instances above; the remaining 47 levels load from bundled
+# NCBI text. Each is bound as a module global (``pam10``, ``pam20``, …,
+# ``pam500``) and listed in ``__all__`` below.
+_PAM_LEVELS = tuple(range(10, 501, 10))
+_PAM_HANDWRITTEN = frozenset((30, 70, 250))
+for _level in _PAM_LEVELS:
+    if _level not in _PAM_HANDWRITTEN:
+        globals()[f"pam{_level}"] = _load_ncbi(f"PAM{_level}", name=f"PAM{_level}")
+del _level
+
+# Nucleotide: NCBI NUC.4.4 ("DNAfull") — IUPAC-aware, ambiguity codes scored.
+# Alphabet is ATGCSWRYKMBVHDN; 'N' (any base) is the wildcard.
+nuc44 = _load_ncbi("NUC.4.4", name="NUC.4.4", wildcard="N")
+
+
+# ---------------------------------------------------------------------------
+# Generated matrices — built from a rule, no external data.
+# ---------------------------------------------------------------------------
+
+
+def identity_matrix(
+    alphabet: str,
+    *,
+    match: int = 1,
+    mismatch: int = 0,
+    wildcard: str = "*",
+    name: str = "IDENTITY",
+    gap_score: int = -1,
+    gap_open: int | None = None,
+    gap_extend: int | None = None,
+) -> SubstitutionMatrix:
+    """An identity matrix over ``alphabet``.
+
+    Equal symbols score ``match``; differing symbols score ``mismatch``. The
+    ``wildcard`` symbol is appended to the alphabet if not already present and
+    scores ``mismatch`` against everything (including itself), so unknown
+    input never spuriously matches.
+    """
+    if wildcard not in alphabet:
+        alphabet = alphabet + wildcard
+    n = len(alphabet)
+    values = np.full((n, n), mismatch, dtype=np.int8)
+    np.fill_diagonal(values, match)
+    wi = alphabet.index(wildcard)
+    values[wi, :] = mismatch
+    values[:, wi] = mismatch
+    return SubstitutionMatrix(
+        name=name,
+        alphabet=alphabet,
+        matrix=values,
+        gap_score=gap_score,
+        wildcard=wildcard,
+        gap_open=gap_open,
+        gap_extend=gap_extend,
+    )
+
+
+def ascii_matrix(
+    *,
+    match: int = 1,
+    mismatch: int = -1,
+    name: str = "ASCII",
+    gap_score: int = -1,
+    gap_open: int | None = None,
+    gap_extend: int | None = None,
+) -> SubstitutionMatrix:
+    """A case-sensitive 128x128 ASCII matrix (``'a'`` != ``'A'``).
+
+    Equal codepoints score ``match``, differing codepoints score ``mismatch``.
+    ``chr(127)`` (DEL) is the wildcard slot that absorbs any non-ASCII input;
+    it scores ``mismatch`` against everything so out-of-range characters do
+    not match each other.
+    """
+    alphabet = "".join(chr(c) for c in range(128))
+    values = np.full((128, 128), mismatch, dtype=np.int8)
+    np.fill_diagonal(values, match)
+    values[127, :] = mismatch
+    values[:, 127] = mismatch
+    return SubstitutionMatrix(
+        name=name,
+        alphabet=alphabet,
+        matrix=values,
+        gap_score=gap_score,
+        wildcard=chr(127),
+        gap_open=gap_open,
+        gap_extend=gap_extend,
+    )
+
+
+# A ready-made simple nucleotide matrix (+5 / -4, the classic BLASTN default)
+# and a ready-made case-sensitive ASCII text matrix.
+dna_match = identity_matrix(
+    "ACGT", match=5, mismatch=-4, wildcard="N", name="DNA_MATCH", gap_score=-5
+)
+ascii_text = ascii_matrix(name="ASCII")
+
+
 __all__ = [
     "SubstitutionMatrix",
+    # Full BLOSUM series (hand-written 45/50/62/80/90 + bundled rest).
+    "blosum30",
+    "blosum35",
+    "blosum40",
     "blosum45",
     "blosum50",
+    "blosum55",
+    "blosum60",
     "blosum62",
+    "blosum65",
+    "blosum70",
+    "blosum75",
     "blosum80",
+    "blosum85",
     "blosum90",
-    "pam30",
-    "pam70",
-    "pam250",
+    "blosum100",
+    # Nucleotide.
+    "nuc44",
+    "dna_match",
+    # Text / generated.
+    "ascii_text",
+    "identity_matrix",
+    "ascii_matrix",
+    # Full PAM series 10-500 (hand-written 30/70/250 + bundled rest).
+    *(f"pam{_level}" for _level in _PAM_LEVELS),
+    # Keyboard typo-matrix namespace (submodule; lazy-loads bundled matrices).
+    "keyboard",
 ]
+
+
+# Imported last — after SubstitutionMatrix and the factories above are
+# defined — so that ``stride_align.matrices.keyboard`` is always available as
+# an attribute (and so keyboard.py can import SubstitutionMatrix from here).
+from . import keyboard  # noqa: E402

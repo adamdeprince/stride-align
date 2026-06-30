@@ -28,16 +28,12 @@ Let's dive right into how it works.
 pip install stride-align
 ```
 
-Prebuilt wheels cover Linux x86_64 (glibc and musl), macOS arm64,
-Linux aarch64, and Linux ppc64le on CPython 3.12 / 3.13 / 3.14.
-Other (platform, Python) pairs fall back to the PyPI source
-distribution and compile locally; you'll need a C++20 compiler and
-CMake ≥ 3.26.
-
 **Loongson / LoongArch64 users:** wheels live on GitHub Releases
 rather than PyPI, and you pick between the old-world and new-world
 binary worlds — see
 [LoongArch installation](#loongarch-installation) further down.
+
+### Simple example
 
 First, just a disclaimer: I'm not using religious texts here to push
 an agenda - for this demo I need multiple largish public domain
@@ -94,6 +90,8 @@ and Python prints
 
 Starting to get the idea? The more similar the strings, the higher the score.
 
+### Larger example: search
+
 Let's build a bigger example, something that gives us a feel for the
 library's performance. You'll probably notice that we switch between
 Smith-Waterman and Needleman-Wunsch and may be wondering which to use
@@ -136,7 +134,7 @@ while True:
 
 Now how can we use this? Suppose we have a random Bible verse and
 want to know what chapter and verse it comes from. `grep` you say?
-Oh, heavens, no, we made a mistake. The verse we have is from a
+Oh, heavens, no: we made a mistake. The verse we have is from a
 different translation, say the Catholic Public Domain, and what we
 have on our computer is the King James Bible. `grep`'s exact string
 matching won't work here. How do we find the chapter and verse? We
@@ -178,7 +176,7 @@ Search time: 206.51ms
 ... and we found it! And pretty quickly too.
 
 
-Now let's do another demo: spell checking.
+### Larger example: spell checker
 
 This is a toy spell checker, not a production one. It ignores punctuation,
 capitalization, word frequency, proper nouns, and context. The point is to
@@ -437,6 +435,50 @@ publications are:
   follow-on derivation appears in Schwartz R.M., Dayhoff M.O. (1978),
   *Matrices for detecting distant relationships*, same volume,
   pages 353–358.)
+
+### Keyboard typo matrices (real typing-error data)
+
+stride-align also ships example **keyboard confusion matrices** built from
+real human typing errors — the Aalto "136 Million Keystrokes" dataset, used
+with the authors' permission. Each scores how likely it is that one
+character was typed when another was meant, so a plausible slip (`teh` for
+`the`) aligns as a near-match instead of a flat mismatch:
+
+```python
+import stride_align as sa
+from stride_align.matrices import keyboard
+
+sa.smith_waterman_score("teh", "the", matrix=keyboard.qwerty)
+```
+
+**Orientation — the query is the misspelled side.** Like every stride-align
+matrix these are `m[a][b]` with `a` = query and `b` = target, and here
+**`a` is the character actually typed (the mistake) and `b` is the character
+that was intended (the correction)**. So pass the misspelled / user-entered
+string as the query and the canonical / dictionary string as the target.
+
+Unlike symmetric BLOSUM/PAM, these matrices are **asymmetric**, so
+orientation matters. If your pipeline has it the other way round — the query
+is the *correct* string — flip the matrix with NumPy's `.T` (transpose),
+which swaps the axes to `m[intended][misspelled]`:
+
+```python
+import numpy as np
+from stride_align.matrices import SubstitutionMatrix, keyboard
+
+fwd = keyboard.qwerty
+rev = SubstitutionMatrix(
+    name=fwd.name + ".T", alphabet=fwd.alphabet,
+    matrix=np.ascontiguousarray(fwd.matrix.T),   # .T swaps query/target
+    gap_score=fwd.gap_score, wildcard=fwd.wildcard,
+)
+```
+
+Build your own from a `{(typed, intended): count}` mapping with
+`keyboard.from_confusion_counts(...)`. The shipped matrices are derived
+log-odds artifacts, not the raw keystroke data; see `NOTICE` and
+`docs/keyboard-matrix-external-sources.md` for attribution and the scope of
+the permission.
 
 ### rapidfuzz compatibility (drop-in shim)
 

@@ -116,3 +116,28 @@ metaphone, pyphonetics) are runtime extras only — none of their
 source is included in or distributed with stride-align, and none is
 imported by any file under ``tests/`` or ``src/``. Their licences
 (MIT and BSD) are Apache-2.0 compatible.
+
+----------------------------------------------------------------------
+
+Keyboard typo / confusion matrices (data)
+=========================================
+
+The optional keyboard substitution matrices — built by
+``tools/build_keyboard_matrices.py`` and loaded through the
+``stride_align.matrices.keyboard`` namespace — are derived, with the
+authors' permission, from the Aalto University "136 Million Keystrokes"
+dataset:
+
+    Vivek Dhakal, Anna Maria Feit, Per Ola Kristensson, Antti Oulasvirta.
+    "Observations on Typing from 136 Million Keystrokes." Proceedings of
+    the 2018 CHI Conference on Human Factors in Computing Systems
+    (CHI '18), 2018. https://doi.org/10.1145/3173574.3174220
+    Dataset: https://userinterfaces.aalto.fi/136Mkeystrokes/
+
+stride-align bundles a small number of example keyboard substitution
+matrices derived from this dataset. The dataset authors granted explicit
+permission to build and publish these derived matrices under stride-align's
+Apache-2.0 licence; only the derived matrices are distributed — the raw
+keystroke data is not. Retain the citation above as attribution. See
+docs/keyboard-matrix-external-sources.md for the provenance and the scope of
+the permission.
