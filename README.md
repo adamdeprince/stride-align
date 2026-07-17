@@ -1073,6 +1073,7 @@ length 1024, match +8 / mismatch −9), 2026-07-16:
   | AVX2 | AMD (naamah) | ~3% (13.8 → 13.4 Gcells/s) |
   | NEON | Apple M4 | ~2% (4.35 → 4.26 Gcells/s) |
   | AVX-512 | Intel (avx10) | ~22% (16.0 → 12.4 Gcells/s) |
+  | LASX | Loongson | ~0% (5.33 → 5.34 Gcells/s, Python-timed batch) |
 
   On the narrow-SIMD backends the exact answer is nearly free; on AVX-512 no
   sound early-exit exists, so `deferred` and the naive full scan both land at
