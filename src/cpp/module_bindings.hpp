@@ -3234,7 +3234,8 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       "Internal: Indel-normalised similarity of the best block-anchored\n"
       "window of the shorter input inside the longer. Underlies\n"
       "``sa.partial_ratio`` / the rapidfuzz shim's ``partial_*_ratio``\n"
-      "family. Returns a value in ``[0, 1]``.",
+      "family. Accepts text, bytes, and arbitrary hashable-element\n"
+      "sequences. Returns a value in ``[0, 1]``.",
       nb::arg("a"),
       nb::arg("b"));
 

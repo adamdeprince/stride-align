@@ -111,3 +111,12 @@ If you're starting from a rapidfuzz codebase:
    form) — saves a Python frame per call.
 4. Phonetic / DTW / Smith-Waterman / matrix-aware alignment have
    no rapidfuzz equivalent; use the native API from the start.
+
+## See also
+
+- [thefuzz-shim.md](thefuzz-shim.md) — integer scores and legacy
+  two-element extraction tuples for TheFuzz codebases
+- [jellyfish-shim.md](jellyfish-shim.md) — the compact distance,
+  similarity, and phonetic compatibility facade
+- [parasail-shim.md](parasail-shim.md) — Smith-Waterman,
+  Needleman-Wunsch, and substitution-matrix compatibility

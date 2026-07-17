@@ -23,8 +23,8 @@ affine gaps, dynamic time warping for numeric time-series, and
 ten phonetic encoders (Soundex, Metaphone, Double Metaphone,
 NYSIIS, Match Rating Approach, Caverphone 2, Cologne Phonetic,
 Daitch-Mokotoff, Beider-Morse Phonetic Matching). The same
-kernel set backs a one-line drop-in shim for the popular
-`rapidfuzz` Python library — existing code migrates by changing
+kernel set backs work-alike facades for RapidFuzz, TheFuzz,
+parasail-python, and Jellyfish — existing code migrates by changing
 its import.
 
 ## Why stride-align
@@ -49,15 +49,18 @@ its import.
   Monge-Elkan, Smith-Waterman, Needleman-Wunsch, DTW. Avoids
   the rapidfuzz + parasail + jellyfish + python-Levenshtein
   patchwork.
-- **Compatibility shims for rapidfuzz and parasail.** `import
+- **Four compatibility shims.** `import
   stride_align.rapidfuzz as rapidfuzz` is a drop-in replacement
-  covering `fuzz`, `distance`, `process`, and `utils`. `import
+  covering `fuzz`, `distance`, `process`, and `utils`; `from
+  stride_align.thefuzz import fuzz, process` preserves TheFuzz's
+  integer scores and extraction tuples; `import
   stride_align.parasail as parasail` covers `sw` / `nw` / `sg`
   (with `_trace` / `_stats` variants), `matrix_create`, the
   BLOSUM and PAM tables, and the `Result` / `Cigar` /
-  `Traceback` / `Matrix` classes. Both shims are migration
-  aids; new code should call the native `stride_align` API
-  directly.
+  `Traceback` / `Matrix` classes; and `import
+  stride_align.jellyfish as jellyfish` covers compact distance,
+  similarity, and phonetic APIs. These are migration aids; new code
+  should call the native `stride_align` API directly.
 - **Real hardware coverage.** Builds and tests run on Intel x86,
   Apple Silicon, AWS Graviton ARM, Loongson LoongArch, and
   POWER8. No QEMU, no emulated SIMD — every backend is
@@ -73,7 +76,9 @@ its import.
 - [docs/api/dtw.md](docs/api/dtw.md) — Dynamic Time Warping
 - [docs/api/phonetic.md](docs/api/phonetic.md) — Ten phonetic encoders including Beider-Morse and Cologne Phonetic
 - [docs/api/rapidfuzz-shim.md](docs/api/rapidfuzz-shim.md) — Compatibility shim for migrating rapidfuzz code (not the primary API)
+- [docs/api/thefuzz-shim.md](docs/api/thefuzz-shim.md) — Integer-scored work-alike facade for migrating TheFuzz 0.22.1 code
 - [docs/api/parasail-shim.md](docs/api/parasail-shim.md) — Compatibility shim for migrating parasail-python code (not the primary API)
+- [docs/api/jellyfish-shim.md](docs/api/jellyfish-shim.md) — Work-alike facade for Jellyfish distance, similarity, and phonetic calls
 - [docs/api/README.md](docs/api/README.md) — Index, including the output-suffix convention shared by every page
 
 ## Optional

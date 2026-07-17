@@ -412,9 +412,7 @@ inline double partial_ratio_one_direction(
 template <typename Token>
 inline double partial_ratio_engine(
     const std::vector<Token>& a,
-    const std::vector<Token>& b,
-    const std::vector<Codepoint>& /*a_cps*/,
-    const std::vector<Codepoint>& /*b_cps*/) {
+    const std::vector<Token>& b) {
   if (a.empty() && b.empty()) return 1.0;
   if (a.empty() || b.empty()) return 0.0;
 
@@ -447,10 +445,7 @@ inline double partial_ratio_bytes(
   // copy is the only allocation on the byte fast path.)
   std::vector<std::uint8_t> av(a.begin(), a.end());
   std::vector<std::uint8_t> bv(b.begin(), b.end());
-  // The codepoint views are only used by the legacy engine signature
-  // for the (now-removed) matching-block lookup; pass empty here.
-  static const std::vector<Codepoint> empty_cps;
-  return partial_ratio_engine<std::uint8_t>(av, bv, empty_cps, empty_cps);
+  return partial_ratio_engine<std::uint8_t>(av, bv);
 }
 
 // Public entry: routes through the byte fast path when both inputs
@@ -473,9 +468,9 @@ inline double partial_ratio(
   if (fits_in_byte) {
     std::vector<std::uint8_t> ab(a.begin(), a.end());
     std::vector<std::uint8_t> bb(b.begin(), b.end());
-    return partial_ratio_engine<std::uint8_t>(ab, bb, a, b);
+    return partial_ratio_engine<std::uint8_t>(ab, bb);
   }
-  return partial_ratio_engine<Codepoint>(a, b, a, b);
+  return partial_ratio_engine<Codepoint>(a, b);
 }
 
 }  // namespace stride_align::partial_ratio

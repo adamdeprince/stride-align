@@ -18,14 +18,16 @@ compatible. The companion audit for the phonetic encoders lives in
 
 ## Posture, in one paragraph
 
-Phase D is implemented from algorithm descriptions only. No third-
-party source code is read, copied, or paraphrased into the production
-path. The production path imports nothing beyond stride-align's own
+Native Phase D is implemented from algorithm descriptions only. No third-
+party source code is copied or paraphrased into that production path. The
+production path imports nothing beyond stride-align's own
 C++ kernels, Python stdlib (built-in operations on `str` / `list` /
 `set` / `dict`), nanobind for the dispatcher boundary, and numpy for
 return arrays. Runtime test oracles are limited to libraries with
 explicitly-compatible licences (PSF, MIT, BSD) and are invoked as
-black boxes — no oracle's source code is consulted.
+black boxes. Later compatibility facades that deliberately adapt
+MIT-licensed edge conventions are identified separately below and in their
+own audits; they do not change native Phase D's provenance.
 
 ## 1. stride-align's own C++ kernels (Apache-2.0)
 
@@ -75,8 +77,8 @@ shipped in the wheel.
 - **What is used:**
   - **(a) Runtime parity oracle** for `tests/test_fuzz.py` and the
     rapidfuzz-shim test suite (`tests/test_rapidfuzz_shim.py`).
-    rapidfuzz is invoked through its public Python API; source not
-    consulted at this layer.
+    rapidfuzz is invoked through its public Python API; source was not
+    consulted for native Phase D or the rapidfuzz-shim parity tests.
   - **(b) Algorithmic inspiration for the multi-word Indel /
     LCSseq kernel** (Phase D follow-up, June 2026). The
     rapidfuzz-cpp C++ headers were read by a delegated investigator
@@ -85,10 +87,11 @@ shipped in the wheel.
     that authorised this and the complete list of architectural
     ideas absorbed. **No source code was copied or close-
     paraphrased.**
-- **What is *not* used:** Verbatim source, header comments,
+- **What is *not* used by native Phase D:** Verbatim source, header comments,
   identifier names, file layouts, struct fields, or any
-  close-paraphrased structural element from the rapidfuzz Python
-  or rapidfuzz-cpp source.
+  close-paraphrased structural element from the rapidfuzz Python or
+  rapidfuzz-cpp source. The later TheFuzz facade's separately licensed
+  use of Python-level edge conventions is recorded in §3d.
 - **Attribution / NOTICE:** Required for (b) — `NOTICE` has an
   "Algorithmic inspiration" bullet crediting rapidfuzz-cpp (MIT,
   Max Bachmann et al.) for the Indel / LCSseq architectural ideas
@@ -119,13 +122,37 @@ shipped in the wheel.
 
 ### 3c. jellyfish
 
-- **URL:** https://github.com/jamesturk/jellyfish
-- **License:** BSD-2-Clause (Apache-2.0 compatible)
-- **What is used:** Pre-existing Soundex / Metaphone test oracle, no
-  Phase D use. Listed here for completeness.
-- **Files affected:** None for Phase D.
+- **URL:** https://codeberg.org/jpt/jellyfish
+- **License:** MIT (Apache-2.0 compatible)
+- **What is used:** Native Phase D scorers remain original. The
+  separate `stride_align.jellyfish` facade adapts Jellyfish 1.2.1's
+  public Jaccard semantics (word sets by default, non-overlapping
+  character chunks when sized) and its long-tolerance Jaro-Winkler
+  adjustment. Full provenance and licence text are recorded in
+  `docs/phonetic-encoder-external-sources.md` §3a and `NOTICE`.
+- **Files affected:** `src/stride_align/jellyfish.py`,
+  `tests/test_jellyfish_shim.py`, `docs/api/jellyfish-shim.md`.
 
-### 3d. CPython stdlib `math`, `random`, `statistics`
+### 3d. TheFuzz facade compatibility references
+
+- **URLs:** https://github.com/seatgeek/thefuzz and
+  https://github.com/rapidfuzz/RapidFuzz
+- **Licenses:** MIT (Apache-2.0 compatible)
+- **What is used:** The separate `stride_align.thefuzz` facade adapts
+  TheFuzz 0.22.1's public structure and legacy preprocessing, integer
+  rounding, extraction, and deduplication conventions. RapidFuzz 3.14.5's
+  Python implementation was consulted for generic-sequence normalization,
+  token-set arithmetic order, and ranking by unrounded score because those
+  behaviors are observable through TheFuzz.
+- **What is not used:** Neither package is a runtime dependency, and no
+  third-party binary is shipped. FuzzyWuzzy remains excluded under §4a.
+- **Attribution / NOTICE:** Both MIT texts are retained in `NOTICE`.
+- **Full audit:** [`thefuzz-shim-external-sources.md`](thefuzz-shim-external-sources.md).
+- **Files affected:** `src/stride_align/thefuzz/`,
+  `tests/test_thefuzz_shim.py`, `src/cpp/partial_ratio_dispatch.hpp`,
+  `include/stride_align/partial_ratio.hpp`, and the facade documentation.
+
+### 3e. CPython stdlib `math`, `random`, `statistics`
 
 - **License:** PSF (Apache-2.0 compatible)
 - **What is used:** Standard-library numeric helpers in tests (e.g.
@@ -145,9 +172,11 @@ vectors to any Phase D file.
 - **URL:** https://github.com/seatgeek/fuzzywuzzy
 - **License:** **GPL-2.0**
 - **Why excluded:** Apache-2.0 cannot incorporate GPL-licensed code.
-  rapidfuzz is the MIT clean-room replacement for FuzzyWuzzy's API
-  surface; stride-align uses rapidfuzz only as a runtime test oracle
-  (see §3a), never reads FuzzyWuzzy source, fixtures, or test vectors.
+  RapidFuzz is the MIT clean-room replacement for FuzzyWuzzy's API
+  surface, and TheFuzz is its MIT-licensed successor package. Native
+  stride-align uses RapidFuzz as a runtime test oracle (see §3a); the
+  explicit facade targets TheFuzz 0.22.1 (see §3d). Neither use reads
+  FuzzyWuzzy source, fixtures, or test vectors.
 - **Apache-2.0 compatible:** No.
 - **Files affected:** None.
 
@@ -309,20 +338,23 @@ audit.
 
 1. **No GPL contamination.** No GPL/AGPL/LGPL source touched any
    Phase D production or test file. FuzzyWuzzy is the largest named
-   exclusion; the rapidfuzz MIT replacement serves as the test oracle.
-2. **No third-party code in the production path.** Phase D's Python
+   exclusion; RapidFuzz serves as the MIT test oracle and the facade
+   targets the MIT-licensed TheFuzz successor.
+2. **Native Phase D has no third-party code in its production path.** Phase D's Python
    compositions (D.3 and D.6) import only `stride_align` itself
    (Apache-2.0). The bit-exact rapidfuzz parity claims in D.3 are
    honoured by `sa.indel_normalized_score` being algebraically equal
    to `rapidfuzz.fuzz.ratio / 100` — verified by formula, not by
-   reading rapidfuzz internals.
-3. **Test oracles are black boxes.** rapidfuzz, difflib, jellyfish are
-   invoked through their public APIs only. None of their source code
-   was read for the Phase D work.
+   reading RapidFuzz internals for the native implementation.
+3. **Native test oracles are black boxes.** RapidFuzz and difflib are
+   invoked through their public APIs only. The later Jellyfish
+   and TheFuzz compatibility facades are explicit MIT-licensed adapters
+   and are outside the native Phase D implementation described by this
+   audit.
 4. **Algorithm references are descriptions, not code.** The classic
    papers and textbook formulations cited in §2 are the implementation
    basis; no specific implementation served as a starting point.
-5. **NOTICE unchanged for Phase D.** None of the runtime dependencies
-   added or used by Phase D is redistributed in the wheel, and none
-   has an attribution clause that activates at the test-only level
-   used here.
+5. **Compatibility-facade notices.** `NOTICE` retains the Jellyfish,
+   TheFuzz, and RapidFuzz MIT licences for the compatibility conventions
+   distributed in those facades; this does not change the provenance of
+   native Phase D code.

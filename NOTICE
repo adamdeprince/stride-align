@@ -57,10 +57,14 @@ cross-checked against the canonical Apache Commons Codec test cases
 during development. The third-party Python libraries listed in
 ``[project.optional-dependencies].phonetic-compat`` — jellyfish
 (MIT), the ``metaphone`` PyPI package (BSD), and pyphonetics (MIT) —
-are provided for downstream users who want their own cross-checks;
+are available to downstream users who want their own cross-checks;
 stride-align's own tests (``tests/test_phonetic.py``,
 ``tests/test_beider_morse.py``) import only ``pytest`` and
 ``stride_align`` and use hand-pinned expected values.
+
+The separate ``tests/test_jellyfish_shim.py`` differential battery
+imports Jellyfish when available because that module explicitly
+targets Jellyfish API compatibility.
 
 ----------------------------------------------------------------------
 
@@ -100,6 +104,22 @@ read the rapidfuzz-cpp source. See
 ``docs/phase-D-external-sources.md`` §3a and §4c for the full
 provenance trail.
 
+Striped SIMD alignment kernels
+==============================
+
+The striped-profile layout and the lazy-F (Farrar-style) horizontal-gap
+correction in stride-align's SIMD Smith-Waterman / Needleman-Wunsch kernels
+(``src/cpp/backends/*.hpp``) are informed by the architecture of parasail
+(https://github.com/jeffdaily/parasail), a BSD-3-Clause SIMD pairwise
+alignment library by Jeff Daily. The striped inner-loop structure and the
+lazy-F correction pass were studied from parasail's source for algorithmic
+ideas; the kernels here are original C++ and no parasail source was copied.
+The academic citation lives in the README "References" section:
+
+  Daily, Jeff. (2016). Parasail: SIMD C library for global, semi-global, and
+  local pairwise sequence alignments. BMC Bioinformatics, 17(1), 1-11.
+  doi:10.1186/s12859-016-0930-z
+
 A consolidated source audit covering every phonetic encoder lives at
 ``docs/phonetic-encoder-external-sources.md``. The BMPM-specific
 audit (Apache Commons Codec rule data, vendored resources, explicit
@@ -107,15 +127,107 @@ GPL-port exclusions) lives at ``docs/bmpm-external-sources.md``.
 
 ----------------------------------------------------------------------
 
-Test oracles
-============
+Test oracles and compatibility references
+=========================================
 
 The third-party phonetic libraries listed under
-``[project.optional-dependencies].phonetic-compat`` (jellyfish,
-metaphone, pyphonetics) are runtime extras only — none of their
-source is included in or distributed with stride-align, and none is
-imported by any file under ``tests/`` or ``src/``. Their licences
-(MIT and BSD) are Apache-2.0 compatible.
+``[project.optional-dependencies].phonetic-compat`` are optional
+cross-check oracles. ``metaphone`` and ``pyphonetics`` remain
+test-time references only. Jellyfish is also the API and behavioural
+reference for ``src/stride_align/jellyfish.py``; its compatibility
+rule variants are adapted under the following MIT licence. TheFuzz
+and RapidFuzz are the behavioural references for
+``src/stride_align/thefuzz/`` and its optional differential tests;
+their compatibility conventions are adapted under the MIT licences
+retained below.
+
+Jellyfish compatibility facade
+==============================
+
+The Jellyfish 1.2.1 compatibility rule variants in
+``src/stride_align/jellyfish.py`` are adapted from Jellyfish:
+https://codeberg.org/jpt/jellyfish
+
+MIT License
+
+Copyright (c) 2015 James Turk
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+TheFuzz compatibility facade
+============================
+
+The public adapter structure and legacy compatibility conventions in
+``src/stride_align/thefuzz/`` are adapted from TheFuzz 0.22.1:
+https://github.com/seatgeek/thefuzz
+
+MIT License
+
+Copyright (c) 2014 SeatGeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+RapidFuzz sequence compatibility
+================================
+
+The generic-sequence normalization, token-set arithmetic order, and
+unrounded-score ranking conventions retained by the TheFuzz facade were
+cross-checked against RapidFuzz 3.14.5's MIT-licensed Python implementation:
+https://github.com/rapidfuzz/RapidFuzz
+
+Copyright © 2020-present Max Bachmann
+Copyright © 2011 Adam Cohen
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------
 

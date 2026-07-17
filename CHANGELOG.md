@@ -4,7 +4,51 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [0.6.0] - 2026-07-16
+
+### Added
+
+* **Full substitution-matrix catalog + keyboard typo matrices.** BLOSUM, PAM,
+  and NUC substitution matrices, plus keyboard confusion matrices derived (with
+  permission) from the Aalto University 136-million-keystrokes dataset.
+
+* **TheFuzz 0.22.1 compatibility facade.** Replace `from thefuzz
+  import fuzz, process` with `from stride_align.thefuzz import fuzz,
+  process`. The facade provides all ten integer-valued scorers,
+  TheFuzz preprocessing and Unicode aliases, the `extract*` family,
+  and `dedupe`, including legacy tuple shapes and ranking by unrounded
+  scores. Arbitrary hashable Python sequence elements use the shared
+  compact-token encoder and native scoring kernels. The partial-ratio
+  family retains the documented rare shifted-window conservative
+  underestimate of stride-align's native matcher.
+
+* **Jellyfish compatibility facade.** `import stride_align.jellyfish
+  as jellyfish` now provides all eleven Jellyfish 1.2.1 public
+  functions. Edit distance and Jaro calls dispatch through native
+  stride-align kernels; multi-code-point grapheme clusters reuse the
+  general hashable-sequence tokenizer. The facade also preserves
+  Jellyfish's padded Hamming, non-overlapping-chunk Jaccard,
+  long-tolerance Jaro-Winkler, phonetic variants, string-only input
+  contract, and tri-state Match Rating comparison.
+
+### Fixed
+
+* **Unsound bounded lazy-F early-exit in striped local Smith-Waterman
+  (too-low scores).** The AVX2 exact-fill fast path and the portable bounded
+  scan stopped propagating the horizontal-gap (F) wavefront early, assuming
+  cell heights are monotonic across striped segments — which they are not. On
+  structured inputs (a long repeated run appearing in both strings at offset
+  positions) this under-reported the local Smith-Waterman score. The default
+  now uses the sound `deferred` correction and the bounded scan is deprecated.
+  Verified against a from-scratch textbook DP and Biopython; full post-mortem
+  and reproducible counter-examples in
+  `docs/known-issue-bounded-lazy-f-scan.md`.
+
+### Performance
+
+* Affine-gap local Smith-Waterman: faster prefix lazy-F correction — roughly
+  +30–45% throughput on AVX2, AVX-512, and NEON, with Needleman-Wunsch
+  unchanged.
 
 ## [0.5.1] - 2026-06-21
 

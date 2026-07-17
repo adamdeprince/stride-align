@@ -7,17 +7,17 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "stride-align"
-version = "0.5.1"
+version = "0.6.0"
 description = "SIMD-accelerated fuzzy string matching, sequence alignment (Smith-Waterman / Needleman-Wunsch), edit distance (Levenshtein / OSA / Indel / Jaro-Winkler), phonetic encoders (Soundex / Metaphone / NYSIIS / Caverphone), and Dynamic Time Warping — x86 / ARM / LoongArch / POWER kernels with first-class CJK."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-# license-files surfaces the LICENSE text in the installed-package
-# metadata (PEP 639), not just the SPDX identifier. SBOM scanners
-# (Snyk, Sonatype, GitHub's dependency graph, vendor risk-assessment
-# tools) parse this to confirm Apache-2.0 compatibility before
-# letting the package into a dependency tree.
-license-files = ["LICENSE"]
+# license-files surfaces the project licence and third-party notices in
+# installed-package metadata (PEP 639), not just the SPDX identifier.
+# SBOM scanners (Snyk, Sonatype, GitHub's dependency graph, vendor
+# risk-assessment tools) parse these before allowing the package into a
+# dependency tree.
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Adam DePrince", email = "adam.deprince@gmail.com" }]
 maintainers = [{ name = "Adam DePrince", email = "adam.deprince@gmail.com" }]
 keywords = [
@@ -53,6 +53,7 @@ keywords = [
   "cjk",
   "unicode",
   "rapidfuzz-alternative",
+  "thefuzz-alternative",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -108,6 +109,7 @@ dev = [
 # scrapers what stride-align is comparable to.
 bench = [
   "rapidfuzz>=3.0",
+  "thefuzz>=0.22,<0.23",
   "editdistance>=0.6",
   "parasail>=1.3",
 ]

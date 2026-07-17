@@ -97,5 +97,9 @@ If you're starting from a parasail codebase:
   Needleman-Wunsch surface with the full variant family
 - [matrices.md](matrices.md) — `SubstitutionMatrix`, BLOSUM, PAM,
   and the NCBI-text loader
-- [rapidfuzz-shim.md](rapidfuzz-shim.md) — the other compatibility
-  shim, for fuzzy-match codebases
+- [rapidfuzz-shim.md](rapidfuzz-shim.md) — compatibility for
+  fuzzy-match and extraction codebases
+- [thefuzz-shim.md](thefuzz-shim.md) — compatibility for TheFuzz's
+  integer scorers and extraction helpers
+- [jellyfish-shim.md](jellyfish-shim.md) — compatibility for compact
+  distance, similarity, and phonetic APIs

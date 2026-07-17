@@ -29,17 +29,17 @@ be compatible.
 
 ## Posture, in one paragraph
 
-Every encoder above is an **original C++ implementation** written
+Every encoder in the native `stride_align` API is an **original C++ implementation** written
 from the published algorithm description and the Apache Commons Codec
 class as a structural reference. No third-party source code is
-copied or paraphrased into the production path. The C++ namespace
+copied or paraphrased into that native production path. The C++ namespace
 boundaries (e.g. `stride_align::phonetic::soundex_detail`) and the
 control-flow structure (cursor advance, rule cascade) follow the
 corresponding Apache Commons Codec class so that cross-checking
 against the Java reference stays tractable. Comments are paraphrased,
-not copied. Tests use hand-pinned expected values; the third-party
-oracle libraries listed in the `phonetic-compat` pyproject extra are
-**not** imported by any test in `tests/`.
+not copied. The separate `stride_align.jellyfish` migration facade
+contains MIT-licensed compatibility variants adapted from Jellyfish
+1.2.1; §3a and `NOTICE` record that provenance explicitly.
 
 ## 1. Apache Commons Codec
 
@@ -89,45 +89,44 @@ references are algorithmic descriptions, not licensed implementations.
 | Match Rating Approach | Moore, G. (Western Airlines), 1977. |
 | Kölner Phonetik | Postel, H.-J. "Die Kölner Phonetik." IBM Nachrichten 19, 1969, pp. 925-931. |
 
-## 3. Third-party test oracles (cross-check, not import)
+## 3. Third-party compatibility references and test oracles
 
-The libraries below are listed in the
-`phonetic-compat` pyproject extra so users can cross-check
-stride-align's output against the de-facto Python encoders. They
-are **not imported** by any test file in `tests/` — every test in
-`tests/test_phonetic.py` uses hand-pinned expected values. The
-expected values were derived from the canonical Apache Commons Codec
-test vectors (and, where the spec was ambiguous, the upstream test
-suite of the named library); the library names appear in comments
-inside the test file as historical credit.
+The libraries below are listed in the `phonetic-compat` pyproject
+extra. Native phonetic tests remain hand-pinned and do not import an
+oracle. The Jellyfish facade has an additional optional differential
+battery because exact third-party API compatibility is its purpose.
 
 ### 3a. jellyfish
 
-- **URL:** https://github.com/jamesturk/jellyfish
+- **URL:** https://codeberg.org/jpt/jellyfish
 - **License:** MIT
-- **What is used:** Listed under `phonetic-compat` extras as a
-  cross-check oracle for downstream users. Not imported by
-  stride-align's own tests. Mentioned in code comments under
-  `metaphone.hpp` and `double_metaphone.hpp` to explain the known
-  divergence (jellyfish's `metaphone("Schmidt")` returns `"SXMTT"`
-  where the Philips 1990 spec — and stride-align — return `"SKMTT"`).
-- **Attribution / NOTICE:** Mentioned in the "Test oracles" section
-  of `NOTICE` for users running their own cross-checks.
+- **What is used:** The rule ordering and boundary behaviour of
+  Jellyfish 1.2.1's Soundex, Metaphone, NYSIIS, Match Rating,
+  non-overlapping-chunk Jaccard, and long-tolerance Jaro-Winkler
+  implementations are adapted in `src/stride_align/jellyfish.py`.
+  Native distance/Jaro kernels remain original stride-align code.
+  `tests/test_jellyfish_shim.py` optionally imports the installed
+  package as a differential oracle.
+- **Attribution / NOTICE:** The full upstream MIT notice is retained
+  in `NOTICE`, and the derived module carries an attribution header.
 - **Apache-2.0 compatible:** Yes.
-- **Files affected:** None at test time; mentioned in comments only.
+- **Files affected:** `src/stride_align/jellyfish.py`,
+  `tests/test_jellyfish_shim.py`, `docs/api/jellyfish-shim.md`,
+  `NOTICE`.
 
 ### 3b. `metaphone` PyPI package (oubiwann/metaphone)
 
 - **URL:** https://github.com/oubiwann/metaphone
 - **License:** BSD
-- **What is used:** Same status as jellyfish — listed in
-  `phonetic-compat`, mentioned in `double_metaphone.hpp` comments
+- **What is used:** Listed in `phonetic-compat` as an oracle and
+  mentioned in `double_metaphone.hpp` comments
   to document the known `DoubleMetaphoneVariant.PYTHON` branch
   (a known bug in the `metaphone` package's GH-after-vowel handler
   that produces `"Hugh"` → `"HH"` where Apache Commons Codec and the
   faithful Lawrence Philips spec produce `"H"`). Not imported by
   stride-align's tests.
-- **Attribution / NOTICE:** Same row as jellyfish.
+- **Attribution / NOTICE:** Mentioned as an optional test oracle in
+  `NOTICE`; no source is distributed.
 - **Apache-2.0 compatible:** Yes.
 - **Files affected:** None at test time; mentioned in comments only.
 
@@ -139,7 +138,8 @@ inside the test file as historical credit.
   authoritative)
 - **What is used:** Listed in `phonetic-compat` extras for downstream
   cross-checks. Not imported by stride-align's tests.
-- **Attribution / NOTICE:** Same row as jellyfish.
+- **Attribution / NOTICE:** Mentioned as an optional test oracle in
+  `NOTICE`; no source is distributed.
 - **Apache-2.0 compatible:** Yes.
 - **Files affected:** None at test time.
 
@@ -248,12 +248,11 @@ first one added). Each encoder is registered in
 2. **No GPL contamination.** abydos and every other GPL/LGPL/AGPL
    phonetic-encoder port are excluded from code, comments, test
    fixtures, and oracle calls. See §4.
-3. **Tests do not import oracles.** Every test in
+3. **Native tests do not import oracles.** Every test in
    `tests/test_phonetic.py` uses hand-pinned expected values. The
-   third-party libraries listed in the `phonetic-compat` pyproject
-   extra (`jellyfish`, `metaphone`, `pyphonetics`) are for downstream
-   users who want their own cross-checks; stride-align's own tests
-   import only `pytest` and `stride_align`.
+   work-alike facade is tested separately in
+   `tests/test_jellyfish_shim.py`; its optional differential battery
+   imports Jellyfish when the `phonetic-compat` extra is installed.
 4. **Test fixtures stay small and named.** Canonical Apache Commons
    Codec test vectors are translated into Python literals one at a
    time, each paired with a comment naming the algorithm and variant

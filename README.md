@@ -1,5 +1,7 @@
 # stride-align
 
+**Faster than rapidfuzz. Faster than parasail. One import away.**
+
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
 `stride-align` is a SIMD-accelerated Python library for fuzzy string
@@ -8,10 +10,12 @@ distance — with first-class Unicode/CJK and a runtime CPU dispatcher
 that picks the widest SIMD backend your machine supports (x86, ARM,
 LoongArch, POWER), with a scalar fallback.
 
-It also drops in for two popular libraries:
-`import stride_align.rapidfuzz as rapidfuzz` replaces `rapidfuzz`, and
-`import stride_align.parasail as parasail` replaces `parasail-python` —
-existing code runs on the native SIMD kernels by changing one import.
+It also provides work-alike imports for four popular libraries:
+`import stride_align.rapidfuzz as rapidfuzz` replaces `rapidfuzz`,
+`from stride_align.thefuzz import fuzz, process` replaces TheFuzz,
+`import stride_align.parasail as parasail` replaces `parasail-python`, and
+`import stride_align.jellyfish as jellyfish` replaces `jellyfish` —
+existing code moves to stride-align by changing one import.
 (New code should prefer the native `stride_align` API.)
 
 The full feature list, every supported algorithm, and per-backend
@@ -286,11 +290,14 @@ targets, `int16` / `float32` / `float64`, optional Sakoe-Chiba band,
 choice of local metric. Detail in
 [`docs/api/dtw.md`](docs/api/dtw.md).
 
-**Compatibility shims.** `stride_align.rapidfuzz` and
-`stride_align.parasail` are drop-in import-replacements for the two
-most popular libraries in the space. Detail in
+**Compatibility shims.** `stride_align.rapidfuzz`,
+`stride_align.thefuzz`, `stride_align.parasail`, and
+`stride_align.jellyfish` are work-alike
+import replacements for widely used libraries in the space. Detail in
 [`docs/api/rapidfuzz-shim.md`](docs/api/rapidfuzz-shim.md) and
-[`docs/api/parasail-shim.md`](docs/api/parasail-shim.md).
+[`docs/api/thefuzz-shim.md`](docs/api/thefuzz-shim.md),
+[`docs/api/parasail-shim.md`](docs/api/parasail-shim.md), and
+[`docs/api/jellyfish-shim.md`](docs/api/jellyfish-shim.md).
 
 The native boundary accepts:
 
@@ -333,7 +340,7 @@ site lives in [`html/`](html/) and is mirrored at
 The full reference lives under
 [`docs/api/`](docs/api/README.md), grouped by surface (edit-distance,
 similarity, alignment, all-pairs cdist, substitution matrices, DTW,
-phonetic encoders, and the two compatibility shims). This section is
+phonetic encoders, and the four compatibility shims). This section is
 a tour of the most common patterns to get you started.
 
 ```python
@@ -517,6 +524,34 @@ Phase D.3 conservative-underestimate — never overshoots upstream, but
 can underestimate by a few points on pairs where rapidfuzz finds a
 shifted optimal window. `Levenshtein.distance` does not yet support
 the `weights=(insert, delete, replace)` kwarg.
+
+### TheFuzz compatibility (work-alike facade)
+
+TheFuzz keeps an older integer-scored API and two-element extraction
+tuples. The dedicated facade preserves those conventions while using
+stride-align's native kernels:
+
+```python
+# Before:
+# from thefuzz import fuzz, process
+
+# After:
+from stride_align.thefuzz import fuzz, process
+
+fuzz.ratio("this is a test", "this is a test!")       # 97
+fuzz.token_sort_ratio("fuzzy wuzzy was a bear", "wuzzy fuzzy was a bear")
+# -> 100
+process.extractOne("cowboys", ["New York Jets", "Dallas Cowboys"])
+# -> ('Dallas Cowboys', 90)
+```
+
+All ten TheFuzz 0.22.1 scorers, `extract*`, and `dedupe` are covered.
+The direct scorers also accept arbitrary sequences of hashable Python
+objects through stride-align's shared compact-token encoder. See
+[`docs/api/thefuzz-shim.md`](docs/api/thefuzz-shim.md) for exact
+preprocessing, rounding, result-shape, and custom-scorer behavior.
+The `partial_ratio` family inherits the same rare shifted-window
+conservative underestimate documented for the RapidFuzz shim above.
 
 ### parasail compatibility (drop-in shim)
 
@@ -1015,6 +1050,35 @@ Mac and Intel re-measured 2026-06-17; Loongson last measured
 2026-06-10 (pre the Jaro and token-ratio work, so unchanged or
 better today).
 
+**Striped Smith-Waterman / Needleman-Wunsch kernel update (2026-07).** The
+score-only local-SW and NW kernels were reworked. Measured throughput of the new
+kernels against the previous ones (native microbench, 1 query × 8 targets,
+length 1024, match +8 / mismatch −9), 2026-07-16:
+
+- **Affine-gap local SW** — a faster prefix lazy-F correction: **roughly
+  +30–45%** across AVX2, AVX-512, and NEON. (The win narrows at the exact length
+  where the specialized exact-fill path engages; one AVX2 i32 corner there is a
+  small regression — every other config wins.)
+- **Needleman-Wunsch** — unchanged (±1%).
+- **Linear-gap local SW** — a **correctness fix**. The previous fast path used an
+  unsound early-exit that could silently under-report scores on structured inputs
+  (post-mortem and reproducible counter-examples in
+  [`docs/known-issue-bounded-lazy-f-scan.md`](docs/known-issue-bounded-lazy-f-scan.md)).
+  The replacement is exact everywhere; a `deferred` correction recovers most of
+  the lost speed where a sound early-exit is impossible. The residual cost is
+  architecture-dependent:
+
+  | Backend | Host | Correctness cost at length 1024 |
+  | --- | --- | ---: |
+  | AVX2 | AMD (naamah) | ~3% (13.8 → 13.4 Gcells/s) |
+  | NEON | Apple M4 | ~2% (4.35 → 4.26 Gcells/s) |
+  | AVX-512 | Intel (avx10) | ~22% (16.0 → 12.4 Gcells/s) |
+
+  On the narrow-SIMD backends the exact answer is nearly free; on AVX-512 no
+  sound early-exit exists, so `deferred` and the naive full scan both land at
+  ~12.5 Gcells/s — correctness costs ~20% there, a trade taken deliberately for a
+  library whose scores are meant to be exact.
+
 **LoongArch / Loongson.** The Loongson optimization story is especially
 telling: for the checked benchmark case -- English text, 16-bit score width,
 score-only Smith-Waterman -- the LASX backend is 16x faster than the generic
@@ -1189,5 +1253,25 @@ If you use my software in your research, please cite me.
   publisher    = {GitHub},
   url          = {https://github.com/adamdeprince/stride-align},
   note         = {Python/C++ library for sequence and string alignment}
+}
+```
+
+## References
+
+stride-align's SIMD Smith-Waterman / Needleman-Wunsch kernels take algorithmic
+ideas from **parasail** (Jeff Daily's SIMD pairwise-alignment library — the
+striped-profile layout and lazy-F gap correction). If you use stride-align in
+published research, please also cite parasail:
+
+```bibtex
+@article{daily2016parasail,
+  author  = {Daily, Jeff},
+  title   = {Parasail: SIMD C library for global, semi-global, and local pairwise sequence alignments},
+  journal = {BMC Bioinformatics},
+  year    = {2016},
+  volume  = {17},
+  number  = {1},
+  pages   = {1--11},
+  doi     = {10.1186/s12859-016-0930-z}
 }
 ```

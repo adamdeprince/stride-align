@@ -1,5 +1,7 @@
 # stride-align
 
+**比 rapidfuzz 更快，比 parasail 更快，一行 import 即可替换。**
+
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
 `stride-align` 是一个 SIMD 加速的 Python 库，专注于模糊字符串匹配、
@@ -7,9 +9,11 @@
 并由运行时 CPU dispatch 自动选用当前机器支持的最宽 SIMD 后端
 （x86、ARM、龙架构、POWER），并带标量回退。
 
-它同时是两个常用库的直接替代品：
+它同时是四个常用库的直接替代品：
 `import stride_align.rapidfuzz as rapidfuzz` 替代 `rapidfuzz`，
-`import stride_align.parasail as parasail` 替代 `parasail-python`——
+`from stride_align.thefuzz import fuzz, process` 替代 `TheFuzz`，
+`import stride_align.parasail as parasail` 替代 `parasail-python`，
+`import stride_align.jellyfish as jellyfish` 替代 `jellyfish`——
 现有代码只需改一行 import，即可跑在原生 SIMD 内核上。
 （新代码应优先直接使用原生 `stride_align` API。）
 

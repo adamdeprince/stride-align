@@ -1111,9 +1111,11 @@ an algorithm list with one paragraph each.
 | Page | Covers |
 | --- | --- |
 | [rapidfuzz-shim.md](rapidfuzz-shim.md) | `stride_align.rapidfuzz.{fuzz, distance, process, utils}` — drop-in replacement for `rapidfuzz`. |
+| [thefuzz-shim.md](thefuzz-shim.md) | `stride_align.thefuzz.{fuzz, process, utils}` — work-alike for TheFuzz 0.22.1's integer scorers and extraction API. |
 | [parasail-shim.md](parasail-shim.md) | `stride_align.parasail` — drop-in replacement for `parasail-python` (Smith-Waterman / Needleman-Wunsch / semi-global, BLOSUM/PAM, `Result` / `Cigar` / `Traceback`). |
+| [jellyfish-shim.md](jellyfish-shim.md) | `stride_align.jellyfish` — work-alike for Jellyfish's edit, similarity, and phonetic functions. |
 
-Both shims are migration aids; new code should call the native
+These shims are migration aids; new code should call the native
 API directly.
 
 ## Two dimensions
@@ -2043,6 +2045,104 @@ If you're starting from a rapidfuzz codebase:
 
 ---
 
+# TheFuzz compatibility shim
+
+`stride_align.thefuzz` is a work-alike facade for TheFuzz 0.22.1.
+Change the import and retain TheFuzz's integer scores, preprocessing,
+selection helpers, and result shapes:
+
+```python
+# Before:
+# from thefuzz import fuzz, process
+
+# After:
+from stride_align.thefuzz import fuzz, process
+
+fuzz.ratio("this is a test", "this is a test!")  # 97
+process.extractOne("cowboys", ["New York Jets", "Dallas Cowboys"])
+# ('Dallas Cowboys', 90)
+```
+
+This is a migration facade. New code that does not need TheFuzz's exact
+integer conventions can use `stride_align.rapidfuzz` for floating-point
+scores or the native `[0, 1]` APIs directly.
+
+## Covered surface
+
+| Module | Functions |
+| --- | --- |
+| `fuzz` | `ratio`, `partial_ratio`, `token_sort_ratio`, `partial_token_sort_ratio`, `token_set_ratio`, `partial_token_set_ratio` |
+| `fuzz` aliases/composites | `QRatio`, `UQRatio`, `WRatio`, `UWRatio` |
+| `process` | `extractWithoutOrder`, `extract`, `extractBests`, `extractOne`, `dedupe` |
+| `utils` | `ascii_only`, `full_process`, public `translation_table` |
+
+The package-level `__version__` is `"0.22.1"`, identifying the upstream
+compatibility target rather than the installed stride-align release.
+
+## Compatibility details
+
+TheFuzz differs in observable ways from its RapidFuzz engine. The facade
+retains them:
+
+- Every built-in scorer returns an `int` from 0 through 100 using Python's
+  `int(round(score))` behavior, including bankers-rounding boundaries.
+- Token scorers, `QRatio`, and `WRatio` run `utils.full_process` by default.
+  `force_ascii=True` preserves TheFuzz's historical rule: delete code points
+  128 through 255, not every non-ASCII character. `UQRatio` and `UWRatio`
+  disable that deletion.
+- `full_process` replaces each non-alphanumeric character separately,
+  lowercases with Unicode simple-lower rules, and strips the ends. It does
+  not collapse internal spaces.
+- `ratio` and `partial_ratio` accept arbitrary Python sequences of hashable
+  elements. Generic sequence elements first receive TheFuzz/RapidFuzz's
+  compatibility normalization; the result then goes through stride-align's
+  shared compact-token encoder and native Indel/partial-ratio kernels.
+- Extraction ranks the unrounded score, rounds only the returned built-in
+  score, preserves input order on exact ties, and skips `None` choices.
+  Iterable choices return `(choice, score)`; mappings return
+  `(choice, score, key)`.
+- Custom scorers retain their original numeric result rather than being
+  integer-rounded.
+
+The in-tree test suite runs independently with pinned expectations. When
+TheFuzz 0.22.1 is installed, it also runs randomized differential batteries
+over strings, Unicode, byte buffers, arbitrary hashable-element sequences,
+ranking, cutoffs, mappings, and all public functions.
+
+## Known limits
+
+The `partial_ratio` family uses stride-align's native block-anchored partial
+matcher. It never overshoots the upstream score, but it can underestimate by
+a few points on rare pairs where RapidFuzz finds a shifted optimal window.
+That also affects partial-token scorers and can flow into `WRatio`.
+
+`full_process` follows the Unicode tables in the running Python release.
+Newly assigned characters can therefore be classified differently from the
+fixed Unicode table compiled into a particular RapidFuzz release until both
+projects update to the same Unicode version.
+
+## TheFuzz versus FuzzyWuzzy
+
+This facade targets the MIT-licensed **TheFuzz 0.22.1** package. It does not
+claim a separately tested `fuzzywuzzy` facade: the legacy FuzzyWuzzy source is
+GPL-2.0 and is explicitly excluded from this project. Code using their common
+core scorer names will often be portable, but TheFuzz 0.22.1 is the behavioral
+contract tested here.
+
+## Native equivalents
+
+- [rapidfuzz-shim.md](rapidfuzz-shim.md) — floating-point 0–100 scores,
+  distance classes, `cdist`, and RapidFuzz result shapes
+- [edit-distance.md](edit-distance.md) — native Indel and Levenshtein
+  single/batch/top-k operations
+- [similarity.md](similarity.md) — native token ratios and other similarity
+  families on the `[0, 1]` scale
+
+Implementation and license provenance is recorded in
+[thefuzz-shim-external-sources.md](../thefuzz-shim-external-sources.md).
+
+---
+
 # parasail compatibility shim
 
 `stride_align.parasail` is a **drop-in compatibility layer** for
@@ -2142,8 +2242,97 @@ If you're starting from a parasail codebase:
   Needleman-Wunsch surface with the full variant family
 - [matrices.md](matrices.md) — `SubstitutionMatrix`, BLOSUM, PAM,
   and the NCBI-text loader
-- [rapidfuzz-shim.md](rapidfuzz-shim.md) — the other compatibility
-  shim, for fuzzy-match codebases
+- [rapidfuzz-shim.md](rapidfuzz-shim.md) — compatibility for
+  fuzzy-match and extraction codebases
+- [thefuzz-shim.md](thefuzz-shim.md) — compatibility for TheFuzz's
+  integer scorers and extraction helpers
+- [jellyfish-shim.md](jellyfish-shim.md) — compatibility for compact
+  distance, similarity, and phonetic APIs
 
 ---
 
+# jellyfish compatibility shim
+
+`stride_align.jellyfish` is a work-alike facade for the public
+`jellyfish` Python API. Replace the import and keep the function calls:
+
+```python
+# import jellyfish
+import stride_align.jellyfish as jellyfish
+
+jellyfish.levenshtein_distance("kitten", "sitting")  # 3
+jellyfish.soundex("Washington")                       # 'W252'
+```
+
+The facade tracks Jellyfish 1.2.1 and exposes its eleven public
+functions:
+
+| Jellyfish function | Implementation |
+| --- | --- |
+| `levenshtein_distance(a, b)` | stride-align native Levenshtein kernel |
+| `damerau_levenshtein_distance(a, b)` | native unrestricted Damerau-Levenshtein kernel |
+| `hamming_distance(a, b)` | native Hamming kernel plus unequal-length padding |
+| `jaro_similarity(a, b)` | native Jaro kernel |
+| `jaro_winkler_similarity(a, b, long_tolerance=None)` | native Jaro plus Jellyfish prefix/long-string adjustment |
+| `jaccard_similarity(a, b, ngram_size=None)` | Jellyfish-compatible set and chunk adapter |
+| `soundex(a)` | Jellyfish phonetic rule variant |
+| `metaphone(a)` | Jellyfish phonetic rule variant |
+| `nysiis(a)` | Jellyfish phonetic rule variant |
+| `match_rating_codex(a)` | Jellyfish Match Rating codex |
+| `match_rating_comparison(a, b)` | Jellyfish tri-state comparison (`True`, `False`, or `None`) |
+
+## Compatibility details
+
+Like upstream Jellyfish, every function accepts `str` only. The
+broader native stride-align API also accepts bytes, NumPy arrays, and
+arbitrary hashable sequences, but the facade deliberately retains
+Jellyfish's narrower type contract.
+
+Jellyfish counts extended Unicode grapheme clusters in its edit,
+Hamming, and Jaro algorithms. ASCII and ordinary one-code-point text
+stay on stride-align's zero-copy string path. Combining sequences,
+emoji ZWJ sequences, emoji modifiers, regional-indicator flags,
+Hangul composition, and Indic conjuncts are segmented and sent through
+the native general-sequence tokenizer. That tokenizer assigns compact
+integer symbols with the same shared hash table used by alignment over
+arbitrary Python objects.
+
+Jellyfish's Jaccard operation is not the same as native
+`stride_align.jaccard`:
+
+- With no `ngram_size`, Jellyfish compares sets of whitespace-separated
+  words.
+- With `ngram_size=n`, it compares sets of **non-overlapping** character
+  chunks and retains a final short chunk.
+- Two empty token sets score `0.0`, not `1.0`.
+
+The facade reproduces those conventions rather than routing to
+stride-align's overlapping character-n-gram multiset scorer.
+
+## Known limit
+
+`jaccard_similarity(..., ngram_size=0)` raises a regular `ValueError`.
+Jellyfish 1.2.1 lets Rust's zero-sized `chunks()` panic escape as a
+`PanicException`; reproducing a runtime panic would make the shim less
+safe without helping normal callers.
+
+The in-tree grapheme segmenter covers the established cluster families
+listed above. A future Unicode release could introduce a new grapheme
+property or script-specific conjunct rule before Python's Unicode tables
+and this compatibility layer are updated.
+
+## Native equivalents
+
+New code can use the richer native families when Jellyfish's exact API
+shape is not required:
+
+- [edit-distance.md](edit-distance.md) — batched scores, normalized
+  scores, best-match and top-k operations
+- [similarity.md](similarity.md) — batched Jaro/Jaro-Winkler and
+  overlapping n-gram similarity
+- [phonetic.md](phonetic.md) — explicit phonetic variants and additional
+  encoders
+- [thefuzz-shim.md](thefuzz-shim.md) — integer fuzzy scorers and
+  extraction helpers for TheFuzz codebases
+
+---

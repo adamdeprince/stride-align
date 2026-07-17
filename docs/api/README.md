@@ -23,9 +23,11 @@ an algorithm list with one paragraph each.
 | Page | Covers |
 | --- | --- |
 | [rapidfuzz-shim.md](rapidfuzz-shim.md) | `stride_align.rapidfuzz.{fuzz, distance, process, utils}` — drop-in replacement for `rapidfuzz`. |
+| [thefuzz-shim.md](thefuzz-shim.md) | `stride_align.thefuzz.{fuzz, process, utils}` — work-alike for TheFuzz 0.22.1's integer scorers and extraction API. |
 | [parasail-shim.md](parasail-shim.md) | `stride_align.parasail` — drop-in replacement for `parasail-python` (Smith-Waterman / Needleman-Wunsch / semi-global, BLOSUM/PAM, `Result` / `Cigar` / `Traceback`). |
+| [jellyfish-shim.md](jellyfish-shim.md) | `stride_align.jellyfish` — work-alike for Jellyfish's edit, similarity, and phonetic functions. |
 
-Both shims are migration aids; new code should call the native
+These shims are migration aids; new code should call the native
 API directly.
 
 ## Two dimensions
