@@ -1468,6 +1468,30 @@ bool scan_lazy_f(
   return propagated;
 }
 
+// Parasail-style H-only lazy-F correction for local affine score-only when
+// gap_open <= gap_extend <= 0 (prefix-carry path). Updates H and best, extends
+// F by gap_extend only, and skips E stores: the next target column rebuilds E
+// from max(E+extend, H+open). Matches the exact-fill affine kernels on AVX2 /
+// NEON / LASX.
+template <typename Ops, typename Cell>
+void scan_lazy_f_h_only(
+    Cell* h_store_data,
+    std::size_t segment_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_extend_vector,
+    typename Ops::vector_type& best_vector) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    auto v_h = load_state_cells<Ops, Cell>(h_store_segment);
+    v_h = Ops::max(v_h, v_f);
+    store_state_cells<Ops, Cell>(h_store_segment, v_h);
+    best_vector = Ops::max(best_vector, v_h);
+    v_f = Ops::add(v_f, gap_extend_vector);
+  }
+}
+
 template <typename Ops, typename Cell, bool PreserveSentinel = true>
 bool scan_global_lazy_f(
     Cell* h_store_data,
@@ -1706,7 +1730,7 @@ typename Ops::vector_type local_lazy_f_prefix_carry(
   return Ops::load_cells(output);
 }
 
-template <typename Ops, typename Cell>
+template <typename Ops, typename Cell, bool TrackBest = true>
 void scan_local_linear_lazy_f_once(
     Cell* h_store_data,
     std::size_t segment_count,
@@ -1715,36 +1739,61 @@ void scan_local_linear_lazy_f_once(
     typename Ops::vector_type& best_vector) {
   constexpr std::size_t lane_count = Ops::lane_count;
 
-  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+  // Sound early-exit: v_f decreases by |gap| every segment and local-SW cells
+  // are >= 0, so once every lane of v_f is <= 0 no later h[seg] can be raised
+  // (max(h[seg] >= 0, v_f <= 0) == h[seg]), and best_vector already holds those
+  // unraised main-pass cells. The last segment any lane can still matter is
+  // ceil(max_lane(v_f) / |gap|); bound the pass to that -- one reduction up
+  // front, then a shorter loop. This is the *sound* replacement for the removed
+  // bounded early-exit, which wrongly assumed h is monotonic across segments
+  // (see docs/known-issue-bounded-lazy-f-scan.md). For gap >= 0 the magnitude
+  // is <= 0 and the full pass is kept.
+  std::size_t active = segment_count;
+  const Cell max_f = reduce_max<Ops, Cell>(v_f);  // == max(0, max lane of v_f)
+  if (max_f <= 0) {
+    active = 0;
+  } else {
+    alignas(Ops::alignment) Cell gap_lanes[lane_count];
+    Ops::store_cells(gap_lanes, gap_vector);
+    const std::int64_t gap_magnitude = -static_cast<std::int64_t>(gap_lanes[0]);
+    if (gap_magnitude > 0) {
+      const std::size_t needed = static_cast<std::size_t>(
+          (static_cast<std::int64_t>(max_f) + gap_magnitude - 1) / gap_magnitude);
+      if (needed < active) {
+        active = needed;
+      }
+    }
+  }
+
+  for (std::size_t segment = 0; segment < active; ++segment) {
     Cell* h_store_segment = h_store_data + segment * lane_count;
     auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
     v_h_segment = Ops::max(v_h_segment, v_f);
     store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
-    best_vector = Ops::max(best_vector, v_h_segment);
+    if constexpr (TrackBest) {
+      best_vector = Ops::max(best_vector, v_h_segment);
+    }
     v_f = Ops::add(v_f, gap_vector);
   }
 }
 
+// Unsound early-exit variant: retained only so backend flags that still name
+// bounded_local_sw_lazy_f_scan compile. Callers must use the unbounded scan;
+// see docs/known-issue-bounded-lazy-f-scan.md.
 template <typename Ops, typename Cell>
+[[deprecated("unsound early-exit; use scan_local_linear_lazy_f_once")]]
 void scan_local_linear_lazy_f_once_bounded(
     Cell* h_store_data,
     std::size_t segment_count,
     typename Ops::vector_type& v_f,
     typename Ops::vector_type gap_vector,
     typename Ops::vector_type& best_vector) {
-  constexpr std::size_t lane_count = Ops::lane_count;
-
-  for (std::size_t segment = 0; segment < segment_count; ++segment) {
-    Cell* h_store_segment = h_store_data + segment * lane_count;
-    auto v_h_segment = load_state_cells<Ops, Cell>(h_store_segment);
-    v_h_segment = Ops::max(v_h_segment, v_f);
-    store_state_cells<Ops, Cell>(h_store_segment, v_h_segment);
-    best_vector = Ops::max(best_vector, v_h_segment);
-    v_f = Ops::add(v_f, gap_vector);
-    if (!any_greater<Ops, Cell>(v_f, Ops::add(v_h_segment, gap_vector))) {
-      return;
-    }
-  }
+  scan_local_linear_lazy_f_once<Ops, Cell>(
+      h_store_data,
+      segment_count,
+      v_f,
+      gap_vector,
+      best_vector);
 }
 
 template <typename Ops, typename Cell, std::size_t LaneCount, bool LocalAlignment>
@@ -1815,22 +1864,45 @@ Score affine_score_state_for_offsets(
   if (state.segment_count == 0 || target_profile_offsets.empty()) {
     return 0;
   }
-  if constexpr (requires { Ops::local_affine_score_exact_segment256_raw(state, target_profile_offsets); }) {
-    if (state.query_size == 1024U && state.segment_count == 256U &&
-        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
-      return Ops::local_affine_score_exact_segment256_raw(state, target_profile_offsets);
+  // Exact-fill: query occupies every striped lane (no OOB padding). The
+  // historical gate hard-coded query_size == 1024, which is just
+  // segment_count * lane_count for the specialized widths.
+  const bool exact_fill_query =
+      state.query_size == state.segment_count * lane_count;
+  if (exact_fill_query && state.gap_open_score <= state.gap_extend_score &&
+      state.gap_extend_score <= 0) {
+    if constexpr (requires {
+                    Ops::local_affine_score_exact_segment256_raw(
+                        state,
+                        target_profile_offsets);
+                  }) {
+      if (state.segment_count == 256U) {
+        return Ops::local_affine_score_exact_segment256_raw(
+            state,
+            target_profile_offsets);
+      }
     }
-  }
-  if constexpr (requires { Ops::local_affine_score_exact_segment128_raw(state, target_profile_offsets); }) {
-    if (state.query_size == 1024U && state.segment_count == 128U &&
-        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
-      return Ops::local_affine_score_exact_segment128_raw(state, target_profile_offsets);
+    if constexpr (requires {
+                    Ops::local_affine_score_exact_segment128_raw(
+                        state,
+                        target_profile_offsets);
+                  }) {
+      if (state.segment_count == 128U) {
+        return Ops::local_affine_score_exact_segment128_raw(
+            state,
+            target_profile_offsets);
+      }
     }
-  }
-  if constexpr (requires { Ops::local_affine_score_exact_segment64_raw(state, target_profile_offsets); }) {
-    if (state.query_size == 1024U && state.segment_count == 64U &&
-        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
-      return Ops::local_affine_score_exact_segment64_raw(state, target_profile_offsets);
+    if constexpr (requires {
+                    Ops::local_affine_score_exact_segment64_raw(
+                        state,
+                        target_profile_offsets);
+                  }) {
+      if (state.segment_count == 64U) {
+        return Ops::local_affine_score_exact_segment64_raw(
+            state,
+            target_profile_offsets);
+      }
     }
   }
   std::fill(state.h_store.begin(), state.h_store.end(), Cell{0});
@@ -1885,12 +1957,10 @@ Score affine_score_state_for_offsets(
           state.segment_count,
           state.gap_extend_score);
       if (any_greater<Ops, Cell>(v_f, zero_vector)) {
-        scan_lazy_f<Ops, Cell>(
+        scan_lazy_f_h_only<Ops, Cell>(
             h_store_data,
-            e_store_data,
             state.segment_count,
             v_f,
-            gap_open_vector,
             gap_extend_vector,
             best_vector);
       }
@@ -1898,15 +1968,17 @@ Score affine_score_state_for_offsets(
       for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
         v_f = shift_left_zero<Ops, Cell>(v_f);
         const bool propagated = scan_lazy_f<Ops, Cell>(
-          h_store_data,
-          e_store_data,
-          state.segment_count,
-          v_f,
-          gap_open_vector,
-          gap_extend_vector,
-          best_vector);
+            h_store_data,
+            e_store_data,
+            state.segment_count,
+            v_f,
+            gap_open_vector,
+            gap_extend_vector,
+            best_vector);
 
-        (void) propagated;
+        if (!propagated) {
+          break;
+        }
         if (can_stop_lazy_f && !any_greater<Ops, Cell>(v_f, zero_vector)) {
           break;
         }
@@ -2045,7 +2117,9 @@ Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
             gap_extend_vector,
             low_score);
 
-        (void) propagated;
+        if (!propagated) {
+          break;
+        }
       }
     }
   }
@@ -3365,9 +3439,52 @@ void local_sw_score_main_segment(
   v_h = load_state_cells<Ops, Cell>(h_load_segment);
 }
 
+// Main-segment step that also folds a deferred lazy-F wavefront into the
+// previous-column H values as they are reloaded for the next diagonal. Mirrors
+// the AVX2 STRIDE_ALIGN_AVX2_LOCAL_SW_*_STEP_CORRECTED pattern.
+template <typename Ops, typename Cell>
+void local_sw_score_main_segment_corrected(
+    Cell* h_store_data,
+    Cell* h_load_data,
+    Cell* e_store_data,
+    const Cell* profile_row,
+    std::size_t segment,
+    typename Ops::vector_type& v_h,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type& pending_h,
+    typename Ops::vector_type gap_vector,
+    typename Ops::vector_type zero_vector,
+    typename Ops::vector_type& best_vector) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+
+  Cell* h_store_segment = h_store_data + segment * lane_count;
+  Cell* h_load_segment = h_load_data + segment * lane_count;
+  Cell* e_segment = e_store_data + segment * lane_count;
+  const Cell* profile_segment = profile_row + segment * lane_count;
+
+  const auto v_profile = load_state_cells<Ops, Cell>(profile_segment);
+  auto v_e = load_state_cells<Ops, Cell>(e_segment);
+  v_h = Ops::add(v_h, v_profile);
+  v_h = Ops::max(v_h, v_e);
+  v_h = Ops::max(v_h, v_f);
+  v_h = Ops::max(v_h, zero_vector);
+  store_state_cells<Ops, Cell>(h_store_segment, v_h);
+  best_vector = Ops::max(best_vector, v_h);
+
+  const auto v_h_gap = Ops::add(v_h, gap_vector);
+  v_e = Ops::max(Ops::add(v_e, gap_vector), v_h_gap);
+  store_state_cells<Ops, Cell>(e_segment, v_e);
+  v_f = Ops::max(Ops::add(v_f, gap_vector), v_h_gap);
+  v_h = load_state_cells<Ops, Cell>(h_load_segment);
+  v_h = Ops::max(v_h, pending_h);
+  best_vector = Ops::max(best_vector, v_h);
+  pending_h = Ops::add(pending_h, gap_vector);
+}
+
 template <typename Ops, typename Cell, std::size_t SegmentCount>
 Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
   constexpr std::size_t lane_count = Ops::lane_count;
+  constexpr std::size_t state_cells = SegmentCount * lane_count;
 
   if (state.fast_score.has_value()) {
     return *state.fast_score;
@@ -3382,126 +3499,247 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
 
   const auto zero_vector = Ops::zero();
   const auto gap_vector = Ops::set1(state.gap_score);
+  // gap * (SegmentCount - 1) for the wrap-around pending correction on the
+  // last segment of the previous column (same as AVX2 segment_gap_N).
+  const auto segment_tail_gap = Ops::set1(static_cast<Cell>(
+      static_cast<Score>(state.gap_score) *
+      static_cast<Score>(SegmentCount - 1U)));
   auto best_vector = zero_vector;
   Cell* h_store_data = state.h_store.data();
   Cell* h_load_data = state.h_load.data();
   Cell* e_store_data = state.e_store.data();
   const Cell* profile_data = state.profile.data();
   const bool use_compact_loop = state.kernel_strategy == ScoreKernelStrategy::compact;
+  // Deferred lazy-F: fold the correction into the next target column instead of
+  // rewriting H immediately. It is correct (fuzz-verified identical to the
+  // materialized/unbounded scan) and, across NEON/AVX2/AVX-512, the
+  // best-recovering *correct* strategy for the exact-fill path, so automatic
+  // uses it. The old alphabet-size >= 48 gate left common small-alphabet cases
+  // (BLOSUM/DNA/text) on the immediate-rewrite path, which is what regressed
+  // relative to the pre-fix *unsound* bounded scan. The immediate path remains
+  // available via explicit materialized/compact and is itself sound: its lazy-F
+  // correction (scan_local_linear_lazy_f_once) bounds the pass with a sound
+  // early-exit. Bounded early-exit scans are never used (unsound; see
+  // docs/known-issue-bounded-lazy-f-scan.md).
+  const bool use_deferred_correction =
+      state.kernel_strategy == ScoreKernelStrategy::deferred ||
+      state.kernel_strategy == ScoreKernelStrategy::deferred_unroll4 ||
+      state.kernel_strategy == ScoreKernelStrategy::automatic;
 
-  for (const auto profile_offset : state.target_profile_offsets) {
-    std::swap(h_store_data, h_load_data);
-
-    auto v_h = shift_left_zero<Ops, Cell>(
-        load_state_cells<Ops, Cell>(h_load_data + ((SegmentCount - 1U) * lane_count)));
-    auto v_f = zero_vector;
-    const Cell* profile_row = profile_data + profile_offset;
-
-    if (use_compact_loop) {
-      for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
-        local_sw_score_main_segment<Ops, Cell>(
-            h_store_data,
-            h_load_data,
-            e_store_data,
-            profile_row,
-            segment,
-            v_h,
-            v_f,
-            gap_vector,
-            zero_vector,
-            best_vector);
-      }
-    } else {
-      for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
-        local_sw_score_main_segment<Ops, Cell>(
-            h_store_data,
-            h_load_data,
-            e_store_data,
-            profile_row,
-            segment,
-            v_h,
-            v_f,
-            gap_vector,
-            zero_vector,
-            best_vector);
-        local_sw_score_main_segment<Ops, Cell>(
-            h_store_data,
-            h_load_data,
-            e_store_data,
-            profile_row,
-            segment + 1U,
-            v_h,
-            v_f,
-            gap_vector,
-            zero_vector,
-            best_vector);
-        local_sw_score_main_segment<Ops, Cell>(
-            h_store_data,
-            h_load_data,
-            e_store_data,
-            profile_row,
-            segment + 2U,
-            v_h,
-            v_f,
-            gap_vector,
-            zero_vector,
-            best_vector);
-        local_sw_score_main_segment<Ops, Cell>(
-            h_store_data,
-            h_load_data,
-            e_store_data,
-            profile_row,
-            segment + 3U,
-            v_h,
-            v_f,
-            gap_vector,
-            zero_vector,
-            best_vector);
-      }
-    }
-
-    v_f = local_lazy_f_prefix_carry<Ops, Cell>(
-        v_f,
-        SegmentCount,
-        state.gap_score);
-    if (any_greater<Ops, Cell>(v_f, zero_vector)) {
-      const bool use_bounded_correction =
-          state.kernel_strategy == ScoreKernelStrategy::automatic ||
-          state.kernel_strategy == ScoreKernelStrategy::bounded ||
-          state.kernel_strategy == ScoreKernelStrategy::compact;
-      if constexpr (requires { Ops::bounded_local_sw_lazy_f_scan; }) {
-        if constexpr (Ops::bounded_local_sw_lazy_f_scan) {
-          if (use_bounded_correction) {
-            scan_local_linear_lazy_f_once_bounded<Ops, Cell>(
-                h_store_data,
-                SegmentCount,
+  auto run_main_segments =
+      [&](Cell* h_store,
+          Cell* h_load,
+          const Cell* profile_row,
+          typename Ops::vector_type& v_h,
+          typename Ops::vector_type& v_f) {
+        if (use_compact_loop) {
+          for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+            local_sw_score_main_segment<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment,
+                v_h,
                 v_f,
                 gap_vector,
-                best_vector);
-          } else {
-            scan_local_linear_lazy_f_once<Ops, Cell>(
-                h_store_data,
-                SegmentCount,
-                v_f,
-                gap_vector,
+                zero_vector,
                 best_vector);
           }
         } else {
-          scan_local_linear_lazy_f_once<Ops, Cell>(
-              h_store_data,
-              SegmentCount,
-              v_f,
-              gap_vector,
-              best_vector);
+          for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
+            local_sw_score_main_segment<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment,
+                v_h,
+                v_f,
+                gap_vector,
+                zero_vector,
+                best_vector);
+            local_sw_score_main_segment<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment + 1U,
+                v_h,
+                v_f,
+                gap_vector,
+                zero_vector,
+                best_vector);
+            local_sw_score_main_segment<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment + 2U,
+                v_h,
+                v_f,
+                gap_vector,
+                zero_vector,
+                best_vector);
+            local_sw_score_main_segment<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment + 3U,
+                v_h,
+                v_f,
+                gap_vector,
+                zero_vector,
+                best_vector);
+          }
         }
-      } else {
-        scan_local_linear_lazy_f_once<Ops, Cell>(
+      };
+
+  auto run_main_segments_corrected =
+      [&](Cell* h_store,
+          Cell* h_load,
+          const Cell* profile_row,
+          typename Ops::vector_type& v_h,
+          typename Ops::vector_type& v_f,
+          typename Ops::vector_type& pending_h) {
+        if (use_compact_loop) {
+          for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+            local_sw_score_main_segment_corrected<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment,
+                v_h,
+                v_f,
+                pending_h,
+                gap_vector,
+                zero_vector,
+                best_vector);
+          }
+        } else {
+          for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
+            local_sw_score_main_segment_corrected<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment,
+                v_h,
+                v_f,
+                pending_h,
+                gap_vector,
+                zero_vector,
+                best_vector);
+            local_sw_score_main_segment_corrected<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment + 1U,
+                v_h,
+                v_f,
+                pending_h,
+                gap_vector,
+                zero_vector,
+                best_vector);
+            local_sw_score_main_segment_corrected<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment + 2U,
+                v_h,
+                v_f,
+                pending_h,
+                gap_vector,
+                zero_vector,
+                best_vector);
+            local_sw_score_main_segment_corrected<Ops, Cell>(
+                h_store,
+                h_load,
+                e_store_data,
+                profile_row,
+                segment + 3U,
+                v_h,
+                v_f,
+                pending_h,
+                gap_vector,
+                zero_vector,
+                best_vector);
+          }
+        }
+      };
+
+  if (!use_deferred_correction) {
+    for (const auto profile_offset : state.target_profile_offsets) {
+      std::swap(h_store_data, h_load_data);
+
+      auto v_h = shift_left_zero<Ops, Cell>(
+          load_state_cells<Ops, Cell>(h_load_data + ((SegmentCount - 1U) * lane_count)));
+      auto v_f = zero_vector;
+      const Cell* profile_row = profile_data + profile_offset;
+      run_main_segments(h_store_data, h_load_data, profile_row, v_h, v_f);
+
+      // Unbounded lazy-F: one full segment pass after the log-step prefix
+      // carry. The old bounded early-exit is unsound (see known-issue doc).
+      v_f = local_lazy_f_prefix_carry<Ops, Cell>(v_f, SegmentCount, state.gap_score);
+      if (any_greater<Ops, Cell>(v_f, zero_vector)) {
+        // gap_score is always <= 0 on this exact-fill path (caller gate), so a
+        // propagated F cannot raise best above the main-pass values.
+        scan_local_linear_lazy_f_once<Ops, Cell, false>(
             h_store_data,
             SegmentCount,
             v_f,
             gap_vector,
             best_vector);
       }
+    }
+
+    return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
+  }
+
+  auto pending_f = zero_vector;
+  bool has_pending_f = false;
+
+  for (const auto profile_offset : state.target_profile_offsets) {
+    std::swap(h_store_data, h_load_data);
+
+    auto v_f = zero_vector;
+    const Cell* profile_row = profile_data + profile_offset;
+
+    if (has_pending_f) {
+      auto pending_h = pending_f;
+      auto last_h = load_state_cells<Ops, Cell>(
+          h_load_data + ((SegmentCount - 1U) * lane_count));
+      last_h = Ops::max(last_h, Ops::add(pending_f, segment_tail_gap));
+      auto v_h = shift_left_zero<Ops, Cell>(last_h);
+      run_main_segments_corrected(
+          h_store_data,
+          h_load_data,
+          profile_row,
+          v_h,
+          v_f,
+          pending_h);
+    } else {
+      auto v_h = shift_left_zero<Ops, Cell>(
+          load_state_cells<Ops, Cell>(h_load_data + ((SegmentCount - 1U) * lane_count)));
+      run_main_segments(h_store_data, h_load_data, profile_row, v_h, v_f);
+    }
+
+    v_f = local_lazy_f_prefix_carry<Ops, Cell>(v_f, SegmentCount, state.gap_score);
+    has_pending_f = any_greater<Ops, Cell>(v_f, zero_vector);
+    pending_f = has_pending_f ? v_f : zero_vector;
+  }
+
+  if (has_pending_f) {
+    // Final column: fold pending F into best only (score-only; no next column).
+    auto pending_h = pending_f;
+    for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+      auto v_h = load_state_cells<Ops, Cell>(h_store_data + segment * lane_count);
+      best_vector = Ops::max(best_vector, Ops::max(v_h, pending_h));
+      pending_h = Ops::add(pending_h, gap_vector);
     }
   }
 
@@ -3635,8 +3873,15 @@ Score score_state(PreparedScoreState<Cell>& state) {
       // segment with smaller h must still receive the carried F -- so it
       // would under-propagate. The carry already collapsed the cross-lane
       // wavefront, so a single unbounded pass is exact and O(segment_count).
-      scan_local_linear_lazy_f_once<Ops, Cell>(
-          h_store_data, state.segment_count, v_f, gap_vector, best_vector);
+      // For gap <= 0 a propagated F cannot beat a main-pass H already
+      // recorded in best_vector, so skip the redundant best max.
+      if (state.gap_score <= 0) {
+        scan_local_linear_lazy_f_once<Ops, Cell, false>(
+            h_store_data, state.segment_count, v_f, gap_vector, best_vector);
+      } else {
+        scan_local_linear_lazy_f_once<Ops, Cell, true>(
+            h_store_data, state.segment_count, v_f, gap_vector, best_vector);
+      }
     }
   }
 

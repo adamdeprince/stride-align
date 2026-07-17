@@ -103,7 +103,7 @@ __m256i shift_left_insert(__m256i vector, __m256i inserted) {
 inline Score local_affine_score_exact_fill_i16_64(
     farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int16_t>& state,
     std::span<const std::size_t> target_profile_offsets) {
-  if (state.query_size != 1024U || state.segment_count != 64U ||
+  if (state.query_size != 64U * 16U || state.segment_count != 64U ||
       target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
       state.gap_extend_score > 0) {
     return 0;
@@ -204,7 +204,7 @@ inline Score local_affine_score_exact_fill_i16_64(
 inline Score local_affine_score_exact_fill_i32_128(
     farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
     std::span<const std::size_t> target_profile_offsets) {
-  if (state.query_size != 1024U || state.segment_count != 128U ||
+  if (state.query_size != 128U * 8U || state.segment_count != 128U ||
       target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
       state.gap_extend_score > 0) {
     return 0;

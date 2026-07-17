@@ -419,7 +419,8 @@ inline Score local_sw_score_exact_fill_i16_64(
   if (state.fast_score.has_value()) {
     return *state.fast_score;
   }
-  if (state.gap_score > 0 || state.query_size != 1024U || state.segment_count != 64U ||
+  // Exact-fill: 64 segments * 16 i16 lanes = 1024.
+  if (state.gap_score > 0 || state.query_size != 64U * 16U || state.segment_count != 64U ||
       state.target_profile_offsets.empty()) {
     return 0;
   }
@@ -444,23 +445,21 @@ inline Score local_sw_score_exact_fill_i16_64(
   __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
   __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
   const auto* profile_cells = state.profile.data();
-  constexpr std::size_t state_cells = 1024U;
-  constexpr std::size_t deferred_correction_min_profile_rows = 48U;
-  const bool use_bounded_correction =
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic ||
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded ||
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::compact;
   const bool use_compact_loop =
       state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic ||
       state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::compact;
+  // automatic uses the deferred lazy-F fold: correct, and the best-recovering
+  // correct strategy on AVX2 (the old alphabet-size >= 48 gate left small
+  // alphabets -- BLOSUM/DNA/text -- on the slower immediate path). The
+  // immediate/compact paths use the sound unbounded scan; the unsound bounded
+  // early-exit is never used (see docs/known-issue-bounded-lazy-f-scan.md).
   const bool use_deferred_correction =
       state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred ||
       state.kernel_strategy ==
           farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred_unroll4 ||
-      (state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic &&
-       state.profile.size() / state_cells >= deferred_correction_min_profile_rows);
+      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic;
 
-  if (!use_deferred_correction || use_bounded_correction) {
+  if (!use_deferred_correction) {
     for (const auto profile_offset : state.target_profile_offsets) {
       std::swap(h_store, h_load);
 
@@ -494,25 +493,11 @@ inline Score local_sw_score_exact_fill_i16_64(
           lane_gap_8,
           zero);
       if (_mm256_movemask_epi8(_mm256_cmpgt_epi16(v_f, zero)) != 0) {
-        if (use_bounded_correction) {
-          if (use_compact_loop) {
-            for (std::size_t segment = 0; segment < 64U; ++segment) {
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment);
-            }
-          } else {
-            for (std::size_t segment = 0; segment < 64U; segment += 8U) {
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 1U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 2U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 3U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 4U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 5U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 6U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED(segment + 7U);
-            }
+        // Unbounded H-only scan (gap <= 0 on this path; best already tracked).
+        if (use_compact_loop) {
+          for (std::size_t segment = 0; segment < 64U; ++segment) {
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment);
           }
-stride_align_avx2_local_sw_i16_bounded_scan_done:
-          ;
         } else {
           for (std::size_t segment = 0; segment < 64U; segment += 8U) {
             STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN(segment);
@@ -679,7 +664,8 @@ inline Score local_sw_score_exact_fill_i32_128(
   if (state.fast_score.has_value()) {
     return *state.fast_score;
   }
-  if (state.gap_score > 0 || state.query_size != 1024U || state.segment_count != 128U ||
+  // Exact-fill: 128 segments * 8 i32 lanes = 1024.
+  if (state.gap_score > 0 || state.query_size != 128U * 8U || state.segment_count != 128U ||
       state.target_profile_offsets.empty()) {
     return 0;
   }
@@ -702,25 +688,19 @@ inline Score local_sw_score_exact_fill_i32_128(
   __m256i* h_load = reinterpret_cast<__m256i*>(state.h_load.data());
   __m256i* e_store = reinterpret_cast<__m256i*>(state.e_store.data());
   const auto* profile_cells = state.profile.data();
-  const bool use_bounded_correction =
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic ||
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded ||
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded_unroll4 ||
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::compact;
-  const bool use_bounded_unroll4 =
-      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded_unroll4;
   const bool use_compact_loop =
       state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic ||
       state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::compact;
   const bool use_deferred_correction =
       state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred ||
       state.kernel_strategy ==
-          farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred_unroll4;
+          farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred_unroll4 ||
+      state.kernel_strategy == farrar_fixed_kernel::detail::ScoreKernelStrategy::automatic;
   const bool use_deferred_unroll4 =
       state.kernel_strategy ==
       farrar_fixed_kernel::detail::ScoreKernelStrategy::deferred_unroll4;
 
-  if (!use_deferred_correction || use_bounded_correction) {
+  if (!use_deferred_correction) {
     for (const auto profile_offset : state.target_profile_offsets) {
       std::swap(h_store, h_load);
 
@@ -732,13 +712,6 @@ inline Score local_sw_score_exact_fill_i32_128(
       if (use_compact_loop) {
         for (std::size_t segment = 0; segment < 128U; ++segment) {
           STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment);
-        }
-      } else if (use_bounded_unroll4) {
-        for (std::size_t segment = 0; segment < 128U; segment += 4U) {
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 1U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 2U);
-          STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP(segment + 3U);
         }
       } else {
         for (std::size_t segment = 0; segment < 128U; segment += 8U) {
@@ -760,32 +733,10 @@ inline Score local_sw_score_exact_fill_i32_128(
           lane_gap_4,
           zero);
       if (_mm256_movemask_epi8(_mm256_cmpgt_epi32(v_f, zero)) != 0) {
-        if (use_bounded_correction) {
-          if (use_compact_loop) {
-            for (std::size_t segment = 0; segment < 128U; ++segment) {
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment);
-            }
-          } else if (use_bounded_unroll4) {
-            for (std::size_t segment = 0; segment < 128U; segment += 4U) {
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 1U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 2U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 3U);
-            }
-          } else {
-            for (std::size_t segment = 0; segment < 128U; segment += 8U) {
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 1U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 2U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 3U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 4U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 5U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 6U);
-              STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED(segment + 7U);
-            }
+        if (use_compact_loop) {
+          for (std::size_t segment = 0; segment < 128U; ++segment) {
+            STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment);
           }
-stride_align_avx2_local_sw_i32_bounded_scan_done:
-          ;
         } else {
           for (std::size_t segment = 0; segment < 128U; segment += 8U) {
             STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN(segment);
@@ -903,7 +854,7 @@ stride_align_avx2_local_sw_i32_bounded_scan_done:
 inline Score local_affine_score_exact_fill_i32_128(
     farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
     std::span<const std::size_t> target_profile_offsets) {
-  if (state.query_size != 1024U || state.segment_count != 128U ||
+  if (state.query_size != 128U * 8U || state.segment_count != 128U ||
       target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
       state.gap_extend_score > 0) {
     return 0;

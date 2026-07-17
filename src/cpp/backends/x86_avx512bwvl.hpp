@@ -212,7 +212,7 @@ inline __m512i global_lazy_f_prefix_carry_512(
 inline Score local_affine_score_exact_fill_i32_64(
     farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
     std::span<const std::size_t> target_profile_offsets) {
-  if (state.query_size != 1024U || state.segment_count != 64U ||
+  if (state.query_size != 64U * 16U || state.segment_count != 64U ||
       target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
       state.gap_extend_score > 0) {
     return 0;

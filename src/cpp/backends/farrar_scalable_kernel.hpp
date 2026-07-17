@@ -623,6 +623,26 @@ void scan_lazy_f(
   }
 }
 
+// Parasail-style H-only lazy-F correction for local affine score-only when
+// gap_open <= gap_extend <= 0. Mirrors farrar_fixed_kernel::scan_lazy_f_h_only.
+template <typename Ops, typename Cell>
+void scan_lazy_f_h_only(
+    Cell* h_store_data,
+    std::size_t segment_count,
+    std::size_t lane_count,
+    typename Ops::vector_type& v_f,
+    typename Ops::vector_type gap_extend_vector,
+    typename Ops::vector_type& best_vector) {
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    Cell* h_store_segment = h_store_data + segment * lane_count;
+    auto v_h = Ops::load_cells(h_store_segment, lane_count);
+    v_h = Ops::max(v_h, v_f, lane_count);
+    Ops::store_cells(h_store_segment, v_h, lane_count);
+    best_vector = Ops::max(best_vector, v_h, lane_count);
+    v_f = Ops::add(v_f, gap_extend_vector, lane_count);
+  }
+}
+
 // Single-pass NW affine lazy-F propagation, sentinel-aware. Mirrors
 // farrar_fixed_kernel::scan_global_lazy_f.
 template <typename Ops, typename Cell>
@@ -670,32 +690,34 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
     return 0;
   }
 
-  // Specialized exact-fill fast paths for query_size=1024. The English and
-  // Chinese benchmark passes default to length=1024, so this is the hot
-  // shape for affine sw-farrar-score. Mirrors the equivalent dispatch in
-  // farrar_fixed_kernel::affine_score_state_for_offsets.
-  if constexpr (requires {
-                  Ops::local_affine_score_exact_segment256_raw(
-                      state,
-                      std::span<const std::size_t>(state.target_profile_offsets));
-                }) {
-    if (state.query_size == 1024U && state.segment_count == 256U &&
-        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
-      return Ops::local_affine_score_exact_segment256_raw(
-          state,
-          std::span<const std::size_t>(state.target_profile_offsets));
+  // Specialized exact-fill fast paths: query fills every striped lane
+  // (query_size == segment_count * lane_count). Historically hard-coded to
+  // 1024, which is that product for the specialized widths.
+  const bool exact_fill_query =
+      state.query_size == state.segment_count * lane_count;
+  if (exact_fill_query && state.gap_open_score <= state.gap_extend_score &&
+      state.gap_extend_score <= 0) {
+    if constexpr (requires {
+                    Ops::local_affine_score_exact_segment256_raw(
+                        state,
+                        std::span<const std::size_t>(state.target_profile_offsets));
+                  }) {
+      if (state.segment_count == 256U) {
+        return Ops::local_affine_score_exact_segment256_raw(
+            state,
+            std::span<const std::size_t>(state.target_profile_offsets));
+      }
     }
-  }
-  if constexpr (requires {
-                  Ops::local_affine_score_exact_segment128_raw(
-                      state,
-                      std::span<const std::size_t>(state.target_profile_offsets));
-                }) {
-    if (state.query_size == 1024U && state.segment_count == 128U &&
-        state.gap_open_score <= state.gap_extend_score && state.gap_extend_score <= 0) {
-      return Ops::local_affine_score_exact_segment128_raw(
-          state,
-          std::span<const std::size_t>(state.target_profile_offsets));
+    if constexpr (requires {
+                    Ops::local_affine_score_exact_segment128_raw(
+                        state,
+                        std::span<const std::size_t>(state.target_profile_offsets));
+                  }) {
+      if (state.segment_count == 128U) {
+        return Ops::local_affine_score_exact_segment128_raw(
+            state,
+            std::span<const std::size_t>(state.target_profile_offsets));
+      }
     }
   }
 
@@ -767,13 +789,11 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
             state.segment_count,
             state.gap_extend_score);
         if (any_greater<Ops, Cell>(v_f, zero_vector, lane_count)) {
-          scan_lazy_f<Ops, Cell>(
+          scan_lazy_f_h_only<Ops, Cell>(
               h_store_data,
-              e_store_data,
               state.segment_count,
               lane_count,
               v_f,
-              gap_open_vector,
               gap_extend_vector,
               best_vector);
         }
@@ -783,15 +803,37 @@ Score affine_score_state(PreparedAffineScoreState<Cell>& state) {
 
     for (std::size_t iteration = 0; iteration < lane_count; ++iteration) {
       v_f = shift_left_zero<Ops, Cell>(v_f, lane_count);
-      update_lazy_f<Ops, Cell>(
-          h_store_data,
-          e_store_data,
-          state.segment_count,
-          lane_count,
-          v_f,
-          gap_open_vector,
-          gap_extend_vector,
-          best_vector);
+      bool propagated = false;
+      for (std::size_t segment = 0; segment < state.segment_count; ++segment) {
+        Cell* h_store_segment = h_store_data + segment * lane_count;
+        Cell* e_segment = e_store_data + segment * lane_count;
+        const auto v_h_previous = Ops::load_cells(h_store_segment, lane_count);
+        const bool segment_propagated =
+            any_greater<Ops, Cell>(v_f, v_h_previous, lane_count);
+        auto v_h = Ops::max(v_h_previous, v_f, lane_count);
+        propagated = propagated || segment_propagated;
+        if (segment_propagated) {
+          Ops::store_cells(h_store_segment, v_h, lane_count);
+          best_vector = Ops::max(best_vector, v_h, lane_count);
+          const auto v_h_open = Ops::add(v_h, gap_open_vector, lane_count);
+          auto v_e = Ops::load_cells(e_segment, lane_count);
+          v_e = Ops::max(v_e, v_h_open, lane_count);
+          Ops::store_cells(e_segment, v_e, lane_count);
+          v_f = Ops::max(
+              Ops::add(v_f, gap_extend_vector, lane_count),
+              v_h_open,
+              lane_count);
+        } else {
+          const auto v_h_open = Ops::add(v_h, gap_open_vector, lane_count);
+          v_f = Ops::max(
+              Ops::add(v_f, gap_extend_vector, lane_count),
+              v_h_open,
+              lane_count);
+        }
+      }
+      if (!propagated) {
+        break;
+      }
       if (can_stop_lazy_f && !any_greater<Ops, Cell>(v_f, zero_vector, lane_count)) {
         break;
       }
@@ -835,7 +877,6 @@ Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
   const auto gap_open_vector = Ops::set1(state.gap_open_score, lane_count);
   const auto gap_extend_vector = Ops::set1(state.gap_extend_score, lane_count);
   const Cell low_score = std::numeric_limits<Cell>::lowest();
-  const bool can_stop_lazy_f = state.gap_open_score <= 0 && state.gap_extend_score <= 0;
   Cell* h_store_data = state.h_store.data();
   Cell* h_load_data = state.h_load.data();
   Cell* e_store_data = state.e_store.data();
@@ -962,7 +1003,7 @@ Score global_affine_score_state_impl(PreparedAffineScoreState<Cell>& state) {
             lane_count);
       }
 
-      if (can_stop_lazy_f && !propagated) {
+      if (!propagated) {
         break;
       }
     }

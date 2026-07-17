@@ -105,7 +105,7 @@ inline std::uint64_t lane_mask(uint64x2_t mask) noexcept {
 inline Score local_affine_score_exact_fill_i16_128(
     farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int16_t>& state,
     std::span<const std::size_t> target_profile_offsets) {
-  if (state.query_size != 1024U || state.segment_count != 128U ||
+  if (state.query_size != 128U * 8U || state.segment_count != 128U ||
       target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
       state.gap_extend_score > 0) {
     return 0;
@@ -201,7 +201,7 @@ inline Score local_affine_score_exact_fill_i16_128(
 inline Score local_affine_score_exact_fill_i32_256(
     farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
     std::span<const std::size_t> target_profile_offsets) {
-  if (state.query_size != 1024U || state.segment_count != 256U ||
+  if (state.query_size != 256U * 4U || state.segment_count != 256U ||
       target_profile_offsets.empty() || state.gap_open_score > state.gap_extend_score ||
       state.gap_extend_score > 0) {
     return 0;
