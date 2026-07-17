@@ -114,6 +114,39 @@ default corpus and correct on every counter-example.
 
 ---
 
+## 3. parasail striped SW — same bug upstream, and the correctness fix regresses *its* performance
+
+The identical unsound lazy-F early-exit exists in upstream parasail's striped SW
+(every `src/sw_striped_*.c`; AVX2-16 is `sw_striped_avx2_256_16.c:331`,
+`if (! _mm256_movemask_epi8(_mm256_cmpgt_epi16(vF, vH))) goto end;`). It was
+located, patched and **validated** in a fork (`adamdeprince/parasail`, branch
+`fix-striped-lazy-f-early-exit`): the patched `sw_striped_avx2_256_16` now
+returns the correct optimum on the five counter-examples (was
+3310/4897/2601/2986/4463 → now 3320/4907/2628/3010/4480, matching `sw_scan`).
+Bundle in `~`: `parasail_bug_note.md`, `parasail_bug_repro.py`,
+`parasail_bug_examples.fasta`.
+
+**Why it isn't PR-ready yet.** The validated patch simply *removes* the
+early-exit, so the lazy-F loop always runs the full `k < segWidth` pass instead
+of bailing after 1–2 iterations. On the common case (F does not travel far)
+that's a real slowdown, and upstream will not take a perf regression to fix a
+rare mis-score. **This is the blocker to fix.**
+
+**Fix direction — sound AND fast (do this instead of just deleting the exit).**
+Port stride-align's **deferred** correction: fold the F contribution into the
+next column rather than guessing when to stop. It is exact and costs only ~3% on
+AVX2 vs the unsound exit (stride-align reference:
+`score_state_exact_fill_local_sw`, `src/cpp/backends/farrar_fixed_kernel.hpp:3485`;
+deferred branch at `:3675`). Alternative: a sound early-exit bounded by
+`ceil(max_lane(v_f)/|gap|)` segments (`scan_local_linear_lazy_f_once`,
+`:1751–1763`). **Caveat:** on AVX-512 the deferred fold does *not* recover the
+speed — that's item 2's open problem — so a fully-general parasail fix inherits
+item 2; but for the AVX2 striped variants deferred is enough to avoid a
+regression. Measure the regression by benching `parasail_sw_striped_avx2_256_16`
+on random length-1024 inputs (the common case): unpatched vs patched vs deferred.
+
+---
+
 ## How to measure (native microbench)
 
 ```bash
@@ -136,3 +169,95 @@ Python-level `smith_waterman_farrar_scores` batch timing). For AVX-512 use
 `--backend avx512bwvl`. Strategy A/B on the linear path: `--sw-farrar-i32-strategy
 bounded|deferred|materialized|auto` (incumbent binary has a real `bounded`; the
 fixed binary deprecates it to the unbounded scan).
+
+## Operational details — the exact scripts I ran on naamah (AVX2)
+
+**Host roles.** `naamah` = AVX2 (AMD, no AVX-512). `avx10` = AVX-512 (`--backend
+avx512bwvl`). local Apple M4 = `neon`. `loongson` = LASX (loongarch64, **no
+native microbench**). Incumbent baseline = commit `5573936`; "fixed" = `main`.
+
+### Build both microbenches (incumbent 5573936 vs fixed working tree)
+```bash
+# a uv venv with cmake+nanobind (created earlier); any cmake+nanobind works
+CM=/tmp/lazyf_hunt/venv/bin/cmake; PY=/tmp/lazyf_hunt/venv/bin/python
+ND="$("$PY" -m nanobind --cmake_dir)"
+build(){ "$CM" -S "$1" -B "$1/build/perf" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DSTRIDE_ALIGN_BUILD_MICROBENCH=ON -DPython_EXECUTABLE="$PY" -Dnanobind_DIR="$ND"
+  "$CM" --build "$1/build/perf" --target stride_align_x86_microbench -j; }
+
+# incumbent worktree (hooksPath=/dev/null skips the LFS post-checkout hook)
+git -C <repo> -c core.hooksPath=/dev/null worktree add -f /tmp/sa-inc 5573936
+build /tmp/sa-inc
+# fixed = a copy of the incumbent tree with the fixed src OVERLAID
+rsync -a --exclude=build --exclude=.git /tmp/sa-inc/ /tmp/sa-fixed/
+# (rsync'd from the mac first: <repo>/src/cpp -> /tmp/fixsrc/cpp, <repo>/include -> /tmp/fixsrc/include)
+rsync -a /tmp/fixsrc/cpp/ /tmp/sa-fixed/src/cpp/ ; rsync -a /tmp/fixsrc/include/ /tmp/sa-fixed/include/
+build /tmp/sa-fixed
+# INC=/tmp/sa-inc/build/perf/stride_align_x86_microbench
+# FIX=/tmp/sa-fixed/build/perf/stride_align_x86_microbench
+```
+
+### The A/B sweep + strategy-spread (`bench_ab.sh`, run verbatim on naamah)
+```bash
+#!/usr/bin/env bash
+set -u
+INC=/tmp/lazyf_hunt/incumbent/build/perf/stride_align_x86_microbench
+FIX=/tmp/sa-fixed/build/perf/stride_align_x86_microbench
+CPU="${CPU:-3}"
+COMMON="--backend avx2 --shape 1:many --warmups 20 --samples 5 --iterations 300"
+cells(){ taskset -c "$CPU" "$1" $2 2>/dev/null | grep -oE 'cells_per_s=[0-9.e+]+' | head -1 | cut -d= -f2; }
+score(){ taskset -c "$CPU" "$1" $2 2>/dev/null | grep -oE 'score=[0-9-]+' | head -1 | cut -d= -f2; }
+ratio(){ awk -v a="$1" -v b="$2" 'BEGIN{ if(a+0>0) printf "%.3f", b/a; else printf "n/a" }'; }
+gc(){ awk -v x="$1" 'BEGIN{ printf "%.2f", x/1e9 }'; }
+# A: fixed-vs-incumbent throughput (auto strategy)
+for variant in sw-farrar-score sw-affine-farrar-score nw-affine-score; do
+  for w in 16 32; do for len in 512 1024 2048; do for pass in english chinese; do
+    base="$COMMON --variant $variant --width $w --length $len --pass $pass"
+    ci=$(cells "$INC" "$base"); cf=$(cells "$FIX" "$base"); : "${ci:=0}" "${cf:=0}"
+    printf "%-22s %2s %5s %-8s %9s %9s %6s\n" "$variant" "$w" "$len" "$pass" "$(gc $ci)" "$(gc $cf)" "$(ratio $ci $cf)"
+  done; done; done; echo "----"
+done
+# B: linear-SW correctness-cost strategy spread (incumbent has the real bounded)
+base="$COMMON --variant sw-farrar-score --width 16 --length 1024 --pass english"
+for strat in bounded deferred materialized auto; do
+  printf "  incumbent %-13s %9s Gc/s (score=%s)\n" "$strat" \
+    "$(gc "$(cells "$INC" "$base --sw-farrar-i32-strategy $strat")")" \
+    "$(score "$INC" "$base --sw-farrar-i32-strategy $strat")"
+done
+printf "  fixed     %-13s %9s Gc/s (score=%s)\n" auto \
+  "$(gc "$(cells "$FIX" "$base")")" "$(score "$FIX" "$base")"
+```
+
+### Item 1's isolating sweep (the affine dip is ONLY at len=1024)
+```bash
+for len in 768 896 960 1024 1088 1152 1280 1536 2048; do
+  b="--backend avx2 --variant sw-affine-farrar-score --shape 1:many --width 32 --length $len --pass english --warmups 20 --samples 5 --iterations 300"
+  echo "len=$len inc=$(taskset -c 3 $INC $b|grep -oE 'cells_per_s=[0-9.e+]+'|cut -d= -f2) fix=$(taskset -c 3 $FIX $b|grep -oE 'cells_per_s=[0-9.e+]+'|cut -d= -f2)"
+done
+```
+
+### parasail: build the fork + validate the striped fix (naamah, AVX2)
+```bash
+rsync -az --exclude=.git --exclude=build ~/dev/parasail/ naamah:/tmp/parasail-fork/
+cmake -S /tmp/parasail-fork -B /tmp/parasail-fork/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5   # old cmake_minimum_required needs this
+cmake --build /tmp/parasail-fork/build -j                     # NOTE: tests/test_verify_traces.c fails
+                                                              # to compile on strict gcc -- unrelated;
+                                                              # libparasail.so still builds fine
+LIB=$(find /tmp/parasail-fork/build -name 'libparasail.so*' | head -1)
+INC=$(dirname "$(find /tmp/parasail-fork -maxdepth 2 -name parasail.h | head -1)")
+gcc -O2 -mavx2 -I"$INC" /tmp/parasail-fork/validate_striped_fix.c "$LIB" -o /tmp/validate
+LD_LIBRARY_PATH=$(dirname "$LIB") /tmp/validate   # -> "VALIDATED: patched striped correct on all 5"
+```
+`validate_striped_fix.c` embeds the five pairs and calls the patched
+`parasail_sw_striped_avx2_256_16` vs `parasail_sw_scan_avx2_256_16`; regenerate
+it from `~/parasail_bug_examples.fasta`. Reuse the same harness (swap the striped
+call for a deferred variant) to bench the item-3 perf regression on random inputs.
+
+### loongson LASX (no native microbench → Python batch timing)
+Fixed side = `pip install` the released 0.6.0 old-world wheel; incumbent = build
+`5573936` with old-world GCC 15.2 (`CC=/opt/loongson-gcc-15.2.0/bin/gcc`,
+`CXX=.../g++`, `PATH` includes `/opt/loongson-cmake-4.3.2/bin`, backend deps
+offline from `/tmp/sa-bw`, venv `--system-site-packages` for numpy). Then time
+`smith_waterman_farrar_scores(q, [t]*8)` at len 1024 on each; the fixed/incumbent
+ratio is the LASX cost (~0%). Toolchain setup is in `tools/_build_loongson.sh`.
