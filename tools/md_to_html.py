@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""Convert every stride-align *.md file (including docs/) to themed HTML
-in the html/ tree. Preserves docs/ subdirectory layout. Handles the
-README language matrix via the LANGS table; everything else is rendered
-through a single generic builder."""
+"""Build the stride-align website into ``html/``.
+
+The editorial homepage is copied from ``website/``. Every Markdown file
+(including the root README language matrix and ``docs/``) is converted to
+themed long-form HTML alongside it.
+"""
 
 import html as _html
+import posixpath
 import re
-from pathlib import Path
+import shutil
+from pathlib import Path, PurePosixPath
 
 import markdown
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "html"
+WEBSITE = REPO / "website"
 OUT.mkdir(exist_ok=True)
 
-# Site theme ("Modern light"). Written verbatim to html/style.css by main()
-# so the whole site regenerates from this one tracked script (html/ itself
-# is git-ignored). Edit here to retheme.
+# Fallback documentation theme for source archives that omit website/docs.css.
+# Normal builds publish the shared Goblin-family theme from website/docs.css.
 STYLE = """\
 :root {
   --bg: #f1f5f9;
@@ -212,27 +216,37 @@ def readme_filename(suffix: str) -> str:
 
 
 def html_filename(suffix: str) -> str:
-    return "index.html" if not suffix else f"index.{suffix}.html"
+    return "README.html" if not suffix else f"README.{suffix}.html"
 
 
-def built_html_name(filename: str) -> str:
-    """The built .html name for a single source filename: a directory-index
-    README[.lang].md -> index[.lang].html, otherwise X.md -> X.html."""
-    for suffix, *_ in LANGS:
-        if filename == readme_filename(suffix):
-            return html_filename(suffix)
-    if filename.endswith(".md"):
-        return filename[:-3] + ".html"
-    return filename
+def built_markdown_relpath(md_relpath: PurePosixPath) -> PurePosixPath:
+    """Return the output path for a Markdown source path.
+
+    Root README translations are long-form pages named ``README*.html``.
+    Nested README files remain directory indexes, and every other Markdown
+    filename keeps its stem.
+    """
+    if md_relpath.parent == PurePosixPath("."):
+        for suffix, *_ in LANGS:
+            if md_relpath.name == readme_filename(suffix):
+                return PurePosixPath(html_filename(suffix))
+    if md_relpath.name == "README.md":
+        return md_relpath.parent / "index.html"
+    return md_relpath.with_suffix(".html")
 
 
-def built_link_target(target: str) -> str:
-    """Map a link target (possibly nested, possibly anchored) to its built
-    page, applying built_html_name to the last path component. Non-.md
-    targets (.txt, external URLs) pass through unchanged."""
+def built_link_target(target: str, *, source_relpath: PurePosixPath) -> str:
+    """Map a repo-relative Markdown link to the corresponding built page."""
     base, hashsep, anchor = target.partition("#")
-    head, slash, name = base.rpartition("/")
-    return head + slash + built_html_name(name) + (hashsep + anchor if hashsep else "")
+    if not base.endswith(".md") or "://" in base:
+        return target
+
+    source_dir = source_relpath.parent.as_posix()
+    resolved_source = PurePosixPath(posixpath.normpath(posixpath.join(source_dir, base)))
+    resolved_output = built_markdown_relpath(resolved_source)
+    source_output_dir = built_markdown_relpath(source_relpath).parent.as_posix()
+    relative_output = posixpath.relpath(resolved_output.as_posix(), start=source_output_dir)
+    return relative_output + (hashsep + anchor if hashsep else "")
 
 
 def render_md_to_html(md_text: str) -> str:
@@ -248,12 +262,13 @@ def render_md_to_html(md_text: str) -> str:
     return body
 
 
-def rewrite_local_links(html_body: str, *, is_readme: bool) -> str:
+def rewrite_local_links(html_body: str, *, source_relpath: PurePosixPath) -> str:
     # Rewrite .md links to the built .html so converted pages cross-link
-    # correctly. Directory READMEs map to index.html (README.md -> index.html,
-    # docs/api/README.md -> docs/api/index.html); BENCHMARK.md -> BENCHMARK.html.
+    # correctly. The root README maps to README.html, directory READMEs map
+    # to index.html, and BENCHMARK.md maps to BENCHMARK.html.
     def replace(match: re.Match) -> str:
-        return f'{match.group(1)}{built_link_target(match.group(2))}"'
+        target = built_link_target(match.group(2), source_relpath=source_relpath)
+        return f'{match.group(1)}{target}"'
 
     html_body = re.sub(r'(href=")([^"]+\.md(?:#[^"]*)?)"', replace, html_body)
 
@@ -272,11 +287,13 @@ def rewrite_local_links(html_body: str, *, is_readme: bool) -> str:
 def rewrite_llms_md_links(text: str) -> str:
     """Rewrite Markdown link targets in the llms*.txt files from their
     repo-relative .md sources to the .html pages this build produces, so the
-    copies served on the website resolve. README*.md maps to index*.html
-    (the README's built filename), everything else .md -> .html. The repo
+    copies served on the website resolve. Root README*.md maps to
+    README*.html, nested README.md maps to index.html, and everything else
+    maps from .md to .html. The repo
     copies keep their .md links (correct for GitHub / source consumption)."""
     return re.sub(r"(\]\()([^)\s]+)(\))",
-                  lambda m: m.group(1) + built_link_target(m.group(2)) + m.group(3),
+                  lambda m: m.group(1) + built_link_target(
+                      m.group(2), source_relpath=PurePosixPath("llms.txt")) + m.group(3),
                   text)
 
 
@@ -339,12 +356,13 @@ def template(
 <link rel="manifest" href="{asset_prefix}site.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{asset_prefix}style.css">
 </head>
 <body>
 <div class="page">
 <header class="masthead">
+<a class="masthead-product" href="https://goblinreactor.com" rel="noopener"><span class="docs-mascot" aria-hidden="true"><img src="{asset_prefix}goblin.png" alt=""></span><span>A Goblin Reactor product</span><b>↗</b></a>
 <h1>{_html.escape(masthead_title)}</h1>
 <p class="tagline">{tagline}</p>
 </header>
@@ -372,7 +390,8 @@ def build_readme(suffix: str) -> None:
         return
     md_text = md_path.read_text(encoding="utf-8")
     body = render_md_to_html(md_text)
-    body = rewrite_local_links(body, is_readme=True)
+    body = rewrite_local_links(
+        body, source_relpath=PurePosixPath(readme_filename(suffix)))
     body, page_h1 = strip_top_h1_and_lang_line(body, suffix=suffix)
 
     lang = next(c for s, c, _n, _d in LANGS if s == suffix)
@@ -394,7 +413,7 @@ def build_readme(suffix: str) -> None:
         tagline=tagline,
         nav_inner=nav,
         content=body.rstrip(),
-        home_link="",
+        home_link='<a class="home" href="index.html">Home</a>',
     )
     out_path = OUT / html_filename(suffix)
     out_path.write_text(out_html, encoding="utf-8")
@@ -405,7 +424,8 @@ def build_benchmark() -> None:
     md_path = REPO / "BENCHMARK.md"
     md_text = md_path.read_text(encoding="utf-8")
     body = render_md_to_html(md_text)
-    body = rewrite_local_links(body, is_readme=False)
+    body = rewrite_local_links(
+        body, source_relpath=PurePosixPath("BENCHMARK.md"))
     body, page_h1 = strip_top_h1_and_lang_line(body, suffix="")
 
     out_html = template(
@@ -416,7 +436,7 @@ def build_benchmark() -> None:
         tagline="Cross-architecture performance: Intel x86, ARM, Loongson, Power",
         nav_inner="",
         content=body.rstrip(),
-        home_link='<a class="home" href="index.html">README</a>',
+        home_link='<a class="home" href="index.html">Home</a>',
     )
     out_path = OUT / "BENCHMARK.html"
     out_path.write_text(out_html, encoding="utf-8")
@@ -430,14 +450,15 @@ def build_generic(md_relpath: Path) -> None:
     md_path = REPO / md_relpath
     md_text = md_path.read_text(encoding="utf-8")
     body = render_md_to_html(md_text)
-    body = rewrite_local_links(body, is_readme=False)
+    md_posix = PurePosixPath(md_relpath.as_posix())
+    body = rewrite_local_links(body, source_relpath=md_posix)
     body, page_h1 = strip_top_h1_and_lang_line(body, suffix="")
 
     # Compute the page's relative depth so the `home` link can point back
     # to index.html with the correct number of `../` segments.
     depth = len(md_relpath.parent.parts)
     up = "../" * depth
-    home_link = f'<a class="home" href="{up}index.html">README</a>'
+    home_link = f'<a class="home" href="{up}index.html">Home</a>'
 
     # `lang` is en by default; if the filename matches a translation
     # suffix in LANGS, switch to that lang code.
@@ -462,17 +483,30 @@ def build_generic(md_relpath: Path) -> None:
         home_link=home_link,
         asset_prefix=up,
     )
-    out_path = OUT / md_relpath.parent / built_html_name(md_relpath.name)
+    out_path = OUT / Path(built_markdown_relpath(md_posix).as_posix())
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(out_html, encoding="utf-8")
     print(f"wrote {out_path}")
 
 
 def main() -> None:
-    # Site stylesheet (theme lives in STYLE above) — written into html/.
-    (OUT / "style.css").write_text(STYLE, encoding="utf-8")
-    print(f"wrote {OUT / 'style.css'}")
-    # README language matrix → index*.html
+    # The product homepage is deliberately authored rather than generated
+    # from the README. Keep source assets outside html/, which is build output.
+    for name in ("index.html", "index.zh-CN.html", "home.css", "goblin.png"):
+        source = WEBSITE / name
+        if not source.exists():
+            raise FileNotFoundError(f"missing homepage source: {source}")
+        shutil.copyfile(source, OUT / name)
+        print(f"copied {source} -> {OUT / name}")
+
+    docs_style = WEBSITE / "docs.css"
+    if docs_style.exists():
+        shutil.copyfile(docs_style, OUT / "style.css")
+        print(f"copied {docs_style} -> {OUT / 'style.css'}")
+    else:
+        (OUT / "style.css").write_text(STYLE, encoding="utf-8")
+        print(f"wrote fallback {OUT / 'style.css'}")
+    # README language matrix → README*.html
     for suffix, *_ in LANGS:
         build_readme(suffix)
     # BENCHMARK has its own bespoke builder (different tagline, home link).
@@ -494,6 +528,22 @@ def main() -> None:
             continue
         rel = md.relative_to(REPO)
         build_generic(rel)
+
+    # Publish the raw benchmark ledger and dated artifacts referenced by the
+    # generated benchmark documentation. These are small evidence files, not
+    # build intermediates.
+    benchmark_sources = [REPO / "benchmark.csv"]
+    benchmark_dir = REPO / "benchmarks"
+    for pattern in ("*.csv", "*.txt", "*.json"):
+        benchmark_sources.extend(sorted(benchmark_dir.glob(pattern)))
+    for src in benchmark_sources:
+        if not src.exists():
+            continue
+        rel = src.relative_to(REPO)
+        dst = OUT / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        print(f"copied benchmark data {rel}")
 
     # Copy the LLM context files verbatim into the site so they are served
     # (and discoverable) at stride-align.com/llms.txt and /llms-full.txt.

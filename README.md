@@ -331,8 +331,11 @@ CIGAR-style summaries where available.
 | [`docs/loongson-build.md`](docs/loongson-build.md) | LoongArch packagers | dual-toolchain (old-world / new-world) build recipe |
 
 Both READMEs and every markdown file in the repo are rendered to
-HTML by [`tools/md_to_html.py`](tools/md_to_html.py); the generated
-site lives in [`html/`](html/) and is mirrored at
+HTML by [`tools/md_to_html.py`](https://github.com/adamdeprince/stride-align/blob/main/tools/md_to_html.py). The long-form
+English README is published as `README.html`; the English and Simplified
+Chinese product homepages are authored under [`website/`](https://github.com/adamdeprince/stride-align/tree/main/website) and
+published as `index.html` and `index.zh-CN.html`.
+The generated site lives in [`html/`](https://github.com/adamdeprince/stride-align/tree/main/html) and is mirrored at
 [stride-align.com](https://stride-align.com).
 
 ## API quick-start
@@ -1025,6 +1028,27 @@ See [BENCHMARK.md](https://stride-align.com/BENCHMARK.html) for full cross-archi
 Careful attention has been, and continues to be, paid to `stride-align`'s
 performance story. The library includes SIMD optimization for a variety of
 common targets, including x86, Arm, and LoongArch.
+
+**Intel AVX-512 versus Parasail (2026-07-18).** The current pinned sweep ran
+on a Granite Rapids Xeon 6975P-C with GCC 16.1 and Parasail 1.3.4. It covers
+80 directly comparable combinations: English and Chinese inputs, linear and
+affine gaps, 16- and 32-bit score widths, `1:1` and `1:many` shapes, and seven
+score/path/CIGAR variants. Ratios are Parasail median runtime divided by
+stride-align median runtime, so values above 1 mean stride-align is faster.
+
+| AVX-512 group | Rows won | Geomean | Median |
+| --- | ---: | ---: | ---: |
+| Overall | **79 / 80** | **1.682x** | 1.656x |
+| Score-only | **47 / 48** | **1.559x** | 1.558x |
+| Path / CIGAR | **32 / 32** | **1.883x** | 1.737x |
+
+The strongest variant geomeans are Needleman-Wunsch path at 2.356x,
+Needleman-Wunsch CIGAR at 2.341x, and Smith-Waterman score at 1.989x. The
+single losing AVX-512 row is Chinese, linear-gap, `1:1` Needleman-Wunsch
+score at width 16 (0.874x). The complete methodology, AVX2 comparison,
+per-variant tables, and five worst rows are in [BENCHMARK.md](BENCHMARK.md).
+The canonical raw data is [benchmark.csv](benchmark.csv), with an immutable
+[dated snapshot](benchmarks/intel-avx512-parasail-2026-07-18.csv).
 
 **rapidfuzz shim full-surface bench (v0.5.0).** Across 108 workloads
 covering every public entry point of `stride_align.rapidfuzz` (10

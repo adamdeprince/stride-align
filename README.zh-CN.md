@@ -538,6 +538,27 @@ LASX 后端在 T=0.99 下，让通常预期会领先的 Tiger Lake AVX-512
 `stride-align` 的性能一直被认真对待，而且仍在持续优化。这个库为
 x86、Arm、龙架构（LoongArch）等多个常见目标做了 SIMD 优化。
 
+**Intel AVX-512 对 Parasail（2026-07-18）。** 当前固定核基准运行在
+Granite Rapids Xeon 6975P-C 上，使用 GCC 16.1 与 Parasail 1.3.4。
+80 个可直接比较的组合覆盖英文和中文输入、线性和仿射空位、16/32
+位得分宽度、`1:1` 和 `1:many` 两种形状，以及七种评分、路径和
+CIGAR 变体。比值为 Parasail 中位运行时间除以 stride-align 中位
+运行时间，因此大于 1 表示 stride-align 更快。
+
+| AVX-512 分组 | 胜出项 | 几何平均值 | 中位数 |
+| --- | ---: | ---: | ---: |
+| 全部 | **79 / 80** | **1.682x** | 1.656x |
+| 仅评分 | **47 / 48** | **1.559x** | 1.558x |
+| 路径 / CIGAR | **32 / 32** | **1.883x** | 1.737x |
+
+表现最强的变体是 Needleman-Wunsch 路径（2.356x）、
+Needleman-Wunsch CIGAR（2.341x）和 Smith-Waterman 评分（1.989x）。
+AVX-512 唯一落后的项目是中文、线性空位、`1:1`、16 位宽度的
+Needleman-Wunsch 评分（0.874x）。完整方法、AVX2 对照、逐变体表格
+和最慢五项见 [BENCHMARK.md](BENCHMARK.md)。规范原始数据为
+[benchmark.csv](benchmark.csv)，并保留了不可变的
+[日期快照](benchmarks/intel-avx512-parasail-2026-07-18.csv)。
+
 **龙架构（LoongArch）/ 龙芯（Loongson）。** 龙芯的优化故事尤其
 值得一说：在基准用例下（英文文本、16 位得分宽度、仅得分的
 Smith-Waterman），LASX backend 比 generic backend 快 16 倍，

@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stride-align — SIMD string matching for Python</title>
+  <meta name="description" content="SIMD fuzzy matching and sequence alignment for Python with first-class CJK. UCS-2 and UCS-4 strings go straight to SIMD without a UTF-8 transcode.">
+  <meta name="theme-color" content="#b7f34a">
+  <meta property="og:title" content="stride-align — Make strings agree. Fast.">
+  <meta property="og:description" content="First-class CJK string alignment for Python. Native UCS-2 and UCS-4 objects go straight to SIMD on Intel and ARM without a UTF-8 detour.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="home.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="brand-area">
+      <a class="brand" href="index.html" aria-label="stride-align home">
+        <span class="mascot-mark" aria-hidden="true"><img src="goblin.png" alt=""></span>
+        <span>stride<span class="brand-dash">-</span>align</span>
+      </a>
+      <a class="product-credit" href="https://goblinreactor.com" rel="noopener">
+        <span class="product-long">A Goblin Reactor product</span><span class="product-short">Goblin Reactor</span><b>↗</b>
+      </a>
+    </div>
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a href="#uses">Use cases</a>
+      <a href="#performance">Performance</a>
+      <a href="docs/api/index.html">Docs</a>
+      <a href="README.html">Readme</a>
+    </nav>
+    <div class="header-actions">
+      <a class="language-cta" href="index.zh-CN.html" hreflang="zh-CN" lang="zh-CN">简体中文</a>
+      <a class="header-cta" href="https://github.com/adamdeprince/stride-align" rel="noopener">
+        GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span>SIMD STRING MATCHING</span> CJK WITHOUT UTF-8</p>
+        <h1>Make strings<br><em>agree.</em> Fast.</h1>
+        <p class="hero-lede">Fuzzy matching and sequence alignment with first-class CJK. Python’s UCS-2 and UCS-4 string objects go straight to SIMD—no UTF-8 representation, no transcoding detour.</p>
+        <div class="unicode-proof" aria-label="Native Python Unicode SIMD path">
+          <span>PYTHON STR</span><i>→</i><strong>UCS-2 / UCS-4</strong><i>→</i><b>SIMD</b>
+        </div>
+        <div class="hero-actions">
+          <a class="button button-dark" href="#install">Start building <span aria-hidden="true">→</span></a>
+          <a class="text-link" href="BENCHMARK.html">Read the numbers <span aria-hidden="true">↗</span></a>
+        </div>
+        <ul class="hero-meta" aria-label="Project details">
+          <li>Apache 2.0</li>
+          <li>Python 3.12+</li>
+          <li>Native UCS-2 / UCS-4 SIMD</li>
+        </ul>
+      </div>
+
+      <div class="hero-demo" aria-label="Example English string alignment">
+        <aside class="hero-benchmark" aria-label="Intel AVX-512 performance versus Parasail">
+          <p>INTEL / AVX-512 / AVX10 HOST / VS PARASAIL</p>
+          <div><strong>1.68<span>×</span></strong><small>overall geomean</small></div>
+          <div><strong>79<span>/80</span></strong><small>rows won</small></div>
+          <div><strong>1.88<span>×</span></strong><small>path + CIGAR</small></div>
+        </aside>
+        <div class="demo-topline">
+          <span>ENGLISH ALIGNMENT / LIVE KERNEL</span>
+          <span class="status"><i></i> MATCHED</span>
+        </div>
+        <div class="score-readout">
+          <span class="score-label">NORMALIZED SCORE</span>
+          <strong>0.9907</strong>
+        </div>
+        <div class="sequence-block">
+          <div class="sequence-label"><span>QUERY</span><span>56 chars</span></div>
+          <div class="sequence" aria-label="In the beginning God created the heavens and the earth">
+            <span>I</span><span>n</span><span>&nbsp;</span><span>t</span><span>h</span><span>e</span><span>&nbsp;</span><span>b</span><span>e</span><span>g</span><span>i</span><span>n</span><span>n</span><span>i</span><span>n</span><span>g</span><span class="ellipsis">···</span><span>h</span><span>e</span><span>a</span><span>v</span><span>e</span><span>n</span><span class="mismatch">s</span>
+          </div>
+          <div class="match-rail" aria-hidden="true">
+            <span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span class="rail-gap">···</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span class="mismatch-mark">×</span>
+          </div>
+          <div class="sequence target" aria-label="In the beginning God created the heaven and the earth">
+            <span>I</span><span>n</span><span>&nbsp;</span><span>t</span><span>h</span><span>e</span><span>&nbsp;</span><span>b</span><span>e</span><span>g</span><span>i</span><span>n</span><span>n</span><span>i</span><span>n</span><span>g</span><span class="ellipsis">···</span><span>h</span><span>e</span><span>a</span><span>v</span><span>e</span><span>n</span><span class="gap">–</span>
+          </div>
+          <div class="sequence-label sequence-label-bottom"><span>TARGET</span><span>55 chars</span></div>
+        </div>
+        <div class="kernel-line">
+          <span>KERNEL</span>
+          <strong>smith_waterman_normalized_score</strong>
+          <span class="simd-pill">AUTO SIMD</span>
+        </div>
+        <div class="demo-grid" aria-hidden="true"></div>
+      </div>
+
+      <div class="proof-strip" aria-label="Performance highlights">
+      <article>
+        <strong>1.68<span>×</span></strong>
+        <p>overall geomean vs Parasail<br><small>Intel / AVX-512 / 80 rows</small></p>
+      </article>
+      <article>
+        <strong>79<span>/80</span></strong>
+        <p>comparable rows won vs Parasail<br><small>Intel / AVX-512</small></p>
+      </article>
+      <article>
+        <strong>1.88<span>×</span></strong>
+        <p>path and CIGAR geomean<br><small>32/32 wins vs Parasail</small></p>
+      </article>
+      <article>
+        <strong>1.34<span>×</span></strong>
+        <p>full-surface geomean vs rapidfuzz<br><small>Apple M4 Max / NEON</small></p>
+      </article>
+      </div>
+    </section>
+
+    <section class="section uses" id="uses">
+      <div class="section-intro">
+        <p class="kicker">01 / WHAT IT DOES</p>
+        <h2>Stop assembling a string stack out of six libraries.</h2>
+        <p>Use the same fast, consistent API from typo-tolerant search to biological alignment. Batch paths prepare the query once, release the GIL, and keep the SIMD lanes busy.</p>
+      </div>
+
+      <div class="use-grid">
+        <article class="use-card use-card-featured">
+          <span class="card-number">01</span>
+          <div class="card-glyph glyph-search" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div>
+            <p class="card-label">SEARCH + MATCHING</p>
+            <h3>Find the right text even when the text is wrong.</h3>
+            <p>Score one query against a whole corpus for fuzzy search, spell correction, record linkage, deduplication, and entity resolution.</p>
+          </div>
+          <a href="docs/api/similarity.html" aria-label="Read similarity API documentation">Explore similarity <span>→</span></a>
+        </article>
+
+        <article class="use-card">
+          <span class="card-number">02</span>
+          <div>
+            <p class="card-label">SEQUENCE ALIGNMENT</p>
+            <h3>Local or global. Linear or affine gaps.</h3>
+            <p>Smith–Waterman and Needleman–Wunsch with score-only paths, traceback, CIGAR output, and built-in biological matrices.</p>
+          </div>
+          <a href="docs/api/alignment.html">Explore alignment <span>→</span></a>
+        </article>
+
+        <article class="use-card">
+          <span class="card-number">03</span>
+          <div>
+            <p class="card-label">NAMES + RECORDS</p>
+            <h3>Match how it sounds, not only how it is spelled.</h3>
+            <p>Soundex, Metaphone, NYSIIS, Caverphone, Cologne, Daitch–Mokotoff, and Beider–Morse live beside the distance functions.</p>
+          </div>
+          <a href="docs/api/phonetic.html">Explore phonetics <span>→</span></a>
+        </article>
+
+        <article class="use-card use-card-accent">
+          <span class="card-number">04</span>
+          <div>
+            <p class="card-label">TIME SERIES</p>
+            <h3>Align signals when time itself drifts.</h3>
+            <p>Dynamic Time Warping for audio, sensors, gestures, and financial series, with batched distances and optional Sakoe–Chiba bands.</p>
+          </div>
+          <a href="docs/api/dtw.html">Explore DTW <span>→</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="engine" id="engine">
+      <div class="engine-heading">
+        <p class="kicker kicker-light">02 / ONE ENGINE</p>
+        <h2>Write the obvious Python.<br><span>Let the dispatcher sweat.</span></h2>
+      </div>
+
+      <div class="dispatch-diagram" aria-label="Runtime CPU dispatch flow">
+        <div class="dispatch-source">
+          <span>YOUR CODE</span>
+          <code>import stride_align as sa</code>
+        </div>
+        <div class="dispatch-arrow" aria-hidden="true"><span></span><b>RUNTIME DISPATCH</b></div>
+        <div class="dispatch-targets">
+          <div><span>01</span><strong>x86</strong><small>AVX2 / AVX-512 / AVX10</small></div>
+          <div><span>02</span><strong>ARM</strong><small>NEON / SVE</small></div>
+          <div><span>03</span><strong>LoongArch</strong><small>LSX / LASX</small></div>
+          <div><span>04</span><strong>POWER</strong><small>VSX</small></div>
+          <div class="scalar"><span>05</span><strong>Scalar</strong><small>portable fallback</small></div>
+        </div>
+      </div>
+
+      <div class="engine-details">
+        <article>
+          <span>UNICODE WITHOUT THE DETOUR</span>
+          <h3>UCS-2 and UCS-4 are first-class SIMD targets.</h3>
+          <p>Developers do not have to encode Python strings into UTF-8 representations before alignment. Chinese, Japanese, Korean, Arabic, and emoji use direct UCS-1, UCS-2, or UCS-4 access and stay on the vectorized path.</p>
+        </article>
+        <article>
+          <span>ONE QUERY × MANY TARGETS</span>
+          <h3>Batch work is the primary path.</h3>
+          <p>Reuse the prepared query profile across candidate lists, or run full all-pairs <code>cdist</code> with thresholds, pruning, and per-query top-k.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="compat section">
+      <div class="compat-copy">
+        <p class="kicker">03 / MOVE EXISTING CODE</p>
+        <h2>One import away means one import away.</h2>
+        <p>Keep familiar APIs while moving the work onto stride-align’s kernels. Native code should use <code>stride_align</code> directly; existing code can take the short road.</p>
+        <a class="text-link text-link-dark" href="docs/api/index.html#compatibility-shims-migration-aids">See compatibility details <span aria-hidden="true">→</span></a>
+      </div>
+      <div class="import-stack" aria-label="Compatibility import examples">
+        <div class="code-window">
+          <div class="window-title"><span></span><span></span><span></span><b>migration.py</b></div>
+          <pre><code><span class="code-comment"># before</span>
+<span class="code-dim">import rapidfuzz</span>
+
+<span class="code-comment"># after</span>
+<span class="code-keyword">import</span> stride_align.rapidfuzz <span class="code-keyword">as</span> rapidfuzz</code></pre>
+        </div>
+        <div class="shim-list">
+          <span>rapidfuzz</span>
+          <span>TheFuzz</span>
+          <span>parasail</span>
+          <span>jellyfish</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="performance" id="performance">
+      <div class="performance-intro">
+        <p class="kicker">04 / PROOF, NOT VIBES</p>
+        <h2>Every fast claim comes with a workload.</h2>
+        <p>The benchmark suite spans architectures, algorithms, text types, score widths, and comparison libraries. Reports include the context behind the headline, including regressions and correctness tradeoffs.</p>
+        <a class="button button-acid" href="BENCHMARK.html">Open benchmark ledger <span aria-hidden="true">↗</span></a>
+      </div>
+
+      <div class="benchmark-board">
+        <div class="board-header">
+          <span>INTEL X86 / AVX-512 VS PARASAIL</span>
+          <span>GEOMEAN · HIGHER IS BETTER</span>
+        </div>
+        <div class="benchmark-row">
+          <div><strong>NW path</strong><small>8 / 8 wins</small></div>
+          <div class="bar-track"><i style="--bar: 100%"></i></div>
+          <b>2.356×</b>
+        </div>
+        <div class="benchmark-row">
+          <div><strong>NW CIGAR</strong><small>8 / 8 wins</small></div>
+          <div class="bar-track"><i style="--bar: 99.4%"></i></div>
+          <b>2.341×</b>
+        </div>
+        <div class="benchmark-row">
+          <div><strong>SW score</strong><small>16 / 16 wins</small></div>
+          <div class="bar-track"><i style="--bar: 84.4%"></i></div>
+          <b>1.989×</b>
+        </div>
+        <div class="benchmark-row">
+          <div><strong>All workloads</strong><small>79 / 80 wins</small></div>
+          <div class="bar-track"><i style="--bar: 71.4%"></i></div>
+          <b>1.682×</b>
+        </div>
+        <p class="board-note">Fresh July 18 rerun; bars use a linear scale relative to NW path. The 80-row sweep covers English and Chinese, linear and affine scoring, 16- and 32-bit widths, and both 1:1 and 1:many shapes against Parasail 1.3.4.</p>
+
+        <aside class="architecture-aside" aria-labelledby="loongson-aside-title">
+          <p class="aside-kicker">ARCHITECTURE ASIDE / LOONGSON</p>
+          <h3 id="loongson-aside-title">Unusual hardware is welcome here.</h3>
+          <p>LoongArch is a supported target, with runtime dispatch across LSX and LASX plus old-world and new-world wheels. It is not the headline platform, but it is a useful demonstration that the portable backend strategy works.</p>
+          <div class="aside-stats">
+            <div><strong>49.17×</strong><span>rapidfuzz geomean<br>108 workloads / LASX</span></div>
+            <div><strong>22.4×</strong><span>Parasail<br>checked score-only SW case</span></div>
+            <div><strong>16×</strong><span>generic backend<br>same checked SW case</span></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="install section" id="install">
+      <div class="install-heading">
+        <p class="kicker">05 / START HERE</p>
+        <h2>From zero to matching in two lines.</h2>
+      </div>
+      <div class="install-panel">
+        <div class="terminal-line">
+          <span class="prompt">$</span>
+          <code>pip install stride-align</code>
+          <button class="copy-button" type="button" data-copy="pip install stride-align" aria-label="Copy install command">
+            <span class="copy-default">COPY</span><span class="copy-success">COPIED</span>
+          </button>
+        </div>
+        <div class="quick-code">
+          <pre><code><span class="code-keyword">import</span> stride_align <span class="code-keyword">as</span> sa
+
+score = sa.smith_waterman_normalized_score(
+    <span class="code-string">"In the beginning… the heavens and the earth."</span>,
+    <span class="code-string">"In the beginning… the heaven and the earth."</span>,
+)
+
+<span class="code-call">print</span>(score)  <span class="code-comment"># 0.9907407407407407</span></code></pre>
+        </div>
+      </div>
+      <div class="install-links">
+        <a href="README.html#getting-started"><span>01</span><strong>Read the tutorial</strong><i>→</i></a>
+        <a href="docs/api/index.html"><span>02</span><strong>Browse the API</strong><i>→</i></a>
+        <a href="README.html#loongarch-installation"><span>03</span><strong>Install on LoongArch</strong><i>→</i></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-brand">
+      <a class="brand brand-footer" href="index.html">
+        <span class="mascot-mark mascot-footer" aria-hidden="true"><img src="goblin.png" alt=""></span>
+        <span>stride<span class="brand-dash">-</span>align</span>
+      </a>
+      <p>More alignments per second.<br>Fewer reasons to add servers.</p>
+    </div>
+    <div class="footer-links">
+      <div>
+        <span>PROJECT</span>
+        <a href="README.html">Readme</a>
+        <a href="docs/api/index.html">API reference</a>
+        <a href="CHANGELOG.html">Changelog</a>
+      </div>
+      <div>
+        <span>PROOF</span>
+        <a href="BENCHMARK.html">Benchmarks</a>
+        <a href="https://github.com/adamdeprince/stride-align" rel="noopener">Source code ↗</a>
+        <a href="index.zh-CN.html" hreflang="zh-CN">简体中文</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>STRIDE-ALIGN / APACHE-2.0</span>
+      <span>Built by <a href="https://goblinreactor.com" rel="noopener">Goblin Reactor ↗</a></span>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var value = button.getAttribute('data-copy');
+        var copied = function () {
+          button.classList.add('is-copied');
+          window.setTimeout(function () { button.classList.remove('is-copied'); }, 1800);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(value).then(copied);
+          return;
+        }
+        var input = document.createElement('textarea');
+        input.value = value;
+        input.setAttribute('readonly', '');
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        input.remove();
+        copied();
+      });
+    });
+  </script>
+</body>
+</html>

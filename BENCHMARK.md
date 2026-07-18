@@ -20,8 +20,8 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 
 | Family | Best stride-align backend | Baseline | Rows | Geomean | Median | Worst | Best |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Intel x86 | `x86_avx512bwvl` | parasail | 80 | **1.677x** | 1.620x | 0.856x | 3.528x |
-| Intel x86 | `x86_avx2` | parasail | 80 | 1.325x | 1.223x | 0.532x | 3.483x |
+| Intel x86 | `x86_avx512bwvl` | parasail | 80 | **1.682x** | 1.656x | 0.874x | 3.629x |
+| Intel x86 | `x86_avx2` | parasail | 80 | 1.319x | 1.248x | 0.517x | 3.452x |
 | ARM Graviton4 (Linux) | `linux_aarch64_neon`/`asimd` | parasail | 80 | **1.138x** | 1.138x | 0.260x | 2.637x |
 | ARM Graviton4 (Linux) | `linux_aarch64_sve2` | parasail | 80 | 1.081x | 1.108x | 0.261x | 2.635x |
 | ARM Graviton4 (Linux) | `linux_aarch64_sve` | parasail | 80 | 1.042x | 1.101x | 0.259x | 2.647x |
@@ -67,16 +67,22 @@ ratio = baseline_median_seconds / stride_align_median_seconds
 > LoongArch rapidfuzz wheel exists), so its ratios are not comparable to
 > the rapidfuzz-baseline rows above.
 
-## Intel x86 - 2026-06-21
+## Intel x86 - 2026-07-18
 
-Raw artifact: [`benchmark.csv`](benchmark.csv).
+Raw artifacts: [`benchmark.csv`](benchmark.csv) is the current Intel sweep;
+[`benchmarks/intel-avx512-parasail-2026-07-18.csv`](benchmarks/intel-avx512-parasail-2026-07-18.csv)
+is the immutable dated snapshot of the same data.
 
-Build context: Intel Xeon 6975P-C (Granite Rapids, 4 vCPU on AWS), Python
-3.14 in the project virtualenv, host pinned with `taskset -c 2`, compiled
-with GCC 16.1, regenerated 2026-06-21. Parasail is the bundled
-`parasail==1.3.4` wheel. The CSV contains 320 data rows: English and Chinese
-workloads, linear and affine scoring, widths 16 and 32, `1:1` and `1:many`
-shapes, and `generic`/`x86_avx2`/`x86_avx512bwvl`/`parasail` backends.
+Build context: Intel Xeon 6975P-C (Granite Rapids, 4 vCPU on AWS host
+`avx10`), Python 3.14 in the project virtualenv, host pinned with
+`taskset -c 2`, compiled with GCC 16.1, regenerated 2026-07-18 after the
+0.6.0 striped SW kernel rework (affine prefix-lazy-F speedup + sound
+linear-SW lazy-F correction; see
+[`docs/known-issue-bounded-lazy-f-scan.md`](docs/known-issue-bounded-lazy-f-scan.md)).
+Parasail is the bundled `parasail==1.3.4` wheel. The CSV contains 320 data
+rows: English and Chinese workloads, linear and affine scoring, widths 16
+and 32, `1:1` and `1:many` shapes, and
+`generic`/`x86_avx2`/`x86_avx512bwvl`/`parasail` backends.
 `x86_avx512bwvl` is the auto-selected backend here; the AVX10.1 backends are
 de-selected because current GCC AVX10 codegen compiles the alignment kernels
 ~2x slower than the classic `avx512f/bw/vl` path (see `CMakeLists.txt`).
@@ -101,23 +107,23 @@ taskset -c 2 .venv/bin/python -m stride_align.benchmark \
 
 | Backend | Rows | Wins | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `x86_avx512bwvl` | 80 | 78 | 1.677x | 1.620x | 0.856x | 3.528x |
-| `x86_avx2` | 80 | 55 | 1.325x | 1.223x | 0.532x | 3.483x |
-| `generic` | 80 |  8 | 0.250x | 0.198x | 0.071x | 1.805x |
+| `x86_avx512bwvl` | 80 | 79 | 1.682x | 1.656x | 0.874x | 3.629x |
+| `x86_avx2` | 80 | 55 | 1.319x | 1.248x | 0.517x | 3.452x |
+| `generic` | 80 |  8 | 0.259x | 0.200x | 0.082x | 1.732x |
 
 Score-only rows (16 sw-farrar-score + 16 sw-score + 16 nw-score):
 
 | Backend | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `x86_avx512bwvl` | 48 | 47 | 1.564x | 1.475x |
-| `x86_avx2` | 48 | 29 | 1.147x | 1.109x |
+| `x86_avx512bwvl` | 48 | 47 | 1.559x | 1.558x |
+| `x86_avx2` | 48 | 29 | 1.159x | 1.189x |
 
 Path/CIGAR rows (8 each of sw-path-info, nw-path-info, sw-cigar, nw-cigar):
 
 | Backend | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `x86_avx512bwvl` | 32 | 31 | 1.862x | 1.751x |
-| `x86_avx2` | 32 | 26 | 1.644x | 1.672x |
+| `x86_avx512bwvl` | 32 | 32 | 1.883x | 1.737x |
+| `x86_avx2` | 32 | 26 | 1.601x | 1.602x |
 
 ### By variant
 
@@ -125,25 +131,25 @@ AVX512BWVL:
 
 | Variant | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `nw-path-info`    |  8 |  8 | 2.377x | 2.453x |
-| `nw-cigar`        |  8 |  8 | 2.362x | 2.495x |
-| `sw-score`        | 16 | 16 | 1.990x | 1.912x |
-| `sw-cigar`        |  8 |  8 | 1.468x | 1.507x |
-| `sw-path-info`    |  8 |  7 | 1.460x | 1.503x |
-| `nw-score`        | 16 | 15 | 1.396x | 1.433x |
-| `sw-farrar-score` | 16 | 16 | 1.378x | 1.281x |
+| `nw-path-info`    |  8 |  8 | 2.356x | 2.495x |
+| `nw-cigar`        |  8 |  8 | 2.341x | 2.472x |
+| `sw-score`        | 16 | 16 | 1.989x | 2.022x |
+| `sw-cigar`        |  8 |  8 | 1.511x | 1.550x |
+| `sw-path-info`    |  8 |  8 | 1.510x | 1.552x |
+| `nw-score`        | 16 | 15 | 1.409x | 1.454x |
+| `sw-farrar-score` | 16 | 16 | 1.353x | 1.118x |
 
 AVX2:
 
 | Variant | Rows | Wins | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
-| `nw-cigar`        |  8 |  8 | 2.325x | 2.388x |
-| `nw-path-info`    |  8 |  8 | 2.318x | 2.358x |
-| `sw-score`        | 16 | 16 | 1.573x | 1.473x |
-| `sw-cigar`        |  8 |  5 | 1.165x | 1.216x |
-| `sw-path-info`    |  8 |  5 | 1.163x | 1.211x |
-| `sw-farrar-score` | 16 |  5 | 1.015x | 0.994x |
-| `nw-score`        | 16 |  8 | 0.945x | 0.992x |
+| `nw-path-info`    |  8 |  8 | 2.266x | 2.317x |
+| `nw-cigar`        |  8 |  8 | 2.258x | 2.286x |
+| `sw-score`        | 16 | 16 | 1.579x | 1.631x |
+| `sw-path-info`    |  8 |  5 | 1.134x | 1.211x |
+| `sw-cigar`        |  8 |  5 | 1.131x | 1.208x |
+| `sw-farrar-score` | 16 |  6 | 1.041x | 0.885x |
+| `nw-score`        | 16 |  7 | 0.946x | 0.985x |
 
 ### Worst rows vs parasail
 
@@ -151,37 +157,41 @@ AVX512BWVL:
 
 | Ratio | Pass | Case | Shape | Variant | Width |
 | ---: | --- | --- | --- | --- | ---: |
-| 0.856x | chinese | linear | 1:1 | `nw-score`     | 16 |
-| 0.990x | chinese | linear | 1:1 | `sw-path-info` | 16 |
-| 1.004x | chinese | linear | 1:1 | `sw-cigar`     | 32 |
-| 1.007x | chinese | linear | 1:1 | `sw-path-info` | 32 |
-| 1.017x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
+| 0.874x | chinese | linear | 1:1 | `nw-score`         | 16 |
+| 1.015x | english | linear | 1:many | `sw-farrar-score` | 32 |
+| 1.032x | chinese | linear | 1:many | `sw-farrar-score` | 32 |
+| 1.035x | chinese | linear | 1:1 | `sw-farrar-score`   | 32 |
+| 1.036x | english | linear | 1:1 | `sw-farrar-score`   | 32 |
 
 AVX2:
 
 | Ratio | Pass | Case | Shape | Variant | Width |
 | ---: | --- | --- | --- | --- | ---: |
-| 0.532x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
-| 0.533x | chinese | linear | 1:1 | `sw-path-info` | 16 |
-| 0.663x | chinese | linear | 1:1 | `nw-score`     | 32 |
-| 0.721x | chinese | linear | 1:1 | `nw-score`     | 16 |
-| 0.748x | english | linear | 1:1 | `nw-score`     | 32 |
+| 0.517x | chinese | linear | 1:1 | `sw-path-info` | 16 |
+| 0.519x | chinese | linear | 1:1 | `sw-cigar`     | 16 |
+| 0.672x | chinese | linear | 1:1 | `nw-score`     | 32 |
+| 0.709x | chinese | linear | 1:1 | `nw-score`     | 16 |
+| 0.760x | english | linear | 1:1 | `nw-score`     | 32 |
 
 ### Takeaways
 
-AVX512BWVL is the strongest Intel backend, winning **78 of 80** comparable
-rows (47 of 48 score-only) at 1.677x parasail geomean. Only two short Chinese
-1:1 rows dip below parity — `nw-score` at 0.856x and `sw-path-info` at
-0.990x. AVX2 wins 55 of 80 at 1.325x geomean. Both backends beat parasail on
-every path/CIGAR variant by geomean; AVX2's remaining sub-parity rows are
-short linear Chinese 1:1 cigar/path-info and `nw-score`.
+AVX512BWVL is still the strongest Intel backend, winning **79 of 80**
+comparable rows (47 of 48 score-only) at **1.682x** parasail geomean.
+Path/CIGAR is a clean sweep (32/32, 1.883x geomean). The only sub-parity
+row is short Chinese linear `nw-score` at 0.874x. The linear
+`sw-farrar-score` cells now all sit above 1.0x despite the residual cost of
+the 0.6.0 sound lazy-F correction on AVX-512 (see
+[`TODO.md`](TODO.md) item 2 and the README kernel-update note). Affine and
+path/CIGAR variants are unaffected or improved. AVX2 wins 55 of 80 at
+1.319x geomean; its remaining sub-parity rows are short linear Chinese 1:1
+cigar/path-info and `nw-score`.
 
-This sweep ran on a Granite Rapids Xeon 6975P-C (4 vCPU, AWS) compiled with
-GCC 16.1. The `x86_avx10_512` / `x86_avx10_256` backends are **de-selected**:
-current GCC AVX10.1 target codegen compiles these striped SW/NW kernels ~2x
-slower than the classic `avx512f/bw/vl` backend on this hardware, so the
-dispatcher prefers `avx512bwvl` — which is also the fastest measured backend
-here. See the AVX10 note in `CMakeLists.txt`.
+This sweep ran on a Granite Rapids Xeon 6975P-C (4 vCPU, AWS host `avx10`)
+compiled with GCC 16.1. The `x86_avx10_512` / `x86_avx10_256` backends are
+**de-selected**: current GCC AVX10.1 target codegen compiles these striped
+SW/NW kernels ~2x slower than the classic `avx512f/bw/vl` backend on this
+hardware, so the dispatcher prefers `avx512bwvl` — which is also the fastest
+measured backend here. See the AVX10 note in `CMakeLists.txt`.
 
 `generic` is for correctness/baseline reference, not as a parasail competitor;
 it loses every score-only row, though a handful of linear NW path/CIGAR rows

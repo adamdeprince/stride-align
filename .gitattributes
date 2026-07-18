@@ -1,5 +1,8 @@
 fast.png filter=lfs diff=lfs merge=lfs -text
 
+# Website mascot artwork.
+website/goblin.png filter=lfs diff=lfs merge=lfs -text
+
 # Loongson / LoongArch64 wheels are served from html/wheels/ so the
 # stride-align.com mirror can serve them for users who can't reach
 # github.com. Each wheel is a multi-MB binary, tracked through git-lfs.
