@@ -9,10 +9,8 @@
   <meta property="og:title" content="stride-align — Make strings agree. Fast.">
   <meta property="og:description" content="First-class CJK string alignment for Python. Native UCS-2 and UCS-4 objects go straight to SIMD on Intel and ARM without a UTF-8 detour.">
   <meta property="og:type" content="website">
-  <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
-  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
-  <link rel="manifest" href="site.webmanifest">
+  <link rel="icon" type="image/png" href="goblin.png">
+  <link rel="apple-touch-icon" href="goblin.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
@@ -67,10 +65,11 @@
 
       <div class="hero-demo" aria-label="Example English string alignment">
         <aside class="hero-benchmark" aria-label="Intel AVX-512 performance versus Parasail">
-          <p>INTEL / AVX-512 / AVX10 HOST / VS PARASAIL</p>
+          <p>INTEL / AVX-512 / VS PARASAIL</p>
           <div><strong>1.68<span>×</span></strong><small>overall geomean</small></div>
           <div><strong>79<span>/80</span></strong><small>rows won</small></div>
           <div><strong>1.88<span>×</span></strong><small>path + CIGAR</small></div>
+          <div><strong>1.55<span>×</span></strong><small>CJK / Chinese text</small></div>
         </aside>
         <div class="demo-topline">
           <span>ENGLISH ALIGNMENT / LIVE KERNEL</span>
@@ -115,8 +114,8 @@
         <p>path and CIGAR geomean<br><small>32/32 wins vs Parasail</small></p>
       </article>
       <article>
-        <strong>1.34<span>×</span></strong>
-        <p>full-surface geomean vs rapidfuzz<br><small>Apple M4 Max / NEON</small></p>
+        <strong>1.55<span>×</span></strong>
+        <p>Chinese-text geomean vs Parasail<br><small>CJK / 39 of 40 rows won</small></p>
       </article>
       </div>
     </section>

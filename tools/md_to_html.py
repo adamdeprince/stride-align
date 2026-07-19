@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build the stride-align website into ``html/``.
+"""Build the stride-align documentation alongside its tracked homepage.
 
-The editorial homepage is copied from ``website/``. Every Markdown file
-(including the root README language matrix and ``docs/``) is converted to
-themed long-form HTML alongside it.
+``html/index.html`` is hand-authored and must never be overwritten here. The
+localized homepage and shared assets are copied from ``website/``. Every
+Markdown file (including the root README language matrix and ``docs/``) is
+converted to themed long-form HTML alongside them.
 """
 
 import html as _html
@@ -341,26 +342,26 @@ def template(
     content: str,
     home_link: str = "",
     asset_prefix: str = "",
+    page_class: str = "",
+    description: str = "SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW for Python.",
 ) -> str:
+    page_classes = "page" + (f" {_html.escape(page_class)}" if page_class else "")
     return f"""<!doctype html>
 <html lang="{lang}" dir="{direction}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_html.escape(title)}</title>
-<meta name="description" content="SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW for Python — a faster drop-in for rapidfuzz and parasail.">
-<link rel="icon" href="{asset_prefix}favicon.ico" sizes="any">
-<link rel="icon" type="image/png" href="{asset_prefix}favicon-32.png" sizes="32x32">
-<link rel="icon" type="image/png" href="{asset_prefix}favicon-16.png" sizes="16x16">
-<link rel="apple-touch-icon" href="{asset_prefix}apple-touch-icon.png" sizes="180x180">
-<link rel="manifest" href="{asset_prefix}site.webmanifest">
+<meta name="description" content="{_html.escape(description)}">
+<link rel="icon" type="image/png" href="{asset_prefix}goblin.png">
+<link rel="apple-touch-icon" href="{asset_prefix}goblin.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{asset_prefix}style.css">
 </head>
 <body>
-<div class="page">
+<div class="{page_classes}">
 <header class="masthead">
 <a class="masthead-product" href="https://goblinreactor.com" rel="noopener"><span class="docs-mascot" aria-hidden="true"><img src="{asset_prefix}goblin.png" alt=""></span><span>A Goblin Reactor product</span><b>↗</b></a>
 <h1>{_html.escape(masthead_title)}</h1>
@@ -433,10 +434,12 @@ def build_benchmark() -> None:
         lang="en",
         direction="ltr",
         masthead_title=page_h1 or "Benchmark Summary",
-        tagline="Cross-architecture performance: Intel x86, ARM, Loongson, Power",
+        tagline="Dated measurements, named baselines, raw receipts",
         nav_inner="",
         content=body.rstrip(),
         home_link='<a class="home" href="index.html">Home</a>',
+        page_class="benchmark-page",
+        description="Reproducible stride-align benchmarks with current Intel AVX-512 results, architecture references, methodology, and raw data.",
     )
     out_path = OUT / "BENCHMARK.html"
     out_path.write_text(out_html, encoding="utf-8")
@@ -490,9 +493,16 @@ def build_generic(md_relpath: Path) -> None:
 
 
 def main() -> None:
-    # The product homepage is deliberately authored rather than generated
-    # from the README. Keep source assets outside html/, which is build output.
-    for name in ("index.html", "index.zh-CN.html", "home.css", "goblin.png"):
+    # The English product homepage is a tracked, hand-authored file. The build
+    # must fail if it is missing and must never replace it with generated copy.
+    homepage = OUT / "index.html"
+    if not homepage.exists():
+        raise FileNotFoundError(f"missing tracked homepage: {homepage}")
+    print(f"preserved tracked homepage {homepage}")
+
+    # Localized content and shared assets remain source-controlled outside the
+    # otherwise-generated html/ tree and are refreshed on every build.
+    for name in ("index.zh-CN.html", "home.css", "goblin.png"):
         source = WEBSITE / name
         if not source.exists():
             raise FileNotFoundError(f"missing homepage source: {source}")

@@ -332,10 +332,11 @@ CIGAR-style summaries where available.
 
 Both READMEs and every markdown file in the repo are rendered to
 HTML by [`tools/md_to_html.py`](https://github.com/adamdeprince/stride-align/blob/main/tools/md_to_html.py). The long-form
-English README is published as `README.html`; the English and Simplified
-Chinese product homepages are authored under [`website/`](https://github.com/adamdeprince/stride-align/tree/main/website) and
-published as `index.html` and `index.zh-CN.html`.
-The generated site lives in [`html/`](https://github.com/adamdeprince/stride-align/tree/main/html) and is mirrored at
+English README is published as `README.html`. The tracked English product
+homepage is authored directly at [`html/index.html`](https://github.com/adamdeprince/stride-align/blob/main/html/index.html); the
+Simplified Chinese homepage and shared assets are authored under
+[`website/`](https://github.com/adamdeprince/stride-align/tree/main/website).
+The published site lives in [`html/`](https://github.com/adamdeprince/stride-align/tree/main/html) and is mirrored at
 [stride-align.com](https://stride-align.com).
 
 ## API quick-start

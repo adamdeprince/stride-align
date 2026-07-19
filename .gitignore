@@ -218,4 +218,5 @@ dist/
 # tracked in git. Exception: html/wheels/ holds the served LoongArch
 # release wheels (git-lfs), which are kept under version control.
 /html/*
+!/html/index.html
 !/html/wheels/

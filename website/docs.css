@@ -26,6 +26,7 @@ html {
 
 body {
   margin: 0;
+  overflow-x: hidden;
   color: var(--ink);
   background-color: var(--paper-deep);
   background-image:
@@ -58,6 +59,7 @@ a:focus-visible {
 
 .page {
   width: 1120px;
+  min-width: 0;
   max-width: calc(100% - 48px);
   margin: 28px auto;
   border: 1px solid var(--ink);
@@ -68,6 +70,7 @@ a:focus-visible {
 
 .masthead {
   position: relative;
+  min-width: 0;
   padding: 68px 70px 56px;
   color: var(--white);
   background: var(--ink);
@@ -159,9 +162,11 @@ a:focus-visible {
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
 .nav {
+  min-width: 0;
   min-height: 60px;
   display: flex;
   flex-wrap: wrap;
@@ -227,8 +232,86 @@ a:focus-visible {
 }
 
 .content {
+  min-width: 0;
   padding: 72px 76px 100px;
   background: var(--paper);
+}
+
+.benchmark-hero {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 42px;
+  border: 1px solid var(--ink);
+  background: var(--acid);
+}
+
+.benchmark-hero article {
+  min-width: 0;
+  min-height: 178px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 20px 18px 18px;
+}
+
+.benchmark-hero article + article {
+  border-left: 1px solid var(--ink);
+}
+
+.benchmark-hero span,
+.benchmark-hero small {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.benchmark-hero strong {
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: clamp(38px, 4vw, 58px);
+  font-weight: 400;
+  line-height: 0.86;
+  letter-spacing: -0.065em;
+  white-space: nowrap;
+}
+
+.benchmark-hero small {
+  max-width: 18ch;
+}
+
+.benchmark-page .content > p:first-of-type {
+  max-width: 76ch;
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.benchmark-note {
+  margin: 72px 0 34px;
+  padding: 24px 26px;
+  border: 1px solid var(--ink);
+  border-left: 8px solid var(--orange);
+  background: var(--paper-deep);
+}
+
+.benchmark-note strong {
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.benchmark-note p {
+  max-width: 78ch;
+  margin: 0;
+}
+
+.benchmark-page table a {
+  white-space: nowrap;
 }
 
 .content > :first-child {
@@ -302,6 +385,7 @@ h6 {
 
 p {
   margin: 0 0 17px;
+  overflow-wrap: anywhere;
 }
 
 ul,
@@ -538,7 +622,8 @@ img {
   .nav > a,
   .nav > a:first-child {
     min-height: 48px;
-    flex: 1;
+    min-width: 0;
+    flex: 1 1 0;
     justify-content: center;
     padding: 0 10px;
     border-top: 1px solid var(--ink);
@@ -560,6 +645,33 @@ img {
 
   .content {
     padding: 52px 22px 74px;
+    overflow: hidden;
+  }
+
+  .benchmark-hero {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-right: -22px;
+    margin-left: -22px;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .benchmark-hero article {
+    min-height: 142px;
+    padding: 15px 16px;
+  }
+
+  .benchmark-hero article:nth-child(3) {
+    border-top: 1px solid var(--ink);
+    border-left: 0;
+  }
+
+  .benchmark-hero article:nth-child(4) {
+    border-top: 1px solid var(--ink);
+  }
+
+  .benchmark-hero strong {
+    font-size: clamp(34px, 11vw, 48px);
   }
 
   .content h2 {

@@ -9,10 +9,8 @@
   <meta property="og:title" content="stride-align — 让字符串快速对齐">
   <meta property="og:description" content="CJK 是一等公民。Python UCS-2 和 UCS-4 对象无需 UTF-8 转码即可直接使用 SIMD。">
   <meta property="og:type" content="website">
-  <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="favicon-32.png" sizes="32x32">
-  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
-  <link rel="manifest" href="site.webmanifest">
+  <link rel="icon" type="image/png" href="goblin.png">
+  <link rel="apple-touch-icon" href="goblin.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
@@ -65,10 +63,11 @@
 
       <div class="hero-demo" aria-label="原生 Python Unicode 中文字符串比对示例">
         <aside class="hero-benchmark" aria-label="Intel AVX-512 相对 Parasail 的性能">
-          <p>INTEL / AVX-512 / AVX10 主机 / 对 PARASAIL</p>
+          <p>INTEL / AVX-512 / 对 PARASAIL</p>
           <div><strong>1.68<span>×</span></strong><small>总体几何平均</small></div>
           <div><strong>79<span>/80</span></strong><small>胜出项目</small></div>
           <div><strong>1.88<span>×</span></strong><small>路径 + CIGAR</small></div>
+          <div><strong>1.55<span>×</span></strong><small>中日韩 / 中文测试</small></div>
         </aside>
         <div class="demo-topline">
           <span>中文比对 / PYTHON UNICODE</span>
@@ -101,7 +100,7 @@
       <article><strong>1.68<span>×</span></strong><p>对 Parasail 的总体几何平均值<br><small>Intel / AVX-512 / 80 项</small></p></article>
       <article><strong>79<span>/80</span></strong><p>对 Parasail 的胜出项目<br><small>Intel / AVX-512</small></p></article>
       <article><strong>1.88<span>×</span></strong><p>路径与 CIGAR 几何平均值<br><small>对 Parasail 32 项全胜</small></p></article>
-      <article><strong>1.34<span>×</span></strong><p>对 rapidfuzz 的完整接口几何平均值<br><small>Apple M4 Max / NEON</small></p></article>
+      <article><strong>1.55<span>×</span></strong><p>中文文本对 Parasail 的几何平均值<br><small>中日韩 / 40 项中胜 39 项</small></p></article>
       </div>
     </section>
 

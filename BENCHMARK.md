@@ -1,71 +1,86 @@
-# Benchmark Summary
+# Benchmarks
 
-[Stride-align](fast.png) is benchmarked across five hardware families:
-Intel x86 (AVX2, AVX512BWVL), ARM Linux aarch64 on AWS Graviton4
-(NEON/ASIMD, SVE, SVE2), ARM macOS arm64 on Apple M-series (NEON),
-LoongArch64 on Loongson (LSX, LASX), and PowerPC64 VSX on Power8. Each
-family ran on a different host with a different parasail build (or no
-parasail at all), so numbers should be read within a family, not
-across families. Raw CSVs live in `benchmark.csv` (x86) and
-`benchmarks/*.csv` (everything else).
+<div class="benchmark-hero" id="current-results">
+  <article><span>AVX-512 / PARASAIL</span><strong>1.682×</strong><small>overall geomean · 80 rows</small></article>
+  <article><span>COMPARABLE ROWS</span><strong>79/80</strong><small>won on Intel Granite Rapids</small></article>
+  <article><span>PATH + CIGAR</span><strong>1.883×</strong><small>geomean · 32/32 wins</small></article>
+  <article><span>CHINESE TEXT</span><strong>1.548×</strong><small>geomean · 39/40 wins</small></article>
+</div>
 
-All ratios are median-runtime ratios. A ratio above `1.0x` means stride-align
-is faster than the named baseline for that row:
+**Reviewed 2026-07-18.** The lead results use the current pinned Intel
+AVX-512 sweep. Every headline below names its baseline, host, date, and raw
+artifact. Older architecture runs remain on this page as dated reference
+measurements; they are not blended into a cross-machine average.
+
+[Download the canonical Intel CSV](benchmark.csv) ·
+[Download the immutable 2026-07-18 snapshot](benchmarks/intel-avx512-parasail-2026-07-18.csv) ·
+[Inspect the benchmark CLI](https://github.com/adamdeprince/stride-align/blob/main/src/stride_align/benchmark.py)
+
+## Read this first
+
+A ratio above `1.0x` means stride-align is faster. Ratios always divide the
+named baseline's median runtime by stride-align's median runtime:
 
 ```text
 ratio = baseline_median_seconds / stride_align_median_seconds
 ```
 
-## At a glance
+Only rows from the same host, corpus, scoring mode, and output contract are
+combined. Parasail comparisons pair score with score and trace/CIGAR with
+path or CIGAR output. Native Loongson and Power8 tables use stride-align's
+portable `generic` backend when no comparable optimized third-party backend
+exists. Those native speedups are useful within that host, but they are not
+Parasail or rapidfuzz claims.
 
-| Family | Best stride-align backend | Baseline | Rows | Geomean | Median | Worst | Best |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Intel x86 | `x86_avx512bwvl` | parasail | 80 | **1.682x** | 1.656x | 0.874x | 3.629x |
-| Intel x86 | `x86_avx2` | parasail | 80 | 1.319x | 1.248x | 0.517x | 3.452x |
-| ARM Graviton4 (Linux) | `linux_aarch64_neon`/`asimd` | parasail | 80 | **1.138x** | 1.138x | 0.260x | 2.637x |
-| ARM Graviton4 (Linux) | `linux_aarch64_sve2` | parasail | 80 | 1.081x | 1.108x | 0.261x | 2.635x |
-| ARM Graviton4 (Linux) | `linux_aarch64_sve` | parasail | 80 | 1.042x | 1.101x | 0.259x | 2.647x |
-| ARM Mac M4 (macOS) | `macos_arm64_neon` | parasail | 80 | **1.065x** | 1.046x | 0.592x | 2.400x |
-| Loongson LoongArch64 | `linux_loongarch64_lasx` | patched parasail (1:1 score) | 16 | **7.517x** | 6.502x | 4.315x | 22.365x |
-| Loongson LoongArch64 | `linux_loongarch64_lasx` | generic (native) | 80 | **4.909x** | 5.149x | 0.499x | 29.707x |
-| Power8 VSX (Linux) | `linux_powerpc64_vsx` | generic (no parasail) | 80 | **3.772x** | 4.128x | 0.915x | 16.797x |
-| Levenshtein (Intel x86) | `x86_avx512bwvl` | rapidfuzz | 14 | **3.433x** | 3.440x | 3.367x | 3.529x |
-| Levenshtein (Intel x86) | `x86_avx512bwvl` | editdistance | 14 | 38.279x | 37.299x | 35.516x | 43.222x |
-| Lev (long, >64 chars) | `x86_avx512bwvl` | rapidfuzz | 5 | **3.61x** | 3.60x | 3.45x | 3.76x |
-| Lev (1-vs-1, q>=100) | `x86_avx512bwvl` | rapidfuzz | 2 | **1.70x** | 1.71x | 1.52x | 1.91x |
-| Lev (cutoff, q=50) | `x86_avx512bwvl` | rapidfuzz | 3 | **2.62x** | 2.53x | 1.93x | 3.67x |
-| Damerau-Lev (short tgts) | `x86_avx512bwvl` | rapidfuzz | 4 | **6.40x** | 6.40x | 6.01x | 6.84x |
-| Damerau-Lev (medium tgts) | `x86_avx512bwvl` | rapidfuzz | 3 | **4.29x** | 5.31x | 2.71x | 5.47x |
-| Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | python-Levenshtein | 4 | **6.61x** | 6.42x | 5.49x | 8.54x |
-| Damerau-Lev (Mac M4 NEON, short tgts) | `macos_arm64_neon` | rapidfuzz OSA | 4 | **5.49x** | 5.43x | 4.35x | 7.45x |
-| Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 7 | **2.17x** | 2.18x | 1.54x | 3.34x |
-| Damerau-Lev (Loongson LASX, mixed tgts) | `linux_loongarch64_lasx` | generic (no rapidfuzz wheel) | 6 | **1.43x** | 1.43x | 1.14x | 1.97x |
-| Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | python-Levenshtein | 4 | **3.18x** | 3.06x | 2.67x | 4.05x |
-| Damerau-Lev (Graviton4, short tgts) | `linux_aarch64_neon`/`sve`/`sve2` | rapidfuzz OSA | 4 | **2.85x** | 2.83x | 2.27x | 3.89x |
-| Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 8 | **2.40x** | 2.51x | 1.56x | 3.03x |
-| Damerau-Lev (Power8 VSX, mixed tgts) | `linux_powerpc64_vsx` | generic (no rapidfuzz wheel) | 7 | **1.99x** | 2.22x | 1.46x | 2.57x |
-| Jaro batch (cross-arch, N=1000) | `x86_avx512bwvl` / `*_neon` / `*_lasx` / `*_vsx` | rapidfuzz | 10 | **5.1x** | 3.7x | 1.54x | 263x |
-| cdist pruning (cross-arch, T=0.99) | `x86_avx512bwvl` / `*_neon` / `*_lasx` | own T=0 baseline | 24 | **426x** | 512x | 145x | 1,408x |
-| rapidfuzz shim full surface (Mac M4 Max) | `macos_arm64_neon` | rapidfuzz, matched `workers=1` | 108 | **1.51x** | 1.41x | 0.48x | 5.71x |
-| ↳ cdist 50×100 only (matched `workers=1`, kernel) | `macos_arm64_neon` | rapidfuzz | 5 | **4.64x** | 4.81x | 3.30x | 5.71x |
-| rapidfuzz shim full surface (Intel Granite Rapids) | `x86_avx512bwvl` | rapidfuzz, matched `workers=1` | 108 | **1.24x** | 1.28x | 0.42x | 2.00x |
-| ↳ cdist 50×100 only (matched `workers=1`, kernel) | `x86_avx512bwvl` | rapidfuzz | 5 | **1.32x** | 1.28x | 0.85x | 2.00x |
-| rapidfuzz shim full surface (Loongson) | `linux_loongarch64_lasx` | pure-Python (no rapidfuzz wheel) | 108 | 49.17x | 53.07x | 8.51x | 314.31x |
+## Current results
 
-> **Methodology note — rapidfuzz-shim rows.** The shim's `cdist` defaults
-> to `workers=-1` (zero-config multi-threading) while rapidfuzz defaults to
-> `workers=1`, so comparing *defaults* conflates kernel speed with
-> threading. The rows above use **matched `workers=1`** — the honest
-> per-thread *kernel* comparison. On that footing the SIMD cdist scorers
-> win outright (the `↳ cdist` rows: Indel, Levenshtein, OSA, fuzz.ratio,
-> and — since the symmetry-flip kernel — Jaro all win or reach parity).
-> The 108-scorer "full surface" geomean is diluted by single-pair calls
-> (which are per-call-overhead-bound and unchanged by SIMD), so the
-> dedicated cdist rows are the better read of the all-pairs kernels. On a
-> multi-core host the shim's default auto-threading widens the gap
-> further. The Loongson row compares against a pure-Python reference (no
-> LoongArch rapidfuzz wheel exists), so its ratios are not comparable to
-> the rapidfuzz-baseline rows above.
+### Intel AVX-512 vs Parasail
+
+The 2026-07-18 sweep covers English and Chinese inputs, linear and affine
+gaps, 16- and 32-bit scores, `1:1` and `1:many` shapes, score-only kernels,
+traceback, and CIGAR generation.
+
+| Slice | Rows | Wins | Geomean | Median | Worst | Best |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Overall | 80 | **79** | **1.682x** | 1.656x | 0.874x | 3.629x |
+| English | 40 | **40** | **1.827x** | 1.766x | 1.015x | 3.365x |
+| Chinese | 40 | **39** | **1.548x** | 1.459x | 0.874x | 3.629x |
+| Path / CIGAR | 32 | **32** | **1.883x** | 1.737x | 1.043x | 3.629x |
+
+The one loss is 16-bit, linear-gap, `1:1` Needleman-Wunsch score on the
+Chinese pass at 0.874x. It is reported rather than hidden. Python's UCS-2
+and UCS-4 objects are first-class SIMD inputs; the Chinese pass does not
+benchmark UTF-8 byte representations or charge an external transcode to the
+competitor.
+
+### Current companion benchmarks
+
+| Workload | Host / backend | Baseline | Rows | Geomean | Worst | Best | Artifact |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| Levenshtein, 1 query × 1,000 KJV targets | Intel AVX-512 | rapidfuzz | 14 | **3.749x** | 3.690x | 3.800x | [CSV](benchmarks/intel-levenshtein-2026-07-17.csv) |
+| OSA/Damerau, short targets | Intel AVX-512 | rapidfuzz OSA | 4 | **7.703x** | 6.732x | 9.000x | [CSV](benchmarks/intel-damerau-levenshtein-2026-07-17.csv) |
+| Score-only alignment | Loongson LASX | stride-align `generic` | 48 | **11.905x** | 2.928x | 33.108x | [CSV](benchmarks/loongson-native-2026-07-17.csv) |
+
+The Loongson row is intentionally an architecture aside: it measures the
+LASX backend against this project's portable implementation, not against
+rapidfuzz or Parasail.
+
+## Freshness ledger
+
+| Dataset | Latest artifact | Status on this page |
+| --- | --- | --- |
+| Intel alignment vs Parasail | [2026-07-18](benchmarks/intel-avx512-parasail-2026-07-18.csv) | **Current lead evidence** |
+| Intel Levenshtein and OSA vs rapidfuzz | [Levenshtein](benchmarks/intel-levenshtein-2026-07-17.csv) · [OSA](benchmarks/intel-damerau-levenshtein-2026-07-17.csv) | **Current** |
+| Loongson LSX/LASX vs generic | [2026-07-17](benchmarks/loongson-native-2026-07-17.csv) | **Current architecture reference** |
+| rapidfuzz shim full surface | [Mac](benchmarks/shim-full-mac-2026-06-17.json) · [Intel AVX10](benchmarks/shim-full-avx10-2026-06-17.json) · [Loongson 2026-06-10](benchmarks/shim-full-loongson-2026-06-10.json) | Reference only; AVX10 is de-selected |
+| Graviton4 alignment vs Parasail | [2026-05-18](benchmarks/graviton4-arm-simd-parasail-2026-05-18.csv) | Dated architecture reference |
+| Apple M-series alignment vs Parasail | [2026-05-18](benchmarks/macos-arm64-neon-2026-05-18.csv) | Dated architecture reference |
+| Power8 VSX vs generic | [2026-05-18](benchmarks/power8-vsx-2026-05-18.csv) | Dated architecture reference |
+| Loongson score-only vs patched Parasail | [2026-05-13](benchmarks/loongson-score-1to1-parasail-2026-05-13.csv) | Historical baseline only |
+
+The detailed sections below retain the full methodology and weak rows. A
+newer artifact must replace both its detailed section and its ledger entry;
+old runs are never silently presented as current.
 
 ## Intel x86 - 2026-07-18
 
@@ -197,23 +212,21 @@ measured backend here. See the AVX10 note in `CMakeLists.txt`.
 it loses every score-only row, though a handful of linear NW path/CIGAR rows
 are competitive.
 
-## Levenshtein (Intel x86) - 2026-06-21
+## Levenshtein (Intel x86) - 2026-07-17
 
-Raw artifact: [`benchmarks/intel-levenshtein-2026-06-21.csv`](benchmarks/intel-levenshtein-2026-06-21.csv).
+Raw artifact: [`benchmarks/intel-levenshtein-2026-07-17.csv`](benchmarks/intel-levenshtein-2026-07-17.csv).
 
-Build context: same host as Intel x86 above (Granite Rapids Xeon 6975P-C,
-Python 3.14, `taskset -c 2`, GCC 16.1), running on the `x86_avx512bwvl`
-backend. The multi-target Myers kernel runs one target per SIMD lane (8x
-64-bit lanes under AVX512) and reads bytes / 1-byte unicode strings
-zero-copy from CPython buffers. Patterns over 64 chars fall through to the
-scalar Hyyrö multi-word dispatch in `levenshtein_dispatch.hpp`.
+Build context: same host as Intel x86 above (Granite Rapids Xeon 6975P-C /
+`avx10`, Python 3.14, `taskset -c 2`, GCC 16.1), running on the
+`x86_avx512bwvl` backend. The multi-target Myers kernel runs one target per
+SIMD lane (8x 64-bit lanes under AVX512) and reads bytes / 1-byte unicode
+strings zero-copy from CPython buffers. Patterns over 64 chars fall through
+to the scalar Hyyrö multi-word dispatch in `levenshtein_dispatch.hpp`.
 
 Command:
 
 ```bash
-taskset -c 2 .venv/bin/python tools/benchmark_libs.py \
-  --input-file kjv_subset.txt --levenshtein \
-  --iterations 25 --warmups 3 < lev_queries.txt > intel-levenshtein-2026-06-21.csv
+taskset -c 2 .venv/bin/python tools/refresh_x86_benchmarks.py --bench kjv --date 2026-07-17
 ```
 
 Corpus: first 1000 lines of `demo/kjv.txt`. Queries: 14 single words and
@@ -224,75 +237,75 @@ SIMD fast path.
 
 | Backend | Rows | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `stride_align` vs `rapidfuzz`    | 14 | **3.433x** | 3.440x | 3.367x | 3.529x |
-| `stride_align` vs `editdistance` | 14 | 38.279x | 37.299x | 35.516x | 43.222x |
+| `stride_align` vs `rapidfuzz`    | 14 | **3.749x** | 3.754x | 3.690x | 3.800x |
+| `stride_align` vs `editdistance` | 14 | 42.379x | 41.501x | 39.149x | 47.014x |
 
 Per-call wall time at 1000 targets (median across 14 queries):
 
 | Library | µs/call | ns/target |
 | --- | ---: | ---: |
-| `stride_align` (`x86_avx512bwvl`) | **156** | **156** |
-| `rapidfuzz`                       | 532  | 532  |
-| `editdistance`                    | 5836 | 5836 |
+| `stride_align` (`x86_avx512bwvl`) | **141** | **141** |
+| `rapidfuzz`                       | 526  | 526  |
+| `editdistance`                    | 5852 | 5852 |
 
 ### Takeaways
 
 On a server Granite Rapids part the 8-lane AVX512 multi-target Myers kernel
-pulls well ahead of rapidfuzz on this batch corpus — **3.4x** geomean (156
-µs/call vs 532), with all 14 queries between 3.37x and 3.53x. The margin is
+pulls well ahead of rapidfuzz on this batch corpus — **3.75x** geomean (141
+µs/call vs 526), with all 14 queries between 3.69x and 3.80x. The margin is
 wider than the older laptop sweep because the 8-lane batch scales on a
-server AVX-512 datapath: stride-align's per-call time roughly thirds while
-rapidfuzz's scalar-per-target loop is unchanged. editdistance is ~38x
+server AVX-512 datapath: stride-align's per-call time roughly quarters while
+rapidfuzz's scalar-per-target loop is unchanged. editdistance is ~42x
 slower, reflecting its pure-C scalar DP loop with no batching.
 
 (python-Levenshtein is omitted from this run — `benchmark_libs.py
 --levenshtein` compares against rapidfuzz and editdistance.)
 
-## Levenshtein extended (Intel x86) - 2026-06-21
+## Levenshtein extended (Intel x86) - 2026-07-17
 
-Raw artifact: [`benchmarks/intel-levenshtein-v2-2026-06-21.csv`](benchmarks/intel-levenshtein-v2-2026-06-21.csv).
+Raw artifact: [`benchmarks/intel-levenshtein-v2-2026-07-17.csv`](benchmarks/intel-levenshtein-v2-2026-07-17.csv).
 
 Three follow-up workloads that exercise the multi-word SIMD batch
 kernel (patterns 65-256 chars, in 64-char blocks W = 2/3/4), the
 zero-copy singular dispatch (no `prepare_alignment` vector copy when
 both inputs are bytes or 1-byte unicode), and the `score_cutoff`
 parameter with per-lane done masks and all-lanes early-exit. Same
-build host and pinning as the section above.
+build host and pinning as the section above (`avx10`, 2026-07-17).
 
 ### Long patterns (1-vs-200, no cutoff)
 
 | `q_len` | stride_align | rapidfuzz | vs rf |
 | ---: | ---: | ---: | ---: |
-| 40  |  21 µs |  44 µs | **2.15x** |
-| 65  |  40 µs | 149 µs | **3.76x** |
-| 100 |  60 µs | 215 µs | **3.60x** |
-| 128 |  76 µs | 262 µs | **3.45x** |
-| 180 | 123 µs | 435 µs | **3.54x** |
-| 200 | 150 µs | 556 µs | **3.70x** |
+| 40  |  20 µs |  45 µs | **2.28x** |
+| 65  |  40 µs | 150 µs | **3.78x** |
+| 100 |  60 µs | 216 µs | **3.59x** |
+| 128 |  76 µs | 265 µs | **3.46x** |
+| 180 | 128 µs | 437 µs | **3.42x** |
+| 200 | 155 µs | 556 µs | **3.59x** |
 
 Each lane in the AVX-512 kernel runs Hyyrö's wide-add carry chain over
 W blocks in parallel across 8 targets. The wide add uses two chained
 64-bit adds + `gt_u64` overflow detection (AVX-512 native unsigned
 `cmpgt`, AVX2 sign-bit-XOR + signed `cmpgt`, SSE4.1 sub-and-sign-bit
 emulation). q_len = 40 is the single-word kernel; on this server part it
-already runs 2.15x rapidfuzz, and the multi-word blocks (q ≥ 65) hold
+already runs 2.28x rapidfuzz, and the multi-word blocks (q ≥ 65) hold
 3.4–3.8x as the 8-lane batch amortizes the per-target setup.
 
 ### 1-vs-1 singular (zero-copy dispatch)
 
 | `q_len` | stride_align | rapidfuzz |
 | ---: | ---: | ---: |
-| 10  | **0.12 µs** | 0.13 µs |
+| 10  | **0.12 µs** | 0.14 µs |
 | 30  | **0.18 µs** | 0.21 µs |
-| 60  | **0.28 µs** | 0.32 µs |
-| 100 | **0.57 µs** | 1.09 µs |
-| 200 | **1.80 µs** | 2.73 µs |
+| 60  | **0.29 µs** | 0.32 µs |
+| 100 | **0.56 µs** | 1.10 µs |
+| 200 | **1.59 µs** | 2.75 µs |
 
 When both inputs are bytes or 1-byte unicode the singular path skips
 the prepare\_alignment vector copy and runs scalar Myers directly on
 the CPython buffer (`PyBytes_AsStringAndSize` / `PyUnicode_1BYTE_DATA`).
 On this part stride-align edges rapidfuzz at every length — a hair ahead
-under 60 chars (0.12 vs 0.13 µs at q=10, Python ABI bound) and ~1.5–1.9x
+under 60 chars (0.12 vs 0.14 µs at q=10, Python ABI bound) and ~1.7–2.0x
 from 100 chars onward, where the multi-word inner loop dominates.
 
 ### score_cutoff (5000 targets, short query)
@@ -301,15 +314,15 @@ stride_align vs rapidfuzz with matching cutoff:
 
 | `q_len` | cutoff | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: | ---: |
-| 10 |  2 | **131 µs** |  413 µs | **3.14x** |
-| 10 |  5 | **171 µs** |  595 µs | **3.48x** |
-| 10 | 10 | **190 µs** |  596 µs | **3.14x** |
-| 30 |  7 | **241 µs** |  970 µs | **4.02x** |
-| 30 | 15 | **348 µs** |  971 µs | 2.79x |
-| 30 | 30 | **434 µs** |  971 µs | 2.24x |
-| 50 | 12 | **358 µs** | 1312 µs | **3.67x** |
-| 50 | 25 | **518 µs** | 1312 µs | 2.53x |
-| 50 | 50 | **680 µs** | 1312 µs | 1.93x |
+| 10 |  2 | **103 µs** |  412 µs | **4.00x** |
+| 10 |  5 | **139 µs** |  597 µs | **4.31x** |
+| 10 | 10 | **161 µs** |  597 µs | **3.70x** |
+| 30 |  7 | **215 µs** |  947 µs | **4.40x** |
+| 30 | 15 | **318 µs** |  948 µs | **2.98x** |
+| 30 | 30 | **406 µs** |  944 µs | 2.33x |
+| 50 | 12 | **329 µs** | 1300 µs | **3.96x** |
+| 50 | 25 | **490 µs** | 1301 µs | **2.65x** |
+| 50 | 50 | **650 µs** | 1302 µs | 2.00x |
 
 Per-lane done masks freeze score updates once a lane crosses
 `cutoff + remaining_chars`, and the column loop breaks as soon as every
@@ -337,14 +350,14 @@ stride-align yet — see "Future work" below.
 - **Pattern lengths > 256**: the multi-word SIMD kernel currently caps
   at W=4. Extending to W=8 (pattern up to 512) is a recompile.
 
-## Damerau-Levenshtein / OSA (Intel x86) - 2026-06-21
+## Damerau-Levenshtein / OSA (Intel x86) - 2026-07-17
 
-Raw artifact: [`benchmarks/intel-damerau-levenshtein-2026-06-21.csv`](benchmarks/intel-damerau-levenshtein-2026-06-21.csv).
+Raw artifact: [`benchmarks/intel-damerau-levenshtein-2026-07-17.csv`](benchmarks/intel-damerau-levenshtein-2026-07-17.csv).
 
 Build context: same host as the Levenshtein section (Granite Rapids Xeon
-6975P-C, Python 3.14, `taskset -c 2`, GCC 16.1). The algorithm is
-OSA-restricted (Optimal String Alignment) Damerau-Levenshtein: like
-Levenshtein but adjacent transpositions cost 1 instead of two
+6975P-C / `avx10`, Python 3.14, `taskset -c 2`, GCC 16.1, 2026-07-17). The
+algorithm is OSA-restricted (Optimal String Alignment) Damerau-Levenshtein:
+like Levenshtein but adjacent transpositions cost 1 instead of two
 substitutions, and each character can participate in at most one edit.
 Hyyrö's bit-parallel recurrence (the `TR = (((~D0_prev) & PM) << 1) &
 PM_old` formulation that rapidfuzz also uses), wrapped in the same
@@ -360,18 +373,18 @@ overhead dominates its loop.
 
 | `q_len` | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: |
-|  5 | **12.4 µs** |  84.5 µs | **6.84x** |
-| 10 | **15.4 µs** | 100.6 µs | **6.54x** |
-| 20 | **21.5 µs** | 134.5 µs | **6.25x** |
-| 30 | **28.4 µs** | 170.8 µs | **6.01x** |
+|  5 | **8.9 µs** |  79.8 µs | **9.00x** |
+| 10 | **11.9 µs** |  96.6 µs | **8.10x** |
+| 20 | **18.3 µs** | 131.0 µs | **7.16x** |
+| 30 | **25.0 µs** | 168.3 µs | **6.73x** |
 
 ### Medium batch (1-vs-200)
 
 | `q_len` | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: |
-| 10 | **3.7 µs** | 20.2 µs | **5.47x** |
-| 30 | **6.5 µs** | 34.3 µs | **5.31x** |
-| 64 | **31.4 µs** | 85.1 µs | **2.71x** |
+| 10 | **3.0 µs** | 19.4 µs | **6.44x** |
+| 30 | **5.6 µs** | 33.8 µs | **6.02x** |
+| 64 | **30.4 µs** | 85.4 µs | **2.81x** |
 
 The win narrows toward q=64 as each lane's single-word OSA recurrence
 lengthens, but the 200-target batch still amortizes setup across 8 lanes.
@@ -381,9 +394,9 @@ lengthens, but the 200-target batch still amortizes setup across 8 lanes.
 
 | `q_len` | stride_align | rapidfuzz | ratio |
 | ---: | ---: | ---: | ---: |
-| 10 | **0.107 µs** | 0.119 µs | **1.11x** |
-| 30 | **0.171 µs** | 0.199 µs | **1.16x** |
-| 60 | **0.290 µs** | 0.305 µs | **1.05x** |
+| 10 | **0.105 µs** | 0.115 µs | **1.09x** |
+| 30 | **0.173 µs** | 0.196 µs | **1.13x** |
+| 60 | **0.287 µs** | 0.303 µs | **1.06x** |
 
 Per-call Python ABI dominates; stride-align now edges rapidfuzz at every
 length (the scalar OSA path runs directly on the CPython buffer).
@@ -408,6 +421,11 @@ Backends specialized for the new SIMD batch kernel: `x86_sse41`,
 shared `NeonOps` bundle. Other architectures (SVE / Loongson / Power)
 still fall through to the shared scalar bit-parallel dispatch and
 remain correct.
+
+<div class="benchmark-note">
+  <strong>Dated architecture reference archive</strong>
+  <p>The following May and June runs are the newest saved receipts for their hosts, but they predate the July kernel work. Their conclusions and follow-up lists describe the measured revision—not the current roadmap. They remain here for regression history and architecture-specific context.</p>
+</div>
 
 ## Levenshtein + Damerau-Levenshtein (Power8 VSX) - 2026-05-19
 
@@ -721,7 +739,7 @@ Remaining weak spots common to all three backends:
   on aarch64 even after the CIGAR builder rework.
 * `sw-farrar-score` width 16 1:1 — 0.82-0.95x geomean across the three.
 
-### Recommended Graviton4 next steps
+### 2026-05-18 Graviton4 follow-up notes
 
 1. Target `sw-cigar` width 16 next — still the lone variant where all three SIMD backends lose to parasail by geomean.
 2. Investigate `sw-farrar-score` width 16 1:1; the 0.82-0.95x range suggests a striped-trace cache miss specific to the short query.
@@ -788,7 +806,7 @@ striped score kernel on width 16. `sw-farrar-score` is also slightly behind
 (`0.951x`). The exact-fill linear SW Farrar score path lands its earlier
 gains here.
 
-### Recommended Mac M-series next steps
+### 2026-05-18 Mac follow-up notes
 
 1. Target affine `nw-score` next — it is the largest remaining gap and the only variant where every comparison loses.
 2. Investigate `sw-farrar-score` width 16: still trailing parasail at `0.905x` median.
@@ -797,71 +815,67 @@ gains here.
 5. Add a native parasail comparison mode to the arm64 microbench before instruction-level parity work.
 6. Keep SWAR off the mac performance path (geomean `0.64x` generic on the 2026-05-13 native sweep) — correctness/reference only.
 
-## Loongson LoongArch64 (LSX/LASX) - 2026-05-18
+## Loongson LoongArch64 (LSX/LASX) - 2026-07-17
 
 Raw Loongson artifacts:
 
 | Artifact | Contents |
 | --- | --- |
-| [`benchmarks/loongson-native-2026-05-18.csv`](benchmarks/loongson-native-2026-05-18.csv) | Full 320-row native sweep after the CIGAR builder rework: `generic`, `swar`, LSX, LASX, all 7 variants, `1:1` and `1:many`, widths 16/32. |
-| [`benchmarks/loongson-score-native-2026-05-13.csv`](benchmarks/loongson-score-native-2026-05-13.csv) | Earlier native score-only sweep. |
+| [`benchmarks/loongson-native-2026-07-17.csv`](benchmarks/loongson-native-2026-07-17.csv) | Full 320-row native sweep after 0.6.0 SW kernel rework + LASX/LSX micro-opts: `generic`, `swar`, LSX, LASX, all 7 variants, `1:1` and `1:many`, widths 16/32. |
+| [`benchmarks/loongson-native-2026-05-18.csv`](benchmarks/loongson-native-2026-05-18.csv) | Prior full 320-row native sweep (pre-0.6.0). |
 | [`benchmarks/loongson-score-1to1-parasail-2026-05-13.csv`](benchmarks/loongson-score-1to1-parasail-2026-05-13.csv) | `sw-score`/`nw-score` `1:1` comparison against patched generic LoongArch parasail. |
-| [`benchmarks/loongson-path-native-2026-05-13.csv`](benchmarks/loongson-path-native-2026-05-13.csv) | Pre-CIGAR-fix path/CIGAR timing-split rows, no parasail. |
-| [`benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv`](benchmarks/loongson-sw-farrar-exactfill-baseline-2026-05-14.csv) | Focused linear `sw-farrar-score` baseline before exact-fill hooks. |
-| [`benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv`](benchmarks/loongson-sw-farrar-exactfill-study-2026-05-14.csv) | Focused linear `sw-farrar-score` run after exact-fill hooks. |
 | [`benchmarks/loongson-2026-05-13.md`](benchmarks/loongson-2026-05-13.md) | Loongson-specific notes and recommendations. |
 
-Build context: Loongson 3A6000-class host, Python 3.13.13, GCC 15.2.0, CMake
-4.3.2. The LoongArch Python extension modules were built with static C++
-runtime linkage; `ldd` shows no dynamic `libstdc++`/`libgcc` dependency.
-Numpy is sourced from a host-local source build (`/data/home/adam/dev/numpy`)
-linked against the GCC 15.2 runtime at `/opt/loongson-gcc-15.2.0/lib`, since
-no upstream loongarch64 wheel exists.
+Build context: Loongson 3A6000-class host (Kylin V10 SP1, old-world
+`/lib64/ld.so.1`), Python 3.12.13, **GCC 15.2.0** at
+`/opt/loongson-gcc-15.2.0`, CMake 4.3.2. Regenerated 2026-07-17. A matching
+**new-world** wheel was also built with GCC 16.1.0
+(`/opt/loongson-gcc-16.1.0/wrappers`) but cannot run on this host (requires
+`GLIBC_2.38` / the new-world loader). Unit tests: **1641 passed, 396 skipped,
+0 failed** (old-world); the five bounded-lazy-F counter-examples all return
+the true scores under LASX/LSX.
 
-Parasail status: upstream `pip install parasail` failed on LoongArch. A
-patched source build works for direct score calls after treating LoongArch as
-a non-x86 `cpuid` stub target, but it is generic parasail, not LSX/LASX
-optimized. Its profile API returned NULL profiles and trace/CIGAR was not
-usable, so parasail is included only for direct `sw-score`/`nw-score` `1:1`
-score rows. The 2026-05-18 sweep is native-only.
+Parasail status unchanged: no LoongArch wheel; the 2026-05-13 patched 1:1
+score comparison remains the parasail baseline below. This 2026-07-17 sweep
+is native-only.
 
-### Overall vs `generic` (2026-05-18 native)
+### Overall vs `generic` (2026-07-17 native)
 
 | Backend | Rows | Wins | Geomean | Median | Worst | Best |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `linux_loongarch64_lasx` | 80 | 68 | 4.909x | 5.149x | 0.499x | 29.707x |
-| `linux_loongarch64_lsx`  | 80 | 72 | 2.876x | 3.081x | 0.350x | 16.085x |
+| `linux_loongarch64_lasx` | 80 | 68 | **4.959x** | 5.192x | 0.495x | 33.108x |
+| `linux_loongarch64_lsx`  | 80 | 71 | **3.630x** | 4.299x | 0.401x | 16.179x |
 
-### Score-only vs `generic` (2026-05-18 native)
-
-| Backend | Rows | Wins | Geomean | Median | Best |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `linux_loongarch64_lasx` | 48 | 48 | 11.624x | 13.370x | 29.707x |
-| `linux_loongarch64_lsx`  | 48 | 48 |  5.185x |  5.334x | 16.085x |
-
-### Path / CIGAR vs `generic` (2026-05-18 native)
+### Score-only vs `generic` (2026-07-17 native)
 
 | Backend | Rows | Wins | Geomean | Median | Best |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `linux_loongarch64_lasx` | 32 | 20 | 1.347x | 1.069x | 7.127x |
-| `linux_loongarch64_lsx`  | 32 | 24 | 1.188x | 1.249x | 3.752x |
+| `linux_loongarch64_lasx` | 48 | 48 | **11.905x** | 12.073x | 33.108x |
+| `linux_loongarch64_lsx`  | 48 | 48 |  **7.269x** |  7.383x | 16.179x |
+
+### Path / CIGAR vs `generic` (2026-07-17 native)
+
+| Backend | Rows | Wins | Geomean | Median | Best |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `linux_loongarch64_lasx` | 32 | 20 | 1.333x | 1.079x | 7.294x |
+| `linux_loongarch64_lsx`  | 32 | 23 | 1.281x | 1.178x | 6.087x |
 
 ### By variant (vs generic)
 
 | Variant | LSX geomean | LASX geomean |
 | --- | ---: | ---: |
-| `sw-farrar-score` |  6.440x | 19.281x |
-| `sw-score`        |  6.089x | 17.770x |
-| `nw-score`        |  3.556x |  4.585x |
-| `sw-cigar`        |  1.194x |  1.915x |
-| `nw-cigar`        |  1.677x |  1.797x |
-| `nw-path-info`    |  1.257x |  1.182x |
-| `sw-path-info`    |  0.791x |  0.809x |
+| `sw-farrar-score` | 10.596x | 19.805x |
+| `sw-score`        |  9.921x | 18.049x |
+| `nw-score`        |  3.654x |  4.721x |
+| `sw-cigar`        |  1.620x |  1.933x |
+| `nw-cigar`        |  1.650x |  1.765x |
+| `nw-path-info`    |  1.219x |  1.147x |
+| `sw-path-info`    |  0.827x |  0.808x |
 
 ### Score-only vs patched LoongArch parasail (1:1)
 
-The 2026-05-13 parasail comparison (16-row 1:1 score-only, unaffected by the
-CIGAR builder rework):
+The 2026-05-13 parasail comparison (16-row 1:1 score-only; still the best
+parasail baseline available on this host):
 
 | Backend | Rows | Wins | Geomean | Median | Best |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -871,36 +885,39 @@ CIGAR builder rework):
 
 ### Takeaways
 
-LASX is the clear Loongson win: 11.6x geomean over generic on score-only,
-7.5x over patched parasail on 1:1 direct score calls, and up to 29.7x on the
-best row. LSX trails LASX by roughly the expected 2x register-width factor.
-LSX/LASX score-only numbers shifted up from the 2026-05-13 sweep (LSX
-4.234x → 5.185x, LASX 6.220x → 11.624x); the bulk of the LASX jump is the
-exact-fill `sw-farrar-score` and `sw-score` paths landing at the 1024-cell
-shape used in the sweep.
+LASX remains the clear Loongson win: **11.9x** geomean over generic on
+score-only (was 11.6x on 2026-05-18), peak **33.1x**, and 7.5x over patched
+parasail on 1:1 score. LSX score-only jumped hard: **5.19x → 7.27x**
+geomean, driven by adding the missing vector `reduce_max` (was a scalar
+spill every score call) and the same sound deferred / active-count lazy-F
+path as the other backends.
 
-`sw-cigar` moved from path-trace-bound to comfortably ahead of generic: LSX
-went from below 1.0x to 1.194x; LASX reaches 1.915x. The CIGAR builder
-rework (`to_chars` + capacity reservation) is the proximate cause; the
-sw-cigar path now spends almost all of its time in the SIMD score kernel
-plus the affine reverse-build, not the digit serialization.
+LASX-specific micro-opts landing this round (on top of the shared 0.6.0
+kernel rework):
 
-`sw-path-info` is the lone remaining weak variant on both LSX (0.791x) and
-LASX (0.809x). `profile_traceback` materialization still dominates over the
-SIMD score lift for that shape.
+1. **`Ops::reduce_max`** for i8/i16/i32 — log-tree fold with `xvmax` +
+   `xvbsrl` / `xvpermi_q` (was shared scalar stack spill).
+2. **`Ops::local_lazy_f_prefix_carry`** for i8/i16/i32 — LASX previously
+   fell through to the scalar store/loop prefix carry every column.
+3. **Sound active-count** on the affine exact-fill H-only F scan
+   (`ceil(max_f / |gap|)`), plus 4-way unrolled main DP bodies for the
+   i16/64 and i32/128 exact-fill kernels.
 
-SWAR is essentially a regression on score-only (`~0.63x` generic on the
-2026-05-13 native sweep) but is roughly at parity with parasail on the
-patched 1:1 score comparison (`1.06x` geomean) — useful as a correctness
-reference, not as a performance path.
+`sw-path-info` is still the lone weak variant (LSX 0.83x / LASX 0.81x) —
+`profile_traceback` materialization dominates the SIMD score lift. SWAR
+remains a score-only regression vs generic (~0.68x) and is for correctness
+only.
 
 ### Recommended Loongson next steps
 
-1. Keep exact-fill LSX/LASX score hooks enabled — large score-only win.
-2. Target a Loongson-specific linear SW trace/CIGAR redesign before doing instruction scheduling.
-3. Start with LASX width 16/32 trace-traffic reduction, then port to LSX.
-4. Add a native Loongson microbench/perf entrypoint before micro-optimizing LSX/LASX loops.
-5. Treat parasail as a generic LoongArch comparison until a maintained LSX/LASX parasail build becomes available.
+1. Keep exact-fill LSX/LASX score hooks + the new `reduce_max` /
+   `local_lazy_f_prefix_carry` members — large score-only win.
+2. Target a Loongson-specific linear SW trace/CIGAR redesign before
+   further instruction scheduling.
+3. Add a native Loongson microbench entrypoint for tight A/B of the
+   exact-fill kernels.
+4. Treat parasail as a generic LoongArch comparison until a maintained
+   LSX/LASX parasail build becomes available.
 
 ## PowerPC64 VSX (Power8 Linux) - 2026-05-18
 
@@ -986,7 +1003,7 @@ SWAR regresses on Power8 across most rows (geomean `0.79x` generic on the
 well enough that SWAR's 64-bit packed lanes give no benefit. SWAR remains
 useful as a correctness/reference backend only.
 
-### Recommended Power8 next steps
+### 2026-05-18 Power8 follow-up notes
 
 1. Try a `vbpermq`-based `trace_mask_*` on real hardware; combined with a row-major linear SW trace table this might bring the masked path above `1.0x` of generic.
 2. Add a Power8 `local_affine_score_exact_segment*_raw` mirroring the NEON helpers if the 1024-character query shape becomes a target; current `sw-farrar-score` is already 7-8x ahead of generic.
@@ -1241,7 +1258,7 @@ equivalent to a full `cdist` plus the iterator overhead — so it's
 the right "no optimization" reference for the speedup ratios.
 
 
-## rapidfuzz shim full surface (cross-arch) - 2026-06-17
+## rapidfuzz shim full surface (dated reference) - 2026-06-17
 
 Comprehensive comparison of every public entry point in the
 `stride_align.rapidfuzz` shim (10 `fuzz` methods, 8 distance classes
@@ -1249,17 +1266,21 @@ Comprehensive comparison of every public entry point in the
 scorers) against upstream rapidfuzz on the same deterministic
 corpus. Generated by `tools/rapidfuzz_shim_full_bench.py`.
 
+Raw receipts: [Mac M4 Max](benchmarks/shim-full-mac-2026-06-17.json),
+[Intel AVX10](benchmarks/shim-full-avx10-2026-06-17.json), and
+[Loongson LASX](benchmarks/shim-full-loongson-2026-06-10.json).
+
 `ratio = upstream_ms / shim_ms` (BENCHMARK.md convention): values
 > 1.0 mean shim is faster than upstream. Min-of-5 wall time per
-workload. `rapidfuzz 3.14.5` on all three hosts. Mac (M4 Max)
-re-measured 2026-06-17 on `main`; Loongson last measured 2026-06-10
-(pre the arbitrary-length-Jaro and token-ratio work, so its current
-numbers would be unchanged or better). **The Intel column below is the
-2026-06-17 `_avx10_512` run.** AVX10 has since been de-selected (current
-GCC AVX10 codegen compiles the kernels slower than classic AVX-512); the
-production Intel x86 backend is now `avx512bwvl` on a Granite Rapids Xeon
-— see the top-of-document At a glance (full surface **1.24x**, cdist
-**1.32x**, GCC 16.1, 2026-06-21).
+workload. `rapidfuzz 3.14.5` was used on all three hosts. Mac M4 Max and
+Intel were measured 2026-06-17; Loongson was measured 2026-06-10.
+
+**This table is retained for surface-level diagnostics, not as a current
+Intel headline.** Its Intel column used `_avx10_512`, which has since been
+de-selected because it loses to the classic AVX-512 backend on this host.
+No saved full-surface `_avx512bwvl` JSON exists, so this page deliberately
+makes no replacement Intel full-surface claim. The current Intel alignment
+evidence is the 2026-07-18 Parasail sweep at the top of the page.
 
 ### At a glance
 
@@ -1269,10 +1290,10 @@ production Intel x86 backend is now `avx512bwvl` on a Granite Rapids Xeon
 | avx10 (Intel AWS) | `_avx10_512` | 108 | **1.02x** | 1.13x | 0.15x | 1.77x | 68/13/27 |
 | Loongson (2026-06-10) | `_lasx` | 108 | **49.17x** | 53.07x | 8.51x | 314.31x | 108/0/0 |
 
-Win/tie/loss buckets use the raw shim/upstream ratio: ≤ 1.05 = win,
-1.05–1.15 = tie, > 1.15 = loss. Loongson dominates because upstream
-rapidfuzz ships no LSX/LASX wheel and falls back to scalar on
-LoongArch.
+Win/tie/loss buckets use the raw shim/upstream runtime ratio: ≤ 1.05 = win,
+1.05–1.15 = tie, > 1.15 = loss. The Loongson comparison is not comparable
+to the Mac and Intel rows: upstream rapidfuzz ships no optimized LoongArch
+wheel, while stride-align uses LASX.
 
 ### Per-workload comparison
 
