@@ -15,6 +15,7 @@
 #include "levenshtein_simd_ops.hpp"
 #include "indel_simd.hpp"
 #include "osa_simd.hpp"
+#include "dtw_dispatch.hpp"
 
 namespace stride_align::backend_linux_aarch64_sve2 {
 
@@ -23,6 +24,16 @@ namespace nb = nanobind;
 using TargetImplementation = stride_align::arm_sve_backend::TargetImplementation;
 
 struct Implementation {
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dispatch_dtw_many(query, targets, window, distance, score_cutoff);
+  }
+
+
   using PreparedSmithWatermanFarrarScore =
       TargetImplementation::PreparedSmithWatermanFarrarScore;
   using PreparedAffineScore = TargetImplementation::PreparedAffineScore;

@@ -2,6 +2,7 @@
 
 #include <lsxintrin.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@
 #include "cdist_simd.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
+#include "dtw_dispatch.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -128,6 +130,16 @@ struct SimdOps<std::uint8_t, std::int8_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return __lsx_vmax_b(lhs, rhs);
+  }
+
+  static std::int8_t reduce_max(vector_type vector) {
+    vector = max(vector, __lsx_vbsrl_v(vector, 8));
+    vector = max(vector, __lsx_vbsrl_v(vector, 4));
+    vector = max(vector, __lsx_vbsrl_v(vector, 2));
+    vector = max(vector, __lsx_vbsrl_v(vector, 1));
+    alignas(16) std::int8_t lanes[16];
+    __lsx_vst(vector, lanes, 0);
+    return lanes[0];
   }
 
   static vector_type shift_left_zero(vector_type vector) {
@@ -248,6 +260,15 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return __lsx_vmax_h(lhs, rhs);
   }
 
+  static std::int16_t reduce_max(vector_type vector) {
+    vector = max(vector, __lsx_vbsrl_v(vector, 8));
+    vector = max(vector, __lsx_vbsrl_v(vector, 4));
+    vector = max(vector, __lsx_vbsrl_v(vector, 2));
+    alignas(16) std::int16_t lanes[8];
+    __lsx_vst(vector, lanes, 0);
+    return lanes[0];
+  }
+
   static vector_type shift_left_zero(vector_type vector) {
     return detail::shift_left_zero<2>(vector);
   }
@@ -360,6 +381,14 @@ struct SimdOps<std::uint32_t, std::int32_t> {
 
   static vector_type max(vector_type lhs, vector_type rhs) {
     return __lsx_vmax_w(lhs, rhs);
+  }
+
+  static std::int32_t reduce_max(vector_type vector) {
+    vector = max(vector, __lsx_vbsrl_v(vector, 8));
+    vector = max(vector, __lsx_vbsrl_v(vector, 4));
+    alignas(16) std::int32_t lanes[4];
+    __lsx_vst(vector, lanes, 0);
+    return std::max(lanes[0], lanes[1]);
   }
 
   static vector_type shift_left_zero(vector_type vector) {
@@ -2439,6 +2468,15 @@ struct Implementation {
     return TargetImplementation::needleman_wunsch_affine_scores_matrix(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dtw_distances_simd<
+        ::stride_align::dtw_simd::LsxDtwOps>(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_loongarch64_lsx;

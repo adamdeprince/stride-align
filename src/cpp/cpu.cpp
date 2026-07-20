@@ -76,9 +76,15 @@ bool x86_supports_avx2() noexcept {
 bool x86_supports_avx512bwvl() noexcept {
 #if (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)) && \
     (defined(__GNUC__) || defined(__clang__))
+  // Full AVX-512 baseline for this backend: F + BW + VL + DQ.
+  // DQ is present on mainstream Xeon AVX-512 silicon; we require it so
+  // the module may use DQ float/int bitwise ops (and so the dispatch
+  // gate matches the compile target).
   __builtin_cpu_init();
-  return __builtin_cpu_supports("avx512f") != 0 && __builtin_cpu_supports("avx512bw") != 0 &&
-      __builtin_cpu_supports("avx512vl") != 0;
+  return __builtin_cpu_supports("avx512f") != 0 &&
+      __builtin_cpu_supports("avx512bw") != 0 &&
+      __builtin_cpu_supports("avx512vl") != 0 &&
+      __builtin_cpu_supports("avx512dq") != 0;
 #else
   return false;
 #endif

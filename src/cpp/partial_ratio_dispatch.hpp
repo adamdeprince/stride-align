@@ -53,7 +53,8 @@ inline double dispatch_partial_ratio(nb::handle a, nb::handle b) {
         using A = typename std::decay_t<decltype(av)>::value_type;
         using B = typename std::decay_t<decltype(bv)>::value_type;
         if constexpr (std::is_same_v<A, B>) {
-          return partial_ratio_engine<A>(av, bv);
+          return partial_ratio_engine<A>(
+              std::span<const A>(av), std::span<const A>(bv));
         } else {
           PyErr_SetString(
               PyExc_RuntimeError,

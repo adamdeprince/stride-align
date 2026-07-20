@@ -20,6 +20,7 @@
 #include "cdist_simd.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
+#include "dtw_dispatch.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -1795,6 +1796,16 @@ struct Implementation {
     return farrar_fixed_kernel::detail::matrix_affine_scores_dispatch_helper<detail::SimdOps, false>(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dtw_distances_simd<
+        ::stride_align::dtw_simd::SseDtwOps>(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_sse41;

@@ -16,11 +16,14 @@
 // SIMD specialization (one target per SIMD lane, lane width 64) lives in
 // each x86 backend header.
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -97,11 +100,9 @@ inline std::size_t myers_inner(
       }
     }
 
-    if (last_hp & top_bit_last) {
-      ++score;
-    } else if (last_hn & top_bit_last) {
-      --score;
-    }
+    // HP and HN top bits are mutually exclusive under Myers/Hyyrö.
+    score += static_cast<std::size_t>((last_hp & top_bit_last) != 0U);
+    score -= static_cast<std::size_t>((last_hn & top_bit_last) != 0U);
     (void)m;
     ++k;
     // Min possible final score is score - (n - k). Bail if even the
@@ -134,11 +135,20 @@ inline std::size_t myers_single_word_u8(
     std::span<const std::uint8_t> text,
     std::size_t cutoff = kNoCutoff) noexcept {
   const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
   if (m == 0) {
-    return text.size();
+    return n;
   }
-  if (text.empty()) {
+  if (n == 0) {
     return m;
+  }
+  // Triangle lower bound: distance >= |m - n|. Bail before the 2 KB
+  // PEQ build when a finite cutoff already rules the pair out.
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) {
+      return cutoff + 1U;
+    }
   }
 
   std::uint64_t peq[256] = {0};
@@ -147,14 +157,32 @@ inline std::size_t myers_single_word_u8(
     peq[pattern[i]] |= one << i;
   }
 
-  const std::uint64_t top_bit = one << (m - 1);
+  const std::size_t shift = m - 1U;
   std::uint64_t vp = (m == 64U)
       ? ~std::uint64_t{0}
       : ((one << m) - 1);
   std::uint64_t vn = 0;
   std::size_t score = m;
 
-  const std::size_t n = text.size();
+  // Dual loops: the common no-cutoff path skips the early-exit branch
+  // and uses a branchless score delta (HP/HN top bits are exclusive).
+  if (cutoff == kNoCutoff) {
+    for (const std::uint8_t c : text) {
+      const std::uint64_t eq = peq[c];
+      const std::uint64_t x = eq | vn;
+      const std::uint64_t d0 = (((x & vp) + vp) ^ vp) | x;
+      const std::uint64_t hp = vn | ~(d0 | vp);
+      const std::uint64_t hn = d0 & vp;
+      score += static_cast<std::size_t>((hp >> shift) & 1U);
+      score -= static_cast<std::size_t>((hn >> shift) & 1U);
+      const std::uint64_t hp_shift = (hp << 1) | one;
+      const std::uint64_t hn_shift = (hn << 1);
+      vp = hn_shift | ~(d0 | hp_shift);
+      vn = d0 & hp_shift;
+    }
+    return score;
+  }
+
   std::size_t k = 0;
   for (const std::uint8_t c : text) {
     const std::uint64_t eq = peq[c];
@@ -162,17 +190,14 @@ inline std::size_t myers_single_word_u8(
     const std::uint64_t d0 = (((x & vp) + vp) ^ vp) | x;
     const std::uint64_t hp = vn | ~(d0 | vp);
     const std::uint64_t hn = d0 & vp;
-    if (hp & top_bit) {
-      ++score;
-    } else if (hn & top_bit) {
-      --score;
-    }
+    score += static_cast<std::size_t>((hp >> shift) & 1U);
+    score -= static_cast<std::size_t>((hn >> shift) & 1U);
     const std::uint64_t hp_shift = (hp << 1) | one;
     const std::uint64_t hn_shift = (hn << 1);
     vp = hn_shift | ~(d0 | hp_shift);
     vn = d0 & hp_shift;
     ++k;
-    if (cutoff != kNoCutoff && score > cutoff + (n - k)) {
+    if (score > cutoff + (n - k)) {
       return cutoff + 1U;
     }
   }
@@ -181,19 +206,64 @@ inline std::size_t myers_single_word_u8(
 
 // Thread-local PEQ scratch for the multi-word Myers kernel. Same
 // idea as ``indel.hpp::MultiWordU8Scratch`` — amortise the 256*K
-// PEQ buffer allocation across calls.
+// PEQ buffer allocation across calls. Dirty-symbol clearing avoids
+// a full 256×K zero on every call when the alphabet is small.
 struct MultiWordLevScratch {
   std::vector<std::uint64_t> peq;
   std::vector<std::uint64_t> vp;
   std::vector<std::uint64_t> vn;
   std::size_t k = 0;
 
+  std::vector<std::uint8_t> peq_dirty;
+  std::array<std::uint32_t, 256> peq_touch{};
+  std::uint32_t peq_gen = 0;
+  std::size_t peq_layout_k = 0;
+
   void resize_for(std::size_t K) {
     if (K > k) {
       peq.assign(256U * K, 0U);
       vp.resize(K);
       vn.resize(K);
+      peq_dirty.clear();
+      peq_layout_k = K;
+      peq_touch.fill(0);
+      peq_gen = 0;
       k = K;
+    }
+  }
+
+  void peq_begin(std::size_t K) {
+    resize_for(K);
+    if (peq_layout_k != K) {
+      std::fill_n(peq.data(), 256U * K, std::uint64_t{0});
+      peq_dirty.clear();
+      peq_layout_k = K;
+    } else {
+      for (const std::uint8_t s : peq_dirty) {
+        std::fill_n(
+            peq.data() + static_cast<std::size_t>(s) * K, K, std::uint64_t{0});
+      }
+      peq_dirty.clear();
+    }
+    if (++peq_gen == 0U) {
+      peq_touch.fill(0);
+      peq_gen = 1U;
+    }
+  }
+
+  void peq_or_bit(std::uint8_t c, std::size_t bit_index, std::size_t K) {
+    if (peq_touch[c] != peq_gen) {
+      peq_touch[c] = peq_gen;
+      peq_dirty.push_back(c);
+    }
+    peq[static_cast<std::size_t>(c) * K + (bit_index >> 6U)] |=
+        std::uint64_t{1} << (bit_index & 63U);
+  }
+
+  void peq_build(std::span<const std::uint8_t> pattern, std::size_t K) {
+    peq_begin(K);
+    for (std::size_t i = 0; i < pattern.size(); ++i) {
+      peq_or_bit(pattern[i], i, K);
     }
   }
 };
@@ -230,8 +300,13 @@ inline std::size_t myers_multi_word_u8(
     std::span<const std::uint8_t> text,
     std::size_t cutoff = kNoCutoff) {
   const std::size_t m = pattern.size();
-  if (m == 0) return text.size();
-  if (text.empty()) return m;
+  const std::size_t n = text.size();
+  if (m == 0) return n;
+  if (n == 0) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
   if (m <= 64U) {
     return myers_single_word_u8(pattern, text, cutoff);
   }
@@ -267,12 +342,7 @@ inline std::size_t myers_multi_word_kN_u8(
   const std::uint64_t one = 1U;
 
   MultiWordLevScratch& scr = multi_word_lev_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   // Stack-resident state. ``K`` is constexpr so the compiler treats
   // these as register-promotable fixed-size arrays.
@@ -334,11 +404,8 @@ inline std::size_t myers_multi_word_kN_u8(
       }
     }
 
-    if (last_hp & top_bit_last) {
-      ++score;
-    } else if (last_hn & top_bit_last) {
-      --score;
-    }
+    score += static_cast<std::size_t>((last_hp & top_bit_last) != 0U);
+    score -= static_cast<std::size_t>((last_hn & top_bit_last) != 0U);
     ++k_col;
     if (cutoff != kNoCutoff && score > cutoff + (n - k_col)) {
       return cutoff + 1U;
@@ -383,12 +450,7 @@ inline std::size_t myers_multi_word_generic_u8(
   const std::uint64_t one = 1U;
 
   MultiWordLevScratch& scr = multi_word_lev_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i / kWord)] |=
-        one << (i % kWord);
-  }
+  scr.peq_build(pattern, K);
 
   std::uint64_t* const vp = scr.vp.data();
   std::uint64_t* const vn = scr.vn.data();
@@ -444,11 +506,8 @@ inline std::size_t myers_multi_word_generic_u8(
       }
     }
 
-    if (last_hp & top_bit_last) {
-      ++score;
-    } else if (last_hn & top_bit_last) {
-      --score;
-    }
+    score += static_cast<std::size_t>((last_hp & top_bit_last) != 0U);
+    score -= static_cast<std::size_t>((last_hn & top_bit_last) != 0U);
     ++k_col;
     if (cutoff != kNoCutoff && score > cutoff + (n - k_col)) {
       return cutoff + 1U;
@@ -464,11 +523,18 @@ std::size_t myers_distance(
     std::size_t cutoff = kNoCutoff) {
   static_assert(std::is_integral_v<Token> || std::is_unsigned_v<Token>);
   const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
   if (m == 0) {
-    return text.size();
+    return n;
   }
-  if (text.empty()) {
+  if (n == 0) {
     return m;
+  }
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) {
+      return cutoff + 1U;
+    }
   }
 
   constexpr std::size_t kWord = 64U;
@@ -600,7 +666,7 @@ inline std::size_t osa_single_word_u8(
     peq[pattern[i]] |= one << i;
   }
 
-  const std::uint64_t top_bit = one << (m - 1U);
+  const std::size_t shift = m - 1U;
   std::uint64_t vp = (m == 64U)
       ? ~std::uint64_t{0}
       : ((one << m) - 1U);
@@ -617,11 +683,9 @@ inline std::size_t osa_single_word_u8(
 
     const std::uint64_t hp = vn | ~(d0 | vp);
     const std::uint64_t hn = d0 & vp;
-    if (hp & top_bit) {
-      ++score;
-    } else if (hn & top_bit) {
-      --score;
-    }
+    // HP/HN top bits are mutually exclusive under Hyyrö OSA.
+    score += static_cast<std::size_t>((hp >> shift) & 1U);
+    score -= static_cast<std::size_t>((hn >> shift) & 1U);
     const std::uint64_t hp_shift = (hp << 1) | one;
     const std::uint64_t hn_shift = hn << 1;
     vp = hn_shift | ~(d0 | hp_shift);
@@ -644,6 +708,11 @@ struct MultiWordOsaScratch {
   std::vector<std::uint64_t> pm_old;
   std::size_t k = 0;
 
+  std::vector<std::uint8_t> peq_dirty;
+  std::array<std::uint32_t, 256> peq_touch{};
+  std::uint32_t peq_gen = 0;
+  std::size_t peq_layout_k = 0;
+
   void resize_for(std::size_t K) {
     if (K > k) {
       peq.assign(256U * K, 0U);
@@ -651,7 +720,46 @@ struct MultiWordOsaScratch {
       vn.resize(K);
       d0_prev.resize(K);
       pm_old.resize(K);
+      peq_dirty.clear();
+      peq_layout_k = K;
+      peq_touch.fill(0);
+      peq_gen = 0;
       k = K;
+    }
+  }
+
+  void peq_begin(std::size_t K) {
+    resize_for(K);
+    if (peq_layout_k != K) {
+      std::fill_n(peq.data(), 256U * K, std::uint64_t{0});
+      peq_dirty.clear();
+      peq_layout_k = K;
+    } else {
+      for (const std::uint8_t s : peq_dirty) {
+        std::fill_n(
+            peq.data() + static_cast<std::size_t>(s) * K, K, std::uint64_t{0});
+      }
+      peq_dirty.clear();
+    }
+    if (++peq_gen == 0U) {
+      peq_touch.fill(0);
+      peq_gen = 1U;
+    }
+  }
+
+  void peq_or_bit(std::uint8_t c, std::size_t bit_index, std::size_t K) {
+    if (peq_touch[c] != peq_gen) {
+      peq_touch[c] = peq_gen;
+      peq_dirty.push_back(c);
+    }
+    peq[static_cast<std::size_t>(c) * K + (bit_index >> 6U)] |=
+        std::uint64_t{1} << (bit_index & 63U);
+  }
+
+  void peq_build(std::span<const std::uint8_t> pattern, std::size_t K) {
+    peq_begin(K);
+    for (std::size_t i = 0; i < pattern.size(); ++i) {
+      peq_or_bit(pattern[i], i, K);
     }
   }
 };
@@ -717,12 +825,7 @@ inline std::size_t osa_multi_word_kN_u8(
   const std::uint64_t one = 1U;
 
   MultiWordOsaScratch& scr = multi_word_osa_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   std::uint64_t vp[K];
   std::uint64_t vn[K];
@@ -795,11 +898,8 @@ inline std::size_t osa_multi_word_kN_u8(
       }
     }
 
-    if (last_hp & top_bit_last) {
-      ++score;
-    } else if (last_hn & top_bit_last) {
-      --score;
-    }
+    score += static_cast<std::size_t>((last_hp & top_bit_last) != 0U);
+    score -= static_cast<std::size_t>((last_hn & top_bit_last) != 0U);
   }
   return score;
 }
@@ -829,12 +929,7 @@ inline std::size_t osa_multi_word_generic_u8(
   const std::uint64_t one = 1U;
 
   MultiWordOsaScratch& scr = multi_word_osa_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i / kWord)] |=
-        one << (i % kWord);
-  }
+  scr.peq_build(pattern, K);
 
   std::uint64_t* const vp = scr.vp.data();
   std::uint64_t* const vn = scr.vn.data();
@@ -903,11 +998,8 @@ inline std::size_t osa_multi_word_generic_u8(
       }
     }
 
-    if (last_hp & top_bit_last) {
-      ++score;
-    } else if (last_hn & top_bit_last) {
-      --score;
-    }
+    score += static_cast<std::size_t>((last_hp & top_bit_last) != 0U);
+    score -= static_cast<std::size_t>((last_hn & top_bit_last) != 0U);
   }
   return score;
 }
@@ -936,7 +1028,7 @@ inline std::size_t osa_distance(
     peq[pattern[i]] |= one << i;
   }
 
-  const std::uint64_t top_bit = one << (m - 1U);
+  const std::size_t shift = m - 1U;
   std::uint64_t vp = (m == 64U) ? ~std::uint64_t{0} : ((one << m) - 1U);
   std::uint64_t vn = 0;
   std::uint64_t d0_prev = 0;
@@ -952,11 +1044,8 @@ inline std::size_t osa_distance(
 
     const std::uint64_t hp = vn | ~(d0 | vp);
     const std::uint64_t hn = d0 & vp;
-    if (hp & top_bit) {
-      ++score;
-    } else if (hn & top_bit) {
-      --score;
-    }
+    score += static_cast<std::size_t>((hp >> shift) & 1U);
+    score -= static_cast<std::size_t>((hn >> shift) & 1U);
     const std::uint64_t hp_shift = (hp << 1) | one;
     const std::uint64_t hn_shift = hn << 1;
     vp = hn_shift | ~(d0 | hp_shift);

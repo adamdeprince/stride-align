@@ -13,6 +13,7 @@
 // vector<uint64_t>>`` instead of the flat 256*B vector) but isn't
 // required to fix the original ``1v1`` bench bug.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -88,11 +89,36 @@ inline std::size_t myers_single_word_u8_with_peq(
     std::span<const std::uint8_t> text,
     std::size_t cutoff = kNoCutoff) noexcept {
   const std::uint64_t one = 1;
-  const std::uint64_t top_bit = one << (m - 1);
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
+
+  const std::size_t shift = m - 1U;
   std::uint64_t vp = (m == 64U) ? ~std::uint64_t{0} : ((one << m) - 1);
   std::uint64_t vn = 0;
   std::size_t score = m;
-  const std::size_t n = text.size();
+
+  if (cutoff == kNoCutoff) {
+    for (const std::uint8_t c : text) {
+      const std::uint64_t eq = peq[c];
+      const std::uint64_t x = eq | vn;
+      const std::uint64_t d0 = (((x & vp) + vp) ^ vp) | x;
+      const std::uint64_t hp = vn | ~(d0 | vp);
+      const std::uint64_t hn = d0 & vp;
+      score += static_cast<std::size_t>((hp >> shift) & 1U);
+      score -= static_cast<std::size_t>((hn >> shift) & 1U);
+      const std::uint64_t hp_shift = (hp << 1) | one;
+      const std::uint64_t hn_shift = (hn << 1);
+      vp = hn_shift | ~(d0 | hp_shift);
+      vn = d0 & hp_shift;
+    }
+    return score;
+  }
+
   std::size_t k = 0;
   for (const std::uint8_t c : text) {
     const std::uint64_t eq = peq[c];
@@ -100,17 +126,14 @@ inline std::size_t myers_single_word_u8_with_peq(
     const std::uint64_t d0 = (((x & vp) + vp) ^ vp) | x;
     const std::uint64_t hp = vn | ~(d0 | vp);
     const std::uint64_t hn = d0 & vp;
-    if (hp & top_bit) {
-      ++score;
-    } else if (hn & top_bit) {
-      --score;
-    }
+    score += static_cast<std::size_t>((hp >> shift) & 1U);
+    score -= static_cast<std::size_t>((hn >> shift) & 1U);
     const std::uint64_t hp_shift = (hp << 1) | one;
     const std::uint64_t hn_shift = (hn << 1);
     vp = hn_shift | ~(d0 | hp_shift);
     vn = d0 & hp_shift;
     ++k;
-    if (cutoff != kNoCutoff && score > cutoff + (n - k)) {
+    if (score > cutoff + (n - k)) {
       return cutoff + 1U;
     }
   }
@@ -127,16 +150,31 @@ inline std::size_t levenshtein_score_prepared_u8(
   if (text.empty()) {
     return prepared.m;
   }
+  if (cutoff != kNoCutoff) {
+    const std::size_t n = text.size();
+    const std::size_t len_diff =
+        prepared.m > n ? prepared.m - n : n - prepared.m;
+    if (len_diff > cutoff) {
+      return cutoff + 1U;
+    }
+  }
   if (prepared.single_word) {
     return myers_single_word_u8_with_peq(
         prepared.peq.data(), prepared.m, text, cutoff);
   }
-  // Multi-word: reuse the existing detail::myers_inner that
-  // myers_multi_word_u8 uses, just plugging in our cached PEQ.
-  std::vector<std::uint64_t> vp;
-  std::vector<std::uint64_t> vn;
-  detail::init_vp_vn(vp, vn, prepared.m);
+  // Multi-word: reuse thread-local vp/vn scratch (amortised across
+  // prepared 1-vs-N calls) and the existing detail::myers_inner with
+  // our cached PEQ.
   const std::size_t B = prepared.B;
+  MultiWordLevScratch& scr = multi_word_lev_scratch();
+  scr.resize_for(B);
+  std::fill_n(scr.vp.data(), B, ~std::uint64_t{0});
+  std::fill_n(scr.vn.data(), B, std::uint64_t{0});
+  constexpr std::size_t kWord = 64U;
+  const std::size_t last_bits = prepared.m - (B - 1U) * kWord;
+  if (last_bits < kWord) {
+    scr.vp[B - 1U] = (std::uint64_t{1} << last_bits) - 1U;
+  }
   return detail::myers_inner(
       prepared.m,
       B,
@@ -145,8 +183,8 @@ inline std::size_t levenshtein_score_prepared_u8(
         return std::span<const std::uint64_t>(
             prepared.peq.data() + static_cast<std::size_t>(c) * B, B);
       },
-      vp.data(),
-      vn.data(),
+      scr.vp.data(),
+      scr.vn.data(),
       prepared.top_bit_last,
       prepared.m,
       cutoff);

@@ -24,6 +24,7 @@
 #include "levenshtein_simd_ops.hpp"
 #include "indel_simd.hpp"
 #include "osa_simd.hpp"
+#include "dtw_dispatch.hpp"
 
 namespace stride_align::backend_avx10_256 {
 
@@ -1095,8 +1096,11 @@ struct Implementation {
 
   static STRIDE_ALIGN_X86_BASELINE bool supported_on_this_machine() noexcept {
 #if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 14)
-    return __builtin_cpu_supports("avx512f") != 0 && __builtin_cpu_supports("avx512bw") != 0 &&
-        __builtin_cpu_supports("avx512vl") != 0 && __builtin_cpu_supports("avx10.1-256") != 0;
+    return __builtin_cpu_supports("avx512f") != 0 &&
+        __builtin_cpu_supports("avx512bw") != 0 &&
+        __builtin_cpu_supports("avx512vl") != 0 &&
+        __builtin_cpu_supports("avx512dq") != 0 &&
+        __builtin_cpu_supports("avx10.1-256") != 0;
 #else
     return false;
 #endif
@@ -1622,6 +1626,15 @@ struct Implementation {
     return TargetImplementation::needleman_wunsch_affine_scores_matrix(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dispatch_dtw_many(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx10_256;

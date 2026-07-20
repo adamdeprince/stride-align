@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <nanobind/nanobind.h>
 
@@ -15,6 +16,7 @@
 #include "cdist_simd.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
+#include "dtw_dispatch.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -383,7 +385,18 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t lane_count = 8;
   static constexpr bool has_vector_max = true;
   static constexpr bool local_sw_score_exact_segment128 = true;
+  static constexpr bool local_sw_score_exact_dual_segment128 = true;
   static constexpr bool bounded_local_sw_lazy_f_scan = true;
+
+  // Dual-target 1:many deferred exact-fill (query 1024 = 128×8).
+  static bool try_score_batch_exact_fill_dual(
+      farrar_fixed_kernel::detail::PreparedScoreBatchState<std::int16_t>& batch,
+      std::vector<Score>& scores) {
+    return farrar_fixed_kernel::detail::try_score_batch_exact_fill_dual_generic<
+        SimdOps,
+        std::int16_t,
+        128U>(batch, scores);
+  }
 
   static uint16x8_t load_tokens(const std::uint16_t* values) {
     return vld1q_u16(values);
@@ -1685,6 +1698,15 @@ struct TargetImplementation {
     return farrar_fixed_kernel::detail::matrix_affine_scores_dispatch_helper<SimdOps, false>(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dtw_distances_simd<
+        ::stride_align::dtw_simd::NeonDtwOps>(query, targets, window, distance, score_cutoff);
   }
 };
 

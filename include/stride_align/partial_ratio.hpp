@@ -125,8 +125,8 @@ inline std::size_t cutoff_for(double best, std::size_t total) {
 // off, not at zero).
 template <typename Token>
 inline double partial_ratio_one_direction(
-    const std::vector<Token>& short_s,
-    const std::vector<Token>& long_s,
+    std::span<const Token> short_s,
+    std::span<const Token> long_s,
     double initial_best) {
   const std::size_t n = short_s.size();
   const std::size_t m = long_s.size();
@@ -135,7 +135,7 @@ inline double partial_ratio_one_direction(
 
   // Build the per-pattern PEQ once. Every window call reuses it.
   const auto prepared = ::stride_align::indel::prepare_indel_pattern<Token>(
-      std::span<const Token>(short_s.data(), n));
+      short_s);
 
   // Character set of the pattern — used by the boundary-extension
   // skip below.
@@ -218,17 +218,28 @@ inline double partial_ratio_one_direction(
     const std::size_t max_offset = m - n;
 
     // Thread-local scratch — the D-by-offset cache and the work stack
-    // would otherwise allocate per partial_ratio call. ``assign``
-    // resets contents without releasing the underlying allocation.
-    constexpr std::size_t kUnevaluated = ~std::size_t{0};
+    // would otherwise allocate per partial_ratio call. A generation
+    // counter marks unevaluated slots without an O(m-n) memset of D.
     thread_local std::vector<std::size_t> D;
+    thread_local std::vector<std::uint32_t> D_gen;
+    thread_local std::uint32_t D_epoch = 0;
     thread_local std::vector<std::pair<std::size_t, std::size_t>> work;
-    D.assign(max_offset + 1U, kUnevaluated);
+    if (++D_epoch == 0U) {
+      // Wrap: force every slot to look unevaluated under the new epoch.
+      std::fill(D_gen.begin(), D_gen.end(), 0U);
+      D_epoch = 1U;
+    }
+    const std::size_t need = max_offset + 1U;
+    if (D.size() < need) {
+      D.resize(need);
+      D_gen.resize(need, 0U);
+    }
     work.clear();
 
     auto eval = [&](std::size_t s) -> std::size_t {
-      if (D[s] != kUnevaluated) return D[s];
+      if (D_gen[s] == D_epoch) return D[s];
       D[s] = run_window(s, n);
+      D_gen[s] = D_epoch;
       return D[s];
     };
 
@@ -408,17 +419,18 @@ inline double partial_ratio_one_direction(
 }
 
 // Engine: handles the empty / one-empty / equal-length cases on top
-// of the one-direction search.
+// of the one-direction search. Takes spans so callers with external
+// buffers (byte views, pre-owned vectors) avoid a defensive copy.
 template <typename Token>
 inline double partial_ratio_engine(
-    const std::vector<Token>& a,
-    const std::vector<Token>& b) {
+    std::span<const Token> a,
+    std::span<const Token> b) {
   if (a.empty() && b.empty()) return 1.0;
   if (a.empty() || b.empty()) return 0.0;
 
   const bool a_short = a.size() <= b.size();
-  const auto& short_s = a_short ? a : b;
-  const auto& long_s  = a_short ? b : a;
+  const std::span<const Token> short_s = a_short ? a : b;
+  const std::span<const Token> long_s  = a_short ? b : a;
 
   double best = partial_ratio_one_direction<Token>(short_s, long_s, 0.0);
 
@@ -434,18 +446,12 @@ inline double partial_ratio_engine(
 
 // Byte fast path entry: caller has already established that both
 // inputs are byte-compatible (ASCII Python str, bytes-like, or
-// pre-narrowed). No widening or per-codepoint check needed.
+// pre-narrowed). No widening, per-codepoint check, or defensive
+// copy — the engine is span-based.
 inline double partial_ratio_bytes(
     std::span<const std::uint8_t> a,
     std::span<const std::uint8_t> b) {
-  if (a.empty() && b.empty()) return 1.0;
-  if (a.empty() || b.empty()) return 0.0;
-  // Copy into vectors only because the engine signature expects
-  // owning containers. (The internal slicing is span-based, so this
-  // copy is the only allocation on the byte fast path.)
-  std::vector<std::uint8_t> av(a.begin(), a.end());
-  std::vector<std::uint8_t> bv(b.begin(), b.end());
-  return partial_ratio_engine<std::uint8_t>(av, bv);
+  return partial_ratio_engine<std::uint8_t>(a, b);
 }
 
 // Public entry: routes through the byte fast path when both inputs
@@ -468,9 +474,13 @@ inline double partial_ratio(
   if (fits_in_byte) {
     std::vector<std::uint8_t> ab(a.begin(), a.end());
     std::vector<std::uint8_t> bb(b.begin(), b.end());
-    return partial_ratio_engine<std::uint8_t>(ab, bb);
+    return partial_ratio_engine<std::uint8_t>(
+        std::span<const std::uint8_t>(ab),
+        std::span<const std::uint8_t>(bb));
   }
-  return partial_ratio_engine<Codepoint>(a, b);
+  return partial_ratio_engine<Codepoint>(
+      std::span<const Codepoint>(a),
+      std::span<const Codepoint>(b));
 }
 
 }  // namespace stride_align::partial_ratio

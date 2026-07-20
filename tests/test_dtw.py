@@ -217,3 +217,59 @@ def test_dtw_distances_rejects_mixed_dtype_targets():
     targets = [np.array([1.0], dtype=np.float32), np.array([1.0], dtype=np.float64)]
     with pytest.raises(TypeError, match="dtype"):
         sa.dtw_distances(q, targets)
+
+
+# ---- SIMD batch ≡ singular -----------------------------------------------
+
+@pytest.mark.parametrize("dtype,distance", [
+    (np.float32, None),
+    (np.float64, None),
+    (np.int16, "l1"),
+    (np.float32, "l1"),
+])
+@pytest.mark.parametrize("window", [None, 5, 0.25])
+def test_dtw_distances_matches_singular(dtype, distance, window):
+    """Batch path (SIMD on capable backends) must match per-pair dtw."""
+    rng = np.random.default_rng(99)
+    q = (rng.standard_normal(32) * 8).astype(dtype, copy=False)
+    lengths = [16, 32, 48, 24, 40, 32, 20, 36, 28]
+    targets = [
+        (rng.standard_normal(n) * 8).astype(dtype, copy=False) for n in lengths
+    ]
+    batch = sa.dtw_distances(q, targets, window=window, distance=distance)
+    assert len(batch) == len(targets)
+    for i, t in enumerate(targets):
+        single = sa.dtw(q, t, window=window, distance=distance)
+        if np.isinf(single):
+            assert np.isinf(batch[i])
+        else:
+            assert batch[i] == pytest.approx(single, rel=1e-5, abs=1e-4)
+
+
+def test_dtw_score_cutoff_returns_inf_when_exceeded():
+    q = np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float64)
+    t = np.array([10.0, 11.0, 12.0, 13.0], dtype=np.float64)
+    full = sa.dtw(q, t, distance="l1")
+    assert full > 0
+    # Tight cutoff must reject.
+    assert np.isinf(sa.dtw(q, t, distance="l1", score_cutoff=full * 0.01))
+    # Loose cutoff returns the real distance.
+    assert sa.dtw(q, t, distance="l1", score_cutoff=full + 1.0) == pytest.approx(full)
+
+
+def test_dtw_band_impossibility_is_inf():
+    q = np.zeros(10, dtype=np.float32)
+    t = np.zeros(30, dtype=np.float32)
+    # |m-n|=20 > window=5 ⇒ no legal warping path.
+    assert np.isinf(sa.dtw(q, t, window=5, distance="l1"))
+
+
+def test_dtw_distances_cutoff_prunes_dissimilar():
+    rng = np.random.default_rng(3)
+    q = (rng.standard_normal(64)).astype(np.float32)
+    near = q + rng.normal(0, 0.01, size=64).astype(np.float32)
+    far = (rng.standard_normal(64) * 20).astype(np.float32)
+    # Small cutoff keeps near, rejects far via LB_Keogh / early abandon.
+    d = sa.dtw_distances(q, [near, far], window=8, distance="l2_squared", score_cutoff=1.0)
+    assert d[0] < 1.0 or np.isfinite(d[0])
+    assert np.isinf(d[1]) or d[1] > 1.0

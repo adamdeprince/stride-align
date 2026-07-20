@@ -1,0 +1,17 @@
+host,date,length,n_targets,dtype,distance,window,score_cutoff,config,library,us_per_batch
+ip-172-31-38-190,2026-07-19,128,64,float32,l2_squared,,,f32-full,stride_align,1131.481
+ip-172-31-38-190,2026-07-19,128,64,float32,l2_squared,,,f32-full,dtaidistance,520016.450
+ip-172-31-38-190,2026-07-19,128,64,float32,l2_squared,8,,f32-w8,stride_align,907.180
+ip-172-31-38-190,2026-07-19,128,64,float32,l2_squared,8,,f32-w8,dtaidistance,66906.789
+ip-172-31-38-190,2026-07-19,128,64,float32,l2_squared,8,50.0,f32-w8-cutoff50,stride_align,945.991
+ip-172-31-38-190,2026-07-19,128,64,int16,l1,,,i16-full,stride_align,1359.319
+ip-172-31-38-190,2026-07-19,128,64,int16,l1,8,,i16-w8,stride_align,2091.954
+ip-172-31-38-190,2026-07-19,128,64,int16,l1,8,500.0,i16-w8-cutoff500,stride_align,749.408
+ip-172-31-38-190,2026-07-19,256,64,float32,l2_squared,,,f32-full,stride_align,3571.262
+ip-172-31-38-190,2026-07-19,256,64,float32,l2_squared,,,f32-full,dtaidistance,2202080.354
+ip-172-31-38-190,2026-07-19,256,64,float32,l2_squared,8,,f32-w8,stride_align,3529.645
+ip-172-31-38-190,2026-07-19,256,64,float32,l2_squared,8,,f32-w8,dtaidistance,134776.288
+ip-172-31-38-190,2026-07-19,256,64,float32,l2_squared,8,50.0,f32-w8-cutoff50,stride_align,3670.005
+ip-172-31-38-190,2026-07-19,256,64,int16,l1,,,i16-full,stride_align,5395.419
+ip-172-31-38-190,2026-07-19,256,64,int16,l1,8,,i16-w8,stride_align,7984.322
+ip-172-31-38-190,2026-07-19,256,64,int16,l1,8,500.0,i16-w8-cutoff500,stride_align,2817.435

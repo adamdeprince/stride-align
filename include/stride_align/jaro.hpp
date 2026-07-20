@@ -261,15 +261,57 @@ inline double jaro_bp_byte_multiword(
   const std::size_t wb = (m + 63U) / 64U;  // words spanning b's positions
   const std::size_t wa = (n + 63U) / 64U;  // words spanning a's positions
 
+  // Thread-local scratch — amortise 256*wb PEQ + bitmap allocations
+  // across long-string Jaro calls (same pattern as multi-word Indel).
+  struct MultiWordJaroScratch {
+    std::vector<std::uint64_t> peq;
+    std::vector<std::uint64_t> used_b;
+    std::vector<std::uint64_t> a_matched;
+    std::vector<std::uint8_t> peq_dirty;
+    std::array<std::uint32_t, 256> peq_touch{};
+    std::uint32_t peq_gen = 0;
+    std::size_t peq_layout_wb = 0;
+  };
+  thread_local MultiWordJaroScratch scr;
+
+  if (scr.peq.size() < 256U * wb) {
+    scr.peq.assign(256U * wb, 0U);
+    scr.peq_dirty.clear();
+    scr.peq_layout_wb = wb;
+    scr.peq_touch.fill(0);
+    scr.peq_gen = 0;
+  } else if (scr.peq_layout_wb != wb) {
+    std::fill_n(scr.peq.data(), 256U * wb, std::uint64_t{0});
+    scr.peq_dirty.clear();
+    scr.peq_layout_wb = wb;
+  } else {
+    for (const std::uint8_t s : scr.peq_dirty) {
+      std::fill_n(
+          scr.peq.data() + static_cast<std::size_t>(s) * wb, wb,
+          std::uint64_t{0});
+    }
+    scr.peq_dirty.clear();
+  }
+  if (++scr.peq_gen == 0U) {
+    scr.peq_touch.fill(0);
+    scr.peq_gen = 1U;
+  }
+
   // PEQ over b: bit j of peq row b[j] is set. 256 rows of `wb` words.
-  std::vector<std::uint64_t> peq(256U * wb, 0U);
   for (std::size_t j = 0; j < m; ++j) {
-    peq[static_cast<std::size_t>(b[j]) * wb + (j >> 6U)] |=
+    const std::uint8_t c = b[j];
+    if (scr.peq_touch[c] != scr.peq_gen) {
+      scr.peq_touch[c] = scr.peq_gen;
+      scr.peq_dirty.push_back(c);
+    }
+    scr.peq[static_cast<std::size_t>(c) * wb + (j >> 6U)] |=
         std::uint64_t{1} << (j & 63U);
   }
 
-  std::vector<std::uint64_t> used_b(wb, 0U);
-  std::vector<std::uint64_t> a_matched(wa, 0U);
+  if (scr.used_b.size() < wb) scr.used_b.resize(wb);
+  if (scr.a_matched.size() < wa) scr.a_matched.resize(wa);
+  std::fill_n(scr.used_b.data(), wb, std::uint64_t{0});
+  std::fill_n(scr.a_matched.data(), wa, std::uint64_t{0});
   std::size_t matches = 0U;
 
   for (std::size_t i = 0; i < n; ++i) {
@@ -278,7 +320,8 @@ inline double jaro_bp_byte_multiword(
     if (lo >= hi) {
       continue;
     }
-    const std::uint64_t* row = peq.data() + static_cast<std::size_t>(a[i]) * wb;
+    const std::uint64_t* row =
+        scr.peq.data() + static_cast<std::size_t>(a[i]) * wb;
     // Leftmost unused b-position in [lo, hi) matching a[i]: scan words
     // low->high; the first word holding a candidate has the lowest
     // position, and its lowest set bit is the leftmost one.
@@ -288,10 +331,11 @@ inline double jaro_bp_byte_multiword(
       const std::size_t base = w * 64U;
       const std::size_t blo = lo > base ? lo - base : 0U;
       const std::size_t bhi = std::min<std::size_t>(64U, hi - base);
-      const std::uint64_t cand = row[w] & bit_range(blo, bhi) & ~used_b[w];
+      const std::uint64_t cand =
+          row[w] & bit_range(blo, bhi) & ~scr.used_b[w];
       if (cand != 0U) {
-        used_b[w] |= cand & (~cand + 1U);
-        a_matched[i >> 6U] |= std::uint64_t{1} << (i & 63U);
+        scr.used_b[w] |= cand & (~cand + 1U);
+        scr.a_matched[i >> 6U] |= std::uint64_t{1} << (i & 63U);
         ++matches;
         break;
       }
@@ -307,14 +351,14 @@ inline double jaro_bp_byte_multiword(
   std::size_t half_trans = 0U;
   std::size_t wa_i = 0U;
   std::size_t wb_i = 0U;
-  std::uint64_t a_bits = a_matched[0];
-  std::uint64_t b_bits = used_b[0];
+  std::uint64_t a_bits = scr.a_matched[0];
+  std::uint64_t b_bits = scr.used_b[0];
   for (std::size_t c = 0; c < matches; ++c) {
     while (a_bits == 0U) {
-      a_bits = a_matched[++wa_i];
+      a_bits = scr.a_matched[++wa_i];
     }
     while (b_bits == 0U) {
-      b_bits = used_b[++wb_i];
+      b_bits = scr.used_b[++wb_i];
     }
     const std::size_t i =
         wa_i * 64U + static_cast<std::size_t>(std::countr_zero(a_bits));

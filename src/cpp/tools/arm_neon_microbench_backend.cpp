@@ -25,6 +25,10 @@ RunResult run_avx512bwvl_backend(const PreparedWorkload&, const Options&) {
   throw std::runtime_error("AVX512BWVL microbench backend is not available in the arm64 build");
 }
 
+int verify_dual_sw_exact_fill_avx512bwvl() {
+  throw std::runtime_error("dual SW exact-fill verify requires AVX-512 (x86 microbench build)");
+}
+
 RunResult run_parasail_backend(const PreparedWorkload&, const Options&) {
   throw std::runtime_error("parasail microbench backend is not linked in the arm64 build");
 }

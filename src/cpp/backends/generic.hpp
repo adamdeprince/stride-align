@@ -20,6 +20,7 @@
 #include "scorer.hpp"
 #include "backends/score_fast_paths.hpp"
 #include "stride_align/alignment.hpp"
+#include "dtw_dispatch.hpp"
 
 namespace stride_align::backend_generic {
 
@@ -1098,6 +1099,15 @@ struct Implementation {
     return matrix_affine_scores_dispatch<false>(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dispatch_dtw_many(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = Kind;

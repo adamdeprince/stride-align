@@ -22,6 +22,7 @@
 #include "cdist_simd.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
+#include "dtw_dispatch.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -406,14 +407,6 @@ inline Score reduce_max_i32_256(__m256i value) {
     } \
   } while (false)
 
-#define STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment_index) \
-  do { \
-    __m256i v_h_flush = _mm256_load_si256(h_store + (segment_index)); \
-    v_h_flush = _mm256_max_epi16(v_h_flush, pending_h); \
-    best = _mm256_max_epi16(best, v_h_flush); \
-    pending_h = _mm256_add_epi16(pending_h, gap); \
-  } while (false)
-
 inline Score local_sw_score_exact_fill_i16_64(
     farrar_fixed_kernel::detail::PreparedScoreState<std::int16_t>& state) {
   if (state.fast_score.has_value()) {
@@ -570,23 +563,14 @@ inline Score local_sw_score_exact_fill_i16_64(
   }
 
   if (has_pending_f) {
-    __m256i pending_h = pending_f;
-    for (std::size_t segment = 0; segment < 64U; segment += 8U) {
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 1U);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 2U);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 3U);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 4U);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 5U);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 6U);
-      STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING(segment + 7U);
-    }
+    // Score-only final fold: gap < 0 so the pending F wavefront is monotone
+    // decreasing; max(best, pending_f) equals max over corrected cells.
+    best = _mm256_max_epi16(best, pending_f);
   }
 
   return reduce_max_i16_256(best);
 }
 
-#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I16_FLUSH_PENDING
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN_BOUNDED
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I16_SCAN
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I16_STEP_CORRECTED
@@ -648,14 +632,6 @@ inline Score local_sw_score_exact_fill_i16_64(
     v_h = _mm256_load_si256(h_load + (segment_index)); \
     v_h = _mm256_max_epi32(v_h, pending_h); \
     best = _mm256_max_epi32(best, v_h); \
-    pending_h = _mm256_add_epi32(pending_h, gap); \
-  } while (false)
-
-#define STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment_index) \
-  do { \
-    __m256i v_h_flush = _mm256_load_si256(h_store + (segment_index)); \
-    v_h_flush = _mm256_max_epi32(v_h_flush, pending_h); \
-    best = _mm256_max_epi32(best, v_h_flush); \
     pending_h = _mm256_add_epi32(pending_h, gap); \
   } while (false)
 
@@ -826,26 +802,8 @@ inline Score local_sw_score_exact_fill_i32_128(
   }
 
   if (has_pending_f) {
-    __m256i pending_h = pending_f;
-    if (use_deferred_unroll4) {
-      for (std::size_t segment = 0; segment < 128U; segment += 4U) {
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 1U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 2U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 3U);
-      }
-    } else {
-      for (std::size_t segment = 0; segment < 128U; segment += 8U) {
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 1U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 2U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 3U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 4U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 5U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 6U);
-        STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING(segment + 7U);
-      }
-    }
+    // Score-only final fold: gap < 0 so pending F is monotone decreasing.
+    best = _mm256_max_epi32(best, pending_f);
   }
 
   return reduce_max_i32_256(best);
@@ -922,7 +880,6 @@ inline Score local_affine_score_exact_fill_i32_128(
   return reduce_max_i32_256(best);
 }
 
-#undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_FLUSH_PENDING
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_STEP_CORRECTED
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN_BOUNDED
 #undef STRIDE_ALIGN_AVX2_LOCAL_SW_I32_SCAN
@@ -1327,11 +1284,15 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return local_sw_score_exact_fill_i32_128(state);
   }
 
-  static Score local_affine_score_exact_segment128_raw(
-      farrar_fixed_kernel::detail::PreparedAffineScoreState<std::int32_t>& state,
-      std::span<const std::size_t> target_profile_offsets) {
-    return local_affine_score_exact_fill_i32_128(state, target_profile_offsets);
-  }
+  // Intentionally no local_affine_score_exact_segment128_raw for AVX2 i32.
+  // After the 0.6.0 general-path prefix-lazy-F speedup, the specialized
+  // exact-fill kernel is ~8-9% *slower* than falling through to
+  // affine_score_state_for_offsets at the exact-fill corner (query_size ==
+  // 128 * 8 == 1024). Other backends (NEON i16 segment128, LASX i32
+  // segment128, AVX-512 segment64) still win with their exact-fill hooks;
+  // only this AVX2-i32 pair regresses. See TODO.md item 1.
+  // The kernel local_affine_score_exact_fill_i32_128 is retained above for
+  // microbench / future retuning.
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
     return _mm256_movemask_epi8(_mm256_cmpgt_epi32(lhs, rhs)) != 0;
@@ -3517,6 +3478,16 @@ struct Implementation {
     return TargetImplementation::needleman_wunsch_affine_scores_matrix(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dtw_distances_simd<
+        ::stride_align::dtw_simd::Avx2DtwOps>(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::x86_avx2;

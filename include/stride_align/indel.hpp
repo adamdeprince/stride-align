@@ -20,9 +20,12 @@
 // Hyyrö (2004) gives a cleaner derivation and the multi-word
 // generalization; rapidfuzz uses the same recurrence.
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <type_traits>
 #include <unordered_map>
@@ -88,6 +91,12 @@ inline std::size_t indel_single_word_u8(
   const std::size_t n = text.size();
   if (m == 0U) return n;
   if (n == 0U) return m;
+  // indel = m + n - 2·LCS ≥ |m - n|. Bail before PEQ build when a
+  // finite cutoff already rules the pair out.
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
 
   std::uint64_t peq[256] = {0};
   const std::uint64_t one = 1U;
@@ -99,22 +108,26 @@ inline std::size_t indel_single_word_u8(
       (m == 64U) ? ~std::uint64_t{0} : ((one << m) - 1U);
   std::uint64_t V = mask;
 
-  // Pre-compute the bail threshold once. The lower bound on final
-  // indel after processing ``j`` of ``n`` text chars is
-  //   2*(j + popcount(V)) - m - n
-  // (derivation: final LCS ≤ (m - popcount(V)) + (n - j), so final
-  // indel = m + n - 2·final_lcs ≥ 2j + 2·popcount(V) - m - n).
-  // Bail when this lower bound exceeds the cutoff, i.e. when
-  //   2*(j + popcount(V)) > m + n + cutoff.
-  const bool has_cutoff = cutoff != kNoCutoff;
-  const std::size_t bail_threshold = m + n + (has_cutoff ? cutoff : 0U);
-
-  std::size_t j = 0;
-  for (const std::uint8_t c : text) {
-    const std::uint64_t U = V & peq[c];
-    V = ((V + U) | (V - U)) & mask;
-    ++j;
-    if (has_cutoff) {
+  // Dual loops: the common no-cutoff path skips per-char popcount.
+  if (cutoff == kNoCutoff) {
+    for (const std::uint8_t c : text) {
+      const std::uint64_t U = V & peq[c];
+      V = ((V + U) | (V - U)) & mask;
+    }
+  } else {
+    // Pre-compute the bail threshold once. The lower bound on final
+    // indel after processing ``j`` of ``n`` text chars is
+    //   2*(j + popcount(V)) - m - n
+    // (derivation: final LCS ≤ (m - popcount(V)) + (n - j), so final
+    // indel = m + n - 2·final_lcs ≥ 2j + 2·popcount(V) - m - n).
+    // Bail when this lower bound exceeds the cutoff, i.e. when
+    //   2*(j + popcount(V)) > m + n + cutoff.
+    const std::size_t bail_threshold = m + n + cutoff;
+    std::size_t j = 0;
+    for (const std::uint8_t c : text) {
+      const std::uint64_t U = V & peq[c];
+      V = ((V + U) | (V - U)) & mask;
+      ++j;
       const std::size_t lower_bound_score =
           2U * (j + static_cast<std::size_t>(std::popcount(V)));
       if (lower_bound_score > bail_threshold) {
@@ -184,6 +197,10 @@ inline std::size_t indel_distance(
   const std::size_t n = text.size();
   if (m == 0U) return n;
   if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
   if (m > 64U) {
     return indel_distance_multi_word<Token>(pattern, text, cutoff);
   }
@@ -198,17 +215,22 @@ inline std::size_t indel_distance(
       (m == 64U) ? ~std::uint64_t{0} : ((one << m) - 1U);
   std::uint64_t V = mask;
 
-  const bool has_cutoff = cutoff != kNoCutoff;
-  const std::size_t bail_threshold = m + n + (has_cutoff ? cutoff : 0U);
-
-  std::size_t j = 0;
-  for (const auto c : text) {
-    auto it = peq.find(c);
-    const std::uint64_t pm = (it == peq.end()) ? 0U : it->second;
-    const std::uint64_t U = V & pm;
-    V = ((V + U) | (V - U)) & mask;
-    ++j;
-    if (has_cutoff) {
+  if (cutoff == kNoCutoff) {
+    for (const auto c : text) {
+      auto it = peq.find(c);
+      const std::uint64_t pm = (it == peq.end()) ? 0U : it->second;
+      const std::uint64_t U = V & pm;
+      V = ((V + U) | (V - U)) & mask;
+    }
+  } else {
+    const std::size_t bail_threshold = m + n + cutoff;
+    std::size_t j = 0;
+    for (const auto c : text) {
+      auto it = peq.find(c);
+      const std::uint64_t pm = (it == peq.end()) ? 0U : it->second;
+      const std::uint64_t U = V & pm;
+      V = ((V + U) | (V - U)) & mask;
+      ++j;
       const std::size_t lower_bound_score =
           2U * (j + static_cast<std::size_t>(std::popcount(V)));
       if (lower_bound_score > bail_threshold) {
@@ -231,6 +253,13 @@ inline std::size_t indel_distance_u8(
     std::span<const std::uint8_t> text,
     std::size_t cutoff = kNoCutoff) {
   const std::size_t m = pattern.size();
+  const std::size_t n = text.size();
+  if (m == 0U) return n;
+  if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
   if (m > 0U && m <= 64U) {
     return indel_single_word_u8(pattern, text, cutoff);
   }
@@ -269,6 +298,10 @@ inline std::size_t indel_distance_u8(
 // The kernel only ever resizes the buffers upward, so reuse across
 // calls amortises away the heap-allocation cost that was the
 // dominant per-call expense for long patterns.
+//
+// PEQ clearing uses a dirty-symbol list: after the first call we only
+// zero the alphabet rows the previous pattern touched (typically ≪ 256
+// for ASCII), instead of ``fill(256 * K)`` every time.
 struct MultiWordU8Scratch {
   std::vector<std::uint64_t> peq;   // 256 * K entries
   std::vector<std::uint64_t> mask;  // K entries
@@ -277,13 +310,62 @@ struct MultiWordU8Scratch {
   std::vector<std::uint64_t> diff;  // K entries
   std::vector<std::uint64_t> U;     // K entries
 
+  // Dirty-PEQ bookkeeping.
+  std::vector<std::uint8_t> peq_dirty;
+  std::array<std::uint32_t, 256> peq_touch{};
+  std::uint32_t peq_gen = 0;
+  std::size_t peq_layout_k = 0;
+
   void resize_for(std::size_t K) {
-    if (peq.size() < 256U * K) peq.resize(256U * K);
+    if (peq.size() < 256U * K) {
+      peq.assign(256U * K, 0U);
+      peq_dirty.clear();
+      peq_layout_k = K;
+      peq_touch.fill(0);
+      peq_gen = 0;
+    }
     if (mask.size() < K) mask.resize(K);
     if (V.size() < K)    V.resize(K);
     if (sum.size() < K)  sum.resize(K);
     if (diff.size() < K) diff.resize(K);
     if (U.size() < K)    U.resize(K);
+  }
+
+  // Prepare peq for a rebuild at layout ``K``. Zeros only previously
+  // dirtied symbol rows when the layout is unchanged.
+  void peq_begin(std::size_t K) {
+    resize_for(K);
+    if (peq_layout_k != K) {
+      std::fill_n(peq.data(), 256U * K, std::uint64_t{0});
+      peq_dirty.clear();
+      peq_layout_k = K;
+    } else {
+      for (const std::uint8_t s : peq_dirty) {
+        std::fill_n(
+            peq.data() + static_cast<std::size_t>(s) * K, K, std::uint64_t{0});
+      }
+      peq_dirty.clear();
+    }
+    if (++peq_gen == 0U) {
+      peq_touch.fill(0);
+      peq_gen = 1U;
+    }
+  }
+
+  void peq_or_bit(std::uint8_t c, std::size_t bit_index, std::size_t K) {
+    if (peq_touch[c] != peq_gen) {
+      peq_touch[c] = peq_gen;
+      peq_dirty.push_back(c);
+    }
+    peq[static_cast<std::size_t>(c) * K + (bit_index >> 6U)] |=
+        std::uint64_t{1} << (bit_index & 63U);
+  }
+
+  void peq_build(std::span<const std::uint8_t> pattern, std::size_t K) {
+    peq_begin(K);
+    for (std::size_t i = 0; i < pattern.size(); ++i) {
+      peq_or_bit(pattern[i], i, K);
+    }
   }
 };
 
@@ -300,19 +382,15 @@ inline std::size_t indel_distance_multi_word_u8(
   const std::size_t n = text.size();
   if (m == 0U) return n;
   if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
   const std::size_t K = (m + 63U) / 64U;
   const std::uint64_t one = 1U;
 
   MultiWordU8Scratch& scr = multi_word_u8_scratch();
-  scr.resize_for(K);
-
-  // Clear PEQ entries within the active 256 × K window.
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   std::uint64_t* const mask = scr.mask.data();
   for (std::size_t k = 0; k < K; ++k) mask[k] = ~std::uint64_t{0};
@@ -406,13 +484,7 @@ inline std::size_t indel_distance_k2_u8(
   const std::uint64_t one = 1U;
 
   MultiWordU8Scratch& scr = multi_word_u8_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   const std::uint64_t mask0 = ~std::uint64_t{0};
   const std::uint64_t mask1 =
@@ -478,13 +550,7 @@ inline std::size_t indel_distance_k3_u8(
   const std::uint64_t one = 1U;
 
   MultiWordU8Scratch& scr = multi_word_u8_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   const std::uint64_t mask0 = ~std::uint64_t{0};
   const std::uint64_t mask1 = ~std::uint64_t{0};
@@ -565,13 +631,7 @@ inline std::size_t indel_distance_k4_u8(
   const std::uint64_t one = 1U;
 
   MultiWordU8Scratch& scr = multi_word_u8_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   const std::uint64_t mask0 = ~std::uint64_t{0};
   const std::uint64_t mask1 = ~std::uint64_t{0};
@@ -672,16 +732,14 @@ inline std::size_t indel_distance_kN_u8(
   const std::size_t n = text.size();
   if (m == 0U) return n;
   if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
   const std::uint64_t one = 1U;
 
   MultiWordU8Scratch& scr = multi_word_u8_scratch();
-  scr.resize_for(K);
-  std::fill(scr.peq.begin(), scr.peq.begin() + 256U * K, std::uint64_t{0});
-
-  for (std::size_t i = 0; i < m; ++i) {
-    scr.peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
-  }
+  scr.peq_build(pattern, K);
 
   // Stack-resident per-block state. ``K`` is constexpr so these are
   // fixed-size arrays the compiler can promote to registers.
@@ -971,6 +1029,10 @@ inline std::size_t indel_distance_multi_word_u8_with_peq(
   const std::size_t n = text.size();
   if (m == 0U) return n;
   if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
 
   // Stack-resident V[K] when K small (K <= 8 covers up to m = 512;
   // partial_ratio's hot path is K <= 4). Heap fallback for K > 8.
@@ -1032,17 +1094,49 @@ inline std::size_t indel_distance_multi_word_u8_with_peq(
 }
 
 // Build a multi-word PEQ for a byte-pattern into a caller-provided
-// vector (sized 256 * K). Skips the per-call allocation when callers
-// own a persistent buffer (e.g. ``partial_ratio``).
+// vector (sized 256 * K). Uses dirty-symbol clearing when the same
+// buffer is reused at the same K (partial_ratio's thread-local peq).
 inline void build_multi_word_peq_u8(
     std::span<const std::uint8_t> pattern,
     std::size_t K,
     std::vector<std::uint64_t>& peq) {
-  peq.assign(256U * K, 0U);
-  const std::uint64_t one = 1U;
+  // Per-thread dirty bookkeeping for the external peq buffer. Assumes
+  // a single persistent buffer per thread (the partial_ratio path).
+  thread_local std::vector<std::uint8_t> dirty;
+  thread_local std::array<std::uint32_t, 256> touch{};
+  thread_local std::uint32_t gen = 0;
+  thread_local std::size_t layout_k = 0;
+
+  if (peq.size() < 256U * K) {
+    peq.assign(256U * K, 0U);
+    dirty.clear();
+    layout_k = K;
+    touch.fill(0);
+    gen = 0;
+  } else if (layout_k != K) {
+    std::fill_n(peq.data(), 256U * K, std::uint64_t{0});
+    dirty.clear();
+    layout_k = K;
+  } else {
+    for (const std::uint8_t s : dirty) {
+      std::fill_n(
+          peq.data() + static_cast<std::size_t>(s) * K, K, std::uint64_t{0});
+    }
+    dirty.clear();
+  }
+  if (++gen == 0U) {
+    touch.fill(0);
+    gen = 1U;
+  }
+
   for (std::size_t i = 0; i < pattern.size(); ++i) {
-    peq[static_cast<std::size_t>(pattern[i]) * K + (i >> 6U)] |=
-        one << (i & 63U);
+    const std::uint8_t c = pattern[i];
+    if (touch[c] != gen) {
+      touch[c] = gen;
+      dirty.push_back(c);
+    }
+    peq[static_cast<std::size_t>(c) * K + (i >> 6U)] |=
+        std::uint64_t{1} << (i & 63U);
   }
 }
 
@@ -1055,6 +1149,10 @@ inline std::size_t indel_distance_prepared(
   const std::size_t n = text.size();
   if (m == 0U) return n;
   if (n == 0U) return m;
+  if (cutoff != kNoCutoff) {
+    const std::size_t len_diff = m > n ? m - n : n - m;
+    if (len_diff > cutoff) return cutoff + 1U;
+  }
   if (prepared.use_dp) {
     // Pattern too long for the single-word prepared PEQ: route to
     // the multi-word kernel. The multi-word PEQ build is amortised
@@ -1064,14 +1162,18 @@ inline std::size_t indel_distance_prepared(
     return indel_distance_multi_word<Token>(prepared.pattern, text, cutoff);
   }
   std::uint64_t V = prepared.mask;
-  const bool has_cutoff = cutoff != kNoCutoff;
-  const std::size_t bail_threshold = m + n + (has_cutoff ? cutoff : 0U);
-  std::size_t j = 0;
-  for (const auto c : text) {
-    const std::uint64_t U = V & prepared.peq_of(c);
-    V = ((V + U) | (V - U)) & prepared.mask;
-    ++j;
-    if (has_cutoff) {
+  if (cutoff == kNoCutoff) {
+    for (const auto c : text) {
+      const std::uint64_t U = V & prepared.peq_of(c);
+      V = ((V + U) | (V - U)) & prepared.mask;
+    }
+  } else {
+    const std::size_t bail_threshold = m + n + cutoff;
+    std::size_t j = 0;
+    for (const auto c : text) {
+      const std::uint64_t U = V & prepared.peq_of(c);
+      V = ((V + U) | (V - U)) & prepared.mask;
+      ++j;
       const std::size_t lower_bound_score =
           2U * (j + static_cast<std::size_t>(std::popcount(V)));
       if (lower_bound_score > bail_threshold) {

@@ -2,9 +2,11 @@
 
 #include <lasxintrin.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -20,6 +22,7 @@
 #include "cdist_simd.hpp"
 #include "cdist_threshold.hpp"
 #include "cdist_topk.hpp"
+#include "dtw_dispatch.hpp"
 #include "jaro_simd.hpp"
 #include "levenshtein_simd.hpp"
 #include "levenshtein_simd_ops.hpp"
@@ -139,7 +142,7 @@ inline Score local_affine_score_exact_fill_i16_64(
     const __m256i* profile_row =
         reinterpret_cast<const __m256i*>(profile_cells + profile_offset);
 
-    for (std::size_t segment = 0; segment < 64U; ++segment) {
+    auto step_h = [&](std::size_t segment) {
       const __m256i v_profile = __lasx_xvld(profile_row + segment, 0);
       __m256i v_e = __lasx_xvld(e_store + segment, 0);
       v_h = __lasx_xvadd_h(v_h, v_profile);
@@ -154,6 +157,12 @@ inline Score local_affine_score_exact_fill_i16_64(
       __lasx_xvst(v_e, e_store + segment, 0);
       v_f = __lasx_xvmax_h(__lasx_xvadd_h(v_f, gap_extend), v_h_open);
       v_h = __lasx_xvld(h_load + segment, 0);
+    };
+    for (std::size_t segment = 0; segment < 64U; segment += 4U) {
+      step_h(segment);
+      step_h(segment + 1U);
+      step_h(segment + 2U);
+      step_h(segment + 3U);
     }
 
     // Log-step prefix carry across the 16 i16 lanes (4 stages).
@@ -173,7 +182,32 @@ inline Score local_affine_score_exact_fill_i16_64(
     v_f = detail::shift_left_insert<2>(__lasx_xvmax_h(prefix, zero), zero);
 
     if (detail::lane_mask<std::int16_t, 16>(__lasx_xvslt_h(zero, v_f)) != 0) {
-      for (std::size_t segment = 0; segment < 64U; ++segment) {
+      // Sound active-count: F drops by |gap_extend| each segment and H >= 0,
+      // so after ceil(max_f / |gap|) segments no lane can still raise H.
+      std::size_t active = 64U;
+      {
+        __m256i tmp = v_f;
+        __m256i half = __lasx_xvpermi_q(zero, tmp, 0x01);
+        tmp = __lasx_xvmax_h(tmp, half);
+        tmp = __lasx_xvmax_h(tmp, __lasx_xvbsrl_v(tmp, 8));
+        tmp = __lasx_xvmax_h(tmp, __lasx_xvbsrl_v(tmp, 4));
+        tmp = __lasx_xvmax_h(tmp, __lasx_xvbsrl_v(tmp, 2));
+        alignas(32) std::int16_t mf_lanes[16];
+        __lasx_xvst(tmp, mf_lanes, 0);
+        const std::int16_t mf = mf_lanes[0];
+        if (mf <= 0) {
+          active = 0;
+        } else if (state.gap_extend_score < 0) {
+          const std::int64_t gap_mag =
+              -static_cast<std::int64_t>(state.gap_extend_score);
+          const std::size_t needed = static_cast<std::size_t>(
+              (static_cast<std::int64_t>(mf) + gap_mag - 1) / gap_mag);
+          if (needed < active) {
+            active = needed;
+          }
+        }
+      }
+      for (std::size_t segment = 0; segment < active; ++segment) {
         const __m256i v_h_previous = __lasx_xvld(h_store + segment, 0);
         const __m256i v_h_corrected = __lasx_xvmax_h(v_h_previous, v_f);
         __lasx_xvst(v_h_corrected, h_store + segment, 0);
@@ -238,7 +272,7 @@ inline Score local_affine_score_exact_fill_i32_128(
     const __m256i* profile_row =
         reinterpret_cast<const __m256i*>(profile_cells + profile_offset);
 
-    for (std::size_t segment = 0; segment < 128U; ++segment) {
+    auto step_w = [&](std::size_t segment) {
       const __m256i v_profile = __lasx_xvld(profile_row + segment, 0);
       __m256i v_e = __lasx_xvld(e_store + segment, 0);
       v_h = __lasx_xvadd_w(v_h, v_profile);
@@ -253,6 +287,12 @@ inline Score local_affine_score_exact_fill_i32_128(
       __lasx_xvst(v_e, e_store + segment, 0);
       v_f = __lasx_xvmax_w(__lasx_xvadd_w(v_f, gap_extend), v_h_open);
       v_h = __lasx_xvld(h_load + segment, 0);
+    };
+    for (std::size_t segment = 0; segment < 128U; segment += 4U) {
+      step_w(segment);
+      step_w(segment + 1U);
+      step_w(segment + 2U);
+      step_w(segment + 3U);
     }
 
     // Log-step prefix carry across the 8 i32 lanes (3 stages).
@@ -269,11 +309,30 @@ inline Score local_affine_score_exact_fill_i32_128(
     v_f = detail::shift_left_insert<4>(__lasx_xvmax_w(prefix, zero), zero);
 
     if (detail::lane_mask<std::int32_t, 8>(__lasx_xvslt_w(zero, v_f)) != 0) {
-      // No-E correction: update H only. The next column's main DP recomputes
-      // E from H, so we can skip writing E here. Parasail uses this shape on
-      // x86; once the prefix-carry helper produces correct outputs it works
-      // on LASX too.
-      for (std::size_t segment = 0; segment < 128U; ++segment) {
+      // No-E correction + sound active-count (see i16 kernel above).
+      std::size_t active = 128U;
+      {
+        __m256i tmp = v_f;
+        __m256i half = __lasx_xvpermi_q(zero, tmp, 0x01);
+        tmp = __lasx_xvmax_w(tmp, half);
+        tmp = __lasx_xvmax_w(tmp, __lasx_xvbsrl_v(tmp, 8));
+        tmp = __lasx_xvmax_w(tmp, __lasx_xvbsrl_v(tmp, 4));
+        alignas(32) std::int32_t mf_lanes[8];
+        __lasx_xvst(tmp, mf_lanes, 0);
+        const std::int32_t mf = mf_lanes[0];
+        if (mf <= 0) {
+          active = 0;
+        } else if (state.gap_extend_score < 0) {
+          const std::int64_t gap_mag =
+              -static_cast<std::int64_t>(state.gap_extend_score);
+          const std::size_t needed = static_cast<std::size_t>(
+              (static_cast<std::int64_t>(mf) + gap_mag - 1) / gap_mag);
+          if (needed < active) {
+            active = needed;
+          }
+        }
+      }
+      for (std::size_t segment = 0; segment < active; ++segment) {
         const __m256i v_h_previous = __lasx_xvld(h_store + segment, 0);
         const __m256i v_h_corrected = __lasx_xvmax_w(v_h_previous, v_f);
         __lasx_xvst(v_h_corrected, h_store + segment, 0);
@@ -344,12 +403,56 @@ struct SimdOps<std::uint8_t, std::int8_t> {
     return __lasx_xvmax_b(lhs, rhs);
   }
 
+  // Horizontal max: log-tree fold (avoids the shared scalar spill loop).
+  static std::int8_t reduce_max(vector_type vector) {
+    const vector_type zero_v = zero();
+    vector = max(vector, __lasx_xvpermi_q(zero_v, vector, 0x01));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 8));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 4));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 2));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 1));
+    alignas(32) std::int8_t lanes[32];
+    __lasx_xvst(vector, lanes, 0);
+    return lanes[0];
+  }
+
   static vector_type shift_left_zero(vector_type vector) {
     return detail::shift_left_zero<1>(vector);
   }
 
   static vector_type shift_left_insert(vector_type vector, std::int8_t inserted) {
     return detail::shift_left_insert<1>(vector, set1(inserted));
+  }
+
+  // Log-depth lazy-F prefix carry (LASX previously fell through to the scalar
+  // store/loop fallback in farrar_fixed_kernel — expensive on every column).
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int8_t gap_score) {
+    const auto span_gap = static_cast<std::int8_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(detail::shift_left_insert<1>(prefix, zero_vector), set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<2>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<4>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 4)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<8>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 8)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<16>(prefix, zero_vector),
+        set1(static_cast<std::int8_t>(static_cast<Score>(span_gap) * 16)));
+    prefix = max(prefix, shifted);
+    return detail::shift_left_insert<1>(max(prefix, zero_vector), zero_vector);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -393,7 +496,18 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr std::size_t lane_count = 16;
   static constexpr bool has_vector_max = true;
   static constexpr bool local_sw_score_exact_segment64 = true;
+  static constexpr bool local_sw_score_exact_dual_segment64 = true;
   static constexpr bool bounded_local_sw_lazy_f_scan = true;
+
+  // Dual-target 1:many deferred exact-fill (query 1024 = 64×16).
+  static bool try_score_batch_exact_fill_dual(
+      farrar_fixed_kernel::detail::PreparedScoreBatchState<std::int16_t>& batch,
+      std::vector<Score>& scores) {
+    return farrar_fixed_kernel::detail::try_score_batch_exact_fill_dual_generic<
+        SimdOps,
+        std::int16_t,
+        64U>(batch, scores);
+  }
 
   static vector_type load_tokens(const std::uint16_t* values) {
     return __lasx_xvld(const_cast<void*>(reinterpret_cast<const void*>(values)), 0);
@@ -437,12 +551,48 @@ struct SimdOps<std::uint16_t, std::int16_t> {
     return __lasx_xvmax_h(lhs, rhs);
   }
 
+  static std::int16_t reduce_max(vector_type vector) {
+    const vector_type zero_v = zero();
+    vector = max(vector, __lasx_xvpermi_q(zero_v, vector, 0x01));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 8));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 4));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 2));
+    alignas(32) std::int16_t lanes[16];
+    __lasx_xvst(vector, lanes, 0);
+    return lanes[0];
+  }
+
   static vector_type shift_left_zero(vector_type vector) {
     return detail::shift_left_zero<2>(vector);
   }
 
   static vector_type shift_left_insert(vector_type vector, std::int16_t inserted) {
     return detail::shift_left_insert<2>(vector, set1(inserted));
+  }
+
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int16_t gap_score) {
+    const auto span_gap = static_cast<std::int16_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(detail::shift_left_insert<2>(prefix, zero_vector), set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<4>(prefix, zero_vector),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<8>(prefix, zero_vector),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 4)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<16>(prefix, zero_vector),
+        set1(static_cast<std::int16_t>(static_cast<Score>(span_gap) * 8)));
+    prefix = max(prefix, shifted);
+    return detail::shift_left_insert<2>(max(prefix, zero_vector), zero_vector);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -536,12 +686,43 @@ struct SimdOps<std::uint32_t, std::int32_t> {
     return __lasx_xvmax_w(lhs, rhs);
   }
 
+  static std::int32_t reduce_max(vector_type vector) {
+    const vector_type zero_v = zero();
+    vector = max(vector, __lasx_xvpermi_q(zero_v, vector, 0x01));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 8));
+    vector = max(vector, __lasx_xvbsrl_v(vector, 4));
+    alignas(32) std::int32_t lanes[8];
+    __lasx_xvst(vector, lanes, 0);
+    return lanes[0];
+  }
+
   static vector_type shift_left_zero(vector_type vector) {
     return detail::shift_left_zero<4>(vector);
   }
 
   static vector_type shift_left_insert(vector_type vector, std::int32_t inserted) {
     return detail::shift_left_insert<4>(vector, set1(inserted));
+  }
+
+  static vector_type local_lazy_f_prefix_carry(
+      vector_type final_f,
+      std::size_t segment_count,
+      std::int32_t gap_score) {
+    const auto span_gap = static_cast<std::int32_t>(
+        static_cast<Score>(segment_count) * static_cast<Score>(gap_score));
+    const auto zero_vector = zero();
+    auto prefix = max(final_f, zero_vector);
+    auto shifted = add(detail::shift_left_insert<4>(prefix, zero_vector), set1(span_gap));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<8>(prefix, zero_vector),
+        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 2)));
+    prefix = max(prefix, shifted);
+    shifted = add(
+        detail::shift_left_insert<16>(prefix, zero_vector),
+        set1(static_cast<std::int32_t>(static_cast<Score>(span_gap) * 4)));
+    prefix = max(prefix, shifted);
+    return detail::shift_left_insert<4>(max(prefix, zero_vector), zero_vector);
   }
 
   static bool any_gt(vector_type lhs, vector_type rhs) {
@@ -2602,6 +2783,15 @@ struct Implementation {
     return TargetImplementation::needleman_wunsch_affine_scores_matrix(
         query_indices, targets, matrix_buffer, stride,
         gap_open_score, gap_extend_score);
+  }
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dtw_distances_simd<
+        ::stride_align::dtw_simd::LasxDtwOps>(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_loongarch64_lasx;

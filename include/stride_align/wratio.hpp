@@ -206,11 +206,17 @@ inline double wratio_engine(
     return best > score_cutoff ? best : 0.0;
   }
 
-  // Widen inputs to codepoints for the partial_ratio family (its
-  // matching-block enumeration operates on codepoints internally).
-  std::vector<Codepoint> a_cp(a.begin(), a.end());
-  std::vector<Codepoint> b_cp(b.begin(), b.end());
-  const double pr = ::stride_align::partial_ratio::partial_ratio(a_cp, b_cp);
+  // Byte tokens go straight through the byte partial_ratio path
+  // (no uint8→codepoint widen / re-narrow). Wider tokens still
+  // widen once into codepoints for the public entry.
+  double pr;
+  if constexpr (std::is_same_v<Token, std::uint8_t>) {
+    pr = ::stride_align::partial_ratio::partial_ratio_bytes(a, b);
+  } else {
+    std::vector<Codepoint> a_cp(a.begin(), a.end());
+    std::vector<Codepoint> b_cp(b.begin(), b.end());
+    pr = ::stride_align::partial_ratio::partial_ratio(a_cp, b_cp);
+  }
   const double pr_scaled = pr * partial_scale;
   if (pr_scaled > best) best = pr_scaled;
   // After ``partial`` the ceiling drops to ``UNBASE_SCALE *

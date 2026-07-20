@@ -29,6 +29,7 @@
 #include "levenshtein_simd_ops.hpp"
 #include "indel_simd.hpp"
 #include "osa_simd.hpp"
+#include "dtw_dispatch.hpp"
 
 namespace stride_align::backend_linux_powerpc64_vsx {
 
@@ -2007,6 +2008,15 @@ struct Implementation {
             ::stride_align::levenshtein_simd::VsxOps>(
         queries, targets, scorer, k, pruning, cpu_count,
         jw_prefix_weight, jw_prefix_threshold, jw_prefix_cap);
+  }
+
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dispatch_dtw_many(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_powerpc64_vsx;

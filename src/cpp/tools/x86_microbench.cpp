@@ -89,6 +89,7 @@ void print_help(std::ostream& output) {
       << "  --gap-open N                     Affine gap-open score (default: -2)\n"
       << "  --gap-extend N                   Affine gap-extend score (default: -1)\n"
       << "  --seed N                         Deterministic corpus offset/mutation seed (default: 1)\n"
+      << "  --verify-dual                    Run dual-target SW exact-fill correctness fuzz (avx512bwvl)\n"
       << "  --help                           Show this help text\n";
 }
 
@@ -102,6 +103,10 @@ Options parse_options(int argc, char** argv) {
     if (argument == "--help" || argument == "-h") {
       print_help(std::cout);
       std::exit(0);
+    }
+    if (argument == "--verify-dual") {
+      // Handled in main before normal bench path; accept here so parse succeeds.
+      continue;
     }
 
     const auto require_value = [&](std::string_view option) -> std::string_view {
@@ -541,6 +546,17 @@ void print_result(
 
 int main(int argc, char** argv) {
   try {
+    bool verify_dual = false;
+    for (int index = 1; index < argc; ++index) {
+      if (std::string_view(argv[index]) == "--verify-dual") {
+        verify_dual = true;
+        break;
+      }
+    }
+    if (verify_dual) {
+      return verify_dual_sw_exact_fill_avx512bwvl();
+    }
+
     const auto options = parse_options(argc, argv);
     const auto workload = build_workload(options);
     const auto prepared = prepare_workload(workload, options);

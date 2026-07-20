@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <new>
 #include <optional>
@@ -1472,7 +1473,8 @@ bool scan_lazy_f(
 // gap_open <= gap_extend <= 0 (prefix-carry path). Updates H and best, extends
 // F by gap_extend only, and skips E stores: the next target column rebuilds E
 // from max(E+extend, H+open). Matches the exact-fill affine kernels on AVX2 /
-// NEON / LASX.
+// NEON / LASX. Uses the same sound active-count bound as
+// scan_local_linear_lazy_f_once (ceil(max_lane(v_f) / |gap|)).
 template <typename Ops, typename Cell>
 void scan_lazy_f_h_only(
     Cell* h_store_data,
@@ -1482,7 +1484,23 @@ void scan_lazy_f_h_only(
     typename Ops::vector_type& best_vector) {
   constexpr std::size_t lane_count = Ops::lane_count;
 
-  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+  std::size_t active = segment_count;
+  const Cell max_f = reduce_max<Ops, Cell>(v_f);
+  if (max_f <= 0) {
+    return;
+  }
+  alignas(Ops::alignment) Cell gap_lanes[lane_count];
+  Ops::store_cells(gap_lanes, gap_extend_vector);
+  const std::int64_t gap_magnitude = -static_cast<std::int64_t>(gap_lanes[0]);
+  if (gap_magnitude > 0) {
+    const std::size_t needed = static_cast<std::size_t>(
+        (static_cast<std::int64_t>(max_f) + gap_magnitude - 1) / gap_magnitude);
+    if (needed < active) {
+      active = needed;
+    }
+  }
+
+  for (std::size_t segment = 0; segment < active; ++segment) {
     Cell* h_store_segment = h_store_data + segment * lane_count;
     auto v_h = load_state_cells<Ops, Cell>(h_store_segment);
     v_h = Ops::max(v_h, v_f);
@@ -1748,20 +1766,70 @@ void scan_local_linear_lazy_f_once(
   // bounded early-exit, which wrongly assumed h is monotonic across segments
   // (see docs/known-issue-bounded-lazy-f-scan.md). For gap >= 0 the magnitude
   // is <= 0 and the full pass is kept.
-  std::size_t active = segment_count;
-  const Cell max_f = reduce_max<Ops, Cell>(v_f);  // == max(0, max lane of v_f)
+  //
+  // Per-lane tightening (TODO item 2): when F is sparse across lanes, a
+  // scalar residual over only the live lanes beats a full-width SIMD pass of
+  // length ceil(global_max_f / |gap|). Gated on wide vectors (lane_count >= 16)
+  // so AVX2/NEON keep the cheap reduce_max + SIMD path.
+  const Cell max_f = reduce_max<Ops, Cell>(v_f);
   if (max_f <= 0) {
-    active = 0;
-  } else {
-    alignas(Ops::alignment) Cell gap_lanes[lane_count];
-    Ops::store_cells(gap_lanes, gap_vector);
-    const std::int64_t gap_magnitude = -static_cast<std::int64_t>(gap_lanes[0]);
+    return;
+  }
+
+  alignas(Ops::alignment) Cell gap_lanes[lane_count];
+  Ops::store_cells(gap_lanes, gap_vector);
+  const std::int64_t gap_magnitude = -static_cast<std::int64_t>(gap_lanes[0]);
+
+  if constexpr (lane_count >= 16) {
     if (gap_magnitude > 0) {
-      const std::size_t needed = static_cast<std::size_t>(
-          (static_cast<std::int64_t>(max_f) + gap_magnitude - 1) / gap_magnitude);
-      if (needed < active) {
-        active = needed;
+      alignas(Ops::alignment) Cell f_lanes[lane_count];
+      Ops::store_cells(f_lanes, v_f);
+      std::size_t live_lanes = 0;
+      std::size_t live_index[lane_count];
+      for (std::size_t lane = 0; lane < lane_count; ++lane) {
+        if (f_lanes[lane] > 0) {
+          live_index[live_lanes++] = lane;
+        }
       }
+      // Sparse residual: stripes do not couple F across lanes during this
+      // pure-extension H-only scan (cross-lane coupling was the prefix carry).
+      constexpr std::size_t kSparseLaneThreshold = 4;
+      if (live_lanes > 0 && live_lanes <= kSparseLaneThreshold) {
+        alignas(Ops::alignment) Cell best_lanes[lane_count];
+        if constexpr (TrackBest) {
+          Ops::store_cells(best_lanes, best_vector);
+        }
+        for (std::size_t li = 0; li < live_lanes; ++li) {
+          const std::size_t lane = live_index[li];
+          Cell f = f_lanes[lane];
+          for (std::size_t segment = 0; segment < segment_count && f > 0;
+               ++segment) {
+            Cell* cell = h_store_data + segment * lane_count + lane;
+            if (f > *cell) {
+              *cell = f;
+              if constexpr (TrackBest) {
+                best_lanes[lane] = std::max(best_lanes[lane], f);
+              }
+            }
+            f = static_cast<Cell>(
+                static_cast<Score>(f) + static_cast<Score>(gap_lanes[0]));
+          }
+        }
+        if constexpr (TrackBest) {
+          best_vector = Ops::load_cells(best_lanes);
+        }
+        v_f = Ops::zero();
+        return;
+      }
+    }
+  }
+
+  std::size_t active = segment_count;
+  if (gap_magnitude > 0) {
+    const std::size_t needed = static_cast<std::size_t>(
+        (static_cast<std::int64_t>(max_f) + gap_magnitude - 1) / gap_magnitude);
+    if (needed < active) {
+      active = needed;
     }
   }
 
@@ -3511,16 +3579,11 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
   const Cell* profile_data = state.profile.data();
   const bool use_compact_loop = state.kernel_strategy == ScoreKernelStrategy::compact;
   // Deferred lazy-F: fold the correction into the next target column instead of
-  // rewriting H immediately. It is correct (fuzz-verified identical to the
-  // materialized/unbounded scan) and, across NEON/AVX2/AVX-512, the
-  // best-recovering *correct* strategy for the exact-fill path, so automatic
-  // uses it. The old alphabet-size >= 48 gate left common small-alphabet cases
-  // (BLOSUM/DNA/text) on the immediate-rewrite path, which is what regressed
-  // relative to the pre-fix *unsound* bounded scan. The immediate path remains
-  // available via explicit materialized/compact and is itself sound: its lazy-F
-  // correction (scan_local_linear_lazy_f_once) bounds the pass with a sound
-  // early-exit. Bounded early-exit scans are never used (unsound; see
-  // docs/known-issue-bounded-lazy-f-scan.md).
+  // rewriting H immediately. Correct (fuzz-verified vs materialized) and the
+  // best-recovering *correct* strategy on NEON/AVX2; on AVX-512 the specialized
+  // exact-fill kernel (local_sw_score_exact_fill_i16_32) further optimizes the
+  // deferred body. Automatic uses deferred. Bounded early-exit scans are never
+  // used (unsound; see docs/known-issue-bounded-lazy-f-scan.md).
   const bool use_deferred_correction =
       state.kernel_strategy == ScoreKernelStrategy::deferred ||
       state.kernel_strategy == ScoreKernelStrategy::deferred_unroll4 ||
@@ -3735,15 +3798,275 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
 
   if (has_pending_f) {
     // Final column: fold pending F into best only (score-only; no next column).
-    auto pending_h = pending_f;
-    for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
-      auto v_h = load_state_cells<Ops, Cell>(h_store_data + segment * lane_count);
-      best_vector = Ops::max(best_vector, Ops::max(v_h, pending_h));
-      pending_h = Ops::add(pending_h, gap_vector);
-    }
+    // best_vector already holds per-lane max of uncorrected H. Corrected cells
+    // are max(H[s], F[s]); with gap < 0 the F wavefront is monotone decreasing
+    // in s, so max_{s,l} max(H,F) = max(max H, max F_0) and a single vector
+    // max against pending_f is exact -- no SegmentCount loop (TODO item 2).
+    best_vector = Ops::max(best_vector, pending_f);
   }
 
   return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
+}
+
+// Dual-target deferred exact-fill for 1:many: lockstep two targets with
+// independent H/E/pending chains. Portable across NEON / LASX / AVX2-style Ops
+// (segment count parameterized). Interleaving the two H chains improves ILP
+// on long segment counts (NEON i16@1024 = 128 segments).
+template <typename Ops, typename Cell, std::size_t SegmentCount>
+std::pair<Score, Score> score_exact_fill_dual_local_sw(
+    const Cell* profile_cells,
+    std::span<const std::size_t> offsets0,
+    std::span<const std::size_t> offsets1,
+    Cell gap_score,
+    Cell* h_store0,
+    Cell* h_load0,
+    Cell* e_store0,
+    Cell* h_store1,
+    Cell* h_load1,
+    Cell* e_store1) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+  constexpr std::size_t state_cells = SegmentCount * lane_count;
+  const std::size_t n0 = offsets0.size();
+  const std::size_t n1 = offsets1.size();
+  const std::size_t n_pair = n0 < n1 ? n0 : n1;
+
+  std::memset(h_store0, 0, state_cells * sizeof(Cell));
+  std::memset(h_load0, 0, state_cells * sizeof(Cell));
+  std::memset(e_store0, 0, state_cells * sizeof(Cell));
+  std::memset(h_store1, 0, state_cells * sizeof(Cell));
+  std::memset(h_load1, 0, state_cells * sizeof(Cell));
+  std::memset(e_store1, 0, state_cells * sizeof(Cell));
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(gap_score);
+  const auto segment_tail_gap = Ops::set1(static_cast<Cell>(
+      static_cast<Score>(gap_score) * static_cast<Score>(SegmentCount - 1U)));
+
+  auto best0 = zero_vector;
+  auto best1 = zero_vector;
+  auto pending_f0 = zero_vector;
+  auto pending_f1 = zero_vector;
+
+  auto run_deferred_column =
+      [&](Cell*& h_store,
+          Cell*& h_load,
+          Cell* e_store,
+          std::size_t profile_offset,
+          typename Ops::vector_type& pending_f,
+          typename Ops::vector_type& best) {
+        std::swap(h_store, h_load);
+        const Cell* profile_row = profile_cells + profile_offset;
+        auto v_f = zero_vector;
+        auto pending_h = pending_f;
+        auto last_h = load_state_cells<Ops, Cell>(
+            h_load + ((SegmentCount - 1U) * lane_count));
+        last_h = Ops::max(last_h, Ops::add(pending_f, segment_tail_gap));
+        auto v_h = shift_left_zero<Ops, Cell>(last_h);
+        for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
+          local_sw_score_main_segment_corrected<Ops, Cell>(
+              h_store, h_load, e_store, profile_row, segment, v_h, v_f, pending_h,
+              gap_vector, zero_vector, best);
+          local_sw_score_main_segment_corrected<Ops, Cell>(
+              h_store, h_load, e_store, profile_row, segment + 1U, v_h, v_f, pending_h,
+              gap_vector, zero_vector, best);
+          local_sw_score_main_segment_corrected<Ops, Cell>(
+              h_store, h_load, e_store, profile_row, segment + 2U, v_h, v_f, pending_h,
+              gap_vector, zero_vector, best);
+          local_sw_score_main_segment_corrected<Ops, Cell>(
+              h_store, h_load, e_store, profile_row, segment + 3U, v_h, v_f, pending_h,
+              gap_vector, zero_vector, best);
+        }
+        v_f = local_lazy_f_prefix_carry<Ops, Cell>(v_f, SegmentCount, gap_score);
+        // Branchless pending (max with zero).
+        pending_f = Ops::max(v_f, zero_vector);
+        best = Ops::max(best, pending_f);
+      };
+
+  for (std::size_t col = 0; col < n_pair; ++col) {
+    std::swap(h_store0, h_load0);
+    std::swap(h_store1, h_load1);
+
+    const Cell* profile_row0 = profile_cells + offsets0[col];
+    const Cell* profile_row1 = profile_cells + offsets1[col];
+
+    auto v_f0 = zero_vector;
+    auto v_f1 = zero_vector;
+    auto pending_h0 = pending_f0;
+    auto pending_h1 = pending_f1;
+
+    auto last_h0 = load_state_cells<Ops, Cell>(
+        h_load0 + ((SegmentCount - 1U) * lane_count));
+    last_h0 = Ops::max(last_h0, Ops::add(pending_f0, segment_tail_gap));
+    auto v_h0 = shift_left_zero<Ops, Cell>(last_h0);
+
+    auto last_h1 = load_state_cells<Ops, Cell>(
+        h_load1 + ((SegmentCount - 1U) * lane_count));
+    last_h1 = Ops::max(last_h1, Ops::add(pending_f1, segment_tail_gap));
+    auto v_h1 = shift_left_zero<Ops, Cell>(last_h1);
+
+    // Interleave the two independent H chains (4-way unrolled).
+    for (std::size_t segment = 0; segment < SegmentCount; segment += 4U) {
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store0, h_load0, e_store0, profile_row0, segment, v_h0, v_f0, pending_h0,
+          gap_vector, zero_vector, best0);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store1, h_load1, e_store1, profile_row1, segment, v_h1, v_f1, pending_h1,
+          gap_vector, zero_vector, best1);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store0, h_load0, e_store0, profile_row0, segment + 1U, v_h0, v_f0, pending_h0,
+          gap_vector, zero_vector, best0);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store1, h_load1, e_store1, profile_row1, segment + 1U, v_h1, v_f1, pending_h1,
+          gap_vector, zero_vector, best1);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store0, h_load0, e_store0, profile_row0, segment + 2U, v_h0, v_f0, pending_h0,
+          gap_vector, zero_vector, best0);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store1, h_load1, e_store1, profile_row1, segment + 2U, v_h1, v_f1, pending_h1,
+          gap_vector, zero_vector, best1);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store0, h_load0, e_store0, profile_row0, segment + 3U, v_h0, v_f0, pending_h0,
+          gap_vector, zero_vector, best0);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store1, h_load1, e_store1, profile_row1, segment + 3U, v_h1, v_f1, pending_h1,
+          gap_vector, zero_vector, best1);
+    }
+
+    v_f0 = local_lazy_f_prefix_carry<Ops, Cell>(v_f0, SegmentCount, gap_score);
+    v_f1 = local_lazy_f_prefix_carry<Ops, Cell>(v_f1, SegmentCount, gap_score);
+    pending_f0 = Ops::max(v_f0, zero_vector);
+    pending_f1 = Ops::max(v_f1, zero_vector);
+    best0 = Ops::max(best0, pending_f0);
+    best1 = Ops::max(best1, pending_f1);
+  }
+
+  for (std::size_t col = n_pair; col < n0; ++col) {
+    run_deferred_column(
+        h_store0, h_load0, e_store0, offsets0[col], pending_f0, best0);
+  }
+  for (std::size_t col = n_pair; col < n1; ++col) {
+    run_deferred_column(
+        h_store1, h_load1, e_store1, offsets1[col], pending_f1, best1);
+  }
+
+  return {
+      static_cast<Score>(reduce_max<Ops, Cell>(best0)),
+      static_cast<Score>(reduce_max<Ops, Cell>(best1))};
+}
+
+// Shared 1:many dual batch driver for Ops that opt in via
+// try_score_batch_exact_fill_dual. SegmentCount must match the exact-fill
+// shape (NEON i16 = 128, LASX i16 = 64, AVX-512 i16 = 32).
+template <
+    template <typename, typename> class OpsTemplate,
+    typename Cell,
+    std::size_t SegmentCount>
+bool try_score_batch_exact_fill_dual_generic(
+    PreparedScoreBatchState<Cell>& batch,
+    std::vector<Score>& scores) {
+  using Ops = ScoreOps<OpsTemplate, Cell>;
+  constexpr std::size_t lane_count = Ops::lane_count;
+  constexpr std::size_t state_cells = SegmentCount * lane_count;
+  constexpr std::size_t exact_query = SegmentCount * lane_count;
+
+  auto& state = batch.state;
+  if (state.gap_score > 0 || state.query_size != exact_query ||
+      state.segment_count != SegmentCount || state.profile.empty() ||
+      batch.target_sizes.empty()) {
+    return false;
+  }
+  if (state.kernel_strategy == ScoreKernelStrategy::materialized ||
+      state.kernel_strategy == ScoreKernelStrategy::compact ||
+      state.kernel_strategy == ScoreKernelStrategy::bounded ||
+      state.kernel_strategy == ScoreKernelStrategy::bounded_unroll4) {
+    return false;
+  }
+
+  const std::size_t n_targets = batch.target_sizes.size();
+  scores.assign(n_targets, 0);
+
+  if (state.h_store.size() < state_cells) {
+    state.h_store.resize(state_cells);
+  }
+  if (state.h_load.size() < state_cells) {
+    state.h_load.resize(state_cells);
+  }
+  if (state.e_store.size() < state_cells) {
+    state.e_store.resize(state_cells);
+  }
+
+  thread_local AlignedVector<Cell> h_store1;
+  thread_local AlignedVector<Cell> h_load1;
+  thread_local AlignedVector<Cell> e_store1;
+  if (h_store1.size() < state_cells) {
+    h_store1.resize(state_cells);
+    h_load1.resize(state_cells);
+    e_store1.resize(state_cells);
+  }
+
+  const Cell* profile_cells = state.profile.data();
+  std::vector<std::size_t> eligible;
+  eligible.reserve(n_targets);
+  for (std::size_t index = 0; index < n_targets; ++index) {
+    if (index < batch.fast_scores.size() && batch.fast_scores[index].has_value()) {
+      scores[index] = *batch.fast_scores[index];
+      continue;
+    }
+    if (index >= batch.target_profile_offsets.size() ||
+        batch.target_profile_offsets[index].empty()) {
+      scores[index] = 0;
+      continue;
+    }
+    eligible.push_back(index);
+  }
+
+  std::stable_sort(
+      eligible.begin(),
+      eligible.end(),
+      [&](std::size_t a, std::size_t b) {
+        return batch.target_sizes[a] < batch.target_sizes[b];
+      });
+
+  std::size_t ei = 0;
+  while (ei + 1U < eligible.size()) {
+    const std::size_t i0 = eligible[ei];
+    std::size_t i1 = eligible[ei + 1U];
+    if (batch.target_sizes[i0] != batch.target_sizes[i1]) {
+      for (std::size_t j = ei + 2U; j < eligible.size(); ++j) {
+        if (batch.target_sizes[eligible[j]] == batch.target_sizes[i0]) {
+          std::swap(eligible[ei + 1U], eligible[j]);
+          i1 = eligible[ei + 1U];
+          break;
+        }
+      }
+    }
+    const auto& off0 = batch.target_profile_offsets[i0];
+    const auto& off1 = batch.target_profile_offsets[i1];
+    const auto pair = score_exact_fill_dual_local_sw<Ops, Cell, SegmentCount>(
+        profile_cells,
+        std::span<const std::size_t>(off0.data(), off0.size()),
+        std::span<const std::size_t>(off1.data(), off1.size()),
+        state.gap_score,
+        state.h_store.data(),
+        state.h_load.data(),
+        state.e_store.data(),
+        h_store1.data(),
+        h_load1.data(),
+        e_store1.data());
+    scores[i0] = pair.first;
+    scores[i1] = pair.second;
+    ei += 2U;
+  }
+
+  if (ei < eligible.size()) {
+    const std::size_t i0 = eligible[ei];
+    state.target_size = batch.target_sizes[i0];
+    state.fast_score = std::nullopt;
+    state.target_profile_offsets = batch.target_profile_offsets[i0];
+    scores[i0] = score_state<OpsTemplate, Cell>(state);
+  }
+
+  return true;
 }
 
 template <template <typename, typename> class OpsTemplate, typename Cell>
@@ -6342,6 +6665,20 @@ template <template <typename, typename> class OpsTemplate, typename Cell, bool L
 std::vector<Score> score_batch_state(PreparedScoreBatchState<Cell>& batch) {
   std::vector<Score> scores;
   scores.reserve(batch.target_sizes.size());
+
+  // Optional dual-target exact-fill batch path (AVX-512 i16×1024 deferred).
+  // Ops::try_score_batch_exact_fill_dual handles pairing + leftover singles.
+  if constexpr (LocalAlignment) {
+    using Ops = ScoreOps<OpsTemplate, Cell>;
+    if constexpr (requires {
+                    Ops::try_score_batch_exact_fill_dual(batch, scores);
+                  }) {
+      if (Ops::try_score_batch_exact_fill_dual(batch, scores)) {
+        return scores;
+      }
+    }
+  }
+
   for (std::size_t index = 0; index < batch.target_sizes.size(); ++index) {
     batch.state.target_size = batch.target_sizes[index];
     batch.state.fast_score = batch.fast_scores[index];

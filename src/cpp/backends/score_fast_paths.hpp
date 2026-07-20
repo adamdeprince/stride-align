@@ -5,8 +5,10 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -26,8 +28,19 @@ bool local_zero_fast_path_is_safe(Cell match_score, Cell mismatch_score, Cell ga
 
 template <typename Token>
 bool tokens_equal(std::span<const Token> query, std::span<const Token> target) {
-  return query.size() == target.size() &&
-      std::equal(query.begin(), query.end(), target.begin());
+  if (query.size() != target.size()) {
+    return false;
+  }
+  if (query.empty()) {
+    return true;
+  }
+  // Byte (and other 1-byte) tokens: one memcmp is cheaper/clearer than
+  // a per-element std::equal loop for the identity fast path.
+  if constexpr (sizeof(Token) == 1) {
+    return std::memcmp(query.data(), target.data(), query.size()) == 0;
+  } else {
+    return std::equal(query.begin(), query.end(), target.begin());
+  }
 }
 
 template <typename Token>
@@ -112,6 +125,8 @@ Score token_independent_local_score(
   return std::max(gap_only, one_diagonal);
 }
 
+// Bit-parallel LCS length (Allison-Dix / Hyyrö). Byte alphabets use a
+// flat 256 × word_count PEQ; wider tokens keep the hashmap path.
 template <typename Token>
 std::size_t lcs_length_bit_parallel(std::span<const Token> query, std::span<const Token> target) {
   if (query.empty() || target.empty()) {
@@ -119,43 +134,120 @@ std::size_t lcs_length_bit_parallel(std::span<const Token> query, std::span<cons
   }
 
   const std::size_t word_count = (query.size() + 63U) / 64U;
-  std::unordered_map<Token, std::vector<std::uint64_t>> symbol_masks;
-  symbol_masks.reserve(std::min<std::size_t>(query.size(), 256U));
-  for (std::size_t index = 0; index < query.size(); ++index) {
-    auto& mask = symbol_masks[query[index]];
-    if (mask.empty()) {
-      mask.assign(word_count, 0);
+
+  if constexpr (std::is_same_v<Token, std::uint8_t>) {
+    // Flat PEQ + dirty-symbol clear via thread-local scratch.
+    struct ByteLcsScratch {
+      std::vector<std::uint64_t> peq;
+      std::vector<std::uint64_t> row;
+      std::vector<std::uint8_t> dirty;
+      std::array<std::uint32_t, 256> touch{};
+      std::uint32_t gen = 0;
+      std::size_t layout_w = 0;
+    };
+    thread_local ByteLcsScratch scr;
+
+    if (scr.peq.size() < 256U * word_count) {
+      scr.peq.assign(256U * word_count, 0U);
+      scr.dirty.clear();
+      scr.layout_w = word_count;
+      scr.touch.fill(0);
+      scr.gen = 0;
+    } else if (scr.layout_w != word_count) {
+      std::fill_n(scr.peq.data(), 256U * word_count, std::uint64_t{0});
+      scr.dirty.clear();
+      scr.layout_w = word_count;
+    } else {
+      for (const std::uint8_t s : scr.dirty) {
+        std::fill_n(
+            scr.peq.data() + static_cast<std::size_t>(s) * word_count,
+            word_count, std::uint64_t{0});
+      }
+      scr.dirty.clear();
     }
-    mask[index / 64U] |= std::uint64_t{1} << (index % 64U);
-  }
+    if (++scr.gen == 0U) {
+      scr.touch.fill(0);
+      scr.gen = 1U;
+    }
 
-  std::vector<std::uint64_t> row(word_count, 0);
-  for (const Token token : target) {
-    const auto mask_iterator = symbol_masks.find(token);
-    std::uint64_t shift_carry = 1;
-    std::uint64_t borrow = 0;
+    for (std::size_t index = 0; index < query.size(); ++index) {
+      const std::uint8_t c = query[index];
+      if (scr.touch[c] != scr.gen) {
+        scr.touch[c] = scr.gen;
+        scr.dirty.push_back(c);
+      }
+      scr.peq[static_cast<std::size_t>(c) * word_count + (index / 64U)] |=
+          std::uint64_t{1} << (index % 64U);
+    }
 
+    if (scr.row.size() < word_count) scr.row.resize(word_count);
+    std::fill_n(scr.row.data(), word_count, std::uint64_t{0});
+
+    for (const std::uint8_t token : target) {
+      const std::uint64_t* mask_row =
+          scr.peq.data() + static_cast<std::size_t>(token) * word_count;
+      std::uint64_t shift_carry = 1;
+      std::uint64_t borrow = 0;
+
+      for (std::size_t word = 0; word < word_count; ++word) {
+        const std::uint64_t previous = scr.row[word];
+        const std::uint64_t mask = mask_row[word];
+        const std::uint64_t x = mask | previous;
+        const std::uint64_t y = (previous << 1U) | shift_carry;
+        shift_carry = previous >> 63U;
+
+        const std::uint64_t first_difference = x - y;
+        const std::uint64_t first_borrow = x < y ? 1U : 0U;
+        const std::uint64_t difference = first_difference - borrow;
+        borrow = (first_borrow != 0 || first_difference < borrow) ? 1U : 0U;
+        scr.row[word] = x & ~difference;
+      }
+    }
+
+    std::size_t length = 0;
     for (std::size_t word = 0; word < word_count; ++word) {
-      const std::uint64_t previous = row[word];
-      const std::uint64_t mask =
-          mask_iterator == symbol_masks.end() ? 0 : mask_iterator->second[word];
-      const std::uint64_t x = mask | previous;
-      const std::uint64_t y = (previous << 1U) | shift_carry;
-      shift_carry = previous >> 63U;
-
-      const std::uint64_t first_difference = x - y;
-      const std::uint64_t first_borrow = x < y ? 1U : 0U;
-      const std::uint64_t difference = first_difference - borrow;
-      borrow = (first_borrow != 0 || first_difference < borrow) ? 1U : 0U;
-      row[word] = x & ~difference;
+      length += static_cast<std::size_t>(std::popcount(scr.row[word]));
     }
-  }
+    return length;
+  } else {
+    std::unordered_map<Token, std::vector<std::uint64_t>> symbol_masks;
+    symbol_masks.reserve(std::min<std::size_t>(query.size(), 256U));
+    for (std::size_t index = 0; index < query.size(); ++index) {
+      auto& mask = symbol_masks[query[index]];
+      if (mask.empty()) {
+        mask.assign(word_count, 0);
+      }
+      mask[index / 64U] |= std::uint64_t{1} << (index % 64U);
+    }
 
-  std::size_t length = 0;
-  for (const auto word : row) {
-    length += static_cast<std::size_t>(std::popcount(word));
+    std::vector<std::uint64_t> row(word_count, 0);
+    for (const Token token : target) {
+      const auto mask_iterator = symbol_masks.find(token);
+      std::uint64_t shift_carry = 1;
+      std::uint64_t borrow = 0;
+
+      for (std::size_t word = 0; word < word_count; ++word) {
+        const std::uint64_t previous = row[word];
+        const std::uint64_t mask =
+            mask_iterator == symbol_masks.end() ? 0 : mask_iterator->second[word];
+        const std::uint64_t x = mask | previous;
+        const std::uint64_t y = (previous << 1U) | shift_carry;
+        shift_carry = previous >> 63U;
+
+        const std::uint64_t first_difference = x - y;
+        const std::uint64_t first_borrow = x < y ? 1U : 0U;
+        const std::uint64_t difference = first_difference - borrow;
+        borrow = (first_borrow != 0 || first_difference < borrow) ? 1U : 0U;
+        row[word] = x & ~difference;
+      }
+    }
+
+    std::size_t length = 0;
+    for (const auto word : row) {
+      length += static_cast<std::size_t>(std::popcount(word));
+    }
+    return length;
   }
-  return length;
 }
 
 template <typename Token, typename Cell>

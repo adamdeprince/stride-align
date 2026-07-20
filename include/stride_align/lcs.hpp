@@ -49,8 +49,15 @@ inline std::size_t lcs_length(const std::vector<Codepoint>& a,
   const auto& cols = a.size() <= b.size() ? a : b;
   const auto& rows = a.size() <= b.size() ? b : a;
   const std::size_t M = cols.size();
-  std::vector<std::size_t> prev(M + 1, 0);
-  std::vector<std::size_t> curr(M + 1, 0);
+  // Thread-local rolling rows — Ratcliff-Obershelp calls LCS/substring
+  // DP many times; amortise allocation across those passes.
+  thread_local std::vector<std::size_t> prev;
+  thread_local std::vector<std::size_t> curr;
+  if (prev.size() < M + 1U) {
+    prev.resize(M + 1U);
+    curr.resize(M + 1U);
+  }
+  std::fill_n(prev.data(), M + 1U, std::size_t{0});
   for (std::size_t i = 1; i <= rows.size(); ++i) {
     curr[0] = 0;
     for (std::size_t j = 1; j <= M; ++j) {
@@ -96,8 +103,15 @@ inline LcsSubstringInfo lcs_substring_info_range(
   if (a_hi <= a_lo || b_hi <= b_lo) return r;
   const std::size_t M = a_hi - a_lo;
   const std::size_t N = b_hi - b_lo;
-  std::vector<std::size_t> prev(N + 1, 0);
-  std::vector<std::size_t> curr(N + 1, 0);
+  // Separate TL pair from ``lcs_length`` so nested/overlapping use is
+  // safe if both ever share a call stack.
+  thread_local std::vector<std::size_t> prev;
+  thread_local std::vector<std::size_t> curr;
+  if (prev.size() < N + 1U) {
+    prev.resize(N + 1U);
+    curr.resize(N + 1U);
+  }
+  std::fill_n(prev.data(), N + 1U, std::size_t{0});
   for (std::size_t i = 1; i <= M; ++i) {
     curr[0] = 0;
     for (std::size_t j = 1; j <= N; ++j) {

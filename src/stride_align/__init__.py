@@ -1917,12 +1917,16 @@ def dtw_distances(
     *,
     window: int | float | None = None,
     distance: str | None = None,
+    score_cutoff: float | None = None,
 ) -> np.ndarray:
     """DTW distance from one query to every target, returned as ``ndarray[float64]``.
 
     Arguments mirror :func:`dtw`. ``targets`` is an iterable of
     ndarrays sharing dtype with ``query``. Empty queries or empty
     targets raise ``ValueError``.
+
+    ``score_cutoff`` enables LB_Keogh pruning (equal-length targets)
+    and returns ``+inf`` for pairs proven to exceed the cutoff.
     """
     if isinstance(targets, (str, bytes)):
         raise TypeError(
@@ -1931,7 +1935,11 @@ def dtw_distances(
     if not isinstance(targets, (list, tuple)):
         targets = tuple(targets)
     return _LEVENSHTEIN_BACKEND.dtw_distances(
-        query, targets, window=window, distance=distance,
+        query,
+        targets,
+        window=window,
+        distance=distance,
+        score_cutoff=score_cutoff,
     )
 
 

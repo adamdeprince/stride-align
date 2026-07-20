@@ -1,14 +1,11 @@
 # TODO: Dynamic Time Warping (DTW) and adjacent numeric-sequence kernels
 
-**Status:** **ON HOLD** at the user's direction (2026-06-08).
-**C.1a scalar reference is shipped** (`sa.dtw`, `sa.dtw_distances`);
-SIMD batch kernels (C.1b/c) and downstream phases (C.2 LB_Keogh, C.3
-subsequence DTW, C.4 LCSS+ERP, C.5 warping path, C.6 Fréchet, C.7
-multidim) are not in progress. The Phase D character-similarity
-gap-filling work that previously gated this phase is now complete
-(see below); the only thing keeping Phase C paused is the explicit
-hold. Resume when the user says so — nothing in the codebase blocks
-restart.
+**Status (2026-07-19):** **C.1a–c + C.1d + C.2 shipped.**
+Scalar oracle, import-selected SIMD batch (SSE4.1 / AVX2 / AVX-512 /
+NEON / LSX / LASX), `score_cutoff` + LB_Keogh prefilter, and
+`tools/refresh_dtw_benchmarks.py` (CSV under `benchmarks/*-dtw-*.csv`).
+Remaining on hold only if product priority moves on: C.3 subsequence
+DTW, C.4 LCSS+ERP, C.5 path, C.6 Fréchet, C.7 multidim.
 
 **Goal (unchanged):** add SIMD-accelerated numeric-sequence distance
 kernels — DTW first, then subsequence DTW, LCSS, ERP, Fréchet — to
@@ -237,10 +234,10 @@ The dispatcher mirrors the existing wide-Farrar routing in
 | Phase | Deliverable | Status | Files touched |
 | --- | --- | --- | --- |
 | **C.1a** | Scalar reference, Python API, dispatcher, dtype rejection, full test suite (correctness + Sakoe-Chiba edge cases) | ✅ shipped | `include/stride_align/dtw.hpp`, `src/cpp/dtw_dispatch.hpp`, `src/stride_align/__init__.py`, `tests/test_dtw.py`, `src/cpp/module_bindings.hpp` |
-| **C.1b** | x86 SIMD batch kernels (float32 / float64 / int16) on sse41 / avx2 / avx512bwvl / avx10_256 / avx10_512 | on hold | `src/cpp/dtw_simd_ops.hpp` (x86 specialisations), `src/cpp/dtw_simd.hpp`, per-backend wiring |
-| **C.1c** | ARM NEON + Loongson LSX/LASX SIMD batch kernels | on hold | additional `dtw_simd_ops.hpp` specialisations, per-backend wiring |
-| **C.1d** | Benchmarks vs `dtaidistance`, `tslearn.metrics.dtw`, `dtw-python`, audio-domain int16 sanity vs float32 | on hold | `tools/refresh_dtw_benchmarks.py`, `benchmarks/intel-dtw-<date>.csv` |
-| **C.2** | LB_Keogh lower-bound prune + early-exit cutoff for the batch path | on hold | new `lb_keogh.hpp`, dispatcher extension |
+| **C.1b** | x86 SIMD batch kernels (float32 / float64 / int16) on sse41 / avx2 / avx512bwvl | ✅ shipped | `src/cpp/dtw_simd_ops.hpp`, `src/cpp/dtw_simd.hpp`, per-backend wiring |
+| **C.1c** | ARM NEON + Loongson LSX/LASX SIMD batch kernels | ✅ shipped | `dtw_simd_ops.hpp` specialisations, per-backend wiring |
+| **C.1d** | Benchmarks vs `dtaidistance` (tslearn / dtw-python optional) | ✅ shipped | `tools/refresh_dtw_benchmarks.py`, `benchmarks/*-dtw-*.csv` |
+| **C.2** | LB_Keogh + `score_cutoff` on singular/batch | ✅ shipped | `include/stride_align/dtw.hpp`, `dtw_dispatch.hpp` |
 | **C.3** | Subsequence DTW (`sa.dtw_subsequence(query, target)` returning `(distance, start_index)`) | on hold | new `dtw_subsequence.hpp` |
 | **C.4** | LCSS + ERP (`sa.lcss(query, target, epsilon=…)`, `sa.erp(query, target, g=…)`) | on hold | new `lcss.hpp`, `erp.hpp` |
 | **C.5** | DTW warping-path traceback | on hold | extend `dtw.hpp` with a path-returning variant |

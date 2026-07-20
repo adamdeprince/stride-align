@@ -607,6 +607,15 @@ struct Implementation {
         gap_open_score, gap_extend_score);
   }
 
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    ensure_supported();
+    return TargetImplementation::dtw_distances(query, targets, window, distance, score_cutoff);
+  }
+
 };
 
 }  // namespace stride_align::backend_macos_arm64_neon

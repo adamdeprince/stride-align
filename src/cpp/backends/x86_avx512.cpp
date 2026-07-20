@@ -14,7 +14,7 @@ using Implementation = stride_align::backend_avx512bwvl::Implementation;
 STRIDE_ALIGN_X86_MODULE_BASELINE void bind_module(nanobind::module_& m) {
   stride_align::bindings::bind_backend_module<Implementation>(
       m,
-      "x86 AVX-512F/BW/VL alignment backend.");
+      "x86 AVX-512F/BW/VL/DQ alignment backend.");
 }
 
 }  // namespace

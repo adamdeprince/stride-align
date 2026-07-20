@@ -59,6 +59,10 @@ bool supports_avx2() noexcept;
 bool supports_avx512bwvl() noexcept;
 bool supports_parasail() noexcept;
 
+// Dual-target deferred exact-fill correctness fuzz (AVX-512 i16×1024 path).
+// Returns 0 on success; prints failures to stderr and returns non-zero on mismatch.
+int verify_dual_sw_exact_fill_avx512bwvl();
+
 RunResult run_avx2_backend(const PreparedWorkload& prepared, const Options& options);
 RunResult run_avx512bwvl_backend(const PreparedWorkload& prepared, const Options& options);
 RunResult run_parasail_backend(const PreparedWorkload& prepared, const Options& options);

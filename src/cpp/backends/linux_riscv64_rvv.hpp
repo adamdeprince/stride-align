@@ -14,6 +14,7 @@
 #include "backends/farrar_scalable_kernel.hpp"
 #include "backends/profile_traceback.hpp"
 #include "backends/riscv_rvv_kernel.hpp"
+#include "dtw_dispatch.hpp"
 
 namespace stride_align::backend_linux_riscv64_rvv {
 
@@ -972,6 +973,15 @@ struct Implementation {
         gap_open_score,
         gap_extend_score,
         width);
+  }
+
+
+  static std::vector<double> dtw_distances(
+      nb::handle query, nb::handle targets,
+      nb::object window, nb::object distance,
+      nb::object score_cutoff = nb::none()) {
+
+    return ::stride_align::dtw::dispatch_dtw_many(query, targets, window, distance, score_cutoff);
   }
 
   static constexpr BackendKind backend_kind = BackendKind::linux_riscv64_rvv;

@@ -2777,16 +2777,19 @@ void bind_backend_module(nb::module_& m, const char* doc) {
   // up to 16/32/64 targets in parallel depending on ISA). Wider unicode
   // and sequence-of-object inputs fall through to scalar.
 
-  // ---- DTW (scalar reference, phase C.1a) -------------------------------
-  // SIMD batch comes in phase C.1b. The C++ surface here is final; the
-  // SIMD layer plugs into dispatch_dtw / dispatch_dtw_many without
-  // touching the bindings.
+  // ---- DTW --------------------------------------------------------------
+  // Backend selection is by import: each extension module
+  // (``_avx2``, ``_neon``, …) binds its own ``Implementation``.
+  // ``dtw`` is always the scalar oracle; ``dtw_distances`` is the
+  // backend’s batch path (SIMD where that Implementation provides it,
+  // scalar otherwise).
 
   m.def(
       "dtw",
       [](nb::handle query, nb::handle target,
-         nb::object window, nb::object distance) {
-        return ::stride_align::dtw::dispatch_dtw(query, target, window, distance);
+         nb::object window, nb::object distance, nb::object score_cutoff) {
+        return ::stride_align::dtw::dispatch_dtw(
+            query, target, window, distance, score_cutoff);
       },
       "Dynamic Time Warping distance between two numeric ndarrays.\n\n"
       "``query``, ``target`` are ``np.ndarray`` with dtype ``float32``,\n"
@@ -2796,23 +2799,24 @@ void bind_backend_module(nb::module_& m, const char* doc) {
       "``(0, 1]`` is the fraction of ``max(len(query), len(target))``.\n\n"
       "``distance`` is ``\"l1\"`` for ``|x - y|`` (default for int16) or\n"
       "``\"l2_squared\"`` for ``(x - y)^2`` (default for float32/float64).\n"
-      "``None`` picks the per-dtype default. Empty inputs raise\n"
-      "``ValueError``.",
+      "``None`` picks the per-dtype default.\n\n"
+      "``score_cutoff``: when set, return ``+inf`` as soon as the\n"
+      "distance is proven to exceed the cutoff (LB_Keogh prefilter on\n"
+      "equal lengths, band impossibility, DP early abandon).\n"
+      "Empty inputs raise ``ValueError``.",
       nb::arg("query"),
       nb::arg("target"),
       nb::kw_only(),
       nb::arg("window") = nb::none(),
-      nb::arg("distance") = nb::none());
+      nb::arg("distance") = nb::none(),
+      nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "dtw_distances",
       [](nb::handle query, nb::handle targets,
-         nb::object window, nb::object distance) {
-        const auto distances = ::stride_align::dtw::dispatch_dtw_many(
-            query, targets, window, distance);
-        // Return ndarray[float64]. Mirrors as_score_ndarray for the
-        // existing batch APIs but float64-typed since DTW results
-        // aren't int64.
+         nb::object window, nb::object distance, nb::object score_cutoff) {
+        const auto distances = Implementation::dtw_distances(
+            query, targets, window, distance, score_cutoff);
         const std::size_t n = distances.size();
         auto* buffer = new double[n];
         for (std::size_t i = 0; i < n; ++i) buffer[i] = distances[i];
@@ -2822,11 +2826,18 @@ void bind_backend_module(nb::module_& m, const char* doc) {
         return nb::ndarray<nb::numpy, double, nb::shape<-1>>(
             buffer, {n}, owner);
       },
+      "Batch Dynamic Time Warping: one query vs many targets.\n\n"
+      "Returns a float64 ndarray of length ``len(targets)``. The\n"
+      "imported CPU backend supplies the kernel (SIMD batch on SSE4.1 /\n"
+      "AVX2 / AVX-512 / NEON / LSX / LASX modules; scalar elsewhere).\n\n"
+      "``score_cutoff`` enables LB_Keogh pruning (equal-length targets)\n"
+      "and skips full DTW when the lower bound exceeds the cutoff.",
       nb::arg("query"),
       nb::arg("targets"),
       nb::kw_only(),
       nb::arg("window") = nb::none(),
-      nb::arg("distance") = nb::none());
+      nb::arg("distance") = nb::none(),
+      nb::arg("score_cutoff") = nb::none());
 
   m.def(
       "hamming_score",
