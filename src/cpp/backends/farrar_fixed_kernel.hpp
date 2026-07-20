@@ -3954,13 +3954,147 @@ std::pair<Score, Score> score_exact_fill_dual_local_sw(
       static_cast<Score>(reduce_max<Ops, Cell>(best1))};
 }
 
+// Four-target deferred exact-fill: same idea as dual, four independent H
+// chains. Intended for long segment counts (NEON 128). May spill registers;
+// call only after dual is known good and measure with a hard-kill threshold.
+template <typename Ops, typename Cell, std::size_t SegmentCount>
+std::array<Score, 4> score_exact_fill_quad_local_sw(
+    const Cell* profile_cells,
+    std::span<const std::size_t> offsets0,
+    std::span<const std::size_t> offsets1,
+    std::span<const std::size_t> offsets2,
+    std::span<const std::size_t> offsets3,
+    Cell gap_score,
+    Cell* h_store0,
+    Cell* h_load0,
+    Cell* e_store0,
+    Cell* h_store1,
+    Cell* h_load1,
+    Cell* e_store1,
+    Cell* h_store2,
+    Cell* h_load2,
+    Cell* e_store2,
+    Cell* h_store3,
+    Cell* h_load3,
+    Cell* e_store3) {
+  constexpr std::size_t lane_count = Ops::lane_count;
+  constexpr std::size_t state_cells = SegmentCount * lane_count;
+  // Equal-length only (caller guarantees same size for all four).
+  const std::size_t n_cols = offsets0.size();
+
+  std::memset(h_store0, 0, state_cells * sizeof(Cell));
+  std::memset(h_load0, 0, state_cells * sizeof(Cell));
+  std::memset(e_store0, 0, state_cells * sizeof(Cell));
+  std::memset(h_store1, 0, state_cells * sizeof(Cell));
+  std::memset(h_load1, 0, state_cells * sizeof(Cell));
+  std::memset(e_store1, 0, state_cells * sizeof(Cell));
+  std::memset(h_store2, 0, state_cells * sizeof(Cell));
+  std::memset(h_load2, 0, state_cells * sizeof(Cell));
+  std::memset(e_store2, 0, state_cells * sizeof(Cell));
+  std::memset(h_store3, 0, state_cells * sizeof(Cell));
+  std::memset(h_load3, 0, state_cells * sizeof(Cell));
+  std::memset(e_store3, 0, state_cells * sizeof(Cell));
+
+  const auto zero_vector = Ops::zero();
+  const auto gap_vector = Ops::set1(gap_score);
+  const auto segment_tail_gap = Ops::set1(static_cast<Cell>(
+      static_cast<Score>(gap_score) * static_cast<Score>(SegmentCount - 1U)));
+
+  auto best0 = zero_vector;
+  auto best1 = zero_vector;
+  auto best2 = zero_vector;
+  auto best3 = zero_vector;
+  auto pending_f0 = zero_vector;
+  auto pending_f1 = zero_vector;
+  auto pending_f2 = zero_vector;
+  auto pending_f3 = zero_vector;
+
+  for (std::size_t col = 0; col < n_cols; ++col) {
+    std::swap(h_store0, h_load0);
+    std::swap(h_store1, h_load1);
+    std::swap(h_store2, h_load2);
+    std::swap(h_store3, h_load3);
+
+    const Cell* profile_row0 = profile_cells + offsets0[col];
+    const Cell* profile_row1 = profile_cells + offsets1[col];
+    const Cell* profile_row2 = profile_cells + offsets2[col];
+    const Cell* profile_row3 = profile_cells + offsets3[col];
+
+    auto v_f0 = zero_vector;
+    auto v_f1 = zero_vector;
+    auto v_f2 = zero_vector;
+    auto v_f3 = zero_vector;
+    auto pending_h0 = pending_f0;
+    auto pending_h1 = pending_f1;
+    auto pending_h2 = pending_f2;
+    auto pending_h3 = pending_f3;
+
+    auto last_h0 = load_state_cells<Ops, Cell>(
+        h_load0 + ((SegmentCount - 1U) * lane_count));
+    last_h0 = Ops::max(last_h0, Ops::add(pending_f0, segment_tail_gap));
+    auto v_h0 = shift_left_zero<Ops, Cell>(last_h0);
+
+    auto last_h1 = load_state_cells<Ops, Cell>(
+        h_load1 + ((SegmentCount - 1U) * lane_count));
+    last_h1 = Ops::max(last_h1, Ops::add(pending_f1, segment_tail_gap));
+    auto v_h1 = shift_left_zero<Ops, Cell>(last_h1);
+
+    auto last_h2 = load_state_cells<Ops, Cell>(
+        h_load2 + ((SegmentCount - 1U) * lane_count));
+    last_h2 = Ops::max(last_h2, Ops::add(pending_f2, segment_tail_gap));
+    auto v_h2 = shift_left_zero<Ops, Cell>(last_h2);
+
+    auto last_h3 = load_state_cells<Ops, Cell>(
+        h_load3 + ((SegmentCount - 1U) * lane_count));
+    last_h3 = Ops::max(last_h3, Ops::add(pending_f3, segment_tail_gap));
+    auto v_h3 = shift_left_zero<Ops, Cell>(last_h3);
+
+    for (std::size_t segment = 0; segment < SegmentCount; ++segment) {
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store0, h_load0, e_store0, profile_row0, segment, v_h0, v_f0, pending_h0,
+          gap_vector, zero_vector, best0);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store1, h_load1, e_store1, profile_row1, segment, v_h1, v_f1, pending_h1,
+          gap_vector, zero_vector, best1);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store2, h_load2, e_store2, profile_row2, segment, v_h2, v_f2, pending_h2,
+          gap_vector, zero_vector, best2);
+      local_sw_score_main_segment_corrected<Ops, Cell>(
+          h_store3, h_load3, e_store3, profile_row3, segment, v_h3, v_f3, pending_h3,
+          gap_vector, zero_vector, best3);
+    }
+
+    v_f0 = local_lazy_f_prefix_carry<Ops, Cell>(v_f0, SegmentCount, gap_score);
+    v_f1 = local_lazy_f_prefix_carry<Ops, Cell>(v_f1, SegmentCount, gap_score);
+    v_f2 = local_lazy_f_prefix_carry<Ops, Cell>(v_f2, SegmentCount, gap_score);
+    v_f3 = local_lazy_f_prefix_carry<Ops, Cell>(v_f3, SegmentCount, gap_score);
+    pending_f0 = Ops::max(v_f0, zero_vector);
+    pending_f1 = Ops::max(v_f1, zero_vector);
+    pending_f2 = Ops::max(v_f2, zero_vector);
+    pending_f3 = Ops::max(v_f3, zero_vector);
+    best0 = Ops::max(best0, pending_f0);
+    best1 = Ops::max(best1, pending_f1);
+    best2 = Ops::max(best2, pending_f2);
+    best3 = Ops::max(best3, pending_f3);
+  }
+
+  return {
+      static_cast<Score>(reduce_max<Ops, Cell>(best0)),
+      static_cast<Score>(reduce_max<Ops, Cell>(best1)),
+      static_cast<Score>(reduce_max<Ops, Cell>(best2)),
+      static_cast<Score>(reduce_max<Ops, Cell>(best3))};
+}
+
 // Shared 1:many dual batch driver for Ops that opt in via
 // try_score_batch_exact_fill_dual. SegmentCount must match the exact-fill
 // shape (NEON i16 = 128, LASX i16 = 64, AVX-512 i16 = 32).
+// EnableQuad: try 4-target lockstep first when four equal-length targets
+// are available (NEON experiment; hard-kill if not faster than dual).
 template <
     template <typename, typename> class OpsTemplate,
     typename Cell,
-    std::size_t SegmentCount>
+    std::size_t SegmentCount,
+    bool EnableQuad = false>
 bool try_score_batch_exact_fill_dual_generic(
     PreparedScoreBatchState<Cell>& batch,
     std::vector<Score>& scores) {
@@ -3998,10 +4132,26 @@ bool try_score_batch_exact_fill_dual_generic(
   thread_local AlignedVector<Cell> h_store1;
   thread_local AlignedVector<Cell> h_load1;
   thread_local AlignedVector<Cell> e_store1;
+  thread_local AlignedVector<Cell> h_store2;
+  thread_local AlignedVector<Cell> h_load2;
+  thread_local AlignedVector<Cell> e_store2;
+  thread_local AlignedVector<Cell> h_store3;
+  thread_local AlignedVector<Cell> h_load3;
+  thread_local AlignedVector<Cell> e_store3;
   if (h_store1.size() < state_cells) {
     h_store1.resize(state_cells);
     h_load1.resize(state_cells);
     e_store1.resize(state_cells);
+  }
+  if constexpr (EnableQuad) {
+    if (h_store2.size() < state_cells) {
+      h_store2.resize(state_cells);
+      h_load2.resize(state_cells);
+      e_store2.resize(state_cells);
+      h_store3.resize(state_cells);
+      h_load3.resize(state_cells);
+      e_store3.resize(state_cells);
+    }
   }
 
   const Cell* profile_cells = state.profile.data();
@@ -4027,8 +4177,72 @@ bool try_score_batch_exact_fill_dual_generic(
         return batch.target_sizes[a] < batch.target_sizes[b];
       });
 
+  auto find_equal_partner = [&](std::size_t start, std::size_t len) -> std::size_t {
+    for (std::size_t j = start; j < eligible.size(); ++j) {
+      if (batch.target_sizes[eligible[j]] == len) {
+        return j;
+      }
+    }
+    return eligible.size();
+  };
+
   std::size_t ei = 0;
-  while (ei + 1U < eligible.size()) {
+  while (ei < eligible.size()) {
+    if constexpr (EnableQuad) {
+      // Prefer four equal-length targets when available.
+      if (ei + 3U < eligible.size()) {
+        const std::size_t i0 = eligible[ei];
+        const std::size_t len0 = batch.target_sizes[i0];
+        const std::size_t j1 = find_equal_partner(ei + 1U, len0);
+        if (j1 < eligible.size()) {
+          std::swap(eligible[ei + 1U], eligible[j1]);
+          const std::size_t j2 = find_equal_partner(ei + 2U, len0);
+          if (j2 < eligible.size()) {
+            std::swap(eligible[ei + 2U], eligible[j2]);
+            const std::size_t j3 = find_equal_partner(ei + 3U, len0);
+            if (j3 < eligible.size()) {
+              std::swap(eligible[ei + 3U], eligible[j3]);
+              const std::size_t i1 = eligible[ei + 1U];
+              const std::size_t i2 = eligible[ei + 2U];
+              const std::size_t i3 = eligible[ei + 3U];
+              const auto& off0 = batch.target_profile_offsets[i0];
+              const auto& off1 = batch.target_profile_offsets[i1];
+              const auto& off2 = batch.target_profile_offsets[i2];
+              const auto& off3 = batch.target_profile_offsets[i3];
+              const auto quad = score_exact_fill_quad_local_sw<Ops, Cell, SegmentCount>(
+                  profile_cells,
+                  std::span<const std::size_t>(off0.data(), off0.size()),
+                  std::span<const std::size_t>(off1.data(), off1.size()),
+                  std::span<const std::size_t>(off2.data(), off2.size()),
+                  std::span<const std::size_t>(off3.data(), off3.size()),
+                  state.gap_score,
+                  state.h_store.data(),
+                  state.h_load.data(),
+                  state.e_store.data(),
+                  h_store1.data(),
+                  h_load1.data(),
+                  e_store1.data(),
+                  h_store2.data(),
+                  h_load2.data(),
+                  e_store2.data(),
+                  h_store3.data(),
+                  h_load3.data(),
+                  e_store3.data());
+              scores[i0] = quad[0];
+              scores[i1] = quad[1];
+              scores[i2] = quad[2];
+              scores[i3] = quad[3];
+              ei += 4U;
+              continue;
+            }
+          }
+        }
+      }
+    }
+
+    if (ei + 1U >= eligible.size()) {
+      break;
+    }
     const std::size_t i0 = eligible[ei];
     std::size_t i1 = eligible[ei + 1U];
     if (batch.target_sizes[i0] != batch.target_sizes[i1]) {

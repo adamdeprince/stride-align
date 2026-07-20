@@ -212,6 +212,16 @@ Hooks: NEON i16×128 segs, LASX i16×64 segs, AVX-512 keeps its specialized dual
   (shared harness `tools/verify_dual_sw_exact_fill.hpp`; arm64 microbench
   routes `--verify-dual` to NEON Ops)
 
+**NEON dual profile + 4-target (M4, 2026-07-20):**
+- `sample(1)`: ~100% of samples in `score_exact_fill_dual_local_sw` segment
+  body (`local_sw_score_main_segment_corrected`); memset negligible.
+- Dual ON vs OFF many=8: **~8.13 / ~4.21 Gc/s ≈ 1.93×** (chain-limited).
+- Target-length scaling (Q=1024, T=256…2048): cells/s stays ~8.2–8.3
+  (not a mem-bandwidth collapse).
+- **4-target lockstep** (`EnableQuad=true` on NEON): many=8 best
+  **~9.49 Gc/s** (~14–17% over dual-only ~8.3). verify-dual still 39/39.
+  Kept enabled for NEON only (LASX stays dual-only).
+
 ---
 
 ## 3. parasail striped SW — same bug upstream — **OPEN (out of tree)**

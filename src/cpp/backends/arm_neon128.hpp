@@ -389,13 +389,16 @@ struct SimdOps<std::uint16_t, std::int16_t> {
   static constexpr bool bounded_local_sw_lazy_f_scan = true;
 
   // Dual-target 1:many deferred exact-fill (query 1024 = 128×8).
+  // EnableQuad=true: also try 4-target lockstep when 4 equal-length targets
+  // are available (measured; hard-kill if not faster than dual-only).
   static bool try_score_batch_exact_fill_dual(
       farrar_fixed_kernel::detail::PreparedScoreBatchState<std::int16_t>& batch,
       std::vector<Score>& scores) {
     return farrar_fixed_kernel::detail::try_score_batch_exact_fill_dual_generic<
         SimdOps,
         std::int16_t,
-        128U>(batch, scores);
+        128U,
+        true>(batch, scores);
   }
 
   static uint16x8_t load_tokens(const std::uint16_t* values) {
