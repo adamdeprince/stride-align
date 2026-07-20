@@ -222,6 +222,22 @@ Hooks: NEON i16×128 segs, LASX i16×64 segs, AVX-512 keeps its specialized dual
   **~9.49 Gc/s** (~14–17% over dual-only ~8.3). verify-dual still 39/39.
   Kept enabled for NEON only (LASX stays dual-only).
 
+### 1:1 residual work (both backends; they do not conflict)
+
+**Why both:** AVX-512 1:1 and NEON 1:1 are different files/kernels. No resource
+conflict. Dual does not apply to 1:1.
+
+| Backend | Before (best) | After (best) | Score | Notes |
+| --- | ---: | ---: | ---: | --- |
+| **NEON** 1:1 | ~4.21 Gc/s | **~4.27 Gc/s (~+1.4%)** | 1985 | specialized `local_sw_score_exact_fill_i16_128` (soft-pipe + split best + branchless pending) |
+| **AVX-512** 1:1 | ~14.00 Gc/s | **~14.01 Gc/s (noise)** | 1985 | already specialized; memset zero only; residual vs unsound ~16 still ~12.5% |
+| Shared generic deferred | — | branchless `pending=max(v_f,0)` | — | helps all non-raw exact-fill paths |
+
+NEON 1:many (quad) still healthy (~10 Gc/s, score 1947); verify-dual 39/39.
+
+**Takeaway:** 1:1 on AVX-512 is saturated without algorithmic change (H recurrence).
+NEON 1:1 got a small specialized-kernel bump; larger NEON wins remain on 1:many.
+
 ---
 
 ## 3. parasail striped SW — same bug upstream — **OPEN (out of tree)**

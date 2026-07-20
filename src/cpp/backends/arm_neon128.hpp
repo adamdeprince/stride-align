@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -377,6 +378,193 @@ struct SimdOps<std::uint8_t, std::int8_t> {
   }
 };
 
+// Specialized 1:1 exact-fill local SW for NEON i16 / length-1024 (128 segments).
+// Deferred lazy-F with soft-pipelined profile/E/prev-H loads and two independent
+// best accumulators (best off the H critical path). Replaces the generic
+// score_state_exact_fill_local_sw loop for this hot shape.
+inline Score local_sw_score_exact_fill_i16_128(
+    farrar_fixed_kernel::detail::PreparedScoreState<std::int16_t>& state) {
+  if (state.fast_score.has_value()) {
+    return *state.fast_score;
+  }
+  if (state.gap_score > 0 || state.query_size != 128U * 8U || state.segment_count != 128U ||
+      state.target_profile_offsets.empty()) {
+    return 0;
+  }
+
+  std::memset(state.h_store.data(), 0, state.h_store.size() * sizeof(std::int16_t));
+  std::memset(state.h_load.data(), 0, state.h_load.size() * sizeof(std::int16_t));
+  std::memset(state.e_store.data(), 0, state.e_store.size() * sizeof(std::int16_t));
+
+  const int16x8_t zero = vdupq_n_s16(0);
+  const int16x8_t gap = vdupq_n_s16(state.gap_score);
+  const auto span = static_cast<std::int16_t>(
+      static_cast<Score>(state.gap_score) * static_cast<Score>(128));
+  const int16x8_t span_gap_1 = vdupq_n_s16(span);
+  const int16x8_t span_gap_2 =
+      vdupq_n_s16(static_cast<std::int16_t>(static_cast<Score>(span) * 2));
+  const int16x8_t span_gap_4 =
+      vdupq_n_s16(static_cast<std::int16_t>(static_cast<Score>(span) * 4));
+  const int16x8_t segment_gap_127 = vdupq_n_s16(static_cast<std::int16_t>(
+      static_cast<Score>(state.gap_score) * static_cast<Score>(127)));
+
+  int16x8_t best0 = zero;
+  int16x8_t best1 = zero;
+  int16x8_t pending_f = zero;
+
+  int16x8_t* h_store = reinterpret_cast<int16x8_t*>(state.h_store.data());
+  int16x8_t* h_load = reinterpret_cast<int16x8_t*>(state.h_load.data());
+  int16x8_t* e_store = reinterpret_cast<int16x8_t*>(state.e_store.data());
+  const auto* profile_cells = state.profile.data();
+
+  const bool use_deferred =
+      state.kernel_strategy != farrar_fixed_kernel::detail::ScoreKernelStrategy::materialized &&
+      state.kernel_strategy != farrar_fixed_kernel::detail::ScoreKernelStrategy::compact &&
+      state.kernel_strategy != farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded &&
+      state.kernel_strategy != farrar_fixed_kernel::detail::ScoreKernelStrategy::bounded_unroll4;
+
+  auto shift_left_zero_i16 = [](int16x8_t v) -> int16x8_t {
+    return vreinterpretq_s16_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s16(v), 14));
+  };
+  auto shift_left_lanes_zero = [](int16x8_t v, int lanes) -> int16x8_t {
+    // lanes ∈ {1,2,4}; byte shift = 2*lanes from low end via vext.
+    if (lanes == 1) {
+      return vreinterpretq_s16_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s16(v), 14));
+    }
+    if (lanes == 2) {
+      return vreinterpretq_s16_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s16(v), 12));
+    }
+    return vreinterpretq_s16_u8(vextq_u8(vdupq_n_u8(0), vreinterpretq_u8_s16(v), 8));
+  };
+  auto prefix_carry = [&](int16x8_t final_f) -> int16x8_t {
+    int16x8_t prefix = vmaxq_s16(final_f, zero);
+    int16x8_t shifted = vaddq_s16(shift_left_lanes_zero(prefix, 1), span_gap_1);
+    prefix = vmaxq_s16(prefix, shifted);
+    shifted = vaddq_s16(shift_left_lanes_zero(prefix, 2), span_gap_2);
+    prefix = vmaxq_s16(prefix, shifted);
+    shifted = vaddq_s16(shift_left_lanes_zero(prefix, 4), span_gap_4);
+    prefix = vmaxq_s16(prefix, shifted);
+    return shift_left_lanes_zero(vmaxq_s16(prefix, zero), 1);
+  };
+  auto reduce_max_i16 = [](int16x8_t v) -> Score {
+    v = vmaxq_s16(v, vextq_s16(v, v, 4));
+    v = vmaxq_s16(v, vextq_s16(v, v, 2));
+    v = vmaxq_s16(v, vextq_s16(v, v, 1));
+    return static_cast<Score>(vgetq_lane_s16(v, 0));
+  };
+
+  const auto& profile_offsets = state.target_profile_offsets;
+  const std::size_t n_cols = profile_offsets.size();
+
+  if (!use_deferred) {
+    for (std::size_t col = 0; col < n_cols; ++col) {
+      std::swap(h_store, h_load);
+      int16x8_t v_h = shift_left_zero_i16(h_load[127]);
+      int16x8_t v_f = zero;
+      const int16x8_t* profile_row =
+          reinterpret_cast<const int16x8_t*>(profile_cells + profile_offsets[col]);
+      for (std::size_t s = 0; s < 128U; ++s) {
+        int16x8_t v_e = e_store[s];
+        v_h = vaddq_s16(v_h, profile_row[s]);
+        v_h = vmaxq_s16(v_h, v_e);
+        v_h = vmaxq_s16(v_h, v_f);
+        v_h = vmaxq_s16(v_h, zero);
+        h_store[s] = v_h;
+        best0 = vmaxq_s16(best0, v_h);
+        const int16x8_t v_h_gap = vaddq_s16(v_h, gap);
+        v_e = vmaxq_s16(vaddq_s16(v_e, gap), v_h_gap);
+        e_store[s] = v_e;
+        v_f = vmaxq_s16(vaddq_s16(v_f, gap), v_h_gap);
+        v_h = h_load[s];
+      }
+      v_f = prefix_carry(v_f);
+      if (vmaxvq_s16(v_f) > 0) {
+        for (std::size_t s = 0; s < 128U; ++s) {
+          int16x8_t v_h_scan = vmaxq_s16(h_store[s], v_f);
+          h_store[s] = v_h_scan;
+          best0 = vmaxq_s16(best0, v_h_scan);
+          v_f = vaddq_s16(v_f, gap);
+          if (vmaxvq_s16(v_f) <= 0) {
+            break;
+          }
+        }
+      }
+    }
+  } else {
+    for (std::size_t col = 0; col < n_cols; ++col) {
+      if (col + 1U < n_cols) {
+        __builtin_prefetch(profile_cells + profile_offsets[col + 1U], 0, 3);
+        __builtin_prefetch(h_store, 0, 3);
+        __builtin_prefetch(e_store, 0, 3);
+      }
+      std::swap(h_store, h_load);
+
+      int16x8_t v_f = zero;
+      int16x8_t pending_h = pending_f;
+      int16x8_t last_h = h_load[127];
+      last_h = vmaxq_s16(last_h, vaddq_s16(pending_f, segment_gap_127));
+      int16x8_t v_h = shift_left_zero_i16(last_h);
+
+      const int16x8_t* profile_row =
+          reinterpret_cast<const int16x8_t*>(profile_cells + profile_offsets[col]);
+
+      // Soft-pipeline: hold profile/E/prev-H for current segment; load next under arithmetic.
+      int16x8_t p_cur = profile_row[0];
+      int16x8_t e_cur = e_store[0];
+      int16x8_t hp_cur = h_load[0];
+
+      for (std::size_t s = 0; s < 127U; ++s) {
+        int16x8_t v_e = e_cur;
+        v_h = vaddq_s16(v_h, p_cur);
+        v_h = vmaxq_s16(v_h, v_e);
+        v_h = vmaxq_s16(v_h, v_f);
+        v_h = vmaxq_s16(v_h, zero);
+        h_store[s] = v_h;
+        if ((s & 1U) == 0U) {
+          best0 = vmaxq_s16(best0, v_h);
+        } else {
+          best1 = vmaxq_s16(best1, v_h);
+        }
+        const int16x8_t v_h_gap = vaddq_s16(v_h, gap);
+        v_e = vmaxq_s16(vaddq_s16(v_e, gap), v_h_gap);
+        e_store[s] = v_e;
+        v_f = vmaxq_s16(vaddq_s16(v_f, gap), v_h_gap);
+        // Next-segment loads under store latency.
+        p_cur = profile_row[s + 1U];
+        e_cur = e_store[s + 1U];
+        const int16x8_t hp_next = h_load[s + 1U];
+        v_h = vmaxq_s16(hp_cur, pending_h);
+        pending_h = vaddq_s16(pending_h, gap);
+        hp_cur = hp_next;
+      }
+      // Segment 127 tail.
+      {
+        int16x8_t v_e = e_cur;
+        v_h = vaddq_s16(v_h, p_cur);
+        v_h = vmaxq_s16(v_h, v_e);
+        v_h = vmaxq_s16(v_h, v_f);
+        v_h = vmaxq_s16(v_h, zero);
+        h_store[127] = v_h;
+        best1 = vmaxq_s16(best1, v_h);
+        const int16x8_t v_h_gap = vaddq_s16(v_h, gap);
+        v_e = vmaxq_s16(vaddq_s16(v_e, gap), v_h_gap);
+        e_store[127] = v_e;
+        v_f = vmaxq_s16(vaddq_s16(v_f, gap), v_h_gap);
+        v_h = vmaxq_s16(hp_cur, pending_h);
+        pending_h = vaddq_s16(pending_h, gap);
+        (void)v_h;
+        (void)pending_h;
+      }
+
+      v_f = prefix_carry(v_f);
+      pending_f = vmaxq_s16(v_f, zero);
+      best0 = vmaxq_s16(best0, pending_f);
+    }
+  }
+
+  return reduce_max_i16(vmaxq_s16(best0, best1));
+}
+
 template <>
 struct SimdOps<std::uint16_t, std::int16_t> {
   using vector_type = int16x8_t;
@@ -399,6 +587,11 @@ struct SimdOps<std::uint16_t, std::int16_t> {
         std::int16_t,
         128U,
         true>(batch, scores);
+  }
+
+  static Score local_sw_score_exact_segment128_raw(
+      farrar_fixed_kernel::detail::PreparedScoreState<std::int16_t>& state) {
+    return local_sw_score_exact_fill_i16_128(state);
   }
 
   static uint16x8_t load_tokens(const std::uint16_t* values) {

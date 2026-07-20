@@ -357,9 +357,10 @@ inline Score local_sw_score_exact_fill_i16_32(
     return 0;
   }
 
-  std::fill(state.h_store.begin(), state.h_store.end(), std::int16_t{0});
-  std::fill(state.h_load.begin(), state.h_load.end(), std::int16_t{0});
-  std::fill(state.e_store.begin(), state.e_store.end(), std::int16_t{0});
+  // 32 × 32 × i16 × 3 arrays = 6 KiB; memset is cheaper than element fill.
+  std::memset(state.h_store.data(), 0, state.h_store.size() * sizeof(std::int16_t));
+  std::memset(state.h_load.data(), 0, state.h_load.size() * sizeof(std::int16_t));
+  std::memset(state.e_store.data(), 0, state.e_store.size() * sizeof(std::int16_t));
 
   const __m512i zero = _mm512_setzero_si512();
   const __m512i gap = _mm512_set1_epi16(state.gap_score);

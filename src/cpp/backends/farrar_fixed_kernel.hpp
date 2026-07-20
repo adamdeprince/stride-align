@@ -3763,47 +3763,37 @@ Score score_state_exact_fill_local_sw(PreparedScoreState<Cell>& state) {
     return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
   }
 
+  // Branchless deferred: always inject max(pending_f, 0). Equivalent to the
+  // has_pending_f branch when gap <= 0 (exact-fill gate) and removes a
+  // data-dependent branch on the hot 1:1 path (NEON / LASX / generic).
   auto pending_f = zero_vector;
-  bool has_pending_f = false;
 
   for (const auto profile_offset : state.target_profile_offsets) {
     std::swap(h_store_data, h_load_data);
 
     auto v_f = zero_vector;
     const Cell* profile_row = profile_data + profile_offset;
-
-    if (has_pending_f) {
-      auto pending_h = pending_f;
-      auto last_h = load_state_cells<Ops, Cell>(
-          h_load_data + ((SegmentCount - 1U) * lane_count));
-      last_h = Ops::max(last_h, Ops::add(pending_f, segment_tail_gap));
-      auto v_h = shift_left_zero<Ops, Cell>(last_h);
-      run_main_segments_corrected(
-          h_store_data,
-          h_load_data,
-          profile_row,
-          v_h,
-          v_f,
-          pending_h);
-    } else {
-      auto v_h = shift_left_zero<Ops, Cell>(
-          load_state_cells<Ops, Cell>(h_load_data + ((SegmentCount - 1U) * lane_count)));
-      run_main_segments(h_store_data, h_load_data, profile_row, v_h, v_f);
-    }
+    auto pending_h = pending_f;
+    auto last_h = load_state_cells<Ops, Cell>(
+        h_load_data + ((SegmentCount - 1U) * lane_count));
+    last_h = Ops::max(last_h, Ops::add(pending_f, segment_tail_gap));
+    auto v_h = shift_left_zero<Ops, Cell>(last_h);
+    run_main_segments_corrected(
+        h_store_data,
+        h_load_data,
+        profile_row,
+        v_h,
+        v_f,
+        pending_h);
 
     v_f = local_lazy_f_prefix_carry<Ops, Cell>(v_f, SegmentCount, state.gap_score);
-    has_pending_f = any_greater<Ops, Cell>(v_f, zero_vector);
-    pending_f = has_pending_f ? v_f : zero_vector;
+    pending_f = Ops::max(v_f, zero_vector);
   }
 
-  if (has_pending_f) {
-    // Final column: fold pending F into best only (score-only; no next column).
-    // best_vector already holds per-lane max of uncorrected H. Corrected cells
-    // are max(H[s], F[s]); with gap < 0 the F wavefront is monotone decreasing
-    // in s, so max_{s,l} max(H,F) = max(max H, max F_0) and a single vector
-    // max against pending_f is exact -- no SegmentCount loop (TODO item 2).
-    best_vector = Ops::max(best_vector, pending_f);
-  }
+  // Final column: fold pending F into best only (score-only; no next column).
+  // With gap < 0 the F wavefront is monotone decreasing in s, so a single
+  // vector max against pending_f is exact.
+  best_vector = Ops::max(best_vector, pending_f);
 
   return static_cast<Score>(reduce_max<Ops, Cell>(best_vector));
 }
