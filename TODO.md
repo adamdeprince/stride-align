@@ -206,6 +206,12 @@ Hooks: NEON i16×128 segs, LASX i16×64 segs, AVX-512 keeps its specialized dual
   no regression). Further LASX dual micro-opts low priority without a native
   microbench/profile.
 
+**Correctness hygiene (M4 NEON, 2026-07-20):**
+- `pytest tests/test_dual_sw_batch.py` → **10/10 passed**
+- `stride_align_arm_neon_microbench --verify-dual` → **39/39 passed**
+  (shared harness `tools/verify_dual_sw_exact_fill.hpp`; arm64 microbench
+  routes `--verify-dual` to NEON Ops)
+
 ---
 
 ## 3. parasail striped SW — same bug upstream — **OPEN (out of tree)**

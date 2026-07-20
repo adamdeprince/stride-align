@@ -89,7 +89,8 @@ void print_help(std::ostream& output) {
       << "  --gap-open N                     Affine gap-open score (default: -2)\n"
       << "  --gap-extend N                   Affine gap-extend score (default: -1)\n"
       << "  --seed N                         Deterministic corpus offset/mutation seed (default: 1)\n"
-      << "  --verify-dual                    Run dual-target SW exact-fill correctness fuzz (avx512bwvl)\n"
+      << "  --verify-dual                    Run dual-target SW exact-fill correctness fuzz\n"
+      << "                                      (avx512bwvl on x86; neon on arm64 microbench)\n"
       << "  --help                           Show this help text\n";
 }
 
@@ -554,6 +555,8 @@ int main(int argc, char** argv) {
       }
     }
     if (verify_dual) {
+      // x86: AVX-512 dual harness. arm64 microbench build: NEON dual harness
+      // (see arm_neon_microbench_backend.cpp).
       return verify_dual_sw_exact_fill_avx512bwvl();
     }
 

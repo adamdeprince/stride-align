@@ -1,4 +1,5 @@
 #include "backends/arm_neon128.hpp"
+#include "verify_dual_sw_exact_fill.hpp"
 #include "x86_microbench_kernels.hpp"
 
 #include <stdexcept>
@@ -26,7 +27,9 @@ RunResult run_avx512bwvl_backend(const PreparedWorkload&, const Options&) {
 }
 
 int verify_dual_sw_exact_fill_avx512bwvl() {
-  throw std::runtime_error("dual SW exact-fill verify requires AVX-512 (x86 microbench build)");
+  // On arm64 microbench builds, --verify-dual runs the NEON harness instead.
+  return verify_dual_detail::run_verify_dual_cases<
+      stride_align::arm_neon128_backend::SimdOps>("neon");
 }
 
 RunResult run_parasail_backend(const PreparedWorkload&, const Options&) {
