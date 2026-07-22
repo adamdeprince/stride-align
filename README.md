@@ -339,6 +339,60 @@ Simplified Chinese homepage and shared assets are authored under
 The published site lives in [`html/`](https://github.com/adamdeprince/stride-align/tree/main/html) and is mirrored at
 [stride-align.com](https://stride-align.com).
 
+### Cloudflare Workers hosting
+
+The site is configured as an assets-only Cloudflare Worker. Wrangler uploads
+the built `html/` tree directly; there is no JavaScript Worker entry point or
+runtime binding.
+
+For **Cloudflare Workers Builds**, set this build variable in
+**Settings → Build → Build Variables and Secrets**. This disables Cloudflare's
+automatic Python dependency detection, which would otherwise see
+`pyproject.toml` and try to compile the stride-align native extension:
+
+```text
+SKIP_DEPENDENCY_INSTALL=1
+```
+
+Use these exact build settings:
+
+```text
+Build command:  bash tools/cloudflare_build.sh
+Deploy command: npx wrangler deploy --assets ./html
+Root directory: /
+```
+
+The Cloudflare build script runs `npm ci`, installs only the pure-Python
+dependency in [`requirements-site.txt`](requirements-site.txt), and runs the
+Markdown renderer. It never installs the stride-align package or invokes a C/C++
+compiler.
+
+For local development, use Node.js 22 or newer and install the Python Markdown
+build dependency once:
+
+```bash
+python3 -m pip install "markdown>=3.5"
+npm ci
+```
+
+Then build and preview locally, validate the upload without deploying, or deploy
+to the configured `stride-align` Worker. Authenticate once before the first
+interactive deployment:
+
+```bash
+npx wrangler login
+npm run site:dev
+npm run site:check
+npm run site:deploy
+```
+
+`site:build` runs [`tools/md_to_html.py`](tools/md_to_html.py). That generator
+preserves the tracked, hand-authored `html/index.html` and refreshes the
+localized homepage, documentation, styles, benchmark artifacts, and shared
+assets around it. Wrangler account selection and any `stride-align.com` custom
+domain route remain Cloudflare account configuration, so a dry run cannot
+change live DNS or routing.
+
 ## API quick-start
 
 The full reference lives under

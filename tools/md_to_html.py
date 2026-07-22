@@ -530,7 +530,7 @@ def main() -> None:
         *(REPO / readme_filename(suffix) for suffix, *_ in LANGS),
     }
     skip_dirs = {"html", "build", "dist", "wheelhouse", ".venv", ".git",
-                 ".pytest_cache", "__pycache__", "node_modules"}
+                 ".pytest_cache", ".wrangler", "__pycache__", "node_modules"}
     for md in sorted(REPO.rglob("*.md")):
         if md in handled_root:
             continue

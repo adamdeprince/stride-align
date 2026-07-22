@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "stride-align",
+  "compatibility_date": "2026-07-21",
+  "assets": {
+    "directory": "./html",
+    "html_handling": "auto-trailing-slash"
+  }
+}

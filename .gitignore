@@ -201,6 +201,13 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Node / Cloudflare Wrangler
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

@@ -1,0 +1,18 @@
+{
+  "name": "stride-align-site",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Cloudflare Workers deployment tooling for stride-align.com",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "site:build": "python3 tools/md_to_html.py",
+    "site:dev": "npm run site:build && wrangler dev",
+    "site:check": "npm run site:build && wrangler deploy --assets ./html --dry-run",
+    "site:deploy": "npm run site:build && wrangler deploy --assets ./html"
+  },
+  "devDependencies": {
+    "wrangler": "4.113.0"
+  }
+}

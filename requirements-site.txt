@@ -1,0 +1,3 @@
+# Website generator only. Do not replace this with `.[dev]`: Cloudflare's
+# build image must not compile the stride-align native extension.
+Markdown==3.10.2
