@@ -213,6 +213,17 @@ pre {
   background: var(--paper-deep);
 }
 
+.primary-nav .nav-start {
+  color: var(--ink);
+  background: var(--acid);
+}
+
+.primary-nav .nav-start:hover,
+.primary-nav .nav-start:focus-visible {
+  color: var(--white);
+  background: var(--orange);
+}
+
 .header-cta {
   min-width: 172px;
   gap: 10px;
@@ -250,6 +261,10 @@ pre {
 .header-cta:focus-visible {
   color: var(--white);
   background: var(--ink);
+}
+
+.mobile-quick-nav {
+  display: none;
 }
 
 .hero {
@@ -399,6 +414,17 @@ pre {
 .button-dark:focus-visible {
   color: var(--ink);
   background: var(--acid);
+}
+
+.button-download {
+  color: var(--ink);
+  background: var(--acid);
+}
+
+.button-download:hover,
+.button-download:focus-visible {
+  color: var(--white);
+  background: var(--orange);
 }
 
 .text-link {
@@ -1560,6 +1586,17 @@ pre {
   gap: 55px;
 }
 
+.install-heading-copy {
+  min-width: 0;
+}
+
+.install-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-top: 36px;
+}
+
 .example-switcher {
   margin-top: 80px;
   border: 1px solid var(--ink);
@@ -1925,6 +1962,44 @@ pre {
     display: none;
   }
 
+  .header-cta {
+    display: none;
+  }
+
+  .mobile-quick-nav {
+    min-height: 58px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-bottom: 1px solid var(--ink);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  .mobile-quick-nav a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 22px;
+    background: var(--ink);
+    color: var(--white);
+  }
+
+  .mobile-quick-nav a + a {
+    border-left: 1px solid var(--ink);
+    color: var(--ink);
+    background: var(--acid);
+  }
+
+  .mobile-quick-nav a:hover,
+  .mobile-quick-nav a:focus-visible {
+    color: var(--white);
+    background: var(--orange);
+  }
+
   .product-long {
     display: none;
   }
@@ -2060,15 +2135,18 @@ pre {
     align-self: start;
   }
 
-  .header-cta {
-    min-width: 90px;
-    padding: 0 15px;
-  }
-
   .language-cta {
     min-width: 82px;
     padding: 0 10px;
     font-size: 10px;
+  }
+
+  .mobile-quick-nav {
+    font-size: 9px;
+  }
+
+  .mobile-quick-nav a {
+    padding: 0 14px;
   }
 
   .hero-copy {
@@ -2173,6 +2251,13 @@ pre {
   .section-intro > p:last-child {
     grid-column: 1;
     margin-top: 15px;
+  }
+
+  .install-heading-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 22px;
+    margin-top: 30px;
   }
 
   .section-intro h2,
