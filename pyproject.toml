@@ -98,6 +98,9 @@ stride-align-file-compare = "stride_align.file_compare:main"
 dev = [
   "build>=1.2",
   "cmake>=3.26",
+  # DuckDB extensions are ABI-versioned. Keep the Python test client on the
+  # exact version used to build the sideloaded test artifact.
+  "duckdb==1.5.5",
   "markdown>=3.5",
   "mypy>=1.8",
   "ninja>=1.11",
@@ -128,6 +131,7 @@ package-mode = true
 [tool.poetry.group.dev.dependencies]
 build = ">=1.2"
 cmake = ">=3.26"
+duckdb = "==1.5.5"
 markdown = ">=3.5"
 mypy = ">=1.8"
 nanobind = ">=2.12"
@@ -157,6 +161,9 @@ wheel.packages = ["src/stride_align"]
 minversion = "8.0"
 addopts = "-q"
 testpaths = ["tests"]
+markers = [
+  "duckdb: requires a version- and platform-matched sideloaded DuckDB extension",
+]
 
 [tool.ruff]
 line-length = 100

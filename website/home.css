@@ -317,6 +317,19 @@ pre {
   letter-spacing: -0.025em;
 }
 
+.hero-lede code {
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.4);
+  font-size: 0.82em;
+}
+
+.unicode-proofs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 28px;
+}
+
 .unicode-proof {
   width: fit-content;
   display: flex;
@@ -328,6 +341,10 @@ pre {
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.06em;
+}
+
+.unicode-proofs .unicode-proof {
+  margin-top: 0;
 }
 
 .unicode-proof i {
@@ -1048,6 +1065,193 @@ pre {
   font-size: 0.9em;
 }
 
+.duckdb-port {
+  color: var(--ink);
+  background: var(--acid);
+  border-bottom: 1px solid var(--ink);
+}
+
+.port-heading {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.3fr) minmax(560px, 1fr);
+  gap: clamp(45px, 7vw, 120px);
+  align-items: start;
+}
+
+.port-heading .kicker {
+  margin-bottom: 20px;
+}
+
+.port-badge {
+  display: inline-block;
+  padding: 7px 9px;
+  color: var(--white);
+  background: var(--ink);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+.port-heading h2 {
+  max-width: 1050px;
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(50px, 6.5vw, 110px);
+  font-weight: 400;
+  line-height: 0.89;
+  letter-spacing: -0.065em;
+  text-transform: uppercase;
+}
+
+.port-heading h2 span {
+  color: var(--orange);
+}
+
+.port-heading > div:last-child > p {
+  max-width: 820px;
+  margin: 35px 0 0;
+  color: rgba(17, 19, 15, 0.72);
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.duckdb-benefits {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 85px;
+  border-top: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
+}
+
+.duckdb-benefit {
+  position: relative;
+  min-width: 0;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(30px, 3.6vw, 55px);
+  border-right: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  background: var(--paper);
+}
+
+.duckdb-benefit-featured {
+  color: var(--white);
+  background: var(--ink);
+}
+
+.benefit-number {
+  position: absolute;
+  top: 24px;
+  right: 25px;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.duckdb-benefit > p {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.duckdb-benefit-featured > p,
+.duckdb-benefit-featured .benefit-number {
+  color: var(--acid);
+}
+
+.duckdb-benefit h3 {
+  max-width: 440px;
+  margin: 50px 0 35px;
+  font-size: clamp(27px, 2.25vw, 39px);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+
+.duckdb-benefit h3 code {
+  font-size: 0.78em;
+  letter-spacing: -0.03em;
+}
+
+.benefit-example {
+  margin-top: auto;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.duckdb-benefit-featured .benefit-example {
+  border-color: var(--line-light);
+}
+
+.benefit-example code {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.duckdb-benefit-featured .benefit-example code {
+  color: #aab1a4;
+}
+
+.duckdb-benefit small {
+  display: block;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.duckdb-benefit-featured small {
+  color: #9fa69a;
+}
+
+.port-contract {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 32px;
+  border-top: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
+}
+
+.port-contract article {
+  min-width: 0;
+  padding: clamp(28px, 3vw, 46px);
+  border-right: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.port-contract article > span {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.port-contract strong {
+  display: block;
+  margin-top: 22px;
+  font-size: clamp(20px, 1.6vw, 27px);
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+}
+
+.port-contract p {
+  margin: 18px 0 0;
+  color: rgba(17, 19, 15, 0.68);
+  font-size: 13px;
+}
+
+.port-contract code {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.42);
+  font-size: 0.9em;
+}
+
 .compat {
   display: grid;
   grid-template-columns: minmax(380px, 0.82fr) minmax(500px, 1.18fr);
@@ -1356,9 +1560,141 @@ pre {
   gap: 55px;
 }
 
-.install-panel {
+.example-switcher {
   margin-top: 80px;
   border: 1px solid var(--ink);
+}
+
+.example-toolbar {
+  min-height: 92px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom: 1px solid var(--ink);
+  background: var(--paper-deep);
+}
+
+.example-toolbar-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 18px 24px;
+}
+
+.example-toolbar-copy span,
+.example-language > span:first-child {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+.example-toolbar-copy span {
+  color: var(--muted);
+}
+
+.example-toolbar-copy strong {
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.example-language {
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--ink);
+}
+
+.example-language > span:first-child {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  white-space: nowrap;
+}
+
+.example-select-wrap {
+  position: relative;
+  min-width: 235px;
+  display: flex;
+}
+
+.example-select-wrap::after {
+  content: "↓";
+  position: absolute;
+  top: 50%;
+  right: 22px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.example-select-wrap select {
+  width: 100%;
+  min-height: 100%;
+  padding: 0 58px 0 23px;
+  border: 0;
+  border-left: 1px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+  background: var(--acid);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+}
+
+.example-select-wrap select:hover,
+.example-select-wrap select:focus-visible {
+  background: var(--orange);
+  outline: 0;
+}
+
+.example-select-wrap select:focus-visible {
+  box-shadow: inset 0 0 0 3px var(--ink);
+}
+
+.example-stage {
+  min-width: 0;
+}
+
+.example-panel[hidden] {
+  display: none;
+}
+
+.install-track {
+  min-width: 0;
+}
+
+.example-panel {
+  border: 0;
+}
+
+.track-title {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 18px;
+  color: #899083;
+  background: var(--ink);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.track-title b {
+  color: var(--acid);
+  font-size: inherit;
+}
+
+.install-track-duckdb .track-title b {
+  color: var(--orange);
 }
 
 .terminal-line {
@@ -1421,12 +1757,29 @@ pre {
 }
 
 .quick-code pre {
+  min-height: 470px;
   margin: 0;
   padding: clamp(35px, 5vw, 75px);
   color: #e1e5dc;
   font-size: clamp(11px, 1.15vw, 17px);
   line-height: 1.9;
   overflow-x: auto;
+}
+
+.track-note {
+  min-height: 102px;
+  margin: 0;
+  padding: 22px 24px;
+  border-top: 1px solid var(--ink);
+  color: var(--muted);
+  background: var(--white);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.install-track-duckdb .terminal-line {
+  background: var(--orange);
 }
 
 .install-links {
@@ -1616,6 +1969,10 @@ pre {
   .performance-intro {
     max-width: 850px;
   }
+
+  .port-heading {
+    grid-template-columns: minmax(160px, 0.25fr) minmax(500px, 1fr);
+  }
 }
 
 @media (max-width: 960px) {
@@ -1650,6 +2007,15 @@ pre {
 
   .proof-strip article:nth-child(4) {
     border-top: 1px solid var(--ink);
+  }
+
+  .duckdb-benefits,
+  .port-contract {
+    grid-template-columns: 1fr;
+  }
+
+  .duckdb-benefit {
+    min-height: 330px;
   }
 }
 
@@ -1798,7 +2164,8 @@ pre {
 
   .section-intro,
   .engine-heading,
-  .install-heading {
+  .install-heading,
+  .port-heading {
     grid-template-columns: 1fr;
     gap: 16px;
   }
@@ -1811,8 +2178,27 @@ pre {
   .section-intro h2,
   .compat h2,
   .install h2,
-  .performance h2 {
+  .performance h2,
+  .port-heading h2 {
     font-size: clamp(44px, 14vw, 70px);
+  }
+
+  .port-heading > div:last-child > p {
+    margin-top: 28px;
+    font-size: 16px;
+  }
+
+  .duckdb-benefits {
+    margin-top: 58px;
+  }
+
+  .duckdb-benefit {
+    min-height: 360px;
+    padding: 32px 26px;
+  }
+
+  .port-contract {
+    margin-top: 22px;
   }
 
   .use-grid {
@@ -1947,8 +2333,39 @@ pre {
     padding: 14px 20px;
   }
 
-  .install-panel {
+  .example-switcher {
     margin-top: 50px;
+  }
+
+  .example-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .example-language {
+    min-height: 62px;
+    border-top: 1px solid var(--ink);
+    border-left: 0;
+  }
+
+  .example-language > span:first-child {
+    padding: 0 16px;
+  }
+
+  .example-select-wrap {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .example-select-wrap select {
+    min-height: 61px;
+  }
+
+  .track-title {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    padding: 12px 16px;
   }
 
   .terminal-line {
@@ -1973,8 +2390,13 @@ pre {
   }
 
   .quick-code pre {
+    min-height: 0;
     padding: 30px 20px;
     font-size: 10px;
+  }
+
+  .track-note {
+    min-height: 0;
   }
 
   .install-links {

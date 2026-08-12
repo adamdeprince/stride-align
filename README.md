@@ -4,10 +4,10 @@
 
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
-`stride-align` is a SIMD-accelerated Python library for fuzzy string
-matching, sequence alignment, phonetic encoding, and time-series
-distance — with first-class Unicode/CJK and a runtime CPU dispatcher
-that picks the widest SIMD backend your machine supports (x86, ARM,
+`stride-align` provides SIMD-accelerated fuzzy string matching and sequence
+alignment for Python and DuckDB, with first-class Unicode/CJK support. The
+Python package also includes phonetic encoding and time-series distance, plus
+a runtime CPU dispatcher that picks the widest supported backend (x86, ARM,
 LoongArch, POWER), with a scalar fallback.
 
 It also provides work-alike imports for four popular libraries:
@@ -22,6 +22,23 @@ The full feature list, every supported algorithm, and per-backend
 detail live in the API reference under
 [`docs/api/`](docs/api/README.md), with LLM-friendly bundles at
 [`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt).
+
+The alignment data plane is also available as a
+[host-neutral C++20 library](docs/cpp-core.md). It can be configured without
+Python or nanobind and consumed as the CMake target `stride_align::core`:
+
+```sh
+cmake -S . -B build/core -G Ninja \
+  -DSTRIDE_ALIGN_BUILD_PYTHON=OFF \
+  -DSTRIDE_ALIGN_BUILD_CPP_TESTS=ON
+cmake --build build/core
+ctest --test-dir build/core
+```
+
+DuckDB support is delivered as a sideloadable extension with native
+`stride_*` scalar SQL functions and per-CPU packages. Usage, downloads, and
+build instructions are documented in
+[`bindings/duckdb/`](bindings/duckdb/README.md).
 
 Instead of giving you a lecture, we're going to learn by doing.
 Let's dive right into how it works.

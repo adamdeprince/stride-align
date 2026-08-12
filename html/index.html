@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — SIMD string matching for Python</title>
-  <meta name="description" content="SIMD fuzzy matching and sequence alignment for Python with first-class CJK. UCS-2 and UCS-4 strings go straight to SIMD without a UTF-8 transcode.">
+  <title>stride-align — SIMD string matching for Python and DuckDB</title>
+  <meta name="description" content="Fast, Unicode-aware string matching and sequence alignment for Python and DuckDB, powered by a native SIMD C++ engine.">
   <meta name="theme-color" content="#b7f34a">
   <meta property="og:title" content="stride-align — Make strings agree. Fast.">
-  <meta property="og:description" content="First-class CJK string alignment for Python. Native UCS-2 and UCS-4 objects go straight to SIMD on Intel and ARM without a UTF-8 detour.">
+  <meta property="og:description" content="Easy, fast, Unicode-aware string matching for Python and DuckDB.">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
@@ -31,6 +31,7 @@
     </div>
     <nav class="primary-nav" aria-label="Primary navigation">
       <a href="#uses">Use cases</a>
+      <a href="#duckdb">DuckDB</a>
       <a href="#performance">Performance</a>
       <a href="docs/api/index.html">Docs</a>
       <a href="README.html">Readme</a>
@@ -46,11 +47,16 @@
   <main id="main">
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow"><span>SIMD STRING MATCHING</span> CJK WITHOUT UTF-8</p>
+        <p class="eyebrow"><span>SIMD STRING MATCHING</span> PYTHON + DUCKDB</p>
         <h1>Make strings<br><em>agree.</em> Fast.</h1>
-        <p class="hero-lede">Fuzzy matching and sequence alignment with first-class CJK. Python’s UCS-2 and UCS-4 string objects go straight to SIMD—no UTF-8 representation, no transcoding detour.</p>
-        <div class="unicode-proof" aria-label="Native Python Unicode SIMD path">
-          <span>PYTHON STR</span><i>→</i><strong>UCS-2 / UCS-4</strong><i>→</i><b>SIMD</b>
+        <p class="hero-lede">Fuzzy matching and sequence alignment with first-class CJK. Python strings and DuckDB <code>VARCHAR</code> values go straight into a fast, Unicode-aware native engine.</p>
+        <div class="unicode-proofs" aria-label="Python and DuckDB SIMD scoring paths">
+          <div class="unicode-proof">
+            <span>PYTHON STR</span><i>→</i><strong>NATIVE SCORER</strong><i>→</i><b>SIMD</b>
+          </div>
+          <div class="unicode-proof">
+            <span>DUCKDB VARCHAR</span><i>→</i><strong>SQL SCORER</strong><i>→</i><b>SIMD</b>
+          </div>
         </div>
         <div class="hero-actions">
           <a class="button button-dark" href="#install">Start building <span aria-hidden="true">→</span></a>
@@ -59,7 +65,8 @@
         <ul class="hero-meta" aria-label="Project details">
           <li>Apache 2.0</li>
           <li>Python 3.12+</li>
-          <li>Native UCS-2 / UCS-4 SIMD</li>
+          <li>Sideloadable DuckDB extension</li>
+          <li>Unicode included</li>
         </ul>
       </div>
 
@@ -174,12 +181,12 @@
     <section class="engine" id="engine">
       <div class="engine-heading">
         <p class="kicker kicker-light">02 / ONE ENGINE</p>
-        <h2>Write the obvious Python.<br><span>Let the dispatcher sweat.</span></h2>
+        <h2>One C++ engine.<br><span>Native at every front door.</span></h2>
       </div>
 
       <div class="dispatch-diagram" aria-label="Runtime CPU dispatch flow">
         <div class="dispatch-source">
-          <span>YOUR CODE</span>
+          <span>PYTHON FRONT DOOR</span>
           <code>import stride_align as sa</code>
         </div>
         <div class="dispatch-arrow" aria-hidden="true"><span></span><b>RUNTIME DISPATCH</b></div>
@@ -194,9 +201,9 @@
 
       <div class="engine-details">
         <article>
-          <span>UNICODE WITHOUT THE DETOUR</span>
+          <span>PYTHON / UNICODE WITHOUT THE DETOUR</span>
           <h3>UCS-2 and UCS-4 are first-class SIMD targets.</h3>
-          <p>Developers do not have to encode Python strings into UTF-8 representations before alignment. Chinese, Japanese, Korean, Arabic, and emoji use direct UCS-1, UCS-2, or UCS-4 access and stay on the vectorized path.</p>
+          <p>Python strings do not have to become UTF-8 before alignment. Chinese, Japanese, Korean, Arabic, and emoji use direct UCS-1, UCS-2, or UCS-4 access and stay on the vectorized path.</p>
         </article>
         <article>
           <span>ONE QUERY × MANY TARGETS</span>
@@ -206,11 +213,66 @@
       </div>
     </section>
 
+    <section class="duckdb-port section" id="duckdb">
+      <div class="port-heading">
+        <div>
+          <p class="kicker">03 / DUCKDB</p>
+          <span class="port-badge">SIDELOADED EXTENSION</span>
+        </div>
+        <div>
+          <h2>SIMD string matching.<br><span>Right inside DuckDB.</span></h2>
+          <p>Load stride-align once, then use its fast scalar functions anywhere you write SQL. Pass ordinary DuckDB <code>VARCHAR</code> values—including CJK, accents, and emoji—and get a score back.</p>
+        </div>
+      </div>
+
+      <div class="duckdb-benefits" aria-label="Using stride-align with DuckDB">
+        <article class="duckdb-benefit duckdb-benefit-featured">
+          <span class="benefit-number">01</span>
+          <p>FAMILIAR SQL</p>
+          <h3>Call a function. Get a score.</h3>
+          <div class="benefit-example"><code>stride_levenshtein('kitten', 'sitting')</code></div>
+          <small>Use stride-align in projections, filters, ordering, joins, CTEs, and views.</small>
+        </article>
+        <article class="duckdb-benefit">
+          <span class="benefit-number">02</span>
+          <p>UNICODE INCLUDED</p>
+          <h3>Pass <code>VARCHAR</code> exactly as it is.</h3>
+          <div class="benefit-example"><code>'你好世界' ↔ '你好世间'</code></div>
+          <small>CJK, accents, combining marks, and emoji all use the same SQL functions.</small>
+        </article>
+        <article class="duckdb-benefit">
+          <span class="benefit-number">03</span>
+          <p>FAST BY DEFAULT</p>
+          <h3>Built for columns, not Python loops.</h3>
+          <div class="benefit-example"><code>SELECT stride_jaro(name, ?) FROM records</code></div>
+          <small>DuckDB evaluates whole vectors through the SIMD package selected for the machine.</small>
+        </article>
+      </div>
+
+      <div class="port-contract">
+        <article>
+          <span>THE SCORERS YOU EXPECT</span>
+          <strong>Edit distance, similarity, and sequence alignment.</strong>
+          <p>Levenshtein, Damerau–Levenshtein, Indel, Hamming, Jaro, Smith–Waterman, and Needleman–Wunsch share one straightforward SQL surface.</p>
+        </article>
+        <article>
+          <span>PACKAGE DISPATCH</span>
+          <strong>Choose the ISA when you choose the package.</strong>
+          <p>Generic, AVX2, AVX-512 BW/VL, NEON, and CPU-tuned Loongson LSX/LASX artifacts keep deployment explicit and make ISA benchmarking reproducible.</p>
+        </article>
+        <article>
+          <span>NATIVE SURFACE ONLY</span>
+          <strong>SQL gets stride-align, not somebody else’s API.</strong>
+          <p>RapidFuzz, Parasail, Jellyfish, and TheFuzz compatibility layers are Python migration aids. DuckDB exposes native <code>stride_*</code> functions only.</p>
+        </article>
+      </div>
+    </section>
+
     <section class="compat section">
       <div class="compat-copy">
-        <p class="kicker">03 / MOVE EXISTING CODE</p>
+        <p class="kicker">04 / PYTHON MIGRATION</p>
         <h2>One import away means one import away.</h2>
-        <p>Keep familiar APIs while moving the work onto stride-align’s kernels. Native code should use <code>stride_align</code> directly; existing code can take the short road.</p>
+        <p>Keep familiar Python APIs while moving the work onto stride-align’s kernels. Native Python code should use <code>stride_align</code> directly; existing Python code can take the short road.</p>
         <a class="text-link text-link-dark" href="docs/api/index.html#compatibility-shims-migration-aids">See compatibility details <span aria-hidden="true">→</span></a>
       </div>
       <div class="import-stack" aria-label="Compatibility import examples">
@@ -233,7 +295,7 @@
 
     <section class="performance" id="performance">
       <div class="performance-intro">
-        <p class="kicker">04 / PROOF, NOT VIBES</p>
+        <p class="kicker">05 / PROOF, NOT VIBES</p>
         <h2>Every fast claim comes with a workload.</h2>
         <p>The benchmark suite spans architectures, algorithms, text types, score widths, and comparison libraries. Reports include the context behind the headline, including regressions and correctness tradeoffs.</p>
         <a class="button button-acid" href="BENCHMARK.html">Open benchmark ledger <span aria-hidden="true">↗</span></a>
@@ -281,32 +343,92 @@
 
     <section class="install section" id="install">
       <div class="install-heading">
-        <p class="kicker">05 / START HERE</p>
-        <h2>From zero to matching in two lines.</h2>
+        <p class="kicker">06 / START HERE</p>
+        <h2>Choose your front door.<br>One scoring core.</h2>
       </div>
-      <div class="install-panel">
-        <div class="terminal-line">
-          <span class="prompt">$</span>
-          <code>pip install stride-align</code>
-          <button class="copy-button" type="button" data-copy="pip install stride-align" aria-label="Copy install command">
-            <span class="copy-default">COPY</span><span class="copy-success">COPIED</span>
-          </button>
+      <div class="example-switcher" data-example-switcher>
+        <div class="example-toolbar">
+          <div class="example-toolbar-copy">
+            <span>PAIRWISE LEVENSHTEIN SIMILARITY</span>
+            <strong>Same input. Same result. Pick a front door.</strong>
+          </div>
+          <label class="example-language" for="example-language">
+            <span>LANGUAGE / HOST</span>
+            <span class="example-select-wrap">
+              <select id="example-language" data-example-select aria-controls="example-python example-duckdb">
+                <option value="python">Python</option>
+                <option value="duckdb">DuckDB SQL</option>
+              </select>
+            </span>
+          </label>
         </div>
-        <div class="quick-code">
-          <pre><code><span class="code-keyword">import</span> stride_align <span class="code-keyword">as</span> sa
+        <div class="example-stage" aria-live="polite">
+          <article class="install-track example-panel" id="example-python" data-example-panel="python" aria-label="Python example">
+          <div class="track-title">
+            <span>PYTHON / IN-PROCESS API</span>
+            <b>RUNTIME DISPATCH</b>
+          </div>
+          <div class="terminal-line">
+            <span class="prompt">$</span>
+            <code>pip install stride-align</code>
+            <button class="copy-button" type="button" data-copy="pip install stride-align" aria-label="Copy Python install command">
+              <span class="copy-default">COPY</span><span class="copy-success">COPIED</span>
+            </button>
+          </div>
+          <div class="quick-code">
+            <pre><code><span class="code-keyword">import</span> stride_align <span class="code-keyword">as</span> sa
 
-score = sa.smith_waterman_normalized_score(
-    <span class="code-string">"In the beginning… the heavens and the earth."</span>,
-    <span class="code-string">"In the beginning… the heaven and the earth."</span>,
+query = <span class="code-string">"你好世界"</span>
+targets = [<span class="code-string">"你好世间"</span>, <span class="code-string">"再见世界"</span>]
+
+score = sa.levenshtein_normalized_score(
+    query, targets[0]
+)
+scores = sa.levenshtein_normalized_scores(
+    query, targets
 )
 
-<span class="code-call">print</span>(score)  <span class="code-comment"># 0.9907407407407407</span></code></pre>
+<span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
+          </div>
+          <p class="track-note">Python wheels inspect the CPU at module load and dispatch calls to the best available backend.</p>
+          </article>
+
+          <article class="install-track install-track-duckdb example-panel" id="example-duckdb" data-example-panel="duckdb" aria-label="DuckDB example" hidden>
+          <div class="track-title">
+            <span>DUCKDB / VECTOR SQL</span>
+            <b>PACKAGE DISPATCH</b>
+          </div>
+          <div class="terminal-line">
+            <span class="prompt">$</span>
+            <code>pip install duckdb==1.5.5</code>
+            <button class="copy-button" type="button" data-copy="pip install duckdb==1.5.5" aria-label="Copy DuckDB Python client install command">
+              <span class="copy-default">COPY</span><span class="copy-success">COPIED</span>
+            </button>
+          </div>
+          <div class="quick-code">
+            <pre><code><span class="code-keyword">import</span> duckdb
+
+db = duckdb.connect(config={
+    <span class="code-string">"allow_unsigned_extensions"</span>: <span class="code-string">"true"</span>
+})
+extension = <span class="code-string">"/path/to/stride_align.duckdb_extension"</span>
+db.execute(<span class="code-string">f"LOAD '{extension}'"</span>)
+
+score = db.execute(
+    <span class="code-string">"SELECT stride_levenshtein_similarity(?, ?)"</span>,
+    [<span class="code-string">"你好世界"</span>, <span class="code-string">"你好世间"</span>],
+).fetchone()[0]
+
+<span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
+          </div>
+          <p class="track-note"><a href="https://distribution.goblinreactor.com/stride-align/duckdb/">Download the extension artifact</a> matching your DuckDB version, platform, and SIMD package; Python is only orchestrating the sideload here.</p>
+          </article>
         </div>
       </div>
       <div class="install-links">
         <a href="README.html#getting-started"><span>01</span><strong>Read the tutorial</strong><i>→</i></a>
         <a href="docs/api/index.html"><span>02</span><strong>Browse the API</strong><i>→</i></a>
-        <a href="README.html#loongarch-installation"><span>03</span><strong>Install on LoongArch</strong><i>→</i></a>
+        <a href="bindings/duckdb/index.html"><span>03</span><strong>Use the DuckDB extension</strong><i>→</i></a>
       </div>
     </section>
   </main>
@@ -324,6 +446,7 @@ score = sa.smith_waterman_normalized_score(
         <span>PROJECT</span>
         <a href="README.html">Readme</a>
         <a href="docs/api/index.html">API reference</a>
+        <a href="bindings/duckdb/index.html">DuckDB extension</a>
         <a href="CHANGELOG.html">Changelog</a>
       </div>
       <div>
@@ -362,6 +485,21 @@ score = sa.smith_waterman_normalized_score(
         input.remove();
         copied();
       });
+    });
+
+    document.querySelectorAll('[data-example-switcher]').forEach(function (switcher) {
+      var select = switcher.querySelector('[data-example-select]');
+      var panels = switcher.querySelectorAll('[data-example-panel]');
+      if (!select || !panels.length) return;
+
+      var showSelectedExample = function () {
+        panels.forEach(function (panel) {
+          panel.hidden = panel.getAttribute('data-example-panel') !== select.value;
+        });
+      };
+
+      select.addEventListener('change', showSelectedExample);
+      showSelectedExample();
     });
   </script>
 </body>

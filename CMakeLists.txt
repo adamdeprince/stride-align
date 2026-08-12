@@ -1,5 +1,74 @@
 cmake_minimum_required(VERSION 3.26)
-project(stride_align LANGUAGES CXX)
+project(stride_align VERSION 0.6.0 LANGUAGES CXX)
+
+option(STRIDE_ALIGN_BUILD_PYTHON "Build the CPython/nanobind adapters" ON)
+option(STRIDE_ALIGN_BUILD_CPP_TESTS "Build the host-neutral C++ core tests" OFF)
+set(STRIDE_ALIGN_INSTALL_CPP_DEFAULT ON)
+if(SKBUILD)
+  set(STRIDE_ALIGN_INSTALL_CPP_DEFAULT OFF)
+endif()
+option(
+  STRIDE_ALIGN_INSTALL_CPP
+  "Install the header-only C++ core and CMake package metadata"
+  ${STRIDE_ALIGN_INSTALL_CPP_DEFAULT}
+)
+
+add_library(stride_align_core INTERFACE)
+add_library(stride_align::core ALIAS stride_align_core)
+set_target_properties(stride_align_core PROPERTIES EXPORT_NAME core)
+target_compile_features(stride_align_core INTERFACE cxx_std_20)
+target_include_directories(
+  stride_align_core
+  INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+if(STRIDE_ALIGN_BUILD_CPP_TESTS)
+  enable_testing()
+  add_executable(stride_align_core_test tests/cpp/test_core.cpp)
+  target_link_libraries(stride_align_core_test PRIVATE stride_align::core)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(stride_align_core_test PRIVATE -O3 -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME stride_align_core_test COMMAND stride_align_core_test)
+endif()
+
+if(STRIDE_ALIGN_INSTALL_CPP)
+  include(CMakePackageConfigHelpers)
+  include(GNUInstallDirs)
+  install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  install(
+    TARGETS stride_align_core
+    EXPORT stride_alignTargets
+  )
+  install(
+    EXPORT stride_alignTargets
+    FILE stride_alignTargets.cmake
+    NAMESPACE stride_align::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/stride_align
+  )
+  configure_package_config_file(
+    cmake/stride_alignConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/stride_alignConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/stride_align
+  )
+  write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/stride_alignConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+  )
+  install(
+    FILES
+      ${CMAKE_CURRENT_BINARY_DIR}/stride_alignConfig.cmake
+      ${CMAKE_CURRENT_BINARY_DIR}/stride_alignConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/stride_align
+  )
+endif()
+
+if(NOT STRIDE_ALIGN_BUILD_PYTHON)
+  return()
+endif()
 
 if(NOT SKBUILD)
   message(

@@ -23,6 +23,7 @@
 #include "lcs_dispatch.hpp"
 #include "ngram_dispatch.hpp"
 #include "partial_ratio_dispatch.hpp"
+#include "python_alignment.hpp"
 #include "token_ratios_dispatch.hpp"
 #include "wratio_dispatch.hpp"
 #include "fuzz_shim_dispatch.hpp"

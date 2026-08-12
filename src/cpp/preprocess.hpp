@@ -17,6 +17,7 @@
 #include <nanobind/nanobind.h>
 
 #include "numpy_view.hpp"
+#include "python_alignment.hpp"
 #include "promotion.hpp"
 #include "stride_align/alignment.hpp"
 
@@ -28,13 +29,6 @@ enum class OutputKind : std::uint8_t {
   bytes,
   unicode,
   sequence,
-};
-
-enum class KernelBits : std::uint8_t {
-  bits8 = 8,
-  bits16 = 16,
-  bits32 = 32,
-  bits64 = 64,
 };
 
 using TokenStorage = std::variant<

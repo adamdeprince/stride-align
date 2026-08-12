@@ -2,29 +2,13 @@
 
 #include <charconv>
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include <nanobind/nanobind.h>
+#include "stride_align/types.hpp"
 
 namespace stride_align {
-
-namespace nb = nanobind;
-
-using Score = std::int64_t;
-
-struct AlignmentResult {
-  Score score = 0;
-  std::size_t query_start = 0;
-  std::size_t query_end = 0;
-  std::size_t target_start = 0;
-  std::size_t target_end = 0;
-  nb::object aligned_query;
-  nb::object aligned_target;
-  std::string operations;
-};
 
 struct AlignmentPath {
   Score score = 0;
@@ -210,16 +194,6 @@ inline AlignmentPath make_global_alignment_path_from_cigar(
     std::size_t target_size,
     std::string_view cigar) {
   return make_alignment_path_from_cigar(score, 0U, query_size, 0U, target_size, cigar);
-}
-
-inline AlignmentPath make_alignment_path(const AlignmentResult& result) {
-  return make_alignment_path(
-      result.score,
-      result.query_start,
-      result.query_end,
-      result.target_start,
-      result.target_end,
-      result.operations);
 }
 
 }  // namespace stride_align

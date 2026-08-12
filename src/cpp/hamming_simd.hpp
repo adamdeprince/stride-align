@@ -61,11 +61,9 @@ inline std::size_t hamming_within_string(
   // implementation; it auto-vectorizes identically to the `count +=
   // (a != b)` form but reads slightly more naturally as "start from
   // max distance, subtract matches".
-  std::size_t dist = n;
-  for (std::size_t i = 0; i < n; ++i) {
-    dist -= static_cast<std::size_t>(a[i] == b[i]);
-  }
-  return dist;
+  return ::stride_align::hamming::hamming_u8(
+      std::span<const std::uint8_t>(a, n),
+      std::span<const std::uint8_t>(b, n));
 }
 
 // Cutoff-aware variant. Bails with sentinel `cutoff + 1` once the

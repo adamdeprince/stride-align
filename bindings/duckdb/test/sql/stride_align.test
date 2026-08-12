@@ -1,0 +1,87 @@
+# name: test/sql/stride_align.test
+# description: stride-align scalar functions and Unicode support
+# group: [stride_align]
+
+require stride_align
+
+query I
+SELECT stride_levenshtein('kitten', 'sitting');
+----
+3
+
+query I
+SELECT stride_levenshtein('你好', '你们好');
+----
+1
+
+query I
+SELECT stride_levenshtein('a😀', 'a😃');
+----
+1
+
+query I
+SELECT stride_hamming('你好', '你号');
+----
+1
+
+statement error
+SELECT stride_hamming('short', 'longer');
+----
+Hamming distance requires equal-length strings
+
+query II
+SELECT stride_osa('ca', 'abc'), stride_true_damerau_levenshtein('ca', 'abc');
+----
+3	2
+
+query I
+SELECT stride_indel('kitten', 'sitting');
+----
+5
+
+query R
+SELECT round(stride_jaro('MARTHA', 'MARHTA'), 12);
+----
+0.944444444444
+
+query R
+SELECT round(stride_jaro_winkler('MARTHA', 'MARHTA'), 12);
+----
+0.961111111111
+
+query R
+SELECT round(stride_levenshtein_similarity('kitten', 'sitting'), 12);
+----
+0.571428571429
+
+query I
+SELECT stride_smith_waterman('你好', '你们好');
+----
+3
+
+query I
+SELECT stride_needleman_wunsch('你好', '你们好');
+----
+3
+
+query II
+SELECT
+  stride_smith_waterman_affine('ACCGT', 'ACG'),
+  stride_needleman_wunsch_affine('ACCGT', 'ACG');
+----
+4	2
+
+query I
+SELECT stride_levenshtein(repeat('你好', 40), repeat('你号', 40));
+----
+40
+
+query I
+SELECT stride_align_simd_level() IN ('generic', 'native', 'avx2', 'avx512bwvl', 'neon', 'la464_lsx', 'la464_lasx', 'la664_lasx');
+----
+1
+
+query I
+SELECT stride_levenshtein(NULL, 'x') IS NULL;
+----
+1

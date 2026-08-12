@@ -1,9 +1,8 @@
 #pragma once
 
 // Hamming distance — count of positions where two equal-length sequences
-// differ. Unlike Levenshtein this requires identical lengths; the API
-// raises a ValueError when they don't match, matching the convention of
-// `Levenshtein.hamming` and `rapidfuzz.distance.Hamming.distance`.
+// differ. Unlike Levenshtein, this requires identical lengths; host adapters
+// decide how to report a length mismatch.
 //
 // No DP recurrence, no carry chains: every position is independent. That
 // makes it the most SIMD-friendly distance metric in this library —
@@ -14,9 +13,20 @@
 #include <cstdint>
 #include <span>
 
-#include "stride_align/alignment.hpp"
-
 namespace stride_align::hamming {
+
+// Contiguous byte fast path. The deliberately simple reduction is easier for
+// compilers to vectorize than a hand-written per-ISA implementation on every
+// backend we support.
+inline std::size_t hamming_u8(
+    std::span<const std::uint8_t> a,
+    std::span<const std::uint8_t> b) noexcept {
+  std::size_t distance = a.size();
+  for (std::size_t index = 0; index < a.size(); ++index) {
+    distance -= static_cast<std::size_t>(a[index] == b[index]);
+  }
+  return distance;
+}
 
 // Scalar reference. Used as correctness oracle and as the fallback when
 // inputs aren't byte-compatible (wider unicode etc.). Caller guarantees
