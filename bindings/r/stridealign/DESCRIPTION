@@ -1,0 +1,16 @@
+Package: stridealign
+Type: Package
+Title: SIMD String Matching and Sequence Alignment
+Version: 0.6.0
+Authors@R: person("Adam", "DePrince", email = "adam.deprince@gmail.com", role = c("aut", "cre"))
+Description: Fast Unicode-aware string distance, similarity, and sequence
+    alignment functions backed by the host-neutral stride-align C++20 core.
+    Native code is dispatched at package load to the best compatible SIMD
+    backend installed with the package.
+License: Apache License (== 2.0)
+URL: https://stride-align.com
+BugReports: https://github.com/adamdeprince/stride-align/issues
+Encoding: UTF-8
+SystemRequirements: C++20
+NeedsCompilation: yes
+RoxygenNote: 7.3.3

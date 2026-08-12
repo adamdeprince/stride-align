@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — SIMD string matching for Python and DuckDB</title>
-  <meta name="description" content="Fast, Unicode-aware string matching and sequence alignment for Python and DuckDB, powered by a native SIMD C++ engine.">
+  <title>stride-align — SIMD string matching for Python, R, and DuckDB</title>
+  <meta name="description" content="Fast, Unicode-aware string matching and sequence alignment for Python, R, and DuckDB, powered by a native SIMD C++ engine.">
   <meta name="theme-color" content="#b7f34a">
   <meta property="og:title" content="stride-align — Make strings agree. Fast.">
-  <meta property="og:description" content="Easy, fast, Unicode-aware string matching for Python and DuckDB.">
+  <meta property="og:description" content="Easy, fast, Unicode-aware string matching for Python, R, and DuckDB.">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
@@ -31,6 +31,7 @@
     </div>
     <nav class="primary-nav" aria-label="Primary navigation">
       <a href="#uses">Use cases</a>
+      <a href="bindings/r/index.html">R</a>
       <a href="#duckdb">DuckDB</a>
       <a href="#performance">Performance</a>
       <a href="docs/api/index.html">Docs</a>
@@ -52,12 +53,15 @@
   <main id="main">
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow"><span>SIMD STRING MATCHING</span> PYTHON + DUCKDB</p>
+        <p class="eyebrow"><span>SIMD STRING MATCHING</span> PYTHON + R + DUCKDB</p>
         <h1>Make strings<br><em>agree.</em> Fast.</h1>
-        <p class="hero-lede">Fuzzy matching and sequence alignment with first-class CJK. Python strings and DuckDB <code>VARCHAR</code> values go straight into a fast, Unicode-aware native engine.</p>
-        <div class="unicode-proofs" aria-label="Python and DuckDB SIMD scoring paths">
+        <p class="hero-lede">Fuzzy matching and sequence alignment with first-class CJK. Python strings, R character vectors, and DuckDB <code>VARCHAR</code> values use one fast, Unicode-aware native engine.</p>
+        <div class="unicode-proofs" aria-label="Python, R, and DuckDB SIMD scoring paths">
           <div class="unicode-proof">
             <span>PYTHON STR</span><i>→</i><strong>NATIVE SCORER</strong><i>→</i><b>SIMD</b>
+          </div>
+          <div class="unicode-proof">
+            <span>R CHARACTER</span><i>→</i><strong>VECTOR SCORER</strong><i>→</i><b>SIMD</b>
           </div>
           <div class="unicode-proof">
             <span>DUCKDB VARCHAR</span><i>→</i><strong>SQL SCORER</strong><i>→</i><b>SIMD</b>
@@ -71,6 +75,7 @@
         <ul class="hero-meta" aria-label="Project details">
           <li>Apache 2.0</li>
           <li>Python 3.12+</li>
+          <li>R package</li>
           <li>Sideloadable DuckDB extension</li>
           <li>Unicode included</li>
         </ul>
@@ -192,12 +197,12 @@
 
       <div class="dispatch-diagram" aria-label="Runtime CPU dispatch flow">
         <div class="dispatch-source">
-          <span>PYTHON FRONT DOOR</span>
-          <code>import stride_align as sa</code>
+          <span>LANGUAGE FRONT DOORS</span>
+          <code>Python · R · DuckDB</code>
         </div>
         <div class="dispatch-arrow" aria-hidden="true"><span></span><b>RUNTIME DISPATCH</b></div>
         <div class="dispatch-targets">
-          <div><span>01</span><strong>x86</strong><small>AVX2 / AVX-512 / AVX10</small></div>
+          <div><span>01</span><strong>x86</strong><small>AVX2 / AVX-512</small></div>
           <div><span>02</span><strong>ARM</strong><small>NEON / SVE</small></div>
           <div><span>03</span><strong>LoongArch</strong><small>LSX / LASX</small></div>
           <div><span>04</span><strong>POWER</strong><small>VSX</small></div>
@@ -355,6 +360,7 @@
           <div class="install-heading-actions">
             <a class="button button-download" href="https://distribution.goblinreactor.com/stride-align/duckdb/" rel="noopener">Download DuckDB extension <span aria-hidden="true">↗</span></a>
             <a class="text-link" href="README.html#getting-started">Python quick start <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="bindings/r/index.html">R quick start <span aria-hidden="true">→</span></a>
           </div>
         </div>
       </div>
@@ -367,8 +373,9 @@
           <label class="example-language" for="example-language">
             <span>LANGUAGE / HOST</span>
             <span class="example-select-wrap">
-              <select id="example-language" data-example-select aria-controls="example-python example-duckdb">
+              <select id="example-language" data-example-select aria-controls="example-python example-r example-duckdb">
                 <option value="python">Python</option>
+                <option value="r">R</option>
                 <option value="duckdb">DuckDB SQL</option>
               </select>
             </span>
@@ -403,6 +410,36 @@ scores = sa.levenshtein_normalized_scores(
 <span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
           </div>
           <p class="track-note">Python wheels inspect the CPU at module load and dispatch calls to the best available backend.</p>
+          </article>
+
+          <article class="install-track install-track-r example-panel" id="example-r" data-example-panel="r" aria-label="R example" hidden>
+          <div class="track-title">
+            <span>R / VECTORIZED PACKAGE API</span>
+            <b>RUNTIME DISPATCH</b>
+          </div>
+          <div class="terminal-line">
+            <span class="prompt">$</span>
+            <code>bindings/r/build-package.sh &amp;&amp; R CMD INSTALL dist/r/stridealign_0.6.0.tar.gz</code>
+            <button class="copy-button" type="button" data-copy="bindings/r/build-package.sh &amp;&amp; R CMD INSTALL dist/r/stridealign_0.6.0.tar.gz" aria-label="Copy R build and install command">
+              <span class="copy-default">COPY</span><span class="copy-success">COPIED</span>
+            </button>
+          </div>
+          <div class="quick-code">
+            <pre><code><span class="code-call">library</span>(stridealign)
+
+query &lt;- <span class="code-string">"你好世界"</span>
+targets &lt;- c(<span class="code-string">"你好世间"</span>, <span class="code-string">"再见世界"</span>)
+
+score &lt;- stride_levenshtein_similarity(
+    query, targets[1]
+)
+scores &lt;- stride_levenshtein_similarity(
+    query, targets
+)
+
+<span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
+          </div>
+          <p class="track-note">The R package accepts ordinary character vectors and selects the best compatible packaged backend when its namespace loads. <a href="bindings/r/index.html">Build and install the R package.</a></p>
           </article>
 
           <article class="install-track install-track-duckdb example-panel" id="example-duckdb" data-example-panel="duckdb" aria-label="DuckDB example" hidden>
@@ -440,7 +477,8 @@ score = db.execute(
       <div class="install-links">
         <a href="README.html#getting-started"><span>01</span><strong>Read the tutorial</strong><i>→</i></a>
         <a href="docs/api/index.html"><span>02</span><strong>Browse the API</strong><i>→</i></a>
-        <a href="bindings/duckdb/index.html"><span>03</span><strong>Use the DuckDB extension</strong><i>→</i></a>
+        <a href="bindings/r/index.html"><span>03</span><strong>Use the R package</strong><i>→</i></a>
+        <a href="bindings/duckdb/index.html"><span>04</span><strong>Use the DuckDB extension</strong><i>→</i></a>
       </div>
     </section>
   </main>
@@ -458,6 +496,7 @@ score = db.execute(
         <span>PROJECT</span>
         <a href="README.html">Readme</a>
         <a href="docs/api/index.html">API reference</a>
+        <a href="bindings/r/index.html">R package</a>
         <a href="bindings/duckdb/index.html">DuckDB extension</a>
         <a href="CHANGELOG.html">Changelog</a>
       </div>

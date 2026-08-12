@@ -1,0 +1,3 @@
+^src/Makevars$
+^src/.*\.(o|so|dll|dylib)$
+^src/.*\.dSYM$

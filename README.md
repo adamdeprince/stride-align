@@ -5,10 +5,10 @@
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
 `stride-align` provides SIMD-accelerated fuzzy string matching and sequence
-alignment for Python and DuckDB, with first-class Unicode/CJK support. The
-Python package also includes phonetic encoding and time-series distance, plus
-a runtime CPU dispatcher that picks the widest supported backend (x86, ARM,
-LoongArch, POWER), with a scalar fallback.
+alignment for Python, R, and DuckDB, with first-class Unicode/CJK support. The
+Python package also includes phonetic encoding and time-series distance. Its
+native packages dispatch to the best compatible backend for x86, ARM,
+LoongArch, POWER, and RISC-V, with a portable fallback.
 
 It also provides work-alike imports for four popular libraries:
 `import stride_align.rapidfuzz as rapidfuzz` replaces `rapidfuzz`,
@@ -39,6 +39,12 @@ DuckDB support is delivered as a sideloadable extension with native
 `stride_*` scalar SQL functions and per-CPU packages. Usage, downloads, and
 build instructions are documented in
 [`bindings/duckdb/`](bindings/duckdb/README.md).
+
+R support is delivered as the `stridealign` package. It accepts ordinary
+character vectors, broadcasts a length-one input, preserves missing values,
+and selects a compatible SIMD backend when the package loads. Build, install,
+and API examples are documented in
+[`bindings/r/`](bindings/r/README.md).
 
 Instead of giving you a lecture, we're going to learn by doing.
 Let's dive right into how it works.

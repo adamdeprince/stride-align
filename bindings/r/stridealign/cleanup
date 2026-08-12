@@ -1,0 +1,10 @@
+#!/bin/sh
+
+set -eu
+package_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+rm -f "$package_root/src/Makevars"
+rm -f "$package_root/src/"backend_*.o
+rm -f "$package_root/src/cpu_detect.o"
+rm -f "$package_root/src/"stridealign_*.so
+rm -f "$package_root/src/"stridealign_*.dll
+rm -f "$package_root/src/"stridealign_*.dylib

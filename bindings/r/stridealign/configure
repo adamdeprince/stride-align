@@ -1,0 +1,139 @@
+#!/bin/sh
+
+set -eu
+
+package_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+template="$package_root/src/Makevars.in"
+output="$package_root/src/Makevars"
+
+cxx20=$(R CMD config CXX20)
+cxx20std=$(R CMD config CXX20STD)
+cxx20flags=$(R CMD config CXX20FLAGS)
+shared_library_extension=$(R CMD config SHLIB_EXT)
+host_os=$(uname -s)
+host_cpu=$(uname -m)
+
+check_directory=$(mktemp -d "${TMPDIR:-/tmp}/stridealign-r-configure.XXXXXX")
+trap 'rm -rf "$check_directory"' EXIT HUP INT TERM
+printf '%s\n' 'int stride_align_flag_probe = 0;' > "$check_directory/probe.cpp"
+
+supports_flags() {
+  candidate_flags=$1
+  # R compiler variables intentionally undergo shell word splitting here.
+  if $cxx20 $cxx20std $cxx20flags $candidate_flags \
+      -c "$check_directory/probe.cpp" -o "$check_directory/probe.o" \
+      >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+backends=""
+have_defines=""
+base_flags=""
+sse41_flags=""
+avx2_flags=""
+avx512bwvl_flags=""
+neon_flags=""
+sve_flags=""
+sve2_flags=""
+lsx_flags=""
+lasx_flags=""
+vsx_flags=""
+rvv_flags=""
+
+append_backend() {
+  backend=$1
+  definition=$2
+  if test -z "$backends"; then
+    backends=$backend
+  else
+    backends="$backends $backend"
+  fi
+  have_defines="$have_defines -D$definition=1"
+}
+
+case "$host_cpu" in
+  x86_64|amd64|AMD64)
+    base_flags="-march=x86-64 -mtune=generic -msse2 -mno-avx -mno-avx2 -mno-avx512f"
+    sse41_flags="-march=x86-64 -mtune=generic -msse4.1 -mno-avx -mno-avx2 -mno-avx512f"
+    avx2_flags="-march=x86-64-v3 -mtune=generic"
+    avx512bwvl_flags="-march=x86-64-v4 -mtune=generic"
+    if supports_flags "$sse41_flags"; then
+      append_backend sse41 STRIDE_ALIGN_R_HAVE_SSE41
+    fi
+    if supports_flags "$avx2_flags"; then
+      append_backend avx2 STRIDE_ALIGN_R_HAVE_AVX2
+    fi
+    if supports_flags "$avx512bwvl_flags"; then
+      append_backend avx512bwvl STRIDE_ALIGN_R_HAVE_AVX512BWVL
+    fi
+    ;;
+  arm64|aarch64)
+    if test "$host_os" = Darwin; then
+      neon_flags="-mcpu=apple-m1"
+    else
+      neon_flags="-march=armv8-a+simd -mtune=generic"
+    fi
+    if supports_flags "$neon_flags"; then
+      append_backend neon STRIDE_ALIGN_R_HAVE_NEON
+    fi
+    if test "$host_os" = Linux; then
+      sve_flags="-march=armv8.2-a+sve -msve-vector-bits=128 -mtune=generic"
+      sve2_flags="-march=armv9-a+sve2 -msve-vector-bits=128 -mtune=generic"
+      if supports_flags "$sve_flags"; then
+        append_backend sve STRIDE_ALIGN_R_HAVE_SVE
+      fi
+      if supports_flags "$sve2_flags"; then
+        append_backend sve2 STRIDE_ALIGN_R_HAVE_SVE2
+      fi
+    fi
+    ;;
+  loongarch64)
+    base_flags="-march=loongarch64 -mtune=generic -mno-lsx -mno-lasx"
+    lsx_flags="-march=la464 -mtune=la464 -mlsx -mno-lasx"
+    lasx_flags="-march=la464 -mtune=la464 -mlsx -mlasx"
+    if supports_flags "$lsx_flags"; then
+      append_backend lsx STRIDE_ALIGN_R_HAVE_LSX
+    fi
+    if supports_flags "$lasx_flags"; then
+      append_backend lasx STRIDE_ALIGN_R_HAVE_LASX
+    fi
+    ;;
+  ppc64|ppc64le|powerpc64|powerpc64le)
+    vsx_flags="-mvsx"
+    if supports_flags "$vsx_flags"; then
+      append_backend vsx STRIDE_ALIGN_R_HAVE_VSX
+    fi
+    ;;
+  riscv64)
+    base_flags="-march=rv64gc -mabi=lp64d"
+    rvv_flags="-march=rv64gcv -mabi=lp64d"
+    if supports_flags "$rvv_flags"; then
+      append_backend rvv STRIDE_ALIGN_R_HAVE_RVV
+    fi
+    ;;
+esac
+
+escape_sed() {
+  printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
+}
+
+sed \
+  -e "s|@STRIDE_ALIGN_R_HAVE_DEFINES@|$(escape_sed "$have_defines")|g" \
+  -e "s|@STRIDE_ALIGN_R_BASE_FLAGS@|$(escape_sed "$base_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_BACKENDS@|$(escape_sed "$backends")|g" \
+  -e "s|@STRIDE_ALIGN_R_SHLIB_EXT@|$(escape_sed "$shared_library_extension")|g" \
+  -e "s|@STRIDE_ALIGN_R_SSE41_FLAGS@|$(escape_sed "$sse41_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_AVX2_FLAGS@|$(escape_sed "$avx2_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_AVX512BWVL_FLAGS@|$(escape_sed "$avx512bwvl_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_NEON_FLAGS@|$(escape_sed "$neon_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_SVE_FLAGS@|$(escape_sed "$sve_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_SVE2_FLAGS@|$(escape_sed "$sve2_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_LSX_FLAGS@|$(escape_sed "$lsx_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_LASX_FLAGS@|$(escape_sed "$lasx_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_VSX_FLAGS@|$(escape_sed "$vsx_flags")|g" \
+  -e "s|@STRIDE_ALIGN_R_RVV_FLAGS@|$(escape_sed "$rvv_flags")|g" \
+  "$template" > "$output"
+
+printf '%s\n' "stride-align R backends: ${backends:-generic only}"

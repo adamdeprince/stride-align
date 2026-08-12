@@ -70,3 +70,10 @@ The Python adapter can continue using CPython's fixed-width Unicode storage.
 The DuckDB adapter instead accepts `VARCHAR` UTF-8 and must score borrowed
 ASCII pairs before DuckDB's `string_t` values leave scope. See
 [`bindings/duckdb/`](../bindings/duckdb/README.md).
+
+The R adapter treats every `CHARSXP` as immutable and never changes a
+`STRSXP`. Clean ASCII bytes are borrowed only for the synchronous native call.
+Every non-ASCII dense or fixed-width token sequence is owned by an
+operation-local buffer. Native- and Latin-1-marked R strings are translated to
+UTF-8 and copied before preparation; non-ASCII strings marked as raw bytes are
+rejected. See [`bindings/r/`](../bindings/r/README.md).

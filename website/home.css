@@ -1592,6 +1592,7 @@ pre {
 
 .install-heading-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 28px;
   margin-top: 36px;
@@ -1754,9 +1755,12 @@ pre {
 }
 
 .terminal-line code {
+  min-width: 0;
   padding: 0 25px;
   font-size: clamp(14px, 1.4vw, 20px);
   font-weight: 600;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .copy-button {
@@ -1821,7 +1825,7 @@ pre {
 
 .install-links {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   border: 1px solid var(--ink);
   border-top: 0;
 }

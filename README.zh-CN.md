@@ -4,10 +4,10 @@
 
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
-`stride-align` 是一个 SIMD 加速的 Python 库，专注于模糊字符串匹配、
-序列比对、语音编码与时间序列距离——把 Unicode/CJK 作为一等公民，
-并由运行时 CPU dispatch 自动选用当前机器支持的最宽 SIMD 后端
-（x86、ARM、龙架构、POWER），并带标量回退。
+`stride-align` 为 Python、R 和 DuckDB 提供 SIMD 加速的模糊字符串匹配
+与序列比对，并把 Unicode/CJK 作为一等公民。Python 软件包还包括语音
+编码与时间序列距离。原生软件包会为 x86、ARM、龙架构、POWER 和
+RISC-V 选择兼容的 SIMD 后端，并带可移植回退路径。
 
 它同时是四个常用库的直接替代品：
 `import stride_align.rapidfuzz as rapidfuzz` 替代 `rapidfuzz`，
@@ -20,6 +20,10 @@
 完整的功能清单、所支持的全部算法以及各后端的细节，请见
 [`docs/api/`](docs/api/README.md) 下的 API 参考，以及面向 LLM 的
 [`llms.txt`](llms.txt) 与 [`llms-full.txt`](llms-full.txt)。
+
+R 软件包的构建、安装与 API 示例见
+[`bindings/r/`](bindings/r/README.md)；DuckDB 侧载扩展的使用、下载与
+构建说明见 [`bindings/duckdb/`](bindings/duckdb/README.md)。
 
 这里不讲理论，直接动手——边做边学。
 

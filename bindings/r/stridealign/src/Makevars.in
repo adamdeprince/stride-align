@@ -1,0 +1,84 @@
+CXX_STD = CXX20
+
+PKG_CPPFLAGS = -Ivendor @STRIDE_ALIGN_R_HAVE_DEFINES@
+PKG_CXXFLAGS = $(CXX_VISIBILITY)
+
+OBJECTS = backend_generic.o cpu_detect.o
+STRIDE_ALIGN_R_BACKENDS = @STRIDE_ALIGN_R_BACKENDS@
+STRIDE_ALIGN_R_SHLIB_EXT = @STRIDE_ALIGN_R_SHLIB_EXT@
+STRIDE_ALIGN_R_EXTRA_SHLIBS = $(addprefix stridealign_,$(addsuffix $(STRIDE_ALIGN_R_SHLIB_EXT),$(STRIDE_ALIGN_R_BACKENDS)))
+
+all: $(SHLIB) $(STRIDE_ALIGN_R_EXTRA_SHLIBS)
+
+backend_generic.o: backend_generic.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_BASE_FLAGS@ -O3 -c $< -o $@
+
+cpu_detect.o: cpu_detect.cpp cpu_detect.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_BASE_FLAGS@ -O3 -c $< -o $@
+
+backend_sse41.o: backend_sse41.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_SSE41_FLAGS@ -O3 -c $< -o $@
+
+backend_avx2.o: backend_avx2.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_AVX2_FLAGS@ -O3 -c $< -o $@
+
+backend_avx512bwvl.o: backend_avx512bwvl.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_AVX512BWVL_FLAGS@ -O3 -c $< -o $@
+
+backend_neon.o: backend_neon.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_NEON_FLAGS@ -O3 -c $< -o $@
+
+backend_sve.o: backend_sve.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_SVE_FLAGS@ -O3 -c $< -o $@
+
+backend_sve2.o: backend_sve2.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_SVE2_FLAGS@ -O3 -c $< -o $@
+
+backend_lsx.o: backend_lsx.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_LSX_FLAGS@ -O3 -c $< -o $@
+
+backend_lasx.o: backend_lasx.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_LASX_FLAGS@ -O3 -c $< -o $@
+
+backend_vsx.o: backend_vsx.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_VSX_FLAGS@ -O3 -c $< -o $@
+
+backend_rvv.o: backend_rvv.cpp backend_impl.hpp target_profile.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_RVV_FLAGS@ -O3 -c $< -o $@
+
+stridealign_sse41$(STRIDE_ALIGN_R_SHLIB_EXT): backend_sse41.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_avx2$(STRIDE_ALIGN_R_SHLIB_EXT): backend_avx2.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_avx512bwvl$(STRIDE_ALIGN_R_SHLIB_EXT): backend_avx512bwvl.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_neon$(STRIDE_ALIGN_R_SHLIB_EXT): backend_neon.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_sve$(STRIDE_ALIGN_R_SHLIB_EXT): backend_sve.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_sve2$(STRIDE_ALIGN_R_SHLIB_EXT): backend_sve2.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_lsx$(STRIDE_ALIGN_R_SHLIB_EXT): backend_lsx.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_lasx$(STRIDE_ALIGN_R_SHLIB_EXT): backend_lasx.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_vsx$(STRIDE_ALIGN_R_SHLIB_EXT): backend_vsx.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+stridealign_rvv$(STRIDE_ALIGN_R_SHLIB_EXT): backend_rvv.o
+	$(SHLIB_LINK) -o $@ $^ $(ALL_LIBS)
+
+.PHONY: stridealign-r-clean
+clean: stridealign-r-clean
+shlib-clean: stridealign-r-clean
+
+stridealign-r-clean:
+	rm -f backend_*.o cpu_detect.o stridealign_*$(STRIDE_ALIGN_R_SHLIB_EXT)

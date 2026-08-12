@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — Python SIMD 字符串匹配</title>
-  <meta name="description" content="面向 Python 的 SIMD 模糊匹配与序列比对。UCS-2 和 UCS-4 字符串直接进入 SIMD，无需转码为 UTF-8。">
+  <title>stride-align — Python、R 与 DuckDB 的 SIMD 字符串匹配</title>
+  <meta name="description" content="面向 Python、R 与 DuckDB 的快速 Unicode 字符串匹配与序列比对，由原生 SIMD C++ 引擎驱动。">
   <meta name="theme-color" content="#b7f34a">
   <meta property="og:title" content="stride-align — 让字符串快速对齐">
-  <meta property="og:description" content="CJK 是一等公民。Python UCS-2 和 UCS-4 对象无需 UTF-8 转码即可直接使用 SIMD。">
+  <meta property="og:description" content="面向 Python、R 与 DuckDB 的快速、易用、原生支持 Unicode 的字符串匹配。">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
@@ -31,6 +31,8 @@
     </div>
     <nav class="primary-nav" aria-label="主导航">
       <a href="#uses">应用场景</a>
+      <a href="bindings/r/index.html">R</a>
+      <a href="bindings/duckdb/index.html">DuckDB</a>
       <a href="#performance">性能</a>
       <a href="docs/api/index.html">文档</a>
       <a href="README.zh-CN.html">自述文件</a>
@@ -44,11 +46,11 @@
   <main id="main">
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow"><span>SIMD 字符串匹配</span> CJK 无需 UTF-8</p>
+        <p class="eyebrow"><span>SIMD 字符串匹配</span> PYTHON + R + DUCKDB</p>
         <h1>让字符串<br><em>快速</em>对齐</h1>
-        <p class="hero-lede">模糊匹配与序列比对，原生支持中日韩文字。Python 的 UCS-2 和 UCS-4 字符串对象直接进入 SIMD——无需 UTF-8 表示，也没有转码绕路。</p>
-        <div class="unicode-proof" aria-label="原生 Python Unicode SIMD 路径">
-          <span>PYTHON STR</span><i>→</i><strong>UCS-2 / UCS-4</strong><i>→</i><b>SIMD</b>
+        <p class="hero-lede">模糊匹配与序列比对，原生支持中日韩文字。Python 字符串、R 字符向量与 DuckDB <code>VARCHAR</code> 共用同一个快速、支持 Unicode 的原生引擎。</p>
+        <div class="unicode-proof" aria-label="Python、R 与 DuckDB 的 SIMD 路径">
+          <span>PYTHON · R · DUCKDB</span><i>→</i><strong>原生评分器</strong><i>→</i><b>SIMD</b>
         </div>
         <div class="hero-actions">
           <a class="button button-dark" href="#install">开始使用 <span aria-hidden="true">→</span></a>
@@ -57,7 +59,8 @@
         <ul class="hero-meta" aria-label="项目详情">
           <li>Apache 2.0</li>
           <li>Python 3.12+</li>
-          <li>原生 UCS-2 / UCS-4 SIMD</li>
+          <li>R 软件包</li>
+          <li>DuckDB 扩展</li>
         </ul>
       </div>
 
@@ -135,12 +138,12 @@
     </section>
 
     <section class="engine" id="engine">
-      <div class="engine-heading"><p class="kicker kicker-light">02 / 同一个引擎</p><h2>写直观的 Python。<br><span>调度器负责底层性能。</span></h2></div>
+      <div class="engine-heading"><p class="kicker kicker-light">02 / 同一个引擎</p><h2>选择熟悉的入口。<br><span>调度器负责底层性能。</span></h2></div>
       <div class="dispatch-diagram" aria-label="运行时 CPU 调度流程">
-        <div class="dispatch-source"><span>你的代码</span><code>import stride_align as sa</code></div>
+        <div class="dispatch-source"><span>语言入口</span><code>Python · R · DuckDB</code></div>
         <div class="dispatch-arrow" aria-hidden="true"><span></span><b>运行时调度</b></div>
         <div class="dispatch-targets">
-          <div><span>01</span><strong>x86</strong><small>AVX2 / AVX-512 / AVX10</small></div>
+          <div><span>01</span><strong>x86</strong><small>AVX2 / AVX-512</small></div>
           <div><span>02</span><strong>ARM</strong><small>NEON / SVE</small></div>
           <div><span>03</span><strong>LoongArch</strong><small>LSX / LASX</small></div>
           <div><span>04</span><strong>POWER</strong><small>VSX</small></div>
@@ -206,14 +209,15 @@ score = sa.levenshtein_normalized_score(
       <div class="install-links">
         <a href="README.zh-CN.html#_1"><span>01</span><strong>阅读入门教程</strong><i>→</i></a>
         <a href="docs/api/index.html"><span>02</span><strong>浏览 API</strong><i>→</i></a>
-        <a href="README.zh-CN.html#loongarch"><span>03</span><strong>在 LoongArch 上安装</strong><i>→</i></a>
+        <a href="bindings/r/index.html"><span>03</span><strong>使用 R 软件包</strong><i>→</i></a>
+        <a href="bindings/duckdb/index.html"><span>04</span><strong>使用 DuckDB 扩展</strong><i>→</i></a>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="footer-brand"><a class="brand brand-footer" href="index.zh-CN.html"><span class="mascot-mark mascot-footer" aria-hidden="true"><img src="goblin.png" alt=""></span><span>stride<span class="brand-dash">-</span>align</span></a><p>每秒完成更多比对。<br>少一些增加服务器的理由。</p></div>
-    <div class="footer-links"><div><span>项目</span><a href="README.zh-CN.html">自述文件</a><a href="docs/api/index.html">API 参考</a><a href="CHANGELOG.html">更新记录</a></div><div><span>证据</span><a href="BENCHMARK.html">基准测试</a><a href="https://github.com/adamdeprince/stride-align" rel="noopener">源代码 ↗</a><a href="index.html" hreflang="en">English</a></div></div>
+    <div class="footer-links"><div><span>项目</span><a href="README.zh-CN.html">自述文件</a><a href="docs/api/index.html">API 参考</a><a href="bindings/r/index.html">R 软件包</a><a href="bindings/duckdb/index.html">DuckDB 扩展</a><a href="CHANGELOG.html">更新记录</a></div><div><span>证据</span><a href="BENCHMARK.html">基准测试</a><a href="https://github.com/adamdeprince/stride-align" rel="noopener">源代码 ↗</a><a href="index.html" hreflang="en">English</a></div></div>
     <div class="footer-bottom"><span>STRIDE-ALIGN / APACHE-2.0</span><span>由 <a href="https://goblinreactor.com" rel="noopener">Goblin Reactor ↗</a> 构建</span></div>
   </footer>
 
