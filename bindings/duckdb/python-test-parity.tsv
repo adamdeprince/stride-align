@@ -22,6 +22,7 @@ tests/test_monge_elkan.py	19	tests/duckdb/test_duckdb_native_api.py	Tokenization
 tests/test_ndarray.py	24	tests/duckdb/test_duckdb_extension.py;tests/duckdb/test_duckdb_native_api.py	Python ndarray layout mechanics become DuckDB LIST typing and vector execution; wide UTF-8 preparation and 8/16/32-bit core paths retain value parity.
 tests/test_ngram.py	20	tests/duckdb/test_duckdb_native_api.py	All four n-gram similarities, configurable n, list APIs, Unicode, empties, and validation are covered.
 tests/test_phonetic.py	81	tests/duckdb/test_duckdb_native_api.py	All native phonetic algorithms, variants, equality helpers, branching, Unicode, and BMPM resources are exercised in SQL.
+tests/test_python_repository.py	3	tests/test_python_repository.py	The architecture-wheel repository is shared distribution infrastructure rather than a language API; its manifest, checksums, self-hosted documentation URLs, and POWER/LoongArch matrix are verified directly.
 tests/test_ratcliff_obershelp.py	11	tests/duckdb/test_duckdb_native_api.py	Scalar/list Ratcliff-Obershelp, normalization, Unicode, empty, and randomized reference behavior is covered.
 tests/test_top_k.py	50	tests/duckdb/test_duckdb_native_api.py	Every native fixed scorer ranking/best family, dynamic extract, global/per-query top-k, adaptive cutoffs, Hamming filtering, and stable indices are covered.
 tests/test_true_damerau_levenshtein.py	16	tests/duckdb/test_duckdb_native_api.py	Unrestricted Damerau scalar/list/ranking/cdist/threshold, Unicode, empties, and reference cases are covered.

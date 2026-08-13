@@ -203,5 +203,5 @@ promises older-Python support.
 - [docs/loongson-build.md](loongson-build.md) — current dual-toolchain build
   and validation instructions for both worlds.
 - [README.md](../README.md) — points users at the right wheel URL
-  per their world; URLs above must match the GitHub Release asset
+  per their world; URLs above must match the self-hosted repository artifact
   names produced in §3 and §5.

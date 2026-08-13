@@ -1,0 +1,85 @@
+{
+  "project": "stride-align",
+  "project_version": "0.6.0",
+  "base_url": "https://distribution.goblinreactor.com/stride-align/python/",
+  "artifacts": [
+    {
+      "platform": "linux_loongarch64",
+      "python": "cp312",
+      "world": "newworld",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-1.newworld-cp312-cp312-linux_loongarch64.whl",
+      "sha256": "d8b420277a93723e58f1cff004e200a550c98ed0cccea7b44cfadf415e104f1f",
+      "size": 5514194
+    },
+    {
+      "platform": "linux_loongarch64",
+      "python": "cp313",
+      "world": "newworld",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-1.newworld-cp313-cp313-linux_loongarch64.whl",
+      "sha256": "bbf0bffbbc340724e2c78f9c034c4186ef73c298e3291af1d5fde181928ab360",
+      "size": 5519959
+    },
+    {
+      "platform": "linux_loongarch64",
+      "python": "cp314",
+      "world": "newworld",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-1.newworld-cp314-cp314-linux_loongarch64.whl",
+      "sha256": "57fcef9d32828c678ffaaee3ab83cade1892be2f5c91e6c21e8e7b0aac6d2a3a",
+      "size": 5522591
+    },
+    {
+      "platform": "linux_loongarch64",
+      "python": "cp312",
+      "world": "oldworld",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-1.oldworld-cp312-cp312-linux_loongarch64.whl",
+      "sha256": "939ee44df3cd71241a1ad991c6f7ee2c35496b9736defc2c2aaf262339647c57",
+      "size": 5582535
+    },
+    {
+      "platform": "linux_loongarch64",
+      "python": "cp313",
+      "world": "oldworld",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-1.oldworld-cp313-cp313-linux_loongarch64.whl",
+      "sha256": "732b3c3ac52c54dc4d2e92814e26c79d43d332d34de5bf9e38cab4a8a21cff1e",
+      "size": 5583206
+    },
+    {
+      "platform": "linux_loongarch64",
+      "python": "cp314",
+      "world": "oldworld",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-1.oldworld-cp314-cp314-linux_loongarch64.whl",
+      "sha256": "c0bf8a922fca16d98d12bb47a0885171190b54aecdabd823c99cc5d84bb8ab01",
+      "size": 5584526
+    },
+    {
+      "platform": "linux_ppc64le",
+      "python": "cp312",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-cp312-cp312-linux_ppc64le.whl",
+      "sha256": "f55e0f4688a0ce33d8b87e5e8ee137ace3f24d4c40f91a4285b958528a708189",
+      "size": 2567241
+    },
+    {
+      "platform": "linux_ppc64le",
+      "python": "cp313",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-cp313-cp313-linux_ppc64le.whl",
+      "sha256": "01e6999a851be84d818ee2e88cfa202fd9e2d765a4585e539c695b4a1b781155",
+      "size": 2569638
+    },
+    {
+      "platform": "linux_ppc64le",
+      "python": "cp314",
+      "validation": "runtime-tested",
+      "path": "v0.6.0/stride_align-0.6.0-cp314-cp314-linux_ppc64le.whl",
+      "sha256": "45ec7adab7a1061e95719d2078944baa22ceeb2543af0ce585b19d1a99cd2772",
+      "size": 2570138
+    }
+  ]
+}

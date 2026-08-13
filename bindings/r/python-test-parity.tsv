@@ -27,6 +27,7 @@ tests/test_monge_elkan.py	19	bindings/r/stridealign/tests/python-test-monge-elka
 tests/test_ndarray.py	24	bindings/r/stridealign/tests/python-test-ndarray.R	NumPy-only dtype/layout mechanics become R STRSXP validation and Unicode 16/32-bit core-path checks.
 tests/test_ngram.py	20	bindings/r/stridealign/tests/python-test-ngram.R	N-gram similarity, normalization, Unicode, bounds, and batch behavior.
 tests/test_phonetic.py	81	bindings/r/stridealign/tests/python-test-phonetic.R	All canonical phonetic tables, equal helpers, Unicode handling, and validation.
+tests/test_python_repository.py	3	tests/test_python_repository.py	The architecture-wheel repository is shared distribution infrastructure rather than a language API; its manifest, checksums, self-hosted documentation URLs, and POWER/LoongArch matrix are verified directly.
 tests/test_ratcliff_obershelp.py	11	bindings/r/stridealign/tests/python-test-ratcliff-obershelp.R	Similarity, normalization, Unicode, empty values, and batches.
 tests/test_top_k.py	50	bindings/r/stridealign/tests/python-test-top-k.R	Global and per-query ranking, cutoffs, Hamming filtering, progress callbacks, and one-based R indices.
 tests/test_true_damerau_levenshtein.py	16	bindings/r/stridealign/tests/python-test-true-damerau-levenshtein.R	Unrestricted Damerau distance, normalization, Unicode, batches, and independent randomized reference.

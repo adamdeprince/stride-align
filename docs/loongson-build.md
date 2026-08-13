@@ -166,6 +166,7 @@ For the old-world venv swap `GCC16` → `GCC15`; the compiler paths remain
   disable it unless you're certain the user box has a matching
   libstdc++ in `LD_LIBRARY_PATH` — the wheel becomes ABI-fragile
   otherwise.
-- **PyPI doesn't index loongarch wheels.** GitHub Releases is the
-  distribution point; the README pins specific URLs per Python
-  version per world.
+- **PyPI doesn't index loongarch wheels.** The self-hosted Python repository at
+  `https://distribution.goblinreactor.com/stride-align/python/` is the
+  distribution point; the README pins versioned URLs per Python and binary
+  world.

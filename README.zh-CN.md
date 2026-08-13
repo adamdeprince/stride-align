@@ -38,10 +38,12 @@ Linux aarch64、Linux ppc64le 在 CPython 3.12 / 3.13 / 3.14 上的
 组合。其他（平台，Python）组合会回退到 PyPI 上的源码发行版并在
 本地编译，这需要支持 C++20 的编译器和 CMake ≥ 3.26。
 
-**龙芯 / 龙架构（LoongArch64）用户：** wheel 不在 PyPI 上，发布
-渠道是 GitHub Releases，安装时还需要在老世界与新世界两套二进制
-世界之间二选一——详见后面的
-[龙架构 LoongArch 安装](#龙架构-loongarch-安装)。
+**POWER8 / ppc64le 与龙芯 / 龙架构（LoongArch64）用户：** 对应的
+wheel 可从项目的
+[自托管 Python 下载页](https://distribution.goblinreactor.com/stride-align/python/)
+获取。POWER 用户请参阅 [POWER8 安装](#power8)；龙架构用户还要
+按照[龙架构 LoongArch 安装](#loongarch)中的说明，在老世界
+与新世界两套二进制环境之间选择。
 
 先声明一下：这里用宗教文本不是要带任何立场——这个 demo 需要几份
 比较大的、含义相同但表达不同的公共领域文档，圣经恰好极其符合这个
@@ -613,18 +615,36 @@ python tools/x86_microbench_regression.py \
 本地兜底，不要当成跨机器的 SLA。
 
 
+## POWER8 安装
+
+项目为 POWER8 及更新处理器提供经过运行测试的 Linux `ppc64le`
+wheel，覆盖 CPython 3.12、3.13 与 3.14。请选择与当前解释器匹配的
+wheel：
+
+```bash
+PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+python3 -m pip install \
+  https://distribution.goblinreactor.com/stride-align/python/v0.6.0/stride_align-0.6.0-${PY}-${PY}-linux_ppc64le.whl
+```
+
+[自托管 Python 下载页](https://distribution.goblinreactor.com/stride-align/python/)
+列出了全部构件与 SHA-256 校验和。wheel 内含通用与 VSX 实现，并在
+导入时选择最佳兼容后端。
+
+
 ## 龙架构 LoongArch 安装
 
 龙架构的 wheel **不在 PyPI 上**（PyPI 暂不索引
-`linux_loongarch64` 平台标签），所以走的是另一条发布通道：
+`linux_loongarch64` 平台标签）。项目通过位于佛蒙特州的自有服务器
+直接提供这些文件：
 
-| 渠道 | URL 前缀 |
+| 资源 | URL |
 | --- | --- |
-| GitHub Releases（主渠道） | `https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/` |
-| `stride-align.com` 镜像 | `https://stride-align.com/wheels/v0.6.0/` |
+| 下载页 | `https://distribution.goblinreactor.com/stride-align/python/` |
+| 带版本的 wheel 前缀 | `https://distribution.goblinreactor.com/stride-align/python/v0.6.0/` |
 
-两个渠道提供完全相同的 wheel，挑访问更快的那个用。在国内访问
-GitHub 较慢时，镜像比较方便；GitHub Releases 是规范主页。
+带版本的目录内容保持不变。下载页列出全部 wheel、验证状态、校验和
+以及机器可读的清单。
 
 先用发行版安装 NumPy（PyPI 上的 loongarch64 NumPy wheel 还很
 稀疏，发行版的版本通常和系统其他组件 ABI 兼容）：
@@ -676,14 +696,7 @@ glibc ABI。
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-镜像：
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://distribution.goblinreactor.com/stride-align/python/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### 新世界 wheel
@@ -693,20 +706,13 @@ pip install \
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-镜像：
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://distribution.goblinreactor.com/stride-align/python/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### 其他说明
 
-预编译的龙架构（LoongArch64）wheel 在两个镜像上都覆盖 Python
-3.12、3.13 和 3.14——两个世界都有。如果你用的是其他 Python
+预编译的龙架构（LoongArch64）wheel 覆盖 Python 3.12、3.13 和
+3.14——两个世界都有。如果你用的是其他 Python
 版本，或者想从源码构建，`pip install stride-align` 会回退到
 PyPI 上的源码发行版，在本地编译 LSX/LASX 内核。构建细节
 （工具链、加载器验证、静态 C++ 运行时）见

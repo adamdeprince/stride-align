@@ -56,10 +56,12 @@ Let's dive right into how it works.
 pip install stride-align
 ```
 
-**Loongson / LoongArch64 users:** wheels live on GitHub Releases
-rather than PyPI, and you pick between the old-world and new-world
-binary worlds — see
-[LoongArch installation](#loongarch-installation) further down.
+**POWER8 / ppc64le and Loongson / LoongArch64 users:** architecture wheels
+are available from the project's
+[self-hosted Python downloads](https://distribution.goblinreactor.com/stride-align/python/).
+POWER users can follow the [POWER8 installation](#power8-installation);
+LoongArch users must also choose between the old-world and new-world binary
+worlds described under [LoongArch installation](#loongarch-installation).
 
 ### Simple example
 
@@ -1311,20 +1313,37 @@ The checked-in native microbench baseline lives at
 loose threshold, not as a cross-machine SLA.
 
 
+## POWER8 installation
+
+Runtime-tested Linux `ppc64le` wheels for POWER8 and newer processors are
+self-hosted for CPython 3.12, 3.13, and 3.14. Choose the wheel matching the
+running interpreter:
+
+```bash
+PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+python3 -m pip install \
+  https://distribution.goblinreactor.com/stride-align/python/v0.6.0/stride_align-0.6.0-${PY}-${PY}-linux_ppc64le.whl
+```
+
+The complete artifact list and SHA-256 checksums are on the
+[self-hosted Python download page](https://distribution.goblinreactor.com/stride-align/python/).
+The wheel contains the generic and VSX implementations and selects the best
+compatible backend when imported.
+
+
 ## LoongArch installation
 
 LoongArch wheels are **not on PyPI** (PyPI doesn't index the
-`linux_loongarch64` platform tag), so they ship through a different
-channel:
+`linux_loongarch64` platform tag). The project serves them directly from its
+Vermont distribution host:
 
-| Channel | URL prefix |
+| Resource | URL |
 | --- | --- |
-| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/` |
-| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.6.0/` |
+| Download page | `https://distribution.goblinreactor.com/stride-align/python/` |
+| Versioned wheel prefix | `https://distribution.goblinreactor.com/stride-align/python/v0.6.0/` |
 
-Same wheels on both, pick whichever loads faster from your network.
-The mirror is convenient when GitHub egress is slow from inside
-China; GitHub Releases is the canonical home.
+The versioned directory is immutable. The download page lists every wheel,
+its validation status, checksums, and a machine-readable manifest.
 
 Install NumPy from your distro first (loongarch64 NumPy wheels are
 sparse on PyPI, and the distro one is usually ABI-compatible with
@@ -1377,14 +1396,7 @@ glibc ABI are what matter.
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-Mirror:
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://distribution.goblinreactor.com/stride-align/python/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### New-world wheel
@@ -1395,20 +1407,13 @@ as one system runtime.
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
-```
-
-Mirror:
-
-```bash
-pip install \
-  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://distribution.goblinreactor.com/stride-align/python/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### Other notes
 
 Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
-and 3.14 — in both worlds — on both mirrors. The build details
+and 3.14 in both worlds. The build details
 (toolchains, loader validation, static C++ runtime) live in
 [docs/loongson-build.md](docs/loongson-build.md). If you're on a
 different Python or want to build from source, `pip install

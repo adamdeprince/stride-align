@@ -132,11 +132,13 @@ def test_loongarch_python_install_is_prominent_and_bilingual() -> None:
     english = HOMEPAGE.read_text(encoding="utf-8")
     chinese = CHINESE_HOMEPAGE_SOURCE.read_text(encoding="utf-8")
 
-    release = "https://github.com/adamdeprince/stride-align/releases/tag/v0.6.0"
-    assert release in english
+    downloads = "https://distribution.goblinreactor.com/stride-align/python/"
+    assert downloads in english
+    assert "POWER8 and LoongArch Python wheels" in english
     assert "PyPI does not index" in english
     assert "README.html#loongarch-installation" in english
-    assert release in chinese
+    assert downloads in chinese
+    assert "POWER8 与龙架构 Python wheel" in chinese
     assert "PyPI 不索引" in chinese
     assert "README.zh-CN.html#loongarch" in chinese
 
