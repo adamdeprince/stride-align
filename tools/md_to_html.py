@@ -555,6 +555,16 @@ def main() -> None:
         shutil.copyfile(src, dst)
         print(f"copied benchmark data {rel}")
 
+    # Runnable tutorial sources linked by the generated README pages. The
+    # corpus and local caches stay out of the website; the demo downloads its
+    # public-domain input when a checkout does not already contain it.
+    for src in sorted((REPO / "demo").glob("*.py")):
+        rel = src.relative_to(REPO)
+        dst = OUT / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        print(f"copied runnable demo {rel}")
+
     # Copy the LLM context files verbatim into the site so they are served
     # (and discoverable) at stride-align.com/llms.txt and /llms-full.txt.
     # They are plain text, not markdown, so they bypass the HTML builders.

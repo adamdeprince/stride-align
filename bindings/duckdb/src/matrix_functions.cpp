@@ -59,20 +59,36 @@ struct Matrix {
 std::vector<std::uint32_t> decode(std::string_view input);
 std::string encode_utf8(std::span<const std::uint32_t> input);
 
+LogicalType varchar_type() {
+  return LogicalType(LogicalTypeId::VARCHAR);
+}
+
+LogicalType bigint_type() {
+  return LogicalType(LogicalTypeId::BIGINT);
+}
+
 LogicalType matrix_type() {
   return LogicalType::STRUCT({
-      {"name", LogicalType::VARCHAR},
-      {"alphabet", LogicalType::VARCHAR},
+      {"name", varchar_type()},
+      {"alphabet", varchar_type()},
       {"scores", LogicalType::BLOB},
-      {"wildcard", LogicalType::VARCHAR},
-      {"gap_score", LogicalType::BIGINT},
-      {"gap_open", LogicalType::BIGINT},
-      {"gap_extend", LogicalType::BIGINT},
+      {"wildcard", varchar_type()},
+      {"gap_score", bigint_type()},
+      {"gap_open", bigint_type()},
+      {"gap_extend", bigint_type()},
   });
 }
 
 std::vector<LogicalType> matrix_input_types() {
-  return {LogicalType(LogicalType::VARCHAR), matrix_type()};
+  // Avoid odr-using DuckDB's header-defined primitive LogicalType objects.
+  // GNU ld otherwise sees a second definition when the loadable extension
+  // links libduckdb_static.
+  return {varchar_type(), matrix_type()};
+}
+
+Value null_bigint() {
+  // Construct from the id for the same reason as matrix_input_types().
+  return Value(bigint_type());
 }
 
 Matrix finish_matrix(Matrix matrix, std::string_view wildcard) {
@@ -122,9 +138,9 @@ Value matrix_value(const Matrix& matrix) {
   fields.emplace_back(matrix_wildcard(matrix));
   fields.push_back(Value::BIGINT(matrix.gap_score));
   fields.push_back(matrix.has_affine
-      ? Value::BIGINT(matrix.gap_open) : Value(LogicalType::BIGINT));
+      ? Value::BIGINT(matrix.gap_open) : null_bigint());
   fields.push_back(matrix.has_affine
-      ? Value::BIGINT(matrix.gap_extend) : Value(LogicalType::BIGINT));
+      ? Value::BIGINT(matrix.gap_extend) : null_bigint());
   return Value::STRUCT(matrix_type(), std::move(fields));
 }
 
@@ -856,20 +872,20 @@ std::vector<std::uint16_t> matrix_encode(
 
 LogicalType path_type() {
   return LogicalType::STRUCT({
-      {"score", LogicalType::BIGINT},
+      {"score", bigint_type()},
       {"query_start", LogicalType::UBIGINT},
       {"query_end", LogicalType::UBIGINT},
       {"target_start", LogicalType::UBIGINT},
       {"target_end", LogicalType::UBIGINT},
-      {"operations", LogicalType::VARCHAR},
-      {"cigar", LogicalType::VARCHAR},
+      {"operations", varchar_type()},
+      {"cigar", varchar_type()},
       {"matches", LogicalType::UBIGINT},
       {"mismatches", LogicalType::UBIGINT},
       {"insertions", LogicalType::UBIGINT},
       {"deletions", LogicalType::UBIGINT},
       {"aligned_length", LogicalType::UBIGINT},
-      {"aligned_query", LogicalType::VARCHAR},
-      {"aligned_target", LogicalType::VARCHAR},
+      {"aligned_query", varchar_type()},
+      {"aligned_target", varchar_type()},
   });
 }
 
@@ -942,7 +958,7 @@ void MatrixAvailable(DataChunk&, ExpressionState&, Vector& result) {
   vector<Value> output;
   for (const Matrix& matrix : matrices()) output.emplace_back(matrix.sql_name);
   result.SetVectorType(VectorType::CONSTANT_VECTOR);
-  result.SetValue(0, Value::LIST(LogicalType::VARCHAR, std::move(output)));
+  result.SetValue(0, Value::LIST(varchar_type(), std::move(output)));
 }
 
 void KeyboardAvailable(DataChunk&, ExpressionState&, Vector& result) {
@@ -954,18 +970,18 @@ void KeyboardAvailable(DataChunk&, ExpressionState&, Vector& result) {
     }
   }
   result.SetVectorType(VectorType::CONSTANT_VECTOR);
-  result.SetValue(0, Value::LIST(LogicalType::VARCHAR, std::move(output)));
+  result.SetValue(0, Value::LIST(varchar_type(), std::move(output)));
 }
 
 void MatrixInfo(DataChunk& arguments, ExpressionState&, Vector& result) {
   const LogicalType type = LogicalType::STRUCT({
-      {"name", LogicalType::VARCHAR},
-      {"alphabet", LogicalType::VARCHAR},
+      {"name", varchar_type()},
+      {"alphabet", varchar_type()},
       {"stride", LogicalType::UBIGINT},
       {"wildcard_index", LogicalType::UBIGINT},
-      {"gap_score", LogicalType::BIGINT},
-      {"gap_open", LogicalType::BIGINT},
-      {"gap_extend", LogicalType::BIGINT},
+      {"gap_score", bigint_type()},
+      {"gap_open", bigint_type()},
+      {"gap_extend", bigint_type()},
   });
   adapter::execute_rows(arguments, result, [&](idx_t row) {
     const MatrixArgument resolved = matrix_argument(
@@ -978,9 +994,9 @@ void MatrixInfo(DataChunk& arguments, ExpressionState&, Vector& result) {
     fields.push_back(Value::UBIGINT(matrix.wildcard));
     fields.push_back(Value::BIGINT(matrix.gap_score));
     fields.push_back(matrix.has_affine
-        ? Value::BIGINT(matrix.gap_open) : Value(LogicalType::BIGINT));
+        ? Value::BIGINT(matrix.gap_open) : null_bigint());
     fields.push_back(matrix.has_affine
-        ? Value::BIGINT(matrix.gap_extend) : Value(LogicalType::BIGINT));
+        ? Value::BIGINT(matrix.gap_extend) : null_bigint());
     return Value::STRUCT(type, std::move(fields));
   });
 }
@@ -1061,9 +1077,9 @@ void MatrixScores(DataChunk& arguments, ExpressionState&, Vector& result) {
       output.push_back(target.has_value()
           ? Value::BIGINT(matrix_score(
                 matrix, query, target->bytes, Local, gap_open, gap_extend))
-          : Value(LogicalType::BIGINT));
+          : null_bigint());
     }
-    return Value::LIST(LogicalType::BIGINT, std::move(output));
+    return Value::LIST(bigint_type(), std::move(output));
   });
 }
 
@@ -1084,20 +1100,20 @@ void MatrixCDist(DataChunk& arguments, ExpressionState&, Vector& result) {
             ? Value::BIGINT(matrix_score(
                   matrix, query->bytes, target->bytes, Local,
                   gap_open, gap_extend))
-            : Value(LogicalType::BIGINT));
+            : null_bigint());
       }
-      rows.push_back(Value::LIST(LogicalType::BIGINT, std::move(values)));
+      rows.push_back(Value::LIST(bigint_type(), std::move(values)));
     }
     return Value::LIST(
-        LogicalType::LIST(LogicalType::BIGINT), std::move(rows));
+        LogicalType::LIST(bigint_type()), std::move(rows));
   });
 }
 
 LogicalType matrix_match_type() {
   return LogicalType::STRUCT({
-      {"score", LogicalType::BIGINT},
-      {"query", LogicalType::VARCHAR},
-      {"target", LogicalType::VARCHAR},
+      {"score", bigint_type()},
+      {"query", varchar_type()},
+      {"target", varchar_type()},
       {"query_index", LogicalType::UBIGINT},
       {"target_index", LogicalType::UBIGINT},
   });
@@ -1257,24 +1273,24 @@ void register_matrix_alignment(ExtensionLoader& loader) {
     ScalarFunctionSet set("stride_" + stem + "_" + suffix);
     const bool many = std::string_view(suffix).ends_with("scores");
     const LogicalType second = many
-        ? LogicalType::LIST(LogicalType::VARCHAR)
-        : LogicalType::VARCHAR;
+        ? LogicalType::LIST(varchar_type())
+        : varchar_type();
     const LogicalType return_type = many
-        ? LogicalType::LIST(LogicalType::BIGINT)
-        : LogicalType::BIGINT;
+        ? LogicalType::LIST(bigint_type())
+        : bigint_type();
     const scalar_function_t function = many
         ? scalar_function_t(MatrixScores<Local>)
         : scalar_function_t(MatrixAlignment<Local, false, false>);
     for (const LogicalType& matrix_input : matrix_input_types()) {
       set.AddFunction(ScalarFunction(
-          {LogicalType::VARCHAR, second, matrix_input},
+          {varchar_type(), second, matrix_input},
           return_type, function));
       set.AddFunction(ScalarFunction(
-          {LogicalType::VARCHAR, second, matrix_input,
-           LogicalType::BIGINT}, return_type, function));
+          {varchar_type(), second, matrix_input,
+           bigint_type()}, return_type, function));
       set.AddFunction(ScalarFunction(
-          {LogicalType::VARCHAR, second, matrix_input,
-           LogicalType::BIGINT, LogicalType::BIGINT}, return_type, function));
+          {varchar_type(), second, matrix_input,
+           bigint_type(), bigint_type()}, return_type, function));
     }
     loader.RegisterFunction(std::move(set));
   }
@@ -1282,15 +1298,15 @@ void register_matrix_alignment(ExtensionLoader& loader) {
     ScalarFunctionSet set("stride_" + stem + "_" + suffix);
     for (const LogicalType& matrix_input : matrix_input_types()) {
       set.AddFunction(ScalarFunction(
-          {LogicalType::VARCHAR, LogicalType::VARCHAR, matrix_input},
+          {varchar_type(), varchar_type(), matrix_input},
           path_type(), MatrixAlignment<Local, true, false>));
       set.AddFunction(ScalarFunction(
-          {LogicalType::VARCHAR, LogicalType::VARCHAR, matrix_input,
-           LogicalType::BIGINT},
+          {varchar_type(), varchar_type(), matrix_input,
+           bigint_type()},
           path_type(), MatrixAlignment<Local, true, false>));
       set.AddFunction(ScalarFunction(
-          {LogicalType::VARCHAR, LogicalType::VARCHAR, matrix_input,
-           LogicalType::BIGINT, LogicalType::BIGINT},
+          {varchar_type(), varchar_type(), matrix_input,
+           bigint_type(), bigint_type()},
           path_type(), MatrixAlignment<Local, true, false>));
     }
     loader.RegisterFunction(std::move(set));
@@ -1298,16 +1314,16 @@ void register_matrix_alignment(ExtensionLoader& loader) {
   ScalarFunctionSet cigar("stride_" + stem + "_matrix_cigar");
   for (const LogicalType& matrix_input : matrix_input_types()) {
     cigar.AddFunction(ScalarFunction(
-        {LogicalType::VARCHAR, LogicalType::VARCHAR, matrix_input},
-        LogicalType::VARCHAR, MatrixAlignment<Local, true, true>));
+        {varchar_type(), varchar_type(), matrix_input},
+        varchar_type(), MatrixAlignment<Local, true, true>));
     cigar.AddFunction(ScalarFunction(
-        {LogicalType::VARCHAR, LogicalType::VARCHAR, matrix_input,
-         LogicalType::BIGINT},
-        LogicalType::VARCHAR, MatrixAlignment<Local, true, true>));
+        {varchar_type(), varchar_type(), matrix_input,
+         bigint_type()},
+        varchar_type(), MatrixAlignment<Local, true, true>));
     cigar.AddFunction(ScalarFunction(
-        {LogicalType::VARCHAR, LogicalType::VARCHAR, matrix_input,
-         LogicalType::BIGINT, LogicalType::BIGINT},
-        LogicalType::VARCHAR, MatrixAlignment<Local, true, true>));
+        {varchar_type(), varchar_type(), matrix_input,
+         bigint_type(), bigint_type()},
+        varchar_type(), MatrixAlignment<Local, true, true>));
   }
   loader.RegisterFunction(std::move(cigar));
 
@@ -1315,21 +1331,21 @@ void register_matrix_alignment(ExtensionLoader& loader) {
                           std::string(Local ? "local" : "global"));
   for (const LogicalType& matrix_input : matrix_input_types()) {
     cdist.AddFunction(ScalarFunction(
-        {LogicalType::LIST(LogicalType::VARCHAR),
-         LogicalType::LIST(LogicalType::VARCHAR), matrix_input},
-        LogicalType::LIST(LogicalType::LIST(LogicalType::BIGINT)),
+        {LogicalType::LIST(varchar_type()),
+         LogicalType::LIST(varchar_type()), matrix_input},
+        LogicalType::LIST(LogicalType::LIST(bigint_type())),
         MatrixCDist<Local>));
     cdist.AddFunction(ScalarFunction(
-        {LogicalType::LIST(LogicalType::VARCHAR),
-         LogicalType::LIST(LogicalType::VARCHAR), matrix_input,
-         LogicalType::BIGINT},
-        LogicalType::LIST(LogicalType::LIST(LogicalType::BIGINT)),
+        {LogicalType::LIST(varchar_type()),
+         LogicalType::LIST(varchar_type()), matrix_input,
+         bigint_type()},
+        LogicalType::LIST(LogicalType::LIST(bigint_type())),
         MatrixCDist<Local>));
     cdist.AddFunction(ScalarFunction(
-        {LogicalType::LIST(LogicalType::VARCHAR),
-         LogicalType::LIST(LogicalType::VARCHAR), matrix_input,
-         LogicalType::BIGINT, LogicalType::BIGINT},
-        LogicalType::LIST(LogicalType::LIST(LogicalType::BIGINT)),
+        {LogicalType::LIST(varchar_type()),
+         LogicalType::LIST(varchar_type()), matrix_input,
+         bigint_type(), bigint_type()},
+        LogicalType::LIST(LogicalType::LIST(bigint_type())),
         MatrixCDist<Local>));
   }
   loader.RegisterFunction(std::move(cdist));
@@ -1345,16 +1361,16 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
       ::duckdb::stride_align_embedded::bmpm_resources());
 
   register_function(loader, "stride_matrix_available", {},
-                    LogicalType::LIST(LogicalType::VARCHAR), MatrixAvailable);
+                    LogicalType::LIST(varchar_type()), MatrixAvailable);
   register_function(loader, "stride_keyboard_available", {},
-                    LogicalType::LIST(LogicalType::VARCHAR), KeyboardAvailable);
+                    LogicalType::LIST(varchar_type()), KeyboardAvailable);
   const LogicalType info_type = LogicalType::STRUCT({
-          {"name", LogicalType::VARCHAR}, {"alphabet", LogicalType::VARCHAR},
+          {"name", varchar_type()}, {"alphabet", varchar_type()},
           {"stride", LogicalType::UBIGINT},
           {"wildcard_index", LogicalType::UBIGINT},
-          {"gap_score", LogicalType::BIGINT},
-          {"gap_open", LogicalType::BIGINT},
-          {"gap_extend", LogicalType::BIGINT}});
+          {"gap_score", bigint_type()},
+          {"gap_open", bigint_type()},
+          {"gap_extend", bigint_type()}});
   ScalarFunctionSet info("stride_matrix_info");
   for (const LogicalType& input : matrix_input_types()) {
     info.AddFunction(ScalarFunction({input}, info_type, MatrixInfo));
@@ -1363,28 +1379,28 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
   ScalarFunctionSet encode("stride_matrix_encode");
   for (const LogicalType& input : matrix_input_types()) {
     encode.AddFunction(ScalarFunction(
-        {input, LogicalType::VARCHAR},
+        {input, varchar_type()},
         LogicalType::LIST(LogicalType::USMALLINT), MatrixEncode));
   }
   loader.RegisterFunction(std::move(encode));
   ScalarFunctionSet step("stride_matrix_score_step_limit");
   for (const LogicalType& input : matrix_input_types()) {
     step.AddFunction(ScalarFunction(
-        {input}, LogicalType::BIGINT, MatrixScoreStepLimit));
+        {input}, bigint_type(), MatrixScoreStepLimit));
     step.AddFunction(ScalarFunction(
-        {input, LogicalType::BIGINT},
-        LogicalType::BIGINT, MatrixScoreStepLimit));
+        {input, bigint_type()},
+        bigint_type(), MatrixScoreStepLimit));
     step.AddFunction(ScalarFunction(
-        {input, LogicalType::BIGINT, LogicalType::BIGINT},
-        LogicalType::BIGINT, MatrixScoreStepLimit));
+        {input, bigint_type(), bigint_type()},
+        bigint_type(), MatrixScoreStepLimit));
   }
   loader.RegisterFunction(std::move(step));
 
   ScalarFunctionSet identity("stride_identity_matrix");
   const std::vector<LogicalType> identity_arguments = {
-      LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
-      LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT,
-      LogicalType::BIGINT, LogicalType::BIGINT};
+      varchar_type(), bigint_type(), bigint_type(),
+      varchar_type(), varchar_type(), bigint_type(),
+      bigint_type(), bigint_type()};
   for (std::size_t count = 1U; count <= identity_arguments.size(); ++count) {
     identity.AddFunction(special_function(
         std::vector<LogicalType>(
@@ -1394,9 +1410,9 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
   loader.RegisterFunction(std::move(identity));
   ScalarFunctionSet ascii("stride_ascii_matrix");
   const std::vector<LogicalType> ascii_arguments = {
-      LogicalType::BIGINT, LogicalType::BIGINT,
-      LogicalType::VARCHAR, LogicalType::BIGINT,
-      LogicalType::BIGINT, LogicalType::BIGINT};
+      bigint_type(), bigint_type(),
+      varchar_type(), bigint_type(),
+      bigint_type(), bigint_type()};
   for (std::size_t count = 0U; count <= ascii_arguments.size(); ++count) {
     ascii.AddFunction(special_function(
         std::vector<LogicalType>(
@@ -1406,8 +1422,8 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
   loader.RegisterFunction(std::move(ascii));
   ScalarFunctionSet from_ncbi("stride_matrix_from_ncbi_text");
   const std::vector<LogicalType> ncbi_arguments = {
-      LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT,
-      LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT};
+      varchar_type(), varchar_type(), bigint_type(),
+      varchar_type(), bigint_type(), bigint_type()};
   for (std::size_t count = 1U; count <= ncbi_arguments.size(); ++count) {
     from_ncbi.AddFunction(special_function(
         std::vector<LogicalType>(
@@ -1417,12 +1433,12 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
   loader.RegisterFunction(std::move(from_ncbi));
 
   const LogicalType score_grid = LogicalType::LIST(
-      LogicalType::LIST(LogicalType::BIGINT));
+      LogicalType::LIST(bigint_type()));
   ScalarFunctionSet substitution("stride_substitution_matrix");
   const std::vector<LogicalType> substitution_arguments = {
-      LogicalType::VARCHAR, LogicalType::VARCHAR, score_grid,
-      LogicalType::BIGINT, LogicalType::VARCHAR,
-      LogicalType::BIGINT, LogicalType::BIGINT};
+      varchar_type(), varchar_type(), score_grid,
+      bigint_type(), varchar_type(),
+      bigint_type(), bigint_type()};
   for (std::size_t count = 3U;
        count <= substitution_arguments.size(); ++count) {
     substitution.AddFunction(special_function(
@@ -1436,10 +1452,10 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
       LogicalType::LIST(LogicalType::DOUBLE));
   ScalarFunctionSet keyboard_counts("stride_keyboard_from_confusion_counts");
   const std::vector<LogicalType> keyboard_count_arguments = {
-      count_grid, LogicalType::VARCHAR, LogicalType::VARCHAR,
-      LogicalType::DOUBLE, LogicalType::BIGINT, LogicalType::DOUBLE,
-      LogicalType::VARCHAR, LogicalType::BIGINT,
-      LogicalType::BIGINT, LogicalType::BIGINT};
+      count_grid, varchar_type(), varchar_type(),
+      LogicalType::DOUBLE, bigint_type(), LogicalType::DOUBLE,
+      varchar_type(), bigint_type(),
+      bigint_type(), bigint_type()};
   for (std::size_t count = 1U;
        count <= keyboard_count_arguments.size(); ++count) {
     keyboard_counts.AddFunction(special_function(
@@ -1451,9 +1467,9 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
 
   ScalarFunctionSet keyboard_npy("stride_keyboard_from_npy");
   const std::vector<LogicalType> keyboard_npy_arguments = {
-      LogicalType::BLOB, LogicalType::VARCHAR, LogicalType::VARCHAR,
-      LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::BIGINT,
-      LogicalType::BIGINT, LogicalType::BIGINT};
+      LogicalType::BLOB, varchar_type(), varchar_type(),
+      varchar_type(), LogicalType::BOOLEAN, bigint_type(),
+      bigint_type(), bigint_type()};
   for (std::size_t count = 1U;
        count <= keyboard_npy_arguments.size(); ++count) {
     keyboard_npy.AddFunction(special_function(
@@ -1469,10 +1485,10 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
     transpose.AddFunction(ScalarFunction(
         {input}, matrix_type(), MatrixTranspose));
     transpose.AddFunction(ScalarFunction(
-        {input, LogicalType::VARCHAR}, matrix_type(), MatrixTranspose));
+        {input, varchar_type()}, matrix_type(), MatrixTranspose));
     substitution_score.AddFunction(ScalarFunction(
-        {input, LogicalType::VARCHAR, LogicalType::VARCHAR},
-        LogicalType::BIGINT, SubstitutionMatrixScore));
+        {input, varchar_type(), varchar_type()},
+        bigint_type(), SubstitutionMatrixScore));
   }
   loader.RegisterFunction(std::move(transpose));
   loader.RegisterFunction(std::move(substitution_score));
@@ -1480,7 +1496,7 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
   register_matrix_alignment<true>(loader);
   register_matrix_alignment<false>(loader);
 
-  const LogicalType strings = LogicalType::LIST(LogicalType::VARCHAR);
+  const LogicalType strings = LogicalType::LIST(varchar_type());
   for (const auto& definition : {
            std::pair<const char*, scalar_function_t>(
                "stride_cdist_matrix_above_threshold", MatrixRank<false>),
@@ -1490,15 +1506,15 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
     for (const LogicalType& matrix_input : matrix_input_types()) {
       functions.AddFunction(ScalarFunction(
           {strings, strings, matrix_input, LogicalType::BOOLEAN,
-           LogicalType::BIGINT},
+           bigint_type()},
           LogicalType::LIST(matrix_match_type()), definition.second));
       functions.AddFunction(ScalarFunction(
           {strings, strings, matrix_input, LogicalType::BOOLEAN,
-           LogicalType::BIGINT, LogicalType::BIGINT},
+           bigint_type(), bigint_type()},
           LogicalType::LIST(matrix_match_type()), definition.second));
       functions.AddFunction(ScalarFunction(
           {strings, strings, matrix_input, LogicalType::BOOLEAN,
-           LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
+           bigint_type(), bigint_type(), bigint_type()},
           LogicalType::LIST(matrix_match_type()), definition.second));
     }
     loader.RegisterFunction(std::move(functions));
@@ -1506,17 +1522,17 @@ void RegisterMatrixFunctions(ExtensionLoader& loader) {
 
   ScalarFunctionSet bmpm("stride_beider_morse");
   bmpm.AddFunction(ScalarFunction(
-      {LogicalType::VARCHAR}, LogicalType::VARCHAR, BeiderMorse));
+      {varchar_type()}, varchar_type(), BeiderMorse));
   bmpm.AddFunction(ScalarFunction(
-      {LogicalType::VARCHAR, LogicalType::BIGINT},
-      LogicalType::VARCHAR, BeiderMorse));
+      {varchar_type(), bigint_type()},
+      varchar_type(), BeiderMorse));
   bmpm.AddFunction(ScalarFunction(
-      {LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BOOLEAN},
-      LogicalType::VARCHAR, BeiderMorse));
+      {varchar_type(), bigint_type(), LogicalType::BOOLEAN},
+      varchar_type(), BeiderMorse));
   bmpm.AddFunction(ScalarFunction(
-      {LogicalType::VARCHAR, LogicalType::BIGINT,
-       LogicalType::BOOLEAN, LogicalType::BIGINT},
-      LogicalType::VARCHAR, BeiderMorse));
+      {varchar_type(), bigint_type(),
+       LogicalType::BOOLEAN, bigint_type()},
+      varchar_type(), BeiderMorse));
   loader.RegisterFunction(std::move(bmpm));
 }
 

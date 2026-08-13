@@ -203,6 +203,39 @@ Search time: 206.51ms
 
 ... and we found it! And pretty quickly too.
 
+#### The same search in DuckDB
+
+The [runnable DuckDB demo](demo/duckdb_vectorized_lookup.py) loads the corpus
+as rows and leaves both scoring and top-one selection inside DuckDB:
+
+```sql
+SELECT reference, verse, score
+FROM (
+    SELECT
+        reference,
+        verse,
+        stride_needleman_wunsch_normalized_score(
+            lower(?), lower(verse)
+        ) AS score
+    FROM demo_bible
+)
+ORDER BY score DESC, reference, verse
+LIMIT 1;
+```
+
+Here the query parameter is a DuckDB constant vector and `verse` is supplied
+by the table scan in DuckDB data chunks. The extension scores those vectors as
+part of the query plan; Python submits the query and fetches its one result. It
+does not construct a score list or loop over verses.
+
+After [downloading the package](https://distribution.goblinreactor.com/stride-align/duckdb/)
+for your platform and CPU, run it like this:
+
+```bash
+export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension
+python3 demo/duckdb_vectorized_lookup.py bible
+```
+
 
 ### Larger example: spell checker
 
@@ -261,6 +294,47 @@ it doesn't matter that I can't spell corectly
 
 this is a demonstration of a spell checker
 it doesn't matter that i can't spell correctly
+```
+
+#### The same spell checker in DuckDB
+
+The DuckDB mode tokenizes a whole input line, crosses all of its tokens with
+the dictionary table, scores the resulting columns in data chunks, and reduces
+the matches back to one ordered line in a single SQL statement. There is no
+Python loop around either the tokens or the dictionary:
+
+```sql
+WITH input_tokens AS (
+    SELECT position, token
+    FROM unnest(string_split(lower(?), ' '))
+         WITH ORDINALITY AS tokens(token, position)
+),
+scored AS (
+    SELECT
+        position,
+        word,
+        stride_needleman_wunsch_normalized_score(token, word) AS score
+    FROM input_tokens
+    CROSS JOIN demo_dictionary
+),
+ranked AS (
+    SELECT
+        position,
+        word,
+        row_number() OVER (
+            PARTITION BY position ORDER BY score DESC, word
+        ) AS match_rank
+    FROM scored
+)
+SELECT string_agg(word, ' ' ORDER BY position)
+FROM ranked
+WHERE match_rank = 1;
+```
+
+Use a system dictionary or pass `--dictionary` explicitly:
+
+```bash
+python3 demo/duckdb_vectorized_lookup.py spell
 ```
 
 

@@ -69,6 +69,36 @@ ORDER BY similarity DESC;
 Use the same pattern with table columns for fuzzy search, deduplication,
 record linkage, ranking, or biological sequence scoring.
 
+## Vectorized nearest lookup
+
+The [Bible lookup and spell-check demo](../../demo/duckdb_vectorized_lookup.py)
+keeps candidates as table rows so DuckDB itself owns the vectors. For example,
+the Bible search is a table scan followed by a SQL top-one reduction:
+
+```sql
+SELECT reference, verse, score
+FROM (
+  SELECT
+    reference,
+    verse,
+    stride_needleman_wunsch_normalized_score(lower(?), lower(verse)) AS score
+  FROM demo_bible
+)
+ORDER BY score DESC, reference, verse
+LIMIT 1;
+```
+
+The spell-check mode tokenizes the input in SQL and `CROSS JOIN`s all tokens
+with the dictionary table. One scorer expression consumes the resulting
+DuckDB chunks; a window reduction selects one word per token. Python only
+sideloads the extension, submits each complete query, and prints its result.
+
+```sh
+export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension
+python3 demo/duckdb_vectorized_lookup.py bible
+python3 demo/duckdb_vectorized_lookup.py spell
+```
+
 ## SQL functions
 
 All string functions accept ordinary UTF-8 `VARCHAR` values. List-valued APIs
@@ -84,6 +114,17 @@ literals. Hamming functions require equal-length strings.
 | Text algorithms | LCS, n-gram, Ratcliff-Obershelp, token ratios, WRatio, and Monge-Elkan |
 | Phonetics | Soundex, Metaphone, NYSIIS, Match Rating, Caverphone, Cologne, Daitch-Mokotoff, Double Metaphone, and Beider-Morse |
 | Sequences | DTW, local/global paths and CIGARs, BLOSUM/PAM/nucleotide matrices, and custom substitution matrices |
+
+The complete catalog lists all 167 registered SQL function names and the
+families that supply their 413 overloads: [DuckDB SQL function catalog](FUNCTIONS.md).
+Inside DuckDB, inspect the exact signatures in the package you loaded with:
+
+```sql
+SELECT function_name, parameters, parameter_types, return_type
+FROM duckdb_functions()
+WHERE function_name LIKE 'stride_%'
+ORDER BY function_name, parameter_types;
+```
 
 The ranking and cdist functions are native bounded operations. They apply
 length bounds, adaptive score cutoffs, and bounded heaps while scanning; a

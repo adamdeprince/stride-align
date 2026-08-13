@@ -361,6 +361,7 @@
             <a class="button button-download" href="https://distribution.goblinreactor.com/stride-align/duckdb/" rel="noopener">Download DuckDB extension <span aria-hidden="true">↗</span></a>
             <a class="text-link" href="README.html#getting-started">Python quick start <span aria-hidden="true">→</span></a>
             <a class="text-link" href="bindings/r/index.html">R quick start <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="https://distribution.goblinreactor.com/stride-align/R/" rel="noopener">R packages <span aria-hidden="true">↗</span></a>
           </div>
         </div>
       </div>
@@ -419,8 +420,8 @@ scores = sa.levenshtein_normalized_scores(
           </div>
           <div class="terminal-line">
             <span class="prompt">$</span>
-            <code>bindings/r/build-package.sh &amp;&amp; R CMD INSTALL dist/r/stridealign_0.6.0.tar.gz</code>
-            <button class="copy-button" type="button" data-copy="bindings/r/build-package.sh &amp;&amp; R CMD INSTALL dist/r/stridealign_0.6.0.tar.gz" aria-label="Copy R build and install command">
+            <code>R -q -e 'install.packages(&quot;stridealign&quot;, repos=&quot;https://distribution.goblinreactor.com/stride-align/R&quot;, type=&quot;source&quot;)'</code>
+            <button class="copy-button" type="button" data-copy="R -q -e 'install.packages(&quot;stridealign&quot;, repos=&quot;https://distribution.goblinreactor.com/stride-align/R&quot;, type=&quot;source&quot;)'" aria-label="Copy hosted R source install command">
               <span class="copy-default">COPY</span><span class="copy-success">COPIED</span>
             </button>
           </div>
@@ -439,7 +440,7 @@ scores &lt;- levenshtein_normalized_scores(
 
 <span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
           </div>
-          <p class="track-note">The R package provides pair, batch, selection, and cdist APIs over ordinary R objects, and selects the best compatible packaged backend when its namespace loads. <a href="bindings/r/index.html">Build and install the R package.</a></p>
+          <p class="track-note">Install the portable source package from the hosted stride-align R repository. A prebuilt arm64 binary is also available specifically for Homebrew R 4.6 on macOS 26 or newer. The package provides pair, batch, selection, and cdist APIs over ordinary R objects, then selects the best compatible packaged backend when its namespace loads. <a href="https://distribution.goblinreactor.com/stride-align/R/">Browse R packages.</a></p>
           </article>
 
           <article class="install-track install-track-duckdb example-panel" id="example-duckdb" data-example-panel="duckdb" aria-label="DuckDB example" hidden>
@@ -463,14 +464,21 @@ db = duckdb.connect(config={
 extension = <span class="code-string">"/path/to/stride_align.duckdb_extension"</span>
 db.execute(<span class="code-string">f"LOAD '{extension}'"</span>)
 
-score = db.execute(
-    <span class="code-string">"SELECT stride_levenshtein_similarity(?, ?)"</span>,
-    [<span class="code-string">"你好世界"</span>, <span class="code-string">"你好世间"</span>],
-).fetchone()[0]
+match = db.execute(
+    <span class="code-string">"""WITH candidates(candidate) AS (
+           VALUES ('你好世间'), ('再见世界')
+       )
+       SELECT candidate,
+              stride_levenshtein_similarity(?, candidate) AS score
+       FROM candidates
+       ORDER BY score DESC
+       LIMIT 1"""</span>,
+    [<span class="code-string">"你好世界"</span>],
+).fetchone()
 
-<span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
+<span class="code-call">print</span>(match)  <span class="code-comment"># ('你好世间', 0.75)</span></code></pre>
           </div>
-          <p class="track-note"><a href="https://distribution.goblinreactor.com/stride-align/duckdb/">Download the extension artifact</a> matching your DuckDB version, platform, and SIMD package; Python is only orchestrating the sideload here.</p>
+          <p class="track-note"><a href="https://distribution.goblinreactor.com/stride-align/duckdb/">Download the extension artifact</a> matching your DuckDB version, platform, and SIMD package. Candidate rows flow through DuckDB's vectorized executor; Python only orchestrates the sideload and query. <a href="README.html#the-same-search-in-duckdb">See the vectorized Bible lookup and spell checker.</a></p>
           </article>
         </div>
       </div>

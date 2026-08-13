@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stride-align R packages</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { max-width: 760px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.6; color: #17201b; }
+    h1 { line-height: 1.1; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { overflow-x: auto; padding: 1rem; background: #eef5e7; border-radius: .5rem; }
+    a { color: #315d1f; }
+    li { margin: .5rem 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>stride-align for R</h1>
+    <p>The portable installation path builds <code>stridealign</code> from source:</p>
+    <pre><code>install.packages(
+    "stridealign",
+    repos = "https://distribution.goblinreactor.com/stride-align/R",
+    type = "source"
+)</code></pre>
+    <p>A prebuilt arm64 binary is also available specifically for Homebrew R
+      4.6 on macOS 26 or newer:</p>
+    <pre><code>install.packages(
+    "stridealign",
+    repos = "https://distribution.goblinreactor.com/stride-align/R",
+    type = "mac.binary.big-sur-arm64"
+)</code></pre>
+    <p>The binary links against Homebrew's R installation. Users of the CRAN
+      macOS framework build, older macOS releases, and other platforms should
+      use the source command above.</p>
+    <ul>
+      <li><a href="src/contrib/stridealign_0.6.0.tar.gz">Source package 0.6.0</a></li>
+      <li><a href="bin/macosx/big-sur-arm64/contrib/4.6/stridealign_0.6.0.tgz">Homebrew R 4.6 binary for macOS 26+ arm64</a></li>
+      <li><a href="SHA256SUMS">SHA-256 checksums</a></li>
+      <li><a href="https://stride-align.com/bindings/r/">R package guide</a></li>
+    </ul>
+  </main>
+</body>
+</html>

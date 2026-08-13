@@ -6,7 +6,34 @@ substitution matrices, phonetics, and Dynamic Time Warping. Pair calls are
 vectorized, a length-one argument is broadcast, and missing strings produce
 missing scores.
 
-## Build and install
+## Install
+
+The portable installation path builds the package from source:
+
+```r
+install.packages(
+    "stridealign",
+    repos = "https://distribution.goblinreactor.com/stride-align/R",
+    type = "source"
+)
+```
+
+The repository also provides a prebuilt arm64 binary specifically for Homebrew
+R 4.6 on macOS 26 or newer:
+
+```r
+install.packages(
+    "stridealign",
+    repos = "https://distribution.goblinreactor.com/stride-align/R",
+    type = "mac.binary.big-sur-arm64"
+)
+```
+
+That binary links against Homebrew's R installation and is not intended for
+the CRAN macOS framework build. Use the source command above on other supported
+R installations and platforms.
+
+## Build from source
 
 Build the self-contained R source package from the repository root:
 

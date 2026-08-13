@@ -1,6 +1,7 @@
 python_test	test_functions	r_tests	adaptation
 tests/duckdb/test_duckdb_extension.py	8	bindings/r/stridealign/tests/duckdb-parity.R	Exercises the same scorer catalog through the installed R batch API; DuckDB SQL details stay covered by the source suite.
 tests/duckdb/test_duckdb_native_api.py	20	bindings/r/stridealign/tests/duckdb-parity.R;bindings/r/stridealign/tests/extended-api.R;bindings/r/stridealign/tests/python-batch-api.R	Exercises the same native algorithms, batch/ranking families, paths, matrices, phonetics, and inclusive cutoff boundaries through the installed R API; DuckDB SQL types stay source-specific.
+tests/duckdb/test_duckdb_vectorized_demo.py	3	bindings/r/stridealign/tests/duckdb-parity.R;bindings/r/stridealign/tests/python-batch-api.R	The R batch tests exercise the same one-to-many alignment scores and ordered results; DuckDB table scans, DataChunks, and Python orchestration stay source-specific.
 tests/test_alignment_unicode.py	19	bindings/r/stridealign/tests/python-test-alignment-unicode.R	Direct Unicode scalar cases, paths, CIGARs, and batches.
 tests/test_api.py	112	bindings/r/stridealign/tests/python-test-api.R;bindings/r/stridealign/tests/api.R;bindings/r/stridealign/tests/backend-generic.R;bindings/r/stridealign/tests/backend-invalid.R	Nanobind loading and CLI probes become installed-package, public-dispatch, and backend checks; third-party adapter probes are excluded.
 tests/test_beider_morse.py	7	bindings/r/stridealign/tests/python-test-beider-morse.R	Canonical names, languages, modes, concatenation, and validation.
