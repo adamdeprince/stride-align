@@ -13,7 +13,14 @@ function.
 The extension has no Python or nanobind runtime dependency. Python appears in
 one example below only as a convenient way to orchestrate DuckDB.
 
-**[Download stride-align packages for DuckDB](https://distribution.goblinreactor.com/stride-align/duckdb/)**
+<div class="download-callout">
+  <div>
+    <span>DuckDB 1.5.5 packages</span>
+    <strong>Download stride-align 0.6.0 for DuckDB</strong>
+    <small>Choose the package matching your platform and CPU profile.</small>
+  </div>
+  <a href="https://distribution.goblinreactor.com/stride-align/duckdb/">Open download page →</a>
+</div>
 
 ## Download and install
 

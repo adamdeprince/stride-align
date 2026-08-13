@@ -369,10 +369,105 @@ EXAMPLES = (
 )
 
 
-def _selector(slug: str) -> str:
+ZH_EXAMPLE_TEXT = {
+    "levenshtein": ("编辑距离", "Levenshtein 距离", "插入、删除与替换。"),
+    "osa": (
+        "编辑距离",
+        "Damerau–Levenshtein（OSA）",
+        "Levenshtein 距离加上每个字符至多参与一次的相邻换位。",
+    ),
+    "true-damerau": (
+        "编辑距离",
+        "无限制 Damerau–Levenshtein",
+        "允许换位重叠的无限制 Damerau 编辑距离。",
+    ),
+    "indel": ("编辑距离", "插入删除距离", "仅使用插入和删除；一次替换计作两次编辑。"),
+    "hamming": ("编辑距离", "Hamming 距离", "用于等长字符串的逐位置替换距离。"),
+    "jaro": ("相似度", "Jaro 相似度", "采用匹配窗口并对换位施加惩罚的相似度。"),
+    "jaro-winkler": ("相似度", "Jaro–Winkler 相似度", "在 Jaro 相似度上增加可配置的共同前缀奖励。"),
+    "lcs": ("序列比较", "最长公共子序列与子串", "返回长度以及实际的最长连续公共子串。"),
+    "ngrams": ("相似度", "字符 n 元组", "基于字符 n 元组的 Jaccard、Dice、余弦与重叠相似度。"),
+    "ratcliff-obershelp": ("相似度", "Ratcliff–Obershelp 相似度", "递归计算最长公共子串的相似度。"),
+    "token-ratios": (
+        "相似度",
+        "部分、词元与加权比率",
+        "可容忍子串位置和词元顺序变化的原生评分器，包括 WRatio。",
+    ),
+    "monge-elkan": ("相似度", "Monge–Elkan 相似度", "用于多词字段的最佳词元组合相似度。"),
+    "smith-waterman": ("序列比对", "Smith–Waterman 局部比对", "使用线性或仿射空位的局部序列比对。"),
+    "needleman-wunsch": (
+        "序列比对",
+        "Needleman–Wunsch 全局比对",
+        "使用线性或仿射空位的全局序列比对。",
+    ),
+    "traceback": (
+        "序列比对",
+        "比对路径与 CIGAR",
+        "返回回溯元数据、对齐后的字符串以及标准或扩展 CIGAR。",
+    ),
+    "one-to-many": ("批量操作", "一对多与最佳匹配", "为候选向量评分，或执行有界的最佳一项筛选。"),
+    "cdist": (
+        "批量操作",
+        "全配对距离矩阵与前 k 项",
+        "稠密矩阵、阈值过滤、全局前 k 项以及每个查询各自的前 k 项。",
+    ),
+    "matrices": ("序列比对", "替换矩阵", "内置 BLOSUM、PAM、核苷酸、文本及自定义评分矩阵。"),
+    "dtw": ("时间序列", "动态时间规整", "用于数值序列的弹性比对，可选 Sakoe–Chiba 窗口。"),
+    "soundex": ("语音编码", "Soundex", "紧凑的英语语音键。"),
+    "metaphone": ("语音编码", "Metaphone", "英语语音编码，支持 Philips 与 Jellyfish 规则变体。"),
+    "double-metaphone": ("语音编码", "Double Metaphone", "返回主要与备用读音键。"),
+    "nysiis": ("语音编码", "NYSIIS", "纽约州身份识别与情报系统编码。"),
+    "match-rating": ("语音编码", "Match Rating 方法", "生成编码并直接比较姓名。"),
+    "caverphone": ("语音编码", "Caverphone 2.0", "为新西兰记录设计的英语姓名编码。"),
+    "cologne": ("语音编码", "科隆语音算法", "支持统一码的德语语音编码。"),
+    "daitch-mokotoff": (
+        "语音编码",
+        "Daitch–Mokotoff Soundex",
+        "面向斯拉夫和意第绪语姓氏、可产生分支的六位数字编码。",
+    ),
+    "beider-morse": ("语音编码", "Beider–Morse", "用于族谱姓名的多语言语音匹配。"),
+}
+
+
+ZH_VECTORIZATION_TEXT = {
+    "shape-one-to-many": (
+        "单个查询对多个目标",
+        "1 个查询 + T 个目标",
+        "T 个分数",
+        "按目标原有顺序为每个目标返回一个分数。一个查询需要与一组候选项比较时，应直接使用这种批量形状。",
+    ),
+    "shape-ranking": (
+        "最佳匹配与一对多前 k 项",
+        "1 个查询 + T 个目标 + K",
+        "1 个匹配或最多 K 个匹配",
+        "最佳匹配只返回一个候选项；前 k 项仅保留指定数量的候选项，应用代码无需构造并排序完整分数向量。",
+    ),
+    "shape-cdist-matrix": (
+        "稠密全配对矩阵",
+        "Q 个查询 × T 个目标",
+        "Q 行 × T 列",
+        "cdist 为笛卡尔积评分。第 q 行对应第 q 个查询，第 t 列对应第 t 个目标，单元格 [q, t] 就是这一对的分数。",
+    ),
+    "shape-global-selection": (
+        "阈值筛选与全局前 k 项",
+        "概念上的 Q × T 网格",
+        "达到阈值的配对记录，或全局最多 K 项",
+        "阈值形式返回所有达标配对。全局前 k 项让整个矩阵共同竞争，因此 k=2 表示总共只返回两项，有些查询可能没有结果。",
+    ),
+    "shape-per-query-selection": (
+        "每个查询各自的前 k 项",
+        "Q 个查询 × T 个目标 + K",
+        "Q 个分组，每组最多 K 个匹配",
+        "每个查询都有独立的候选竞争。k=2 时最多可返回 2Q 个匹配，并且每个非空查询行都有自己的近邻列表。",
+    ),
+}
+
+
+def _selector(slug: str, locale: str) -> str:
     select_id = f"api-language-{slug}"
+    label = "语言" if locale == "zh-CN" else "Language"
     return f"""<div class="api-example-select">
-<label for="{select_id}">Language</label>
+<label for="{select_id}">{label}</label>
 <span><select id="{select_id}" data-language-select>
 <option value="python">Python</option>
 <option value="r">R</option>
@@ -397,21 +492,27 @@ def _panel(language: str, code: str) -> str:
     )
 
 
-def render_api_catalog() -> str:
+def render_api_catalog(locale: str = "en") -> str:
     cards = []
     for example in EXAMPLES:
+        family, title, description = (
+            ZH_EXAMPLE_TEXT[example.slug]
+            if locale == "zh-CN"
+            else (example.family, example.title, example.description)
+        )
+        detail_label = "详细语义（英文） →" if locale == "zh-CN" else "Detailed semantics →"
         detail = (
-            f'<a class="api-detail-link" href="{escape(example.detail)}">Detailed semantics →</a>'
+            f'<a class="api-detail-link" href="{escape(example.detail)}">{detail_label}</a>'
             if example.detail
             else ""
         )
         cards.append(
             f"""<section class="api-example" id="{escape(example.slug)}">
 <header class="api-example-heading">
-<div><span>{escape(example.family)}</span><h2>{escape(example.title)}</h2></div>
-{_selector(example.slug)}
+<div><span>{escape(family)}</span><h2>{escape(title)}</h2></div>
+{_selector(example.slug, locale)}
 </header>
-<p>{escape(example.description)}</p>
+<p>{escape(description)}</p>
 <div class="api-language-panels">
 {_panel("python", example.python)}
 {_panel("r", example.r)}
@@ -423,21 +524,34 @@ def render_api_catalog() -> str:
     return '<div class="api-catalog">\n' + "\n".join(cards) + "\n</div>"
 
 
-def render_vectorization_guide() -> str:
+def render_vectorization_guide(locale: str = "en") -> str:
     cards = []
     for example in VECTORIZATION_EXAMPLES:
+        title, input_shape, output_shape, description = (
+            ZH_VECTORIZATION_TEXT[example.slug]
+            if locale == "zh-CN"
+            else (
+                example.title,
+                example.input_shape,
+                example.output_shape,
+                example.description,
+            )
+        )
+        shape_label = "向量化形状" if locale == "zh-CN" else "Vectorization shape"
+        input_label = "输入" if locale == "zh-CN" else "Input"
+        output_label = "输出" if locale == "zh-CN" else "Output"
         cards.append(
             f"""<section class="api-example vectorization-example" id="{escape(example.slug)}">
 <header class="api-example-heading">
-<div><span>Vectorization shape</span><h2>{escape(example.title)}</h2></div>
-{_selector(example.slug)}
+<div><span>{shape_label}</span><h2>{escape(title)}</h2></div>
+{_selector(example.slug, locale)}
 </header>
 <div class="vector-shape" aria-label="Input and output shape">
-<div><span>Input</span><code>{escape(example.input_shape)}</code></div>
+<div><span>{input_label}</span><code>{escape(input_shape)}</code></div>
 <b aria-hidden="true">→</b>
-<div><span>Output</span><code>{escape(example.output_shape)}</code></div>
+<div><span>{output_label}</span><code>{escape(output_shape)}</code></div>
 </div>
-<p>{escape(example.description)}</p>
+<p>{escape(description)}</p>
 <div class="api-language-panels">
 {_panel("python", example.python)}
 {_panel("r", example.r)}
@@ -445,8 +559,4 @@ def render_vectorization_guide() -> str:
 </div>
 </section>"""
         )
-    return (
-        '<div class="api-catalog vectorization-catalog">\n'
-        + "\n".join(cards)
-        + "\n</div>"
-    )
+    return '<div class="api-catalog vectorization-catalog">\n' + "\n".join(cards) + "\n</div>"

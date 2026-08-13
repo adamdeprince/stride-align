@@ -7,12 +7,16 @@ from pathlib import Path
 from tools.api_catalog import (
     EXAMPLES,
     VECTORIZATION_EXAMPLES,
+    ZH_EXAMPLE_TEXT,
+    ZH_VECTORIZATION_TEXT,
     render_api_catalog,
     render_vectorization_guide,
 )
 
 TARGETS = {"python", "r", "duckdb"}
 ROOT = Path(__file__).resolve().parents[1]
+CHINESE_API_SOURCE = ROOT / "docs" / "api" / "README.zh-CN.md"
+CHINESE_API = ROOT / "html" / "docs" / "api" / "index.zh-CN.html"
 
 
 class ApiCatalogParser(HTMLParser):
@@ -49,15 +53,45 @@ class ApiCatalogParser(HTMLParser):
 
 
 def test_api_catalog_has_a_synchronized_selector_for_every_example() -> None:
-    parser = ApiCatalogParser()
-    parser.feed(render_api_catalog())
-    parser.feed(render_vectorization_guide())
     examples = EXAMPLES + VECTORIZATION_EXAMPLES
     slugs = {example.slug for example in examples}
 
     assert len(slugs) == len(examples)
-    assert parser.selects == {slug: 1 for slug in slugs}
-    assert parser.panels == {slug: TARGETS for slug in slugs}
+    for locale in ("en", "zh-CN"):
+        parser = ApiCatalogParser()
+        parser.feed(render_api_catalog(locale))
+        parser.feed(render_vectorization_guide(locale))
+
+        assert parser.selects == {slug: 1 for slug in slugs}
+        assert parser.panels == {slug: TARGETS for slug in slugs}
+
+
+def test_chinese_api_catalog_covers_every_card_and_uses_chinese_terms() -> None:
+    assert set(ZH_EXAMPLE_TEXT) == {example.slug for example in EXAMPLES}
+    assert set(ZH_VECTORIZATION_TEXT) == {example.slug for example in VECTORIZATION_EXAMPLES}
+
+    rendered = render_vectorization_guide("zh-CN") + render_api_catalog("zh-CN")
+    source = CHINESE_API_SOURCE.read_text(encoding="utf-8")
+
+    assert ">语言<" in rendered
+    assert "向量化形状" in rendered
+    assert "全局前 k 项" in rendered
+    assert "每个查询各自的前 k 项" in rendered
+    assert "详细语义（英文）" in rendered
+    assert ">Language<" not in rendered
+    assert "整个网格全局" in source
+    assert "3 × Q" in source
+
+
+def test_generated_chinese_api_page_has_translation_navigation() -> None:
+    page = CHINESE_API.read_text(encoding="utf-8")
+
+    assert '<html lang="zh-CN"' in page
+    assert 'hreflang="en" href="index.html"' in page
+    assert 'hreflang="zh-CN" href="index.zh-CN.html" class="active"' in page
+    assert page.count("data-language-select") == len(EXAMPLES + VECTORIZATION_EXAMPLES)
+    assert "<!-- stride-vectorization-guide -->" not in page
+    assert "<!-- stride-api-catalog -->" not in page
 
 
 def test_python_api_catalog_examples_execute() -> None:

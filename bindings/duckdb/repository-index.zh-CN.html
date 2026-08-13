@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DuckDB packages — stride-align</title>
-  <meta name="description" content="Download stride-align 0.6.0 extension packages for DuckDB 1.5.5 by platform and CPU profile.">
+  <title>DuckDB 软件包 — stride-align</title>
+  <meta name="description" content="按平台与处理器配置下载适用于 DuckDB 1.5.5 的 stride-align 0.6.0 扩展软件包。">
   <meta name="theme-color" content="#21493a">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -55,53 +55,53 @@
 </head>
 <body>
   <div class="topbar">
-    <strong>stride-align / DuckDB packages</strong>
-    <nav aria-label="Page navigation">
-      <a href="https://stride-align.com/bindings/duckdb/">Guide</a>
-      <a href="https://stride-align.com/docs/api/index.html">API</a>
-      <a href="index.zh-CN.html" hreflang="zh-CN" lang="zh-CN">简体中文</a>
+    <strong>stride-align / DuckDB 软件包</strong>
+    <nav aria-label="页面导航">
+      <a href="https://stride-align.com/bindings/duckdb/">使用指南</a>
+      <a href="https://stride-align.com/docs/api/index.zh-CN.html">编程接口</a>
+      <a href="index.html" hreflang="en" lang="en">English</a>
     </nav>
   </div>
   <header>
-    <p class="eyebrow">Release 0.6.0 · DuckDB 1.5.5 · unsigned extension</p>
-    <h1>Choose the package built for your machine.</h1>
-    <p>Match the DuckDB version, platform, and CPU profile. Available artifacts below have been loaded and runtime tested on the stated instruction set; planned packages are clearly marked pending.</p>
-    <a class="primary-cta" href="#packages">View available downloads ↓</a>
+    <p class="eyebrow">版本 0.6.0 · DuckDB 1.5.5 · 未签名扩展</p>
+    <h1>选择为本机处理器构建的软件包。</h1>
+    <p>请同时匹配 DuckDB 版本、平台与处理器配置。下列可下载文件均已在所标注的指令集上完成加载与运行测试；计划中的软件包会明确标为待发布。</p>
+    <a class="primary-cta" href="#packages">查看可下载文件 ↓</a>
   </header>
   <main>
     <section id="packages" aria-labelledby="packages-title">
       <div class="section-heading">
-        <h2 id="packages-title">Available and planned packages</h2>
-        <p>Download links appear only after the artifact has completed runtime validation. Pending rows are not downloadable packages.</p>
+        <h2 id="packages-title">现有与计划中的软件包</h2>
+        <p>只有完成运行验证后才会出现下载链接。标为待发布的行目前并不是可下载的软件包。</p>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Platform</th><th>CPU package</th><th>Artifact</th><th>Validation</th></tr></thead>
+          <thead><tr><th>平台</th><th>处理器软件包</th><th>文件</th><th>验证状态</th></tr></thead>
           <tbody>
-            <tr><td>macOS arm64</td><td>NEON / Apple M1 baseline</td><td><a class="download" href="v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension">Download</a><a class="checksum" href="v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">Runtime tested</td></tr>
-            <tr><td>Linux x86-64</td><td>generic / SSE2 baseline</td><td><a class="download" href="v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension">Download</a><a class="checksum" href="v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">Runtime tested</td></tr>
-            <tr><td>Linux x86-64</td><td>AVX2 / x86-64-v3</td><td><a class="download" href="v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension">Download</a><a class="checksum" href="v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">Runtime tested</td></tr>
-            <tr><td>Linux x86-64</td><td>AVX-512 / x86-64-v4</td><td><a class="download" href="v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension">Download</a><a class="checksum" href="v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">Runtime tested</td></tr>
-            <tr class="pending-row"><td>Linux POWER (ppc64le)</td><td>POWER8+ / VSX</td><td><span class="pending">Pending</span></td><td>Build and runtime validation pending</td></tr>
-            <tr class="pending-row"><td>Linux LoongArch64</td><td>Loongson LA464 / LSX</td><td><span class="pending">Pending</span></td><td>Build and runtime validation pending</td></tr>
-            <tr class="pending-row"><td>Linux LoongArch64</td><td>Loongson LA464 / LASX</td><td><span class="pending">Pending</span></td><td>Build and runtime validation pending</td></tr>
-            <tr class="pending-row"><td>Linux LoongArch64</td><td>Loongson LA664 / LASX</td><td><span class="pending">Pending</span></td><td>Build and runtime validation pending</td></tr>
+            <tr><td>macOS arm64</td><td>NEON / Apple M1 基线</td><td><a class="download" href="v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension">下载</a><a class="checksum" href="v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">已通过运行测试</td></tr>
+            <tr><td>Linux x86-64</td><td>通用 / SSE2 基线</td><td><a class="download" href="v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension">下载</a><a class="checksum" href="v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">已通过运行测试</td></tr>
+            <tr><td>Linux x86-64</td><td>AVX2 / x86-64-v3</td><td><a class="download" href="v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension">下载</a><a class="checksum" href="v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">已通过运行测试</td></tr>
+            <tr><td>Linux x86-64</td><td>AVX-512 / x86-64-v4</td><td><a class="download" href="v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension">下载</a><a class="checksum" href="v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension.sha256">SHA-256</a></td><td class="status">已通过运行测试</td></tr>
+            <tr class="pending-row"><td>Linux POWER（ppc64le）</td><td>POWER8+ / VSX</td><td><span class="pending">待发布</span></td><td>等待构建与运行验证</td></tr>
+            <tr class="pending-row"><td>Linux 龙芯架构 64 位</td><td>龙芯 LA464 / LSX</td><td><span class="pending">待发布</span></td><td>等待构建与运行验证</td></tr>
+            <tr class="pending-row"><td>Linux 龙芯架构 64 位</td><td>龙芯 LA464 / LASX</td><td><span class="pending">待发布</span></td><td>等待构建与运行验证</td></tr>
+            <tr class="pending-row"><td>Linux 龙芯架构 64 位</td><td>龙芯 LA664 / LASX</td><td><span class="pending">待发布</span></td><td>等待构建与运行验证</td></tr>
           </tbody>
         </table>
       </div>
       <div class="notes">
-        <p class="note"><code>linux_amd64</code> is DuckDB's x86-64 platform identifier; it is not a CPU-vendor claim.</p>
-        <p class="note">Loading an instruction-set-specific package on an incompatible processor is not supported.</p>
+        <p class="note"><code>linux_amd64</code> 是 DuckDB 对 x86-64 平台的标识，并不表示处理器厂商。</p>
+        <p class="note">不支持在处理器不兼容时加载针对特定指令集的软件包。</p>
       </div>
     </section>
 
-    <h3>Load the downloaded extension</h3>
+    <h3>加载已下载的扩展</h3>
     <pre><code>duckdb -unsigned
 
 LOAD '/absolute/path/to/stride_align.0.6.0.duckdb_extension';
 SELECT stride_levenshtein('kitten', 'sitting');</code></pre>
-    <p class="note" style="margin-top:20px">The extension registers 167 <code>stride_*</code> SQL function names with 413 overloads. See the <a href="https://stride-align.com/docs/api/index.html">cross-language API</a>, the <a href="https://stride-align.com/bindings/duckdb/FUNCTIONS.html">complete DuckDB function catalog</a>, the <a href="manifest.json">machine-readable manifest</a>, or <a href="SHA256SUMS">all checksums</a>.</p>
+    <p class="note" style="margin-top:20px">扩展注册 167 个 <code>stride_*</code> SQL 函数名称，共有 413 个重载。请参阅<a href="https://stride-align.com/docs/api/index.zh-CN.html">跨语言编程接口</a>、<a href="https://stride-align.com/bindings/duckdb/FUNCTIONS.html">完整 DuckDB 函数目录</a>、<a href="manifest.json">机器可读清单</a>或<a href="SHA256SUMS">全部校验和</a>。</p>
   </main>
-  <footer><span>stride-align 0.6.0 · DuckDB 1.5.5 · Apache-2.0</span><a href="https://github.com/adamdeprince/stride-align">Source code ↗</a></footer>
+  <footer><span>stride-align 0.6.0 · DuckDB 1.5.5 · Apache-2.0</span><a href="https://github.com/adamdeprince/stride-align">源代码 ↗</a></footer>
 </body>
 </html>

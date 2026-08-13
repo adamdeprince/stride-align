@@ -3174,6 +3174,39 @@ body.scientific-home {
   font-size: 12px;
 }
 
+.duckdb-download-link {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 20px;
+  color: #fff;
+  background: var(--research-green);
+  border-top: 1px solid #102f23;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.045em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.duckdb-download-link:visited {
+  color: #fff;
+}
+
+.duckdb-download-link:hover,
+.duckdb-download-link:focus-visible {
+  color: var(--research-green);
+  background: #e5eee8;
+}
+
+.duckdb-download-link b {
+  font-size: 16px;
+  font-weight: 500;
+}
+
 .research-code {
   position: relative;
   background: var(--research-code);

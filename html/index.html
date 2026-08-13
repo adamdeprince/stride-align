@@ -196,6 +196,7 @@
 # your platform, and your CPU package, then set:
 export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension</code></pre>
           </div>
+          <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/duckdb/" rel="noopener"><span>Download the DuckDB extension package</span><b>→</b></a>
           <p>DuckDB extensions are tied to the DuckDB ABI. Choose generic, AVX2, AVX-512, or NEON from the package index rather than loading an ISA your machine does not support.</p>
         </article>
       </div>
@@ -569,9 +570,9 @@ corrected = db.execute(
         SELECT list(word ORDER BY word) AS words
         FROM demo_dictionary
     ), input_tokens AS (
-    SELECT position, token
-    FROM unnest(string_split(lower(?), ' '))
-         WITH ORDINALITY AS tokens(token, position)
+        SELECT position, token
+        FROM unnest(string_split(lower(?), ' '))
+             WITH ORDINALITY AS tokens(token, position)
         WHERE token != ''
     ), matched AS (
         SELECT

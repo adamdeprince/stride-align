@@ -967,6 +967,71 @@ tbody tr:hover {
   display: none !important;
 }
 
+.download-callout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  margin: 30px 0 42px;
+  border: 1px solid var(--docs-green);
+  border-radius: 4px;
+  background: var(--docs-green-light);
+  overflow: hidden;
+}
+
+.download-callout > div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 20px 22px;
+}
+
+.download-callout span,
+.download-callout small {
+  color: var(--docs-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.045em;
+}
+
+.download-callout span {
+  color: var(--docs-green);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.download-callout strong {
+  color: var(--docs-ink);
+  font-size: 19px;
+  font-weight: 500;
+}
+
+.download-callout > a {
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 22px;
+  color: #fff;
+  background: var(--docs-green);
+  border-left: 1px solid var(--docs-green);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.download-callout > a:visited {
+  color: #fff;
+}
+
+.download-callout > a:hover,
+.download-callout > a:focus-visible {
+  color: var(--docs-green);
+  background: #fff;
+}
+
 .api-page .content > p:first-child {
   max-width: 76ch;
   color: #34443b;
@@ -1225,5 +1290,15 @@ tbody tr:hover {
 
   .vectorization-example .api-language-panels pre {
     min-height: 0;
+  }
+
+  .download-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .download-callout > a {
+    min-height: 58px;
+    border-top: 1px solid var(--docs-green);
+    border-left: 0;
   }
 }

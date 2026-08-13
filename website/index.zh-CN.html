@@ -3,233 +3,662 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — Python、R 与 DuckDB 的 SIMD 字符串匹配</title>
-  <meta name="description" content="面向 Python、R 与 DuckDB 的快速 Unicode 字符串匹配与序列比对，由原生 SIMD C++ 引擎驱动。">
-  <meta name="theme-color" content="#b7f34a">
-  <meta property="og:title" content="stride-align — 让字符串快速对齐">
-  <meta property="og:description" content="面向 Python、R 与 DuckDB 的快速、易用、原生支持 Unicode 的字符串匹配。">
+  <title>stride-align — 面向 Python、R 与 DuckDB 的统一码字符串分析</title>
+  <meta name="description" content="面向 Python、R 与 DuckDB、由单指令多数据技术加速的统一码字符串匹配与序列比对，附有可复现的基准测试和可运行示例。">
+  <meta name="theme-color" content="#21493a">
+  <meta property="og:title" content="stride-align — 统一码字符串分析">
+  <meta property="og:description" content="面向 Python、R 与 DuckDB 的字符串匹配与序列比对，由原生单指令多数据内核提供支持。">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="home.css">
 </head>
-<body>
+<body class="scientific-home">
   <a class="skip-link" href="#main">跳到主要内容</a>
 
-  <header class="site-header">
-    <div class="brand-area">
-      <a class="brand" href="index.zh-CN.html" aria-label="stride-align 中文首页">
-        <span class="mascot-mark" aria-hidden="true"><img src="goblin.png" alt=""></span>
-        <span>stride<span class="brand-dash">-</span>align</span>
-      </a>
-      <a class="product-credit" href="https://goblinreactor.com" rel="noopener">
-        <span class="product-long">Goblin Reactor 出品</span><span class="product-short">Goblin Reactor</span><b>↗</b>
-      </a>
-    </div>
-    <nav class="primary-nav" aria-label="主导航">
-      <a href="#uses">应用场景</a>
-      <a href="bindings/r/index.html">R</a>
-      <a href="bindings/duckdb/index.html">DuckDB</a>
-      <a href="#performance">性能</a>
-      <a href="docs/api/index.html">文档</a>
-      <a href="README.zh-CN.html">自述文件</a>
+  <header class="research-header">
+    <a class="research-brand" href="index.zh-CN.html" aria-label="stride-align 中文首页">
+      <span class="research-mark" aria-hidden="true"><img src="goblin.png" alt=""></span>
+      <span class="research-brand-copy">
+        <strong>stride-align</strong>
+        <small>字符串匹配与序列比对</small>
+      </span>
+    </a>
+    <nav class="research-nav" aria-label="主导航">
+      <a href="#scope">范围</a>
+      <a href="#results">测量结果</a>
+      <a href="#install">示例</a>
+      <a href="docs/api/index.zh-CN.html">编程接口</a>
     </nav>
-    <div class="header-actions">
-      <a class="language-cta" href="index.html" hreflang="en" lang="en">English</a>
-      <a class="header-cta" href="https://github.com/adamdeprince/stride-align" rel="noopener">GitHub <span aria-hidden="true">↗</span></a>
+    <div class="research-actions">
+      <a href="index.html" hreflang="en" lang="en">English</a>
+      <a href="https://github.com/adamdeprince/stride-align" rel="noopener">源代码 ↗</a>
     </div>
   </header>
 
   <main id="main">
-    <section class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow"><span>SIMD 字符串匹配</span> PYTHON + R + DUCKDB</p>
-        <h1>让字符串<br><em>快速</em>对齐</h1>
-        <p class="hero-lede">模糊匹配与序列比对，原生支持中日韩文字。Python 字符串、R 字符向量与 DuckDB <code>VARCHAR</code> 共用同一个快速、支持 Unicode 的原生引擎。</p>
-        <div class="unicode-proof" aria-label="Python、R 与 DuckDB 的 SIMD 路径">
-          <span>PYTHON · R · DUCKDB</span><i>→</i><strong>原生评分器</strong><i>→</i><b>SIMD</b>
+    <section class="research-intro" id="scope">
+      <div class="research-intro-copy">
+        <p class="research-label">版本 0.6.0 · Apache-2.0</p>
+        <h1>统一码（Unicode）字符串比较与序列比对。</h1>
+        <p class="research-lede">stride-align 以一套原生 C++ 实现提供编辑距离、相似度、生物序列比对、语音编码与时间序列比对。Python、R 和 DuckDB 使用相同的底层评分定义。</p>
+        <div class="research-actions-row">
+          <a class="research-button" href="#install">运行示例</a>
+          <a class="research-text-link" href="#results">查看测量结果 ↓</a>
+          <a class="research-text-link" href="docs/api/index.zh-CN.html">浏览编程接口 ↗</a>
         </div>
-        <div class="hero-actions">
-          <a class="button button-dark" href="#install">开始使用 <span aria-hidden="true">→</span></a>
-          <a class="text-link" href="BENCHMARK.html">查看数据 <span aria-hidden="true">↗</span></a>
-        </div>
-        <ul class="hero-meta" aria-label="项目详情">
-          <li>Apache 2.0</li>
-          <li>Python 3.12+</li>
-          <li>R 软件包</li>
-          <li>DuckDB 扩展</li>
-        </ul>
       </div>
 
-      <div class="hero-demo" aria-label="原生 Python Unicode 中文字符串比对示例">
-        <aside class="hero-benchmark" aria-label="Intel AVX-512 相对 Parasail 的性能">
-          <p>INTEL / AVX-512 / 对 PARASAIL</p>
-          <div><strong>1.68<span>×</span></strong><small>总体几何平均</small></div>
-          <div><strong>79<span>/80</span></strong><small>胜出项目</small></div>
-          <div><strong>1.88<span>×</span></strong><small>路径 + CIGAR</small></div>
-          <div><strong>1.55<span>×</span></strong><small>中日韩 / 中文测试</small></div>
-        </aside>
-        <div class="demo-topline">
-          <span>中文比对 / PYTHON UNICODE</span>
-          <span class="status"><i></i> UCS-2 SIMD</span>
+      <aside class="project-record" aria-labelledby="project-record-title">
+        <h2 id="project-record-title">项目概览</h2>
+        <dl>
+          <div><dt>接口</dt><dd>Python、R、DuckDB SQL</dd></div>
+          <div><dt>文本模型</dt><dd>统一码，包括中日韩文字与表情符号</dd></div>
+          <div><dt>执行形式</dt><dd>标量、批量、全配对、阈值、前 k 项</dd></div>
+          <div><dt>体系结构</dt><dd>x86、Arm、LoongArch、POWER</dd></div>
+          <div><dt>源代码</dt><dd><a href="https://github.com/adamdeprince/stride-align" rel="noopener">GitHub 仓库 ↗</a></dd></div>
+        </dl>
+      </aside>
+
+      <div class="capability-table" aria-label="算法系列">
+        <article>
+          <span>01</span>
+          <h2>编辑距离与相似度</h2>
+          <p>Levenshtein、OSA、无限制 Damerau–Levenshtein、Indel、Hamming、Jaro、Jaro–Winkler、LCS、n-gram 与 Ratcliff–Obershelp。</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h2>序列比对</h2>
+          <p>Smith–Waterman 与 Needleman–Wunsch，支持线性或仿射空位、仅评分路径、回溯、CIGAR 输出及替换矩阵。</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h2>筛选与矩阵</h2>
+          <p>一对多评分、全配对距离矩阵（cdist）、阈值、有限的前 k 项筛选、内置生物矩阵与自定义矩阵。</p>
+        </article>
+        <article>
+          <span>04</span>
+          <h2>其他分析</h2>
+          <p>语音编码器、Monge–Elkan、键盘感知评分，以及用于数值序列的动态时间规整。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="research-results" id="results">
+      <div class="research-section-heading">
+        <div>
+          <p class="research-label">选定测量结果</p>
+          <h2>性能结论均附基线与工作负载。</h2>
         </div>
-        <div class="score-readout">
-          <span class="score-label">归一化相似度</span>
-          <strong>0.9412</strong>
+        <p>比值为基线中位运行时间除以 stride-align 中位运行时间；大于 1.0 表示 stride-align 更快。这些数据来自固定主机上的测量，并非普遍常数。</p>
+      </div>
+
+      <div class="measurement-table-wrap">
+        <table class="measurement-table">
+          <thead>
+            <tr>
+              <th scope="col">工作负载</th>
+              <th scope="col">主机 / 后端</th>
+              <th scope="col">基线</th>
+              <th scope="col">几何平均</th>
+              <th scope="col">覆盖情况</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">全部序列比对项目</th>
+              <td>Intel Xeon 6975P-C / AVX-512</td>
+              <td>Parasail 1.3.4</td>
+              <td class="measurement-value">1.682×</td>
+              <td>79 / 80 项胜出</td>
+            </tr>
+            <tr>
+              <th scope="row">路径与 CIGAR 输出</th>
+              <td>Intel Xeon 6975P-C / AVX-512</td>
+              <td>Parasail 1.3.4</td>
+              <td class="measurement-value">1.883×</td>
+              <td>32 / 32 项胜出</td>
+            </tr>
+            <tr>
+              <th scope="row">中文序列比对输入</th>
+              <td>Intel Xeon 6975P-C / AVX-512</td>
+              <td>Parasail 1.3.4</td>
+              <td class="measurement-value">1.548×</td>
+              <td>39 / 40 项胜出</td>
+            </tr>
+            <tr>
+              <th scope="row">Levenshtein，1 × 1,000 个 KJV 目标</th>
+              <td>Intel Xeon 6975P-C / AVX-512</td>
+              <td>RapidFuzz</td>
+              <td class="measurement-value">3.749×</td>
+              <td>14 / 14 项胜出</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="measurement-notes">
+        <p><strong>序列比对测试规程。</strong>GCC 16.1；预热三次后计时 15 次；使用英文与中文输入、线性与仿射空位、16 位与 32 位评分，以及 1:1 和 1:many 两种形状。AVX-512 唯一落后的一项仍计入汇总。</p>
+        <p><strong>数据文件。</strong><a href="benchmarks/intel-avx512-parasail-2026-07-18.csv">序列比对 CSV</a> · <a href="benchmarks/intel-levenshtein-2026-07-17.csv">Levenshtein CSV</a> · <a href="BENCHMARK.html">完整方法与结果</a></p>
+      </div>
+    </section>
+
+    <section class="walkthrough-intro" aria-labelledby="walkthrough-title">
+      <p class="research-label">可复现的演练</p>
+      <h2 id="walkthrough-title">先安装并验证，再从一对字符串扩展到整个语料库。</h2>
+      <p>每一步都有语言选择器，而且彼此同步。无论读到哪里，只需选择一次接口，整套演练就会随之切换。</p>
+    </section>
+
+    <div class="workflow-steps">
+    <section class="workflow-step" id="install">
+      <div class="workflow-step-heading">
+        <p class="step-number" aria-label="步骤 1"></p>
+        <h2>安装所选接口。</h2>
+        <p>三个接口都公开原生 stride-align 算法。DuckDB 软件包需要按 DuckDB 版本、平台和单指令多数据（SIMD）级别明确选择。</p>
+        <div class="example-language-control">
+          <label for="install-language">语言</label>
+          <span><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
         </div>
-        <div class="sequence-block">
-          <div class="sequence-label"><span>查询</span><span>17 个字符</span></div>
-          <div class="sequence sequence-cjk" aria-label="在开始的时候，机器学会了理解文字。">
-            <span>在</span><span>开</span><span>始</span><span>的</span><span>时</span><span>候</span><span>，</span><span>机</span><span>器</span><span>学</span><span>会</span><span>了</span><span>理</span><span>解</span><span>文</span><span class="mismatch">字</span><span>。</span>
+      </div>
+      <div class="workflow-stage">
+        <article class="language-panel" data-language-panel="python">
+          <header><span>Python</span><a href="README.zh-CN.html#_1">安装指南 ↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-python-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="install-python-code">python3 -m pip install stride-align</code></pre>
           </div>
-          <div class="match-rail match-rail-cjk" aria-hidden="true">
-            <span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span>│</span><span class="mismatch-mark">×</span><span>│</span>
+          <p>二进制 wheel 包含受支持的后端，并在模块加载时选择最佳的兼容实现。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="r" hidden>
+          <header><span>R</span><a href="https://distribution.goblinreactor.com/stride-align/R/" rel="noopener">软件包仓库 ↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-r-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="install-r-code">R -q -e 'install.packages(
+  "stridealign",
+  repos="https://distribution.goblinreactor.com/stride-align/R",
+  type="source"
+)'</code></pre>
           </div>
-          <div class="sequence sequence-cjk target" aria-label="在开始的时候，机器学会了理解文本。">
-            <span>在</span><span>开</span><span>始</span><span>的</span><span>时</span><span>候</span><span>，</span><span>机</span><span>器</span><span>学</span><span>会</span><span>了</span><span>理</span><span>解</span><span>文</span><span class="gap">本</span><span>。</span>
+          <p>托管的源码包是可移植的安装方式。仓库也会标明二进制包适用的更具体环境。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="duckdb" hidden>
+          <header><span>由 Python 编排的 DuckDB SQL</span><a href="https://distribution.goblinreactor.com/stride-align/duckdb/index.zh-CN.html" rel="noopener">扩展软件包 ↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-duckdb-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="install-duckdb-code">python3 -m pip install duckdb==1.5.5
+
+# 下载与 DuckDB 1.5.5、平台和 CPU 软件包匹配的扩展，然后设置：
+export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension</code></pre>
           </div>
-          <div class="sequence-label sequence-label-bottom"><span>目标</span><span>17 个字符</span></div>
-        </div>
-        <div class="kernel-line">
-          <span>内核</span><strong>levenshtein_normalized_score</strong><span class="simd-pill">无需 UTF-8</span>
-        </div>
-        <div class="demo-grid" aria-hidden="true"></div>
-      </div>
-
-      <div class="proof-strip" aria-label="性能摘要">
-      <article><strong>1.68<span>×</span></strong><p>对 Parasail 的总体几何平均值<br><small>Intel / AVX-512 / 80 项</small></p></article>
-      <article><strong>79<span>/80</span></strong><p>对 Parasail 的胜出项目<br><small>Intel / AVX-512</small></p></article>
-      <article><strong>1.88<span>×</span></strong><p>路径与 CIGAR 几何平均值<br><small>对 Parasail 32 项全胜</small></p></article>
-      <article><strong>1.55<span>×</span></strong><p>中文文本对 Parasail 的几何平均值<br><small>中日韩 / 40 项中胜 39 项</small></p></article>
-      </div>
-    </section>
-
-    <section class="section uses" id="uses">
-      <div class="section-intro">
-        <p class="kicker">01 / 能做什么</p>
-        <h2>不必再用六个库拼出一套字符串处理栈。</h2>
-        <p>从容错搜索到生物序列比对，使用同一套快速、一致的 API。批量路径只准备一次查询，并释放 GIL，让 SIMD 通道持续工作。</p>
-      </div>
-      <div class="use-grid">
-        <article class="use-card use-card-featured">
-          <span class="card-number">01</span><div class="card-glyph glyph-search" aria-hidden="true"><i></i><i></i><i></i></div>
-          <div><p class="card-label">搜索与匹配</p><h3>即使文字有误，也能找到正确结果。</h3><p>面向模糊搜索、拼写修正、记录关联、去重与实体解析，一次查询即可对整个语料库评分。</p></div>
-          <a href="docs/api/similarity.html">相似度 API <span>→</span></a>
-        </article>
-        <article class="use-card">
-          <span class="card-number">02</span>
-          <div><p class="card-label">序列比对</p><h3>局部或全局，线性或仿射空位。</h3><p>Smith–Waterman 与 Needleman–Wunsch，支持仅评分、回溯、CIGAR 输出和内置生物矩阵。</p></div>
-          <a href="docs/api/alignment.html">比对 API <span>→</span></a>
-        </article>
-        <article class="use-card">
-          <span class="card-number">03</span>
-          <div><p class="card-label">姓名与记录</p><h3>按读音匹配，而不仅是拼写。</h3><p>Soundex、Metaphone、NYSIIS、Caverphone、Cologne、Daitch–Mokotoff 与 Beider–Morse 均可直接使用。</p></div>
-          <a href="docs/api/phonetic.html">语音编码 API <span>→</span></a>
-        </article>
-        <article class="use-card use-card-accent">
-          <span class="card-number">04</span>
-          <div><p class="card-label">时间序列</p><h3>即使时间漂移，也能对齐信号。</h3><p>动态时间规整适用于音频、传感器、手势与金融序列，支持批量距离和 Sakoe–Chiba 窗口。</p></div>
-          <a href="docs/api/dtw.html">DTW API <span>→</span></a>
+          <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/duckdb/index.zh-CN.html" rel="noopener"><span>下载 DuckDB 扩展软件包</span><b>→</b></a>
+          <p>DuckDB 扩展与 DuckDB ABI 绑定。请从软件包索引选择 generic、AVX2、AVX-512 或 NEON，不要加载本机不支持的指令集。</p>
         </article>
       </div>
     </section>
 
-    <section class="engine" id="engine">
-      <div class="engine-heading"><p class="kicker kicker-light">02 / 同一个引擎</p><h2>选择熟悉的入口。<br><span>调度器负责底层性能。</span></h2></div>
-      <div class="dispatch-diagram" aria-label="运行时 CPU 调度流程">
-        <div class="dispatch-source"><span>语言入口</span><code>Python · R · DuckDB</code></div>
-        <div class="dispatch-arrow" aria-hidden="true"><span></span><b>运行时调度</b></div>
-        <div class="dispatch-targets">
-          <div><span>01</span><strong>x86</strong><small>AVX2 / AVX-512</small></div>
-          <div><span>02</span><strong>ARM</strong><small>NEON / SVE</small></div>
-          <div><span>03</span><strong>LoongArch</strong><small>LSX / LASX</small></div>
-          <div><span>04</span><strong>POWER</strong><small>VSX</small></div>
-          <div class="scalar"><span>05</span><strong>标量</strong><small>可移植后备路径</small></div>
+    <section class="workflow-step" id="first-score">
+      <div class="workflow-step-heading">
+        <p class="step-number" aria-label="步骤 2"></p>
+        <h2>验证一对字符串。</h2>
+        <p>两个字符串的四个码点中有一个不同，因此归一化 Levenshtein 相似度为 3 ÷ 4 = 0.75。</p>
+        <div class="example-language-control">
+          <label for="trivial-language">语言</label>
+          <span><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
         </div>
       </div>
-      <div class="engine-details">
-        <article><span>UNICODE 不绕路</span><h3>UCS-2 与 UCS-4 是一等 SIMD 目标。</h3><p>开发者无需先把 Python 字符串编码为 UTF-8。中文、日文、韩文、阿拉伯文和 emoji 通过 UCS-1、UCS-2 或 UCS-4 直接访问，并保持在向量化路径上。</p></article>
-        <article><span>一次查询 × 多个目标</span><h3>批量处理是主要路径。</h3><p>在候选列表之间复用已经准备好的查询，或通过阈值、剪枝和逐查询 top-k 运行完整的 <code>cdist</code>。</p></article>
-      </div>
-    </section>
-
-    <section class="compat section">
-      <div class="compat-copy">
-        <p class="kicker">03 / 迁移现有代码</p><h2>真的只需改一行 import。</h2>
-        <p>保留熟悉的 API，同时把工作迁移到 stride-align 内核。新代码应直接使用 <code>stride_align</code>，现有代码则可走最短迁移路径。</p>
-        <a class="text-link text-link-dark" href="docs/api/index.html#compatibility-shims-migration-aids">查看兼容层 <span>→</span></a>
-      </div>
-      <div class="import-stack">
-        <div class="code-window"><div class="window-title"><span></span><span></span><span></span><b>migration.py</b></div><pre><code><span class="code-comment"># 修改前</span>
-<span class="code-dim">import rapidfuzz</span>
-
-<span class="code-comment"># 修改后</span>
-<span class="code-keyword">import</span> stride_align.rapidfuzz <span class="code-keyword">as</span> rapidfuzz</code></pre></div>
-        <div class="shim-list"><span>rapidfuzz</span><span>TheFuzz</span><span>parasail</span><span>jellyfish</span></div>
-      </div>
-    </section>
-
-    <section class="performance" id="performance">
-      <div class="performance-intro">
-        <p class="kicker">04 / 用数据说话</p><h2>每个性能结论都有对应工作负载。</h2>
-        <p>基准覆盖多种架构、算法、文本类型、评分宽度与对照库，并同时记录退步项目与正确性取舍。</p>
-        <a class="button button-acid" href="BENCHMARK.html">打开基准账本 <span>↗</span></a>
-      </div>
-      <div class="benchmark-board">
-        <div class="board-header"><span>INTEL X86 / AVX-512 对 PARASAIL</span><span>几何平均值 · 越高越好</span></div>
-        <div class="benchmark-row"><div><strong>NW 路径</strong><small>8 / 8 胜</small></div><div class="bar-track"><i style="--bar:100%"></i></div><b>2.356×</b></div>
-        <div class="benchmark-row"><div><strong>NW CIGAR</strong><small>8 / 8 胜</small></div><div class="bar-track"><i style="--bar:99.4%"></i></div><b>2.341×</b></div>
-        <div class="benchmark-row"><div><strong>SW 评分</strong><small>16 / 16 胜</small></div><div class="bar-track"><i style="--bar:84.4%"></i></div><b>1.989×</b></div>
-        <div class="benchmark-row"><div><strong>全部工作负载</strong><small>79 / 80 胜</small></div><div class="bar-track"><i style="--bar:71.4%"></i></div><b>1.682×</b></div>
-        <p class="board-note">7 月 18 日重新测试。80 项覆盖英文与中文、线性与仿射评分、16/32 位宽度，以及 1:1 和 1:many 两种形状；对照版本为 Parasail 1.3.4。</p>
-        <aside class="architecture-aside" aria-labelledby="loongson-aside-title-zh">
-          <p class="aside-kicker">架构旁注 / 龙芯</p><h3 id="loongson-aside-title-zh">非常规硬件同样受到支持。</h3>
-          <p>LoongArch 支持 LSX 与 LASX 运行时调度，并提供旧世界和新世界两套 wheel。它不是主打平台，但验证了可移植后端策略。</p>
-          <div class="aside-stats"><div><strong>49.17×</strong><span>rapidfuzz 几何平均值<br>108 项 / LASX</span></div><div><strong>22.4×</strong><span>Parasail<br>指定 SW 仅评分测试</span></div><div><strong>16×</strong><span>通用后端<br>同一指定 SW 测试</span></div></div>
-        </aside>
-      </div>
-    </section>
-
-    <section class="install section" id="install">
-      <div class="install-heading"><p class="kicker">05 / 从这里开始</p><h2>两行代码开始匹配。</h2></div>
-      <div class="install-panel">
-        <div class="terminal-line"><span class="prompt">$</span><code>pip install stride-align</code><button class="copy-button" type="button" data-copy="pip install stride-align" aria-label="复制安装命令"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button></div>
-        <div class="quick-code"><pre><code><span class="code-keyword">import</span> stride_align <span class="code-keyword">as</span> sa
+      <div class="workflow-stage">
+        <article class="language-panel" data-language-panel="python">
+          <header><span>保存为 trivial.py</span><code>python3 trivial.py</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-python-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="trivial-python-code">import stride_align as sa
 
 score = sa.levenshtein_normalized_score(
-    <span class="code-string">"在开始的时候，机器学会了理解文字。"</span>,
-    <span class="code-string">"在开始的时候，机器学会了理解文本。"</span>,
+    "你好世界",
+    "你好世间",
+)
+print(score)</code></pre>
+          </div>
+        </article>
+
+        <article class="language-panel" data-language-panel="r" hidden>
+          <header><span>保存为 trivial.R</span><code>Rscript trivial.R</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-r-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="trivial-r-code">library(stridealign)
+
+score &lt;- levenshtein_normalized_score(
+    "你好世界",
+    "你好世间"
+)
+print(score)</code></pre>
+          </div>
+        </article>
+
+        <article class="language-panel" data-language-panel="duckdb" hidden>
+          <header><span>保存为 trivial_duckdb.py</span><code>python3 trivial_duckdb.py</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-duckdb-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="trivial-duckdb-code">import os
+import duckdb
+
+db = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+extension = os.environ["STRIDE_ALIGN_DUCKDB_EXTENSION"].replace("'", "''")
+db.execute(f"LOAD '{extension}'")
+
+score = db.execute(
+    "SELECT stride_levenshtein_similarity(?, ?)",
+    ["你好世界", "你好世间"],
+).fetchone()[0]
+print(score)</code></pre>
+          </div>
+        </article>
+
+        <div class="expected-result">
+          <span>预期结果</span>
+          <code>0.75</code>
+        </div>
+      </div>
+    </section>
+
+    <section class="workflow-step" id="bible-search">
+      <div class="workflow-step-heading">
+        <p class="step-number" aria-label="步骤 3"></p>
+        <h2>用模糊匹配在语料库中查找一段意译。</h2>
+        <p>查询与目标使用了不同措辞，所以精确子串搜索会失败。本例将一个查询与 31,102 条记录进行评分，并返回得分最高的完整记录。</p>
+        <aside class="corpus-note" aria-label="作者对示例语料库的说明">
+          <strong>作者说明</strong>
+          <p>如果在这里使用基督教经文让任何人感到被排斥或冒犯，我在此致歉。我无意用宗教文本表达宗教立场或推广任何主张。这个演示需要多部大型公版文献，它们以不同措辞表达相同含义；不同《圣经》译本恰好非常符合这一要求——甚至好得有些离谱。</p>
+        </aside>
+        <div class="example-language-control">
+          <label for="bible-language">语言</label>
+          <span><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
+        </div>
+      </div>
+      <div class="workflow-stage">
+        <article class="language-panel" data-language-panel="python">
+          <header><span>Python 批量 API</span><code>python3 bible.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-python-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="bible-python-code">from pathlib import Path
+from urllib.request import urlretrieve
+
+import stride_align as sa
+
+corpus = Path("kjv.txt")
+if not corpus.exists():
+    urlretrieve("https://openbible.com/textfiles/kjv.txt", corpus)
+
+rows = [
+    line.split("\t", 1)
+    for line in corpus.read_text(encoding="utf-8-sig").splitlines()
+    if "\t" in line
+]
+references, verses = zip(*rows, strict=True)
+
+query = (
+    "The earth will mourn, and the heavens will lament from above. "
+    "For I have spoken, I have decided, and I have not regretted. "
+    "Neither will I be turned away from it."
+)
+scores = sa.needleman_wunsch_normalized_scores(
+    query.lower(),
+    [verse.lower() for verse in verses],
+)
+best = int(scores.argmax())
+
+print(f"{references[best]}\t{verses[best]}")
+print(f"score: {float(scores[best]):.6f}")</code></pre>
+          </div>
+          <p>一次 Python 调用即可为整个目标序列评分；批量处理中会复用已准备好的查询。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="r" hidden>
+          <header><span>R 批量 API</span><code>Rscript bible.R</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-r-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="bible-r-code">library(stridealign)
+
+corpus &lt;- "kjv.txt"
+if (!file.exists(corpus)) {
+    download.file(
+        "https://openbible.com/textfiles/kjv.txt",
+        corpus,
+        mode = "wb",
+        quiet = TRUE
+    )
+}
+
+lines &lt;- readLines(corpus, encoding = "UTF-8")
+rows &lt;- strsplit(
+    lines[grepl("\t", lines, fixed = TRUE)],
+    "\t",
+    fixed = TRUE
+)
+references &lt;- vapply(rows, `[[`, "", 1L)
+verses &lt;- vapply(rows, function(row) paste(row[-1L], collapse = "\t"), "")
+
+query &lt;- paste(
+    "The earth will mourn, and the heavens will lament from above.",
+    "For I have spoken, I have decided, and I have not regretted.",
+    "Neither will I be turned away from it."
+)
+scores &lt;- needleman_wunsch_normalized_scores(
+    tolower(query),
+    tolower(verses)
+)
+best &lt;- which.max(scores)
+
+cat(references[[best]], "\t", verses[[best]], "\n", sep = "")
+cat(sprintf("score: %.6f\n", scores[[best]]))</code></pre>
+          </div>
+          <p>R 将完整字符向量交给批量 API，并为每节经文接收一个分数。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="duckdb" hidden>
+          <header><span>保存为 bible_duckdb.py</span><code>python3 bible_duckdb.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-duckdb-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="bible-duckdb-code">import os
+from pathlib import Path
+from urllib.request import urlretrieve
+
+import duckdb
+
+corpus = Path("kjv.txt")
+if not corpus.exists():
+    urlretrieve("https://openbible.com/textfiles/kjv.txt", corpus)
+
+db = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+extension = os.environ["STRIDE_ALIGN_DUCKDB_EXTENSION"].replace("'", "''")
+db.execute(f"LOAD '{extension}'")
+
+db.execute(
+    """
+    CREATE OR REPLACE TABLE demo_bible AS
+    SELECT trim(reference) AS reference, trim(verse) AS verse
+    FROM read_csv(
+        ?,
+        delim = '\t',
+        header = false,
+        skip = 2,
+        columns = {'reference': 'VARCHAR', 'verse': 'VARCHAR'},
+        quote = '',
+        escape = ''
+    )
+    WHERE reference IS NOT NULL
+      AND verse IS NOT NULL
+      AND trim(verse) != ''
+    """,
+    [str(corpus.resolve())],
 )
 
-<span class="code-call">print</span>(score)  <span class="code-comment"># 0.9411764705882353</span></code></pre></div>
+query = (
+    "The earth will mourn, and the heavens will lament from above. "
+    "For I have spoken, I have decided, and I have not regretted. "
+    "Neither will I be turned away from it."
+)
+
+reference, verse, score = db.execute(
+    """
+    WITH corpus AS (
+        SELECT
+            list(reference ORDER BY reference, verse) AS reference_values,
+            list(verse ORDER BY reference, verse) AS verse_values,
+            list(lower(verse) ORDER BY reference, verse) AS normalized_verses
+        FROM demo_bible
+    ), matched AS (
+        SELECT
+            reference_values,
+            verse_values,
+            stride_extract_best(
+                lower(?),
+                normalized_verses,
+                'needleman_wunsch_normalized'
+            ) AS best_match
+        FROM corpus
+    )
+    SELECT
+        reference_values[cast(best_match.index AS BIGINT) + 1] AS reference,
+        verse_values[cast(best_match.index AS BIGINT) + 1] AS verse,
+        best_match.score AS score
+    FROM matched
+    """,
+    [query],
+).fetchone()
+
+print(f"{reference}\t{verse}")
+print(f"score: {score:.6f}")</code></pre>
+          </div>
+          <p>Python 编排方式与 Python 示例一样：已有文件就复用，否则下载；随后将语料库载入 DuckDB。SQL 形成一个有序候选列表，再由 <code>stride_extract_best</code> 执行 stride-align 优化的 Needleman–Wunsch 批量与最佳一项路径。</p>
+        </article>
+
+        <div class="experiment-result">
+          <span>实际排名第一的记录</span>
+          <dl>
+            <div><dt>出处</dt><dd>Jeremiah 4:28</dd></div>
+            <div><dt>名次</dt><dd>31,102 条中的第 1 名</dd></div>
+            <div><dt>分数</dt><dd>0.419643</dd></div>
+            <div><dt>度量</dt><dd>归一化 Needleman–Wunsch</dd></div>
+          </dl>
+        </div>
       </div>
-      <div class="install-links">
-        <a href="README.zh-CN.html#_1"><span>01</span><strong>阅读入门教程</strong><i>→</i></a>
-        <a href="docs/api/index.html"><span>02</span><strong>浏览 API</strong><i>→</i></a>
-        <a href="bindings/r/index.html"><span>03</span><strong>使用 R 软件包</strong><i>→</i></a>
-        <a href="bindings/duckdb/index.html"><span>04</span><strong>使用 DuckDB 扩展</strong><i>→</i></a>
+    </section>
+
+    <section class="workflow-step" id="spell-checker">
+      <div class="workflow-step-heading">
+        <p class="step-number" aria-label="步骤 4"></p>
+        <h2>把同一操作用于拼写检查器。</h2>
+        <p>这个示例有意保持简单，不处理标点、词频、上下文或专有名词。它只用于展示如何通过批量或向量化路径，把一个词元与整部词典比较。</p>
+        <div class="example-language-control">
+          <label for="spell-language">语言</label>
+          <span><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
+        </div>
       </div>
+      <div class="workflow-stage">
+        <article class="language-panel" data-language-panel="python">
+          <header><span>Python 批量 API</span><code>printf '...' | python3 spell.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-python-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="spell-python-code">import sys
+from pathlib import Path
+
+import stride_align as sa
+
+paths = [
+    Path("/usr/share/dict/words"),
+    Path("/usr/dict/words"),
+    Path("/var/lib/dict/words"),
+    Path("/etc/dictionaries-common/words"),
+]
+dictionary_path = next(path for path in paths if path.is_file())
+words = list(dict.fromkeys(
+    word.strip().lower()
+    for word in dictionary_path.read_text(errors="ignore").splitlines()
+    if word.strip()
+))
+
+def correct(token):
+    scores = sa.needleman_wunsch_normalized_scores(token, words)
+    return words[int(scores.argmax())]
+
+tokens = sys.stdin.readline().lower().split()
+print(" ".join(correct(token) for token in tokens))</code></pre>
+          </div>
+          <p>每个词元都会对整部词典发起一次批量调用；评分循环留在原生库中。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="r" hidden>
+          <header><span>R 批量 API</span><code>printf '...' | Rscript spell.R</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-r-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="spell-r-code">library(stridealign)
+
+paths &lt;- c(
+    "/usr/share/dict/words",
+    "/usr/dict/words",
+    "/var/lib/dict/words",
+    "/etc/dictionaries-common/words"
+)
+dictionary_path &lt;- paths[file.exists(paths)][[1L]]
+words &lt;- unique(tolower(readLines(dictionary_path, warn = FALSE)))
+words &lt;- words[nzchar(words)]
+
+correct &lt;- function(token) {
+    scores &lt;- needleman_wunsch_normalized_scores(token, words)
+    words[[which.max(scores)]]
+}
+
+line &lt;- readLines("stdin", n = 1L, warn = FALSE)
+tokens &lt;- strsplit(tolower(line), "\\s+")[[1L]]
+cat(paste(vapply(tokens, correct, ""), collapse = " "), "\n")</code></pre>
+          </div>
+          <p>每个词元是一个标量，候选词典则作为一个 R 字符向量传给批量 API。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="duckdb" hidden>
+          <header><span>保存为 spell_duckdb.py</span><code>printf '...' | python3 spell_duckdb.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-duckdb-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="spell-duckdb-code">import os
+import sys
+from pathlib import Path
+
+import duckdb
+
+paths = [
+    Path("/usr/share/dict/words"),
+    Path("/usr/dict/words"),
+    Path("/var/lib/dict/words"),
+    Path("/etc/dictionaries-common/words"),
+]
+dictionary_path = next((path for path in paths if path.is_file()), None)
+if dictionary_path is None:
+    raise FileNotFoundError("no system dictionary found")
+
+db = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+extension = os.environ["STRIDE_ALIGN_DUCKDB_EXTENSION"].replace("'", "''")
+db.execute(f"LOAD '{extension}'")
+
+db.execute(
+    """
+    CREATE OR REPLACE TABLE demo_dictionary AS
+    SELECT DISTINCT lower(trim(word)) AS word
+    FROM read_csv(
+        ?,
+        delim = '\x1f',
+        header = false,
+        columns = {'word': 'VARCHAR'},
+        quote = '',
+        escape = ''
+    )
+    WHERE word IS NOT NULL AND trim(word) != ''
+    """,
+    [str(dictionary_path.resolve())],
+)
+
+line = sys.stdin.readline()
+corrected = db.execute(
+    """
+    WITH dictionary AS (
+        SELECT list(word ORDER BY word) AS words
+        FROM demo_dictionary
+    ), input_tokens AS (
+        SELECT position, token
+        FROM unnest(string_split(lower(?), ' '))
+             WITH ORDINALITY AS tokens(token, position)
+        WHERE token != ''
+    ), matched AS (
+        SELECT
+            position,
+            stride_extract_best(
+                token,
+                words,
+                'needleman_wunsch_normalized'
+            ) AS best_match
+        FROM input_tokens
+        CROSS JOIN dictionary
+    )
+    SELECT coalesce(
+        string_agg(best_match.target, ' ' ORDER BY position),
+        ''
+    )
+    FROM matched
+    """,
+    [line],
+).fetchone()[0]
+
+print(corrected)</code></pre>
+          </div>
+          <p>Python 查找词典、旁加载扩展并提交一次查询。DuckDB 负责分词和重组；每个词元都通过 stride-align 的一对多最佳匹配操作完成处理。</p>
+        </article>
+
+        <div class="expected-result expected-result-block spell-result">
+          <span>示例</span>
+          <p><strong>输入</strong> this is a demonstrtion of a spell checker</p>
+          <p><strong>输出</strong> this is a demonstration of a spell checker</p>
+        </div>
+      </div>
+    </section>
+    </div>
+
+    <section class="research-next" aria-labelledby="next-title">
+      <div>
+        <p class="research-label">参考资料</p>
+        <h2 id="next-title">在三个接口中使用同一套 API。</h2>
+      </div>
+      <nav aria-label="API 文档">
+        <a href="docs/api/index.zh-CN.html"><span>编程接口</span><strong>查看 Python、R 与 DuckDB 中的每一种算法</strong><i>→</i></a>
+      </nav>
     </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="footer-brand"><a class="brand brand-footer" href="index.zh-CN.html"><span class="mascot-mark mascot-footer" aria-hidden="true"><img src="goblin.png" alt=""></span><span>stride<span class="brand-dash">-</span>align</span></a><p>每秒完成更多比对。<br>少一些增加服务器的理由。</p></div>
-    <div class="footer-links"><div><span>项目</span><a href="README.zh-CN.html">自述文件</a><a href="docs/api/index.html">API 参考</a><a href="bindings/r/index.html">R 软件包</a><a href="bindings/duckdb/index.html">DuckDB 扩展</a><a href="CHANGELOG.html">更新记录</a></div><div><span>证据</span><a href="BENCHMARK.html">基准测试</a><a href="https://github.com/adamdeprince/stride-align" rel="noopener">源代码 ↗</a><a href="index.html" hreflang="en">English</a></div></div>
-    <div class="footer-bottom"><span>STRIDE-ALIGN / APACHE-2.0</span><span>由 <a href="https://goblinreactor.com" rel="noopener">Goblin Reactor ↗</a> 构建</span></div>
+  <footer class="research-footer">
+    <div>
+      <strong>stride-align 0.6.0</strong>
+      <span>Apache-2.0 · Python · R · DuckDB</span>
+    </div>
+    <nav aria-label="页脚链接">
+      <a href="BENCHMARK.html">基准测试</a>
+      <a href="CHANGELOG.html">更新记录</a>
+      <a href="https://github.com/adamdeprince/stride-align" rel="noopener">源代码 ↗</a>
+      <a href="https://goblinreactor.com" rel="noopener">Goblin Reactor ↗</a>
+    </nav>
   </footer>
 
   <script>
-    document.querySelectorAll('[data-copy]').forEach(function (button) {
+    document.querySelectorAll('[data-copy-source]').forEach(function (button) {
       button.addEventListener('click', function () {
-        var value = button.getAttribute('data-copy');
-        var copied = function () { button.classList.add('is-copied'); window.setTimeout(function () { button.classList.remove('is-copied'); }, 1800); };
-        if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(value).then(copied); return; }
-        var input = document.createElement('textarea'); input.value = value; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0'; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove(); copied();
+        var source = document.getElementById(button.getAttribute('data-copy-source'));
+        if (!source) return;
+        var value = source.textContent.trim();
+        var copied = function () {
+          button.classList.add('is-copied');
+          window.setTimeout(function () { button.classList.remove('is-copied'); }, 1800);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(value).then(copied);
+          return;
+        }
+        var input = document.createElement('textarea');
+        input.value = value;
+        input.setAttribute('readonly', '');
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        input.remove();
+        copied();
       });
     });
+
   </script>
+  <script src="language-switch.js"></script>
 </body>
 </html>

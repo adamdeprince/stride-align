@@ -234,6 +234,9 @@ def built_markdown_relpath(md_relpath: PurePosixPath) -> PurePosixPath:
                 return PurePosixPath(html_filename(suffix))
     if md_relpath.name == "README.md":
         return md_relpath.parent / "index.html"
+    for suffix, *_ in LANGS:
+        if suffix and md_relpath.name == readme_filename(suffix):
+            return md_relpath.parent / f"index.{suffix}.html"
     return md_relpath.with_suffix(".html")
 
 
@@ -354,6 +357,15 @@ def template(
     description: str = "SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW for Python.",
 ) -> str:
     page_classes = "page" + (f" {_html.escape(page_class)}" if page_class else "")
+    is_chinese = lang == "zh-CN"
+    product_label = "Goblin Reactor 出品" if is_chinese else "A Goblin Reactor product"
+    source_label = "源代码" if is_chinese else "Source Code"
+    api_filename = "index.zh-CN.html" if is_chinese else "index.html"
+    footer_copy = (
+        "stride-align · GitHub 上的开源项目"
+        if is_chinese
+        else "stride-align · open source on GitHub"
+    )
     return f"""<!doctype html>
 <html lang="{lang}" dir="{direction}">
 <head>
@@ -371,20 +383,19 @@ def template(
 <body>
 <div class="{page_classes}">
 <header class="masthead">
-<a class="masthead-product" href="https://goblinreactor.com" rel="noopener"><span class="docs-mascot" aria-hidden="true"><img src="{asset_prefix}goblin.png" alt=""></span><span>A Goblin Reactor product</span><b>↗</b></a>
+<a class="masthead-product" href="https://goblinreactor.com" rel="noopener"><span class="docs-mascot" aria-hidden="true"><img src="{asset_prefix}goblin.png" alt=""></span><span>{product_label}</span><b>↗</b></a>
 <h1>{_html.escape(masthead_title)}</h1>
 <p class="tagline">{tagline}</p>
 </header>
 <nav class="nav">
-{home_link}<a class="api" href="{asset_prefix}docs/api/index.html">API</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">Source Code</a>
+{home_link}<a class="api" href="{asset_prefix}docs/api/{api_filename}">API</a><a class="github" href="https://github.com/adamdeprince/stride-align" rel="noopener">{source_label}</a>
 {nav_inner}
 </nav>
 <main class="content">
 {content}
 </main>
 <footer class="footer">
-stride-align · open source on
-<a href="https://github.com/adamdeprince/stride-align">GitHub</a>
+<a href="https://github.com/adamdeprince/stride-align">{footer_copy}</a>
 </footer>
 </div>
 <script src="{asset_prefix}language-switch.js"></script>
@@ -422,7 +433,11 @@ def build_readme(suffix: str) -> None:
         tagline=tagline,
         nav_inner=nav,
         content=body.rstrip(),
-        home_link='<a class="home" href="index.html">Home</a>',
+        home_link=(
+            '<a class="home" href="index.zh-CN.html">首页</a>'
+            if suffix == "zh-CN"
+            else '<a class="home" href="index.html">Home</a>'
+        ),
     )
     out_path = OUT / html_filename(suffix)
     out_path.write_text(out_html, encoding="utf-8")
@@ -459,11 +474,15 @@ def build_generic(md_relpath: Path) -> None:
     matrix or the BENCHMARK page (those have bespoke builders above)."""
     md_path = REPO / md_relpath
     md_text = md_path.read_text(encoding="utf-8")
-    is_api_index = md_relpath == Path("docs/api/README.md")
+    api_locale = {
+        Path("docs/api/README.md"): "en",
+        Path("docs/api/README.zh-CN.md"): "zh-CN",
+    }.get(md_relpath)
+    is_api_index = api_locale is not None
     if is_api_index:
         replacements = {
-            "<!-- stride-vectorization-guide -->": render_vectorization_guide(),
-            "<!-- stride-api-catalog -->": render_api_catalog(),
+            "<!-- stride-vectorization-guide -->": render_vectorization_guide(api_locale),
+            "<!-- stride-api-catalog -->": render_api_catalog(api_locale),
         }
         for marker, replacement in replacements.items():
             if marker not in md_text:
@@ -478,8 +497,6 @@ def build_generic(md_relpath: Path) -> None:
     # to index.html with the correct number of `../` segments.
     depth = len(md_relpath.parent.parts)
     up = "../" * depth
-    home_link = f'<a class="home" href="{up}index.html">Home</a>'
-
     # `lang` is en by default; if the filename matches a translation
     # suffix in LANGS, switch to that lang code.
     name = md_path.stem  # e.g. "loongson-vs-tiger-lake-cdist-2026-05-24" or "README.zh-CN"
@@ -491,6 +508,22 @@ def build_generic(md_relpath: Path) -> None:
             direction = lang_dir
             break
 
+    home_filename = "index.zh-CN.html" if lang == "zh-CN" else "index.html"
+    home_label = "首页" if lang == "zh-CN" else "Home"
+    home_link = f'<a class="home" href="{up}{home_filename}">{home_label}</a>'
+
+    if is_api_index:
+        english_class = ' class="active"' if api_locale == "en" else ""
+        chinese_class = ' class="active"' if api_locale == "zh-CN" else ""
+        nav_inner = (
+            '<div class="lang-switch" aria-label="Translations">\n'
+            f'  <a hreflang="en" href="index.html"{english_class}>English</a>\n'
+            f'  <a hreflang="zh-CN" href="index.zh-CN.html"{chinese_class}>简体中文</a>\n'
+            "</div>"
+        )
+    else:
+        nav_inner = ""
+
     title_base = page_h1 or md_path.stem
     out_html = template(
         title=f"{title_base} — stride-align",
@@ -498,17 +531,25 @@ def build_generic(md_relpath: Path) -> None:
         direction=direction,
         masthead_title=page_h1 or md_path.stem,
         tagline=(
-            "One native algorithm surface for Python, R, and DuckDB"
+            (
+                "Python、R 与 DuckDB 共用的一套原生算法接口"
+                if api_locale == "zh-CN"
+                else "One native algorithm surface for Python, R, and DuckDB"
+            )
             if is_api_index
-            else "stride-align documentation"
+            else ("stride-align 文档" if lang == "zh-CN" else "stride-align documentation")
         ),
-        nav_inner="",
+        nav_inner=nav_inner,
         content=body.rstrip(),
         home_link=home_link,
         asset_prefix=up,
         page_class="api-page" if is_api_index else "",
         description=(
-            "Cross-language stride-align API examples for Python, R, and DuckDB."
+            (
+                "面向 Python、R 与 DuckDB 的 stride-align 跨语言编程接口示例。"
+                if api_locale == "zh-CN"
+                else "Cross-language stride-align API examples for Python, R, and DuckDB."
+            )
             if is_api_index
             else "SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW for Python."
         ),
