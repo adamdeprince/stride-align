@@ -238,7 +238,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--extension",
         default=os.environ.get("STRIDE_ALIGN_DUCKDB_EXTENSION"),
-        help="path to stride_align.duckdb_extension (or set STRIDE_ALIGN_DUCKDB_EXTENSION)",
+        help=("path to stride_align.0.6.0.duckdb_extension (or set STRIDE_ALIGN_DUCKDB_EXTENSION)"),
     )
     commands = result.add_subparsers(dest="command", required=True)
 
@@ -256,7 +256,7 @@ def main() -> int:
     arguments = parser().parse_args()
     if not arguments.extension:
         print(
-            "pass --extension /path/to/stride_align.duckdb_extension "
+            "pass --extension /path/to/stride_align.0.6.0.duckdb_extension "
             "or set STRIDE_ALIGN_DUCKDB_EXTENSION",
             file=sys.stderr,
         )

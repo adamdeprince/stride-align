@@ -1,0 +1,4 @@
+7df6c3c0dfad0ebfde4f120c1183b62f54a0c8bb939dfa04d4c27594461e4b6e  v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension
+1ef7408cc7dc02ba9742dd9d5c93a4cefe048d922990177dcdf9d94e08d0f58f  v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension
+1ae5093ddb664f6e594a5dac6c9799159b7b6e27200f05f30c561d2bbabb7aaa  v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension
+80f96057f53a7b336ba19ca0588cc17e938e9a49435704759744b337b9a084e2  v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension

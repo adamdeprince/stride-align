@@ -27,7 +27,7 @@ duckdb -unsigned
 ```
 
 ```sql
-LOAD '/absolute/path/to/stride_align.duckdb_extension';
+LOAD '/absolute/path/to/stride_align.0.6.0.duckdb_extension';
 
 SELECT stride_levenshtein('kitten', 'sitting');
 -- 3
@@ -42,7 +42,7 @@ Or from Python:
 import duckdb
 
 db = duckdb.connect(config={"allow_unsigned_extensions": "true"})
-extension = "/absolute/path/to/stride_align.duckdb_extension"
+extension = "/absolute/path/to/stride_align.0.6.0.duckdb_extension"
 db.execute(f"LOAD '{extension}'")
 
 score = db.execute(
@@ -94,7 +94,7 @@ DuckDB chunks; a window reduction selects one word per token. Python only
 sideloads the extension, submits each complete query, and prints its result.
 
 ```sh
-export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension
+export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension
 python3 demo/duckdb_vectorized_lookup.py bible
 python3 demo/duckdb_vectorized_lookup.py spell
 ```
@@ -187,6 +187,16 @@ SELECT stride_align_simd_level();
 
 Loading an ISA-specific package on an incompatible CPU is not supported.
 
+Published artifacts use the filename
+`stride_align.<project-version>.duckdb_extension`; release 0.6.0 is therefore
+`stride_align.0.6.0.duckdb_extension`. The version must match the Python and R
+release in `pyproject.toml`. Keep `stride_align` before the first dot because
+DuckDB derives the extension entrypoint name from that segment.
+
+`repository-index.html`, `repository-manifest.json`, and
+`repository-SHA256SUMS` are the checked-in publication metadata for the current
+release.
+
 ## Build from source
 
 Pin a DuckDB source checkout to the exact version you plan to load the
@@ -205,6 +215,9 @@ cmake --build build/duckdb-native \
 
 The artifact is normally written to
 `build/duckdb-native/extension/stride_align/stride_align.duckdb_extension`.
+Published packages rename that raw build output to
+`stride_align.0.6.0.duckdb_extension`, using the same release version as the
+Python and R packages.
 The extension config uses `DONT_LINK`, so the resulting DuckDB executable is
 also suitable for testing the artifact through the real sideload path.
 Pass `EXTENSION_STATIC_BUILD=ON` explicitly on fresh GNU/Linux builds. DuckDB
@@ -241,7 +254,7 @@ bindings/duckdb/check-python-test-parity.py
 form and verifies that each named function is present in the loaded extension:
 
 ```sh
-STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension \
+STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension \
   bindings/duckdb/check-native-api.py
 ```
 
@@ -255,7 +268,7 @@ For an artifact elsewhere, or when several SIMD packages are present, select
 it explicitly:
 
 ```sh
-STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension \
+STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension \
   pytest tests/duckdb
 
 STRIDE_ALIGN_DUCKDB_SIMD=avx2 pytest tests/duckdb

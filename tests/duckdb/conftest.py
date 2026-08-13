@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,10 @@ from typing import Any
 import pytest
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-_EXTENSION_FILENAME = "stride_align.duckdb_extension"
+with (_REPOSITORY_ROOT / "pyproject.toml").open("rb") as _project_file:
+    _PROJECT_VERSION = str(tomllib.load(_project_file)["project"]["version"])
+
+_EXTENSION_FILENAME = f"stride_align.{_PROJECT_VERSION}.duckdb_extension"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "project": "stride-align",
+  "project_version": "0.6.0",
+  "duckdb_version": "1.5.5",
+  "published_at": "2026-08-13",
+  "artifacts": [
+    {
+      "platform": "osx_arm64",
+      "profile": "neon",
+      "compiler_target": "-mcpu=apple-m1",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension",
+      "sha256": "7df6c3c0dfad0ebfde4f120c1183b62f54a0c8bb939dfa04d4c27594461e4b6e"
+    },
+    {
+      "platform": "linux_amd64",
+      "profile": "generic",
+      "compiler_target": "-march=x86-64 -mtune=generic -msse2 -mno-avx -mno-avx2 -mno-avx512f",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension",
+      "sha256": "1ef7408cc7dc02ba9742dd9d5c93a4cefe048d922990177dcdf9d94e08d0f58f"
+    },
+    {
+      "platform": "linux_amd64",
+      "profile": "avx2",
+      "compiler_target": "-march=x86-64-v3 -mtune=generic",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension",
+      "sha256": "1ae5093ddb664f6e594a5dac6c9799159b7b6e27200f05f30c561d2bbabb7aaa"
+    },
+    {
+      "platform": "linux_amd64",
+      "profile": "avx512bwvl",
+      "compiler_target": "-march=x86-64-v4 -mtune=generic",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension",
+      "sha256": "80f96057f53a7b336ba19ca0588cc17e938e9a49435704759744b337b9a084e2"
+    }
+  ]
+}

@@ -461,7 +461,7 @@ scores &lt;- levenshtein_normalized_scores(
 db = duckdb.connect(config={
     <span class="code-string">"allow_unsigned_extensions"</span>: <span class="code-string">"true"</span>
 })
-extension = <span class="code-string">"/path/to/stride_align.duckdb_extension"</span>
+extension = <span class="code-string">"/path/to/stride_align.0.6.0.duckdb_extension"</span>
 db.execute(<span class="code-string">f"LOAD '{extension}'"</span>)
 
 match = db.execute(
@@ -478,7 +478,7 @@ match = db.execute(
 
 <span class="code-call">print</span>(match)  <span class="code-comment"># ('你好世间', 0.75)</span></code></pre>
           </div>
-          <p class="track-note"><a href="https://distribution.goblinreactor.com/stride-align/duckdb/">Download the extension artifact</a> matching your DuckDB version, platform, and SIMD package. Candidate rows flow through DuckDB's vectorized executor; Python only orchestrates the sideload and query. <a href="README.html#the-same-search-in-duckdb">See the vectorized Bible lookup and spell checker.</a></p>
+          <p class="track-note"><a href="https://distribution.goblinreactor.com/stride-align/duckdb/">Download stride-align 0.6.0 for DuckDB</a>, matching your DuckDB version, platform, and SIMD package. Candidate rows flow through DuckDB's vectorized executor; Python only orchestrates the sideload and query. <a href="README.html#the-same-search-in-duckdb">See the vectorized Bible lookup and spell checker.</a></p>
           </article>
         </div>
       </div>

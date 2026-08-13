@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stride-align for DuckDB</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    * { box-sizing: border-box; }
+    body { max-width: 1120px; margin: 0 auto; padding: 64px 24px; color: #e9eee4; background: #10130f; }
+    h1 { margin: 0; color: #b7f34a; font: 800 clamp(36px, 7vw, 72px)/.95 system-ui, sans-serif; }
+    h2 { margin-top: 56px; font: 700 22px/1.2 system-ui, sans-serif; }
+    p { max-width: 780px; color: #b8c0b3; line-height: 1.65; }
+    a { color: #b7f34a; }
+    code { color: #ff9b54; }
+    pre { padding: 20px; overflow: auto; border: 1px solid #3a4137; background: #181d16; line-height: 1.55; }
+    table { width: 100%; margin-top: 20px; border-collapse: collapse; }
+    th, td { padding: 14px 12px; border: 1px solid #3a4137; text-align: left; vertical-align: top; }
+    th { color: #10130f; background: #b7f34a; }
+    .status { white-space: nowrap; color: #b8c0b3; }
+    footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid #3a4137; color: #7f8979; }
+    @media (max-width: 760px) {
+      table, thead, tbody, tr, th, td { display: block; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      tr { margin-top: 18px; border: 1px solid #3a4137; }
+      td { border: 0; border-bottom: 1px solid #3a4137; }
+      td:last-child { border-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>stride-align<br>for DuckDB</h1>
+    <p>Choose the stride-align 0.6.0 artifact matching DuckDB 1.5.5, your platform, and your CPU. These are unsigned sideloaded extensions.</p>
+
+    <h2>Packages</h2>
+    <table>
+      <thead><tr><th>Platform</th><th>CPU package</th><th>Artifact</th><th>Validation</th></tr></thead>
+      <tbody>
+        <tr><td>macOS arm64</td><td>NEON / Apple M1 baseline</td><td><a href="v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension">download</a> · <a href="v1.5.5/osx_arm64/neon/stride_align.0.6.0.duckdb_extension.sha256">sha256</a></td><td class="status">runtime tested</td></tr>
+        <tr><td>Linux x86-64</td><td>generic / SSE2 baseline</td><td><a href="v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension">download</a> · <a href="v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension.sha256">sha256</a></td><td class="status">runtime tested</td></tr>
+        <tr><td>Linux x86-64</td><td>AVX2 / x86-64-v3</td><td><a href="v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension">download</a> · <a href="v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension.sha256">sha256</a></td><td class="status">runtime tested</td></tr>
+        <tr><td>Linux x86-64</td><td>AVX-512 / x86-64-v4</td><td><a href="v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension">download</a> · <a href="v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension.sha256">sha256</a></td><td class="status">runtime tested</td></tr>
+      </tbody>
+    </table>
+
+    <p><code>linux_amd64</code> is DuckDB's x86-64 platform identifier; it is not a CPU-vendor claim.</p>
+
+    <h2>SQL endpoints</h2>
+    <p>The extension registers 167 <code>stride_*</code> SQL function names with
+      413 overloads. <a href="https://stride-align.com/bindings/duckdb/FUNCTIONS.html">Browse the complete grouped function catalog</a>,
+      or inspect the exact signatures in your loaded package through
+      <code>duckdb_functions()</code>.</p>
+
+    <h2>Sideload</h2>
+    <pre><code>duckdb -unsigned
+
+LOAD '/absolute/path/to/stride_align.0.6.0.duckdb_extension';
+SELECT stride_levenshtein('kitten', 'sitting');</code></pre>
+    <p>Loading a package whose ISA is not supported by the machine is not supported. See the <a href="manifest.json">machine-readable manifest</a> or <a href="SHA256SUMS">all checksums</a>.</p>
+  </main>
+  <footer>stride-align 0.6.0 · DuckDB 1.5.5 · Apache-2.0</footer>
+</body>
+</html>

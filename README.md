@@ -232,7 +232,7 @@ After [downloading the package](https://distribution.goblinreactor.com/stride-al
 for your platform and CPU, run it like this:
 
 ```bash
-export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension
+export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension
 python3 demo/duckdb_vectorized_lookup.py bible
 ```
 
