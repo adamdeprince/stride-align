@@ -196,6 +196,7 @@ extension into. From the stride-align repository root:
 cmake -S /path/to/duckdb -B build/duckdb-native -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_EXTENSIONS_ONLY=OFF \
+  -DEXTENSION_STATIC_BUILD=ON \
   -DDUCKDB_EXTENSION_CONFIGS="$PWD/bindings/duckdb/extension_config.cmake" \
   -DSTRIDE_ALIGN_DUCKDB_SIMD=native
 cmake --build build/duckdb-native \
@@ -206,6 +207,10 @@ The artifact is normally written to
 `build/duckdb-native/extension/stride_align/stride_align.duckdb_extension`.
 The extension config uses `DONT_LINK`, so the resulting DuckDB executable is
 also suitable for testing the artifact through the real sideload path.
+Pass `EXTENSION_STATIC_BUILD=ON` explicitly on fresh GNU/Linux builds. DuckDB
+uses it to compile its static library into independently discardable function
+and data sections, keeping the sideloaded package from retaining unused DuckDB
+core code.
 
 DuckDB 1.5.5 does not infer LoongArch64 correctly when it generates extension
 metadata. LoongArch64 package builds must also pass:
