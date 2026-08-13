@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from demo.duckdb_vectorized_lookup import (
+    BIBLE_SEARCH_SQL,
+    SPELLCHECK_SQL,
     load_bible,
     load_dictionary,
     nearest_bible_match,
@@ -11,18 +13,15 @@ from demo.duckdb_vectorized_lookup import (
 )
 
 
-def test_bible_lookup_crosses_duckdb_data_chunks(
+def test_bible_lookup_consumes_complete_duckdb_list(
     duckdb_extension: Any,
     tmp_path: Path,
 ) -> None:
-    # DuckDB's standard vector is smaller than this corpus. Put the only exact
-    # match near the end so a scalar implementation that mishandles later
-    # DataChunks cannot accidentally pass on the first chunk.
+    # Put the only exact match near the end so the one-to-many operation must
+    # consume the complete DuckDB LIST rather than accidentally considering
+    # only an initial subset.
     lines = ["KJV", "test corpus"]
-    lines.extend(
-        f"Example 1:{index}\tfiller verse number {index}"
-        for index in range(5_000)
-    )
+    lines.extend(f"Example 1:{index}\tfiller verse number {index}" for index in range(5_000))
     lines.append("Example 2:1\tthe exact verse we need")
     corpus = tmp_path / "verses.txt"
     corpus.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -37,6 +36,18 @@ def test_bible_lookup_crosses_duckdb_data_chunks(
     assert match.score == 1.0
 
 
+def test_bible_lookup_uses_one_to_many_top_one_api() -> None:
+    assert "stride_extract_best" in BIBLE_SEARCH_SQL
+    assert "'needleman_wunsch_normalized'" in BIBLE_SEARCH_SQL
+    assert "stride_needleman_wunsch_normalized_score(" not in BIBLE_SEARCH_SQL
+
+
+def test_spellchecker_uses_one_to_many_top_one_api() -> None:
+    assert "list(word ORDER BY word)" in SPELLCHECK_SQL
+    assert "stride_extract_best" in SPELLCHECK_SQL
+    assert "stride_needleman_wunsch_normalized_score(" not in SPELLCHECK_SQL
+
+
 def test_spellchecker_scores_all_tokens_and_dictionary_rows_in_sql(
     duckdb_extension: Any,
     tmp_path: Path,
@@ -47,10 +58,13 @@ def test_spellchecker_scores_all_tokens_and_dictionary_rows_in_sql(
     dictionary.write_text("\n".join(words) + "\n", encoding="utf-8")
 
     assert load_dictionary(duckdb_extension.connection, dictionary) == len(words)
-    assert spellcheck_line(
-        duckdb_extension.connection,
-        "this is a demonstrtion of a spell checker",
-    ) == "this is a demonstration of a spell checker"
+    assert (
+        spellcheck_line(
+            duckdb_extension.connection,
+            "this is a demonstrtion of a spell checker",
+        )
+        == "this is a demonstration of a spell checker"
+    )
 
 
 def test_spellchecker_preserves_token_order_and_handles_empty_input(

@@ -1,83 +1,61 @@
-# stride-align API reference
+# API
 
-Native `stride_align` API surface, grouped by what you're doing.
-Most pages share the same shape: a small "output-processing
-variants" table that explains the suffix family
-(`_scores` / `_normalized_scores` / `_best` / `_top_k`) once, then
-an algorithm list with one paragraph each.
+stride-align exposes the same native algorithms through Python, R, and DuckDB.
+Every algorithm below includes one call in each interface. Use the selector on
+any example; all selectors on this page and the homepage stay synchronized.
 
-## Native API (primary)
+The examples assume `import stride_align as sa` in Python,
+`library(stridealign)` in R, or a loaded stride-align extension in DuckDB. See
+the [homepage installation walkthrough](../../index.html#install) or
+[download the DuckDB package](https://distribution.goblinreactor.com/stride-align/duckdb/)
+matching your DuckDB version, platform, and CPU.
 
-| Page | Covers |
+The API is organized by algorithm, not by language adapter. Python and R use
+ordinary function calls; DuckDB uses `stride_*` SQL functions over literals,
+columns, or list values. Compatibility facades are intentionally outside this
+native cross-language reference.
+
+## Vectorization semantics
+
+Let `Q` be the number of queries, `T` the number of targets, and `K` the
+requested result limit. The function name determines both how much of the
+`Q × T` comparison grid is retained and the shape returned to the caller.
+
+| Operation | Logical input | Logical output |
+| --- | --- | --- |
+| `*_scores` / `*_similarities` | one query and `T` targets | `T` scores in target order |
+| `*_best` | one query and `T` targets | one match, or no match for an empty candidate set |
+| `*_top_k` / `extract` | one query and `T` targets | at most `K` matches across those targets |
+| `cdist` | `Q` queries and `T` targets | dense `Q × T` score matrix |
+| `cdist_above_threshold` | conceptual `Q × T` grid | only pair records meeting the threshold |
+| `cdist_top_k` | conceptual `Q × T` grid | at most `K` pair records **across the whole grid** |
+| `cdist_top_k_per_query` | conceptual `Q × T` grid | `Q` groups, each containing at most `K` targets |
+
+The host languages preserve those logical shapes using their native data
+types:
+
+| Host | Collection and index conventions |
 | --- | --- |
-| [edit-distance.md](edit-distance.md) | Levenshtein, Damerau-Levenshtein (OSA + unrestricted), Indel, Hamming |
-| [similarity.md](similarity.md) | Jaro, Jaro-Winkler, n-gram (Jaccard / Dice / cosine / overlap), Ratcliff-Obershelp, Monge-Elkan |
-| [alignment.md](alignment.md) | Smith-Waterman, Needleman-Wunsch, Farrar score-only, traceback, CIGAR |
-| [cdist.md](cdist.md) | All-pairs `cdist`, `cdist_above_threshold`, `cdist_top_k`, `cdist_top_k_per_query`, `Scorer` enum, pruning |
-| [matrices.md](matrices.md) | `SubstitutionMatrix`, built-in BLOSUM and PAM, NCBI text loader |
-| [dtw.md](dtw.md) | Dynamic Time Warping with Sakoe-Chiba band and alternative local metrics |
-| [phonetic.md](phonetic.md) | Soundex, Metaphone, Double Metaphone, NYSIIS, MRA, Caverphone 2, Cologne Phonetic, Daitch-Mokotoff, Beider-Morse |
+| Python | Score vectors and dense `cdist` results are NumPy arrays. Rankings are tuples/lists; threshold and per-query forms are iterators. Match indices are zero-based. |
+| R | Results use numeric vectors, matrices, data frames, and lists. Match indices are one-based. Pair scorers also accept equal-length character vectors or broadcast a length-one side. |
+| DuckDB | Results use `LIST`, nested `LIST`, and `STRUCT` values. Match index fields are zero-based, while SQL list subscripts are one-based. Pair functions applied to table columns run through DuckDB's vectorized chunk machinery; list-valued functions can additionally batch a candidate collection within each row. |
 
-## Compatibility shims (migration aids)
+For non-matrix string scorers, threshold and all-pairs top-k selection use a
+normalized similarity scorer; dense `cdist` also supports raw distances. The
+scorer-specific match, mismatch, gap, prefix, cutoff, and substitution-matrix
+options carry through the collection forms that support that scorer.
 
-| Page | Covers |
-| --- | --- |
-| [rapidfuzz-shim.md](rapidfuzz-shim.md) | `stride_align.rapidfuzz.{fuzz, distance, process, utils}` — drop-in replacement for `rapidfuzz`. |
-| [thefuzz-shim.md](thefuzz-shim.md) | `stride_align.thefuzz.{fuzz, process, utils}` — work-alike for TheFuzz 0.22.1's integer scorers and extraction API. |
-| [parasail-shim.md](parasail-shim.md) | `stride_align.parasail` — drop-in replacement for `parasail-python` (Smith-Waterman / Needleman-Wunsch / semi-global, BLOSUM/PAM, `Result` / `Cigar` / `Traceback`). |
-| [jellyfish-shim.md](jellyfish-shim.md) | `stride_align.jellyfish` — work-alike for Jellyfish's edit, similarity, and phonetic functions. |
+> `cdist_top_k(..., k=3)` returns no more than three matches total, even if
+> there are thousands of queries. `cdist_top_k_per_query(..., k=3)` gives each
+> query its own competition and can therefore return as many as `3 × Q`
+> matches. Choose the first for global record linkage and the second for
+> nearest neighbors for every query.
 
-These shims are migration aids; new code should call the native
-API directly.
+<!-- stride-vectorization-guide -->
 
-## Two dimensions
+## Algorithms
 
-The API has two orthogonal dimensions: **which algorithm** and
-**what shape you want the output in**. Rather than enumerating
-every (algorithm × shape) combination, each page documents the
-shape suffixes once at the top and then lists the algorithms.
-Common output suffixes:
+<!-- stride-api-catalog -->
 
-| Suffix | Returns |
-| --- | --- |
-| `_score(query, target)` | single int / float |
-| `_normalized_score(query, target)` | single float in `[0, 1]` |
-| `_scores(query, targets)` | `ndarray` of int / float, one per target |
-| `_normalized_scores(query, targets)` | `ndarray[float64]` in `[0, 1]`, one per target |
-| `_best(query, targets)` | `(target, score)` or `None` |
-| `_normalized_best(query, targets)` | `(target, normalised_score)` or `None` |
-| `_top_k(query, targets, k=…)` | list of top-k `(target, score)` |
-| `cdist*` family | full grid / threshold / top-k over many queries × many targets |
-
-Alignment and DTW have a richer variant family because they
-return paths, CIGARs, and per-target traceback — see
-[alignment.md](alignment.md).
-
-## Cross-cutting
-
-- **Inputs**: every kernel accepts `bytes`, `str` (UCS-1 / UCS-2
-  / UCS-4 — zero-copy, no `.encode("utf-8")` round-trip), and
-  NumPy integer `ndarray`. UCS-2 inputs go straight into a
-  16-bit-token SIMD path so Chinese / Japanese / Korean strings
-  use the same kernel as ASCII rather than being downcoded to
-  bytes.
-- **GIL**: every SIMD kernel releases the GIL while running. The
-  cdist family parallelises rows across `cpu_count` worker
-  threads.
-- **Backend dispatch**: the widest SIMD kernel for the current
-  CPU is chosen once at import. See
-  [edit-distance.md#simd-dispatch](edit-distance.md#simd-dispatch)
-  for the priority order.
-- **Cutoff push-down**: edit-distance entry points accept
-  `score_cutoff=k` and bail per lane when the lower bound on
-  distance exceeds `k` — saves work over full DP + filter.
-
-## See also
-
-- [../../README.md](../../README.md) — project overview, install,
-  quick start
-- [../../BENCHMARK.md](../../BENCHMARK.md) — performance numbers
-  vs parasail, rapidfuzz, python-Levenshtein, editdistance
-- [../../CHANGELOG.md](../../CHANGELOG.md) — version history
-- [../adding-a-new-algorithm.md](../adding-a-new-algorithm.md) —
-  internals if you want to add a new SIMD-backed kernel
+Detailed parameter, return-value, matrix, and traceback semantics are linked
+from each algorithm above.

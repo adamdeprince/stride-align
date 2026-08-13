@@ -13,12 +13,12 @@ function.
 The extension has no Python or nanobind runtime dependency. Python appears in
 one example below only as a convenient way to orchestrate DuckDB.
 
-## Quick start
+**[Download stride-align packages for DuckDB](https://distribution.goblinreactor.com/stride-align/duckdb/)**
+
+## Download and install
 
 Choose the extension artifact matching your DuckDB version, platform, and CPU
 package. Unsigned local extensions require DuckDB's sideload opt-in.
-
-[Browse published DuckDB packages](https://distribution.goblinreactor.com/stride-align/duckdb/).
 
 From the DuckDB CLI:
 
@@ -72,26 +72,24 @@ record linkage, ranking, or biological sequence scoring.
 ## Vectorized nearest lookup
 
 The [Bible lookup and spell-check demo](../../demo/duckdb_vectorized_lookup.py)
-keeps candidates as table rows so DuckDB itself owns the vectors. For example,
-the Bible search is a table scan followed by a SQL top-one reduction:
+keeps candidates in a DuckDB table, collects them into an ordered list, and
+hands that complete vector to stride-align's optimized top-one operation:
 
 ```sql
-SELECT reference, verse, score
-FROM (
-  SELECT
-    reference,
-    verse,
-    stride_needleman_wunsch_normalized_score(lower(?), lower(verse)) AS score
+WITH corpus AS (
+  SELECT list(lower(verse) ORDER BY reference, verse) AS verses
   FROM demo_bible
 )
-ORDER BY score DESC, reference, verse
-LIMIT 1;
+SELECT stride_extract_best(lower(?), verses, 'needleman_wunsch_normalized')
+FROM corpus;
 ```
 
-The spell-check mode tokenizes the input in SQL and `CROSS JOIN`s all tokens
-with the dictionary table. One scorer expression consumes the resulting
-DuckDB chunks; a window reduction selects one word per token. Python only
-sideloads the extension, submits each complete query, and prints its result.
+The result contains the winning target, score, and zero-based list index. The
+full demo uses that index to recover the corresponding reference and original
+verse. The spell-check mode tokenizes the input in SQL, collects the dictionary
+column into a list, and calls the same batch top-one operation for each token.
+Python only sideloads the extension, submits each complete query, and prints
+its result.
 
 ```sh
 export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb_extension

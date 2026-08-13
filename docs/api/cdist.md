@@ -14,9 +14,14 @@ share the same `scorer=` argument and pruning machinery.
 | Function | Returns | Use when |
 | --- | --- | --- |
 | `cdist(queries, targets, *, scorer, …)` | `ndarray` shape `(Q, T)` | you need the full score matrix |
-| `cdist_above_threshold(queries, targets, *, scorer, threshold, …)` | iterator of `(qi, ti, score)` | you only care about pairs above a similarity floor |
-| `cdist_top_k(queries, targets, *, scorer, k, …)` | iterator of `(qi, ti, score)` of the global top-`k` matches | global k-nearest-neighbours across the whole grid |
-| `cdist_top_k_per_query(queries, targets, *, scorer, k, …)` | per-query top-k, `list[list[(ti, score)]]` | every query gets its own top-k neighbour list |
+| `cdist_above_threshold(queries, targets, *, scorer, threshold, …)` | iterator of `(score, query, target)` | you only care about pairs above a similarity floor |
+| `cdist_top_k(queries, targets, *, scorer, k, …)` | list of at most `k` `(score, query, target)` records | global k-nearest-neighbours across the whole grid |
+| `cdist_top_k_per_query(queries, targets, *, scorer, k, …)` | iterator of `(query, list[(score, target)])` | every query gets its own top-k neighbour list |
+
+The two top-k forms have different cardinality. `cdist_top_k(..., k=5)`
+returns no more than five records from the entire `Q × T` grid.
+`cdist_top_k_per_query(..., k=5)` returns one group per query and therefore
+up to `5 × Q` records overall.
 
 `cdist_top_k_per_query` accepts `cpu_count=` (default `0` =
 auto-detect, capped sensibly; `1` = single-threaded). Per-query
@@ -94,11 +99,12 @@ matches = list(sa.cdist_top_k(
 ))
 
 # Per-query 5-nearest-neighbours, 8-way parallel
-nn = sa.cdist_top_k_per_query(
+for query, matches in sa.cdist_top_k_per_query(
     queries, targets,
     scorer=sa.Scorer.JARO_WINKLER, k=5, cpu_count=8,
-)
-# nn[i] is a list of up to 5 (target_index, score) tuples for queries[i]
+):
+    # matches contains up to 5 (score, target) tuples for query.
+    ...
 ```
 
 ## Choosing the right entry point

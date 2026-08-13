@@ -206,27 +206,36 @@ Search time: 206.51ms
 #### The same search in DuckDB
 
 The [runnable DuckDB demo](demo/duckdb_vectorized_lookup.py) loads the corpus
-as rows and leaves both scoring and top-one selection inside DuckDB:
+as rows, collects those rows into an ordered candidate list, and passes the
+whole list to stride-align's optimized one-to-many top-one function:
 
 ```sql
-SELECT reference, verse, score
-FROM (
+WITH corpus AS (
     SELECT
-        reference,
-        verse,
-        stride_needleman_wunsch_normalized_score(
-            lower(?), lower(verse)
-        ) AS score
+        list(reference ORDER BY reference, verse) AS reference_values,
+        list(verse ORDER BY reference, verse) AS verse_values,
+        list(lower(verse) ORDER BY reference, verse) AS normalized_verses
     FROM demo_bible
+), matched AS (
+    SELECT
+        reference_values,
+        verse_values,
+        stride_extract_best(
+            lower(?), normalized_verses, 'needleman_wunsch_normalized'
+        ) AS best_match
+    FROM corpus
 )
-ORDER BY score DESC, reference, verse
-LIMIT 1;
+SELECT
+    reference_values[cast(best_match.index AS BIGINT) + 1] AS reference,
+    verse_values[cast(best_match.index AS BIGINT) + 1] AS verse,
+    best_match.score AS score
+FROM matched;
 ```
 
-Here the query parameter is a DuckDB constant vector and `verse` is supplied
-by the table scan in DuckDB data chunks. The extension scores those vectors as
-part of the query plan; Python submits the query and fetches its one result. It
-does not construct a score list or loop over verses.
+DuckDB owns the corpus table and list aggregation. The batch function prepares
+the query once, scores the candidate vector, applies its top-one pruning, and
+returns the winning zero-based index. Python only submits the query and fetches
+its one result; it never loops over verses.
 
 After [downloading the package](https://distribution.goblinreactor.com/stride-align/duckdb/)
 for your platform and CPU, run it like this:
@@ -298,37 +307,31 @@ it doesn't matter that i can't spell correctly
 
 #### The same spell checker in DuckDB
 
-The DuckDB mode tokenizes a whole input line, crosses all of its tokens with
-the dictionary table, scores the resulting columns in data chunks, and reduces
-the matches back to one ordered line in a single SQL statement. There is no
-Python loop around either the tokens or the dictionary:
+The DuckDB mode tokenizes a whole input line, collects the dictionary into a
+candidate list, and applies stride-align's batch top-one operation once per
+token. The matches return as one ordered line in a single SQL statement. There
+is no Python loop around either the tokens or the dictionary:
 
 ```sql
-WITH input_tokens AS (
+WITH dictionary AS (
+    SELECT list(word ORDER BY word) AS words
+    FROM demo_dictionary
+), input_tokens AS (
     SELECT position, token
     FROM unnest(string_split(lower(?), ' '))
          WITH ORDINALITY AS tokens(token, position)
 ),
-scored AS (
+matched AS (
     SELECT
         position,
-        word,
-        stride_needleman_wunsch_normalized_score(token, word) AS score
+        stride_extract_best(
+            token, words, 'needleman_wunsch_normalized'
+        ) AS best_match
     FROM input_tokens
-    CROSS JOIN demo_dictionary
-),
-ranked AS (
-    SELECT
-        position,
-        word,
-        row_number() OVER (
-            PARTITION BY position ORDER BY score DESC, word
-        ) AS match_rank
-    FROM scored
+    CROSS JOIN dictionary
 )
-SELECT string_agg(word, ' ' ORDER BY position)
-FROM ranked
-WHERE match_rank = 1;
+SELECT string_agg(best_match.target, ' ' ORDER BY position)
+FROM matched;
 ```
 
 Use a system dictionary or pass `--dictionary` explicitly:
@@ -519,9 +522,8 @@ print(object_result.aligned_query, object_result.aligned_target)
 ```
 
 Use `Scores(...).compare([...])` or the `*_scores()` functions for one-query
-against many-target score workloads. That path prepares the query/profile once
-and is the preferred performance API for repeated English/Chinese text
-comparisons.
+against many-target score workloads. These are the preferred performance APIs
+for repeated English/Chinese text comparisons.
 
 Traceback outputs preserve the paired fast-path type:
 

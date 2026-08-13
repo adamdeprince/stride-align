@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Bible lookup and spell checking through DuckDB's vectorized executor.
+"""Bible lookup and spell checking through DuckDB and stride-align batches.
 
 Python owns the terminal and file discovery. Candidate strings stay in DuckDB
-tables, and every score is produced by a ``stride_*`` scalar function while
-DuckDB scans vectors of rows. No Python loop scores individual candidates.
+tables, and SQL passes complete candidate vectors to stride-align's one-to-many
+functions. No Python loop or row-at-a-time scorer processes the candidates.
 """
 
 from __future__ import annotations
@@ -26,54 +26,61 @@ DICTIONARY_PATHS = (
     Path("/etc/dictionaries-common/words"),
 )
 
-# The parameter is a DuckDB CONSTANT_VECTOR and ``verse`` arrives in flat or
-# dictionary vectors from the table scan. The extension handles each DataChunk
-# as DuckDB calls the scalar function.
+# DuckDB collects the table columns into consistently ordered LIST vectors.
+# ``stride_extract_best`` owns the optimized batch scoring and top-one reduction.
+# Its zero-based index selects the corresponding original reference and verse
+# from the two parallel DuckDB lists.
 BIBLE_SEARCH_SQL = """
-SELECT reference, verse, score
-FROM (
+WITH corpus AS (
     SELECT
-        reference,
-        verse,
-        stride_needleman_wunsch_normalized_score(lower(?), lower(verse)) AS score
+        list(reference ORDER BY reference, verse) AS reference_values,
+        list(verse ORDER BY reference, verse) AS verse_values,
+        list(lower(verse) ORDER BY reference, verse) AS normalized_verses
     FROM demo_bible
+), matched AS (
+    SELECT
+        reference_values,
+        verse_values,
+        stride_extract_best(
+            lower(?),
+            normalized_verses,
+            'needleman_wunsch_normalized'
+        ) AS best_match
+    FROM corpus
 )
-ORDER BY score DESC, reference, verse
-LIMIT 1
+SELECT
+    reference_values[cast(best_match.index AS BIGINT) + 1] AS reference,
+    verse_values[cast(best_match.index AS BIGINT) + 1] AS verse,
+    best_match.score AS score
+FROM matched
 """
 
-# One SQL statement expands every input token, joins it to every dictionary
-# row, scores those rows as DuckDB vectors, picks a winner per token, and puts
-# the corrected line back in order. Python never loops over tokens or words.
+# One SQL statement collects the dictionary into a candidate LIST, expands the
+# input tokens, and applies stride-align's batch top-one operation to each
+# token. Python never loops over tokens or words.
 SPELLCHECK_SQL = """
-WITH input_tokens AS (
+WITH dictionary AS (
+    SELECT list(word ORDER BY word) AS words
+    FROM demo_dictionary
+), input_tokens AS (
     SELECT position, token
     FROM unnest(string_split(lower(?), ' '))
          WITH ORDINALITY AS tokens(token, position)
     WHERE token <> ''
 ),
-scored AS (
+matched AS (
     SELECT
         position,
-        token,
-        word,
-        stride_needleman_wunsch_normalized_score(token, word) AS score
+        stride_extract_best(
+            token,
+            words,
+            'needleman_wunsch_normalized'
+        ) AS best_match
     FROM input_tokens
-    CROSS JOIN demo_dictionary
-),
-ranked AS (
-    SELECT
-        position,
-        word,
-        row_number() OVER (
-            PARTITION BY position
-            ORDER BY score DESC, word
-        ) AS match_rank
-    FROM scored
+    CROSS JOIN dictionary
 )
-SELECT coalesce(string_agg(word, ' ' ORDER BY position), '')
-FROM ranked
-WHERE match_rank = 1
+SELECT coalesce(string_agg(best_match.target, ' ' ORDER BY position), '')
+FROM matched
 """
 
 
@@ -147,7 +154,7 @@ def load_bible(connection: Any, path: Path) -> int:
 
 
 def nearest_bible_match(connection: Any, query: str) -> BibleMatch:
-    """Return the single best verse; scoring and top-1 selection stay in SQL."""
+    """Return the best verse through stride-align's one-to-many best function."""
     row = connection.execute(BIBLE_SEARCH_SQL, [query]).fetchone()
     if row is None:
         raise ValueError("the Bible table is empty")
@@ -191,14 +198,17 @@ def load_dictionary(connection: Any, path: Path) -> int:
 
 
 def spellcheck_line(connection: Any, line: str) -> str:
-    """Correct every whitespace-delimited token in one vectorized SQL query."""
+    """Correct every token with one SQL query and one batch call per token."""
     return str(connection.execute(SPELLCHECK_SQL, [line]).fetchone()[0])
 
 
 def run_bible(connection: Any, corpus: Path, query: str | None) -> None:
     corpus = ensure_bible(corpus)
     count = load_bible(connection, corpus)
-    print(f"Loaded {count:,} verses; DuckDB scores the table in data chunks.", file=sys.stderr)
+    print(
+        f"Loaded {count:,} verses; stride-align scores one DuckDB LIST batch.",
+        file=sys.stderr,
+    )
 
     def search(text: str) -> None:
         started = time.perf_counter()

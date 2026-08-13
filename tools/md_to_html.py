@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path, PurePosixPath
 
 import markdown
+from api_catalog import render_api_catalog, render_vectorization_guide
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "html"
@@ -207,8 +208,8 @@ strong, b { color: var(--text); font-weight: 600; }
 
 # Add a row per README translation that exists in the repo root.
 LANGS = [
-    ("",        "en",     "English",              "ltr"),
-    ("zh-CN",   "zh-CN",  "简体中文",             "ltr"),
+    ("", "en", "English", "ltr"),
+    ("zh-CN", "zh-CN", "简体中文", "ltr"),
 ]
 
 
@@ -277,9 +278,9 @@ def rewrite_local_links(html_body: str, *, source_relpath: PurePosixPath) -> str
     # TEXT, so rendered links read "cdist" rather than "cdist.md". Descriptive
     # text (anything containing whitespace) is left untouched.
     def strip_ext(m: re.Match) -> str:
-        text = re.sub(r"^(\S+?)\.(?:md|html)(#\S*)?$",
-                      lambda t: t.group(1) + (t.group(2) or ""),
-                      m.group(2))
+        text = re.sub(
+            r"^(\S+?)\.(?:md|html)(#\S*)?$", lambda t: t.group(1) + (t.group(2) or ""), m.group(2)
+        )
         return m.group(1) + text + m.group(3)
 
     return re.sub(r"(<a\b[^>]*>)([^<]+)(</a>)", strip_ext, html_body)
@@ -292,10 +293,15 @@ def rewrite_llms_md_links(text: str) -> str:
     README*.html, nested README.md maps to index.html, and everything else
     maps from .md to .html. The repo
     copies keep their .md links (correct for GitHub / source consumption)."""
-    return re.sub(r"(\]\()([^)\s]+)(\))",
-                  lambda m: m.group(1) + built_link_target(
-                      m.group(2), source_relpath=PurePosixPath("llms.txt")) + m.group(3),
-                  text)
+    return re.sub(
+        r"(\]\()([^)\s]+)(\))",
+        lambda m: (
+            m.group(1)
+            + built_link_target(m.group(2), source_relpath=PurePosixPath("llms.txt"))
+            + m.group(3)
+        ),
+        text,
+    )
 
 
 def strip_top_h1_and_lang_line(html_body: str, *, suffix: str) -> tuple[str, str | None]:
@@ -305,7 +311,7 @@ def strip_top_h1_and_lang_line(html_body: str, *, suffix: str) -> tuple[str, str
     h1_match = re.search(r"<h1[^>]*>(.*?)</h1>", html_body, flags=re.S)
     if h1_match:
         title = re.sub(r"<.*?>", "", h1_match.group(1)).strip()
-        html_body = html_body[: h1_match.start()] + html_body[h1_match.end():]
+        html_body = html_body[: h1_match.start()] + html_body[h1_match.end() :]
 
     # Drop the "Languages:" line markup whether translated or not.
     # The README translations have a single <p> with many language links.
@@ -314,7 +320,7 @@ def strip_top_h1_and_lang_line(html_body: str, *, suffix: str) -> tuple[str, str
         html_body,
     )
     if p_match:
-        html_body = html_body[p_match.end():]
+        html_body = html_body[p_match.end() :]
 
     return html_body.lstrip(), title
 
@@ -328,7 +334,9 @@ def render_lang_switch(active_suffix: str) -> str:
         active = suffix == active_suffix
         cls = ' class="active"' if active else ""
         parts.append(f'<a hreflang="{code}" href="{href}"{cls}>{name}</a>')
-    return '<div class="lang-switch" aria-label="Translations">\n  ' + "\n  ".join(parts) + "\n</div>"
+    return (
+        '<div class="lang-switch" aria-label="Translations">\n  ' + "\n  ".join(parts) + "\n</div>"
+    )
 
 
 def template(
@@ -357,7 +365,7 @@ def template(
 <link rel="apple-touch-icon" href="{asset_prefix}goblin.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{asset_prefix}style.css">
 </head>
 <body>
@@ -379,6 +387,7 @@ stride-align · open source on
 <a href="https://github.com/adamdeprince/stride-align">GitHub</a>
 </footer>
 </div>
+<script src="{asset_prefix}language-switch.js"></script>
 </body>
 </html>
 """
@@ -391,8 +400,7 @@ def build_readme(suffix: str) -> None:
         return
     md_text = md_path.read_text(encoding="utf-8")
     body = render_md_to_html(md_text)
-    body = rewrite_local_links(
-        body, source_relpath=PurePosixPath(readme_filename(suffix)))
+    body = rewrite_local_links(body, source_relpath=PurePosixPath(readme_filename(suffix)))
     body, page_h1 = strip_top_h1_and_lang_line(body, suffix=suffix)
 
     lang = next(c for s, c, _n, _d in LANGS if s == suffix)
@@ -425,8 +433,7 @@ def build_benchmark() -> None:
     md_path = REPO / "BENCHMARK.md"
     md_text = md_path.read_text(encoding="utf-8")
     body = render_md_to_html(md_text)
-    body = rewrite_local_links(
-        body, source_relpath=PurePosixPath("BENCHMARK.md"))
+    body = rewrite_local_links(body, source_relpath=PurePosixPath("BENCHMARK.md"))
     body, page_h1 = strip_top_h1_and_lang_line(body, suffix="")
 
     out_html = template(
@@ -452,6 +459,16 @@ def build_generic(md_relpath: Path) -> None:
     matrix or the BENCHMARK page (those have bespoke builders above)."""
     md_path = REPO / md_relpath
     md_text = md_path.read_text(encoding="utf-8")
+    is_api_index = md_relpath == Path("docs/api/README.md")
+    if is_api_index:
+        replacements = {
+            "<!-- stride-vectorization-guide -->": render_vectorization_guide(),
+            "<!-- stride-api-catalog -->": render_api_catalog(),
+        }
+        for marker, replacement in replacements.items():
+            if marker not in md_text:
+                raise ValueError(f"missing {marker} in {md_path}")
+            md_text = md_text.replace(marker, replacement)
     body = render_md_to_html(md_text)
     md_posix = PurePosixPath(md_relpath.as_posix())
     body = rewrite_local_links(body, source_relpath=md_posix)
@@ -480,11 +497,21 @@ def build_generic(md_relpath: Path) -> None:
         lang=lang,
         direction=direction,
         masthead_title=page_h1 or md_path.stem,
-        tagline="stride-align documentation",
+        tagline=(
+            "One native algorithm surface for Python, R, and DuckDB"
+            if is_api_index
+            else "stride-align documentation"
+        ),
         nav_inner="",
         content=body.rstrip(),
         home_link=home_link,
         asset_prefix=up,
+        page_class="api-page" if is_api_index else "",
+        description=(
+            "Cross-language stride-align API examples for Python, R, and DuckDB."
+            if is_api_index
+            else "SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW for Python."
+        ),
     )
     out_path = OUT / Path(built_markdown_relpath(md_posix).as_posix())
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -502,7 +529,12 @@ def main() -> None:
 
     # Localized content and shared assets remain source-controlled outside the
     # otherwise-generated html/ tree and are refreshed on every build.
-    for name in ("index.zh-CN.html", "home.css", "goblin.png"):
+    for name in (
+        "index.zh-CN.html",
+        "home.css",
+        "goblin.png",
+        "language-switch.js",
+    ):
         source = WEBSITE / name
         if not source.exists():
             raise FileNotFoundError(f"missing homepage source: {source}")
@@ -529,12 +561,25 @@ def main() -> None:
         REPO / "BENCHMARK.md",
         *(REPO / readme_filename(suffix) for suffix, *_ in LANGS),
     }
-    skip_dirs = {"html", "build", "dist", "wheelhouse", ".venv", ".git",
-                 ".pytest_cache", ".wrangler", "__pycache__", "node_modules"}
+    skip_dirs = {
+        "html",
+        "build",
+        "dist",
+        "wheelhouse",
+        ".venv",
+        ".git",
+        ".pytest_cache",
+        ".wrangler",
+        "__pycache__",
+        "node_modules",
+    }
     for md in sorted(REPO.rglob("*.md")):
         if md in handled_root:
             continue
-        if any(part in skip_dirs or part.startswith("wheelhouse_") for part in md.relative_to(REPO).parts):
+        if any(
+            part in skip_dirs or part.startswith("wheelhouse_")
+            for part in md.relative_to(REPO).parts
+        ):
             continue
         rel = md.relative_to(REPO)
         build_generic(rel)
@@ -572,8 +617,8 @@ def main() -> None:
         src = REPO / name
         if src.exists():
             (OUT / name).write_text(
-                rewrite_llms_md_links(src.read_text(encoding="utf-8")),
-                encoding="utf-8")
+                rewrite_llms_md_links(src.read_text(encoding="utf-8")), encoding="utf-8"
+            )
             print(f"copied {OUT / name} (.md links rewritten to .html)")
         else:
             print(f"WARNING: {src} not found; not copied into html/")
