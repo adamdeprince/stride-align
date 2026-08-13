@@ -33,9 +33,15 @@
     <p>The binary links against Homebrew's R installation. Users of the CRAN
       macOS framework build, older macOS releases, and other platforms should
       use the source command above.</p>
+    <p>Runtime-tested Linux binaries for R 4.6 are available as direct
+      downloads. The LoongArch64 package contains generic, LSX, and LASX
+      backends; the POWER8 package contains generic and VSX backends. Each
+      package selects the best supported backend when it loads.</p>
     <ul>
       <li><a href="src/contrib/stridealign_0.6.0.tar.gz">Source package 0.6.0</a></li>
       <li><a href="bin/macosx/big-sur-arm64/contrib/4.6/stridealign_0.6.0.tgz">Homebrew R 4.6 binary for macOS 26+ arm64</a></li>
+      <li><a href="bin/linux/loongarch64/contrib/4.6/stridealign_0.6.0_R_loongarch64-unknown-linux-gnu.tar.gz">R 4.6 binary for Linux LoongArch64</a></li>
+      <li><a href="bin/linux/ppc64le/contrib/4.6/stridealign_0.6.0_R_powerpc64le-conda-linux-gnu.tar.gz">R 4.6 binary for Linux POWER8+ (ppc64le)</a></li>
       <li><a href="SHA256SUMS">SHA-256 checksums</a></li>
       <li><a href="https://stride-align.com/bindings/r/">R package guide</a></li>
     </ul>

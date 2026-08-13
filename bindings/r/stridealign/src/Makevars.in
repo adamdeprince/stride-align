@@ -2,6 +2,7 @@ CXX_STD = CXX20
 
 PKG_CPPFLAGS = -Ivendor @STRIDE_ALIGN_R_HAVE_DEFINES@
 PKG_CXXFLAGS = $(CXX_VISIBILITY)
+PKG_LIBS = @STRIDE_ALIGN_R_RUNTIME_LIBS@
 
 OBJECTS = backend_generic.o cpu_detect.o beider_morse_impl.o
 STRIDE_ALIGN_R_BACKENDS = @STRIDE_ALIGN_R_BACKENDS@
@@ -81,7 +82,6 @@ stridealign_rvv$(STRIDE_ALIGN_R_SHLIB_EXT): backend_rvv.o
 
 .PHONY: stridealign-r-clean
 clean: stridealign-r-clean
-shlib-clean: stridealign-r-clean
 
 stridealign-r-clean:
 	rm -f backend_*.o cpu_detect.o beider_morse_impl.o stridealign_*$(STRIDE_ALIGN_R_SHLIB_EXT)

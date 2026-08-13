@@ -33,7 +33,7 @@ set(
   STRIDE_ALIGN_DUCKDB_SIMD
   "native"
   CACHE STRING
-  "SIMD package profile: generic, native, avx2, avx512bwvl, neon, la464_lsx, la464_lasx, or la664_lasx"
+  "SIMD package profile: generic, native, avx2, avx512bwvl, neon, power8_vsx, la464_lsx, la464_lasx, or la664_lasx"
 )
 set_property(
   CACHE STRIDE_ALIGN_DUCKDB_SIMD
@@ -43,6 +43,7 @@ set_property(
     avx2
     avx512bwvl
     neon
+    power8_vsx
     la464_lsx
     la464_lasx
     la664_lasx
@@ -145,6 +146,17 @@ function(configure_stride_align_duckdb_target target_name)
       target_compile_definitions(
         ${target_name} PRIVATE STRIDE_ALIGN_DUCKDB_TARGET_NEON=1
       )
+    elseif(STRIDE_ALIGN_DUCKDB_SIMD STREQUAL "power8_vsx")
+      if(NOT stride_align_processor MATCHES "^(ppc64|ppc64le|powerpc64|powerpc64le)$")
+        message(FATAL_ERROR "The power8_vsx DuckDB package profile requires PowerPC64")
+      endif()
+      target_compile_options(
+        ${target_name}
+        PRIVATE -mcpu=power8 -mtune=power8 -mvsx
+      )
+      target_compile_definitions(
+        ${target_name} PRIVATE STRIDE_ALIGN_DUCKDB_TARGET_POWER8_VSX=1
+      )
     elseif(STRIDE_ALIGN_DUCKDB_SIMD STREQUAL "la464_lsx")
       if(NOT stride_align_processor MATCHES "^loongarch64$")
         message(FATAL_ERROR "The la464_lsx DuckDB package profile requires LoongArch64")
@@ -208,6 +220,16 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     ${LOADABLE_EXTENSION_NAME}
     PRIVATE -static-libstdc++ -static-libgcc
   )
+endif()
+
+# Strip at link time, before DuckDB appends its ABI metadata footer. Running
+# strip on the finished .duckdb_extension can discard that footer and make an
+# otherwise valid sideloaded package unloadable.
+if(
+  CMAKE_SYSTEM_NAME STREQUAL "Linux"
+  AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"
+)
+  target_link_options(${LOADABLE_EXTENSION_NAME} PRIVATE -s)
 endif()
 
 install(

@@ -179,6 +179,7 @@ explicit:
 | `avx2` | x86-64-v3 / AVX2 |
 | `avx512bwvl` | x86-64-v4 / AVX-512 F/BW/VL/DQ |
 | `neon` | AArch64 NEON |
+| `power8_vsx` | POWER8 or newer, VSX |
 | `la464_lsx` | Loongson LA464, LSX only |
 | `la464_lasx` | Loongson LA464, LASX |
 | `la664_lasx` | Loongson LA664, LASX |
@@ -212,6 +213,7 @@ cmake -S /path/to/duckdb -B build/duckdb-native -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_EXTENSIONS_ONLY=OFF \
   -DEXTENSION_STATIC_BUILD=ON \
+  -DOVERRIDE_GIT_DESCRIBE=v1.5.5 \
   -DDUCKDB_EXTENSION_CONFIGS="$PWD/bindings/duckdb/extension_config.cmake" \
   -DSTRIDE_ALIGN_DUCKDB_SIMD=native
 cmake --build build/duckdb-native \
@@ -225,6 +227,9 @@ Published packages rename that raw build output to
 Python and R packages.
 The extension config uses `DONT_LINK`, so the resulting DuckDB executable is
 also suitable for testing the artifact through the real sideload path.
+Keep `OVERRIDE_GIT_DESCRIBE` pinned when building from a DuckDB release archive;
+without its Git metadata DuckDB otherwise stamps the package with a dummy
+version that cannot be loaded by the official client.
 Pass `EXTENSION_STATIC_BUILD=ON` explicitly on fresh GNU/Linux builds. DuckDB
 uses it to compile its static library into independently discardable function
 and data sections, keeping the sideloaded package from retaining unused DuckDB
@@ -239,6 +244,13 @@ metadata. LoongArch64 package builds must also pass:
 
 Validate the resulting DuckDB CLI with `PRAGMA platform`; it must return
 `linux_loongarch64` before the extension is packaged.
+The extension configuration disables DuckDB's bundled jemalloc on LoongArch;
+the allocator cannot initialize with the supported vendor toolchains, whereas
+DuckDB's libc allocator works normally.
+
+POWER8 package builds likewise pass
+`-DDUCKDB_EXPLICIT_PLATFORM=linux_ppc64le`; validate that exact value before
+publishing the extension.
 
 ## Python parity tests
 

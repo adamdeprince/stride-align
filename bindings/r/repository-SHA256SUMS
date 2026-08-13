@@ -1,2 +1,4 @@
-f296afdb77a0f9939f77f718a120117ba4410cd7d78640fc4c471c99fee58b95  src/contrib/stridealign_0.6.0.tar.gz
+a34740ec3c43d0fac1823d396a85ce56050ef083039242253f76c89d16f0afc1  src/contrib/stridealign_0.6.0.tar.gz
 1b568cc8866f5b181896b5c4e545b183bfa30e1888c0727fb5c7f74d33b0fcc6  bin/macosx/big-sur-arm64/contrib/4.6/stridealign_0.6.0.tgz
+b00a20ce89269c03a5cd63ee7d12810b63eec9f8d787b662f2515b28f1b4f75b  bin/linux/loongarch64/contrib/4.6/stridealign_0.6.0_R_loongarch64-unknown-linux-gnu.tar.gz
+50d8e80a120a56e47eff58dcae851b5b7034dd15e305e60f816b862d2069a94b  bin/linux/ppc64le/contrib/4.6/stridealign_0.6.0_R_powerpc64le-conda-linux-gnu.tar.gz

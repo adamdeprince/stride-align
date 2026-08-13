@@ -36,6 +36,38 @@
       "validation": "runtime-tested",
       "path": "v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension",
       "sha256": "80f96057f53a7b336ba19ca0588cc17e938e9a49435704759744b337b9a084e2"
+    },
+    {
+      "platform": "linux_ppc64le",
+      "profile": "power8_vsx",
+      "compiler_target": "-mcpu=power8 -mtune=power8 -mvsx",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_ppc64le/power8_vsx/stride_align.0.6.0.duckdb_extension",
+      "sha256": "58715369ce827ddc9053e3364494e14a6fb3699a6c86d50402cd662e140109af"
+    },
+    {
+      "platform": "linux_loongarch64",
+      "profile": "la464_lsx",
+      "compiler_target": "-march=la464 -mtune=la464 -mlsx -mno-lasx",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_loongarch64/la464_lsx/stride_align.0.6.0.duckdb_extension",
+      "sha256": "2cc3b99e326ccbee6e514768b9269701a7de274e7871a78062eb40c1c15de365"
+    },
+    {
+      "platform": "linux_loongarch64",
+      "profile": "la464_lasx",
+      "compiler_target": "-march=la464 -mtune=la464 -mlsx -mlasx",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_loongarch64/la464_lasx/stride_align.0.6.0.duckdb_extension",
+      "sha256": "ebdbc4e31ad7367bbb0bdafb11c3dfe7edb1345ff9dcd56402f177eb1cd2643b"
+    },
+    {
+      "platform": "linux_loongarch64",
+      "profile": "la664_lasx",
+      "compiler_target": "-march=la664 -mtune=la664 -mlsx -mlasx",
+      "validation": "runtime-tested",
+      "path": "v1.5.5/linux_loongarch64/la664_lasx/stride_align.0.6.0.duckdb_extension",
+      "sha256": "efe05f69152f669e5e989a1fc1bef65055ad04d1834872bf0a0af75a463bbe37"
     }
   ]
 }

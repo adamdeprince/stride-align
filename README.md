@@ -1319,8 +1319,8 @@ channel:
 
 | Channel | URL prefix |
 | --- | --- |
-| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/` |
-| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.5.0/` |
+| GitHub Releases (primary) | `https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/` |
+| `stride-align.com` mirror | `https://stride-align.com/wheels/v0.6.0/` |
 
 Same wheels on both, pick whichever loads faster from your network.
 The mirror is convenient when GitHub egress is slow from inside
@@ -1351,70 +1351,65 @@ mismatch even if it did. We ship one wheel per world:
 | World | Loader | glibc | Typical hosts | Wheel build tag |
 | --- | --- | --- | --- | --- |
 | **Old-world** | `/lib64/ld.so.1` | 2.28-era | Stock Kylin, original Loongson distros | `1.oldworld` |
-| **New-world** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | Recent LoongArch distros, anything where the new loader has been installed | `1.newworld` |
+| **New-world** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | Recent LoongArch distros whose Python uses the new loader | `1.newworld` |
 
 Both wheels are statically linked against libstdc++ / libgcc so the
 only thing separating them is the loader / glibc ABI.
 
-**Pick the right one with this one-liner**:
+**Pick the right one from the loader embedded in your Python executable**:
 
 ```bash
-test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
+PYTHON_LOADER=$(readelf -l "$(readlink -f "$(command -v python3)")" |
+  sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p')
+case "$PYTHON_LOADER" in
+  */ld-linux-loongarch-lp64d.so.1) WORLD=newworld ;;
+  */ld.so.1) WORLD=oldworld ;;
+  *) echo "Unrecognized Python loader: $PYTHON_LOADER" >&2; exit 1 ;;
+esac
+echo "$WORLD"
 ```
 
-If you see `new-world`, the loader is in place — use the new-world
-wheel. If you see `old-world`, either install the old-world wheel,
-or run the one-time sudo symlink below to enter new-world land
-(safe — it's a new filename, not a replacement, so existing
-old-world binaries keep working).
+Use the wheel matching the result. Do not select a world from the processor
+model or the mere presence of a loader file: Python's embedded loader and
+glibc ABI are what matter.
 
 ### Old-world wheel
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 Mirror:
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### New-world wheel
 
-The new-world wheel needs the new loader available at the path the
-ELF references. One sudo step, once per box, leaves old-world
-binaries unaffected:
-
-```bash
-sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
-            /lib64/ld-linux-loongarch-lp64d.so.1
-```
-
-(Distro packagers usually drop an equivalent symlink as part of the
-new-world transition, in which case you can skip this.)
-
-Then:
+Use this package only when the detection command above prints
+`new-world`; a new-world distribution supplies the matching loader and glibc
+as one system runtime.
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 Mirror:
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### Other notes
 
 Prebuilt LoongArch64 wheels are available for Python 3.12, 3.13,
 and 3.14 — in both worlds — on both mirrors. The build details
-(toolchains, RPATH wrapper, static C++ runtime) live in
+(toolchains, loader validation, static C++ runtime) live in
 [docs/loongson-build.md](docs/loongson-build.md). If you're on a
 different Python or want to build from source, `pip install
 stride-align` falls back to the PyPI source distribution and

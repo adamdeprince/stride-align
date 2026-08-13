@@ -620,8 +620,8 @@ python tools/x86_microbench_regression.py \
 
 | 渠道 | URL 前缀 |
 | --- | --- |
-| GitHub Releases（主渠道） | `https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/` |
-| `stride-align.com` 镜像 | `https://stride-align.com/wheels/v0.5.0/` |
+| GitHub Releases（主渠道） | `https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/` |
+| `stride-align.com` 镜像 | `https://stride-align.com/wheels/v0.6.0/` |
 
 两个渠道提供完全相同的 wheel，挑访问更快的那个用。在国内访问
 GitHub 较慢时，镜像比较方便；GitHub Releases 是规范主页。
@@ -650,61 +650,57 @@ PY=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info
 | 世界 | 加载器 | glibc | 典型机器 | wheel build 标签 |
 | --- | --- | --- | --- | --- |
 | **老世界** | `/lib64/ld.so.1` | 2.28 时代 | 出厂 Kylin、原版龙芯发行版 | `1.oldworld` |
-| **新世界** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | 较新的龙架构发行版，或者任何安装了新加载器的机器 | `1.newworld` |
+| **新世界** | `/lib64/ld-linux-loongarch-lp64d.so.1` | ≥ 2.36 | Python 使用新加载器的较新龙架构发行版 | `1.newworld` |
 
 两份 wheel 都静态链接了 libstdc++ / libgcc，唯一的差别就是
 加载器和 glibc ABI 世界。
 
-**用下面这一行命令判断**：
+**请根据 Python 可执行文件内嵌的加载器判断**：
 
 ```bash
-test -e /lib64/ld-linux-loongarch-lp64d.so.1 && echo new-world || echo old-world
+PYTHON_LOADER=$(readelf -l "$(readlink -f "$(command -v python3)")" |
+  sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p')
+case "$PYTHON_LOADER" in
+  */ld-linux-loongarch-lp64d.so.1) WORLD=newworld ;;
+  */ld.so.1) WORLD=oldworld ;;
+  *) echo "无法识别 Python 加载器：$PYTHON_LOADER" >&2; exit 1 ;;
+esac
+echo "$WORLD"
 ```
 
-如果输出 `new-world`，说明加载器已就位——直接用新世界的 wheel。
-如果输出 `old-world`，要么装老世界的 wheel，要么跑下面那条
-一次性的 sudo 软链接命令进入新世界（安全——它是新增一个文件名而
-不是替换，老世界的二进制照样正常）。
+安装与输出结果相符的 wheel。不要只看处理器型号，也不要只看某个
+加载器文件是否存在；真正决定兼容性的是 Python 内嵌的加载器和
+glibc ABI。
 
 ### 老世界 wheel
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 镜像：
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.oldworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### 新世界 wheel
 
-新世界 wheel 需要新的加载器出现在 ELF 引用的那个路径上。每台
-机器一次性 sudo 即可，不影响已有的老世界二进制：
-
-```bash
-sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
-            /lib64/ld-linux-loongarch-lp64d.so.1
-```
-
-（发行版打包者通常会把同等的软链接随新世界一起放进来，那种情况下
-可以跳过这一步。）
-
-然后：
+只有前面的检测命令输出 `new-world` 时才安装这一包。新世界发行版会
+把匹配的加载器与 glibc 作为同一套系统运行时提供。
 
 ```bash
 pip install \
-  https://github.com/adamdeprince/stride-align/releases/download/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://github.com/adamdeprince/stride-align/releases/download/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 镜像：
 
 ```bash
 pip install \
-  https://stride-align.com/wheels/v0.5.0/stride_align-0.5.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+  https://stride-align.com/wheels/v0.6.0/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
 ```
 
 ### 其他说明
@@ -713,7 +709,7 @@ pip install \
 3.12、3.13 和 3.14——两个世界都有。如果你用的是其他 Python
 版本，或者想从源码构建，`pip install stride-align` 会回退到
 PyPI 上的源码发行版，在本地编译 LSX/LASX 内核。构建细节
-（工具链、RPATH wrapper、静态 C++ 运行时）见
+（工具链、加载器验证、静态 C++ 运行时）见
 [docs/loongson-build.md](docs/loongson-build.md)。
 
 

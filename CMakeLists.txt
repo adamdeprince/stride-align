@@ -379,8 +379,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES 
   add_stride_align_backend(_lsx src/cpp/backends/linux_loongarch64_lsx.cpp)
   add_stride_align_backend(_lasx src/cpp/backends/linux_loongarch64_lasx.cpp)
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(_lsx PRIVATE -mlsx)
-    target_compile_options(_lasx PRIVATE -mlsx -mlasx)
+    # Some vendor toolchains default every translation unit to LSX. Keep the
+    # dispatcher and fallback backends on the baseline ISA so importing the
+    # package remains safe before runtime feature selection has occurred.
+    foreach(target_name _cpu _generic _swar)
+      target_compile_options(
+        ${target_name}
+        PRIVATE -march=loongarch64 -mtune=generic -mno-lsx -mno-lasx
+      )
+    endforeach()
+    target_compile_options(_lsx PRIVATE -march=la464 -mtune=la464 -mlsx -mno-lasx)
+    target_compile_options(_lasx PRIVATE -march=la464 -mtune=la464 -mlsx -mlasx)
   endif()
   list(
     APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS
@@ -389,10 +398,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES 
   )
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "^(ppc64|ppc64le|powerpc64)$")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND STRIDE_ALIGN_SYSTEM_PROCESSOR MATCHES "^(ppc64|ppc64le|powerpc64|powerpc64le)$")
   add_stride_align_backend(_vsx src/cpp/backends/linux_powerpc64_vsx.cpp)
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(_vsx PRIVATE -mvsx)
+    target_compile_options(_vsx PRIVATE -mcpu=power8 -mtune=power8 -mvsx)
   endif()
   list(APPEND STRIDE_ALIGN_CPU_COMPILE_DEFINITIONS STRIDE_ALIGN_HAVE_LINUX_POWERPC64_VSX=1)
 endif()

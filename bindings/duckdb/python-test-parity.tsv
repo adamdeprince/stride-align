@@ -1,6 +1,7 @@
 python_test	test_functions	duckdb_tests	adaptation
 tests/test_alignment_unicode.py	19	tests/duckdb/test_duckdb_extension.py;tests/duckdb/test_duckdb_native_api.py	UTF-8 scalar, batch, path, CIGAR, and wide-codepoint cases run through sideloaded SQL functions.
 tests/test_api.py	112	tests/duckdb/test_duckdb_extension.py;tests/duckdb/test_duckdb_native_api.py	Public scorer, dispatch-profile, vector, cutoff, normalized, backend, and alignment contracts are exercised through DuckDB; Python CLI and nanobind mechanics are host-specific.
+tests/test_api_guide.py	7	tests/test_api_guide.py;tests/duckdb/test_duckdb_native_api.py	The documentation tests verify the DuckDB calls and vectorization shapes shown by the language-switchable API guide; native SQL tests execute the same surface.
 tests/test_beider_morse.py	7	tests/duckdb/test_duckdb_native_api.py	Embedded BMPM resources, rule mode, concatenation, maximum output, Unicode, and validation are exercised in SQL.
 tests/test_bounded_lazy_f_regression.py	1	tests/duckdb/test_duckdb_native_api.py	Affine alignment and matrix path oracles cover the checked-in lazy-F regression behavior in the shared C++ core.
 tests/test_cdist.py	22	tests/duckdb/test_duckdb_native_api.py	All sixteen scorer IDs, rectangular and symmetric matrices, options, empty inputs, Unicode, and SQL list results are covered.
@@ -11,6 +12,7 @@ tests/test_cdist_top_k.py	15	tests/duckdb/test_duckdb_native_api.py	Global bound
 tests/test_dtw.py	25	tests/duckdb/test_duckdb_native_api.py	Float and SMALLINT DTW defaults, batch distances, windows, explicit distance, cutoff, and validation use DuckDB numeric lists.
 tests/test_dual_sw_batch.py	6	tests/duckdb/test_duckdb_native_api.py	Standard/Farrar batch aliases, affine options, Unicode, empty targets, and per-pair equivalence run as list-valued SQL calls.
 tests/test_fuzz.py	29	tests/duckdb/test_duckdb_native_api.py	Native partial/token/weighted ratios are covered; no TheFuzz facade is registered.
+tests/test_homepage.py	9	tests/test_homepage.py;tests/duckdb/test_duckdb_vectorized_demo.py	The homepage tests verify its complete DuckDB scripts and architecture-specific installation links, while the vectorized demo suite executes their DataChunk-oriented operations.
 tests/test_indel.py	21	tests/duckdb/test_duckdb_native_api.py	Raw/normalized scalar, cutoff, list, top-k, cdist, wide Unicode, empty, and randomized-oracle behavior is covered.
 tests/test_jaro.py	19	tests/duckdb/test_duckdb_native_api.py	Jaro and Jaro-Winkler scalar/list/cdist/ranking plus configurable prefix behavior is covered.
 tests/test_keyboard_matrices.py	14	tests/duckdb/test_duckdb_native_api.py	Embedded layouts, confusion-count construction, NPY loading, transpose, orientation, validation, and alignment are native matrix-value SQL tests.

@@ -1,10 +1,11 @@
-# TODO: new-world Python builds for LoongArch (CPython 3.12 through 3.14)
+# New-world Python validation for LoongArch (CPython 3.12 through 3.14)
 
-**Status:** parked, revisit weekend after 2026-05-28.
-**Goal:** make this box capable of building **and** smoke-testing the
-new-world LoongArch wheel for every supported Python version (3.12,
-3.13, 3.14). Today the box is fully old-world; the
-new-world wheel is built blind and uploaded without local validation.
+**Status:** completed 2026-08-13.
+**Goal:** build and smoke-test the new-world LoongArch wheel for every
+supported Python version (3.12, 3.13, 3.14) even though the installed Kylin
+system remains old-world. The validation interpreters use the GCC 16 sysroot;
+the redistributable wheels use the target-prefixed compilers directly and do
+not retain toolchain RPATHs.
 
 ## Why this is needed
 
@@ -17,13 +18,12 @@ mapped, and only one libc can live in one address space. So:
 
 - Old-world Python + 15.2.0 toolchain → builds + runs the **old-world**
   wheel. Already working today.
-- New-world Python + 16.1.0 toolchain (via `wrappers/`) → builds +
-  runs the **new-world** wheel. **Not yet built; this TODO.**
+- New-world Python + 16.1.0 toolchain (the validation interpreter may use
+  `wrappers/`) → runs the **new-world** wheel.
 
-Without new-world Python, we can build the new-world wheel
-(`pip wheel` doesn't need to import the result) but we cannot run
-`pytest` against it on this box, so cross-arch validation skips the
-new-world variant.
+The release check now builds small new-world CPython runtimes for all three
+supported ABIs and imports each finished wheel under glibc 2.43. An attempted
+import into the host's old-world CPython is not considered validation.
 
 ## Plan
 
@@ -120,9 +120,11 @@ done
 
 ```bash
 cd ~/dev/stride-align
+export NEW_CC=$GCC16/bin/loongarch64-loongson-linux-gnu-gcc
+export NEW_CXX=$GCC16/bin/loongarch64-loongson-linux-gnu-g++
 for V in 3.12 3.13 3.14; do
     source ~/venvs/stride-align-newworld-$V/bin/activate
-    CC=$GCC16/wrappers/gcc CXX=$GCC16/wrappers/g++ \
+    CC=$NEW_CC CXX=$NEW_CXX \
         pip wheel . --no-build-isolation --no-deps \
         -C wheel.build_tag=1.newworld \
         -w wheelhouse/newworld
@@ -133,10 +135,9 @@ done
 This produces:
 
 ```
-wheelhouse/newworld/stride_align-0.3.0-1.newworld-cp39-cp39-linux_loongarch64.whl
-wheelhouse/newworld/stride_align-0.3.0-1.newworld-cp310-cp310-linux_loongarch64.whl
-…
-wheelhouse/newworld/stride_align-0.3.0-1.newworld-cp314-cp314-linux_loongarch64.whl
+wheelhouse/newworld/stride_align-0.6.0-1.newworld-cp312-cp312-linux_loongarch64.whl
+wheelhouse/newworld/stride_align-0.6.0-1.newworld-cp313-cp313-linux_loongarch64.whl
+wheelhouse/newworld/stride_align-0.6.0-1.newworld-cp314-cp314-linux_loongarch64.whl
 ```
 
 ### 4. Smoke test each new-world wheel
@@ -146,7 +147,7 @@ for V in 3.12 3.13 3.14; do
     PY=cp$(echo $V | tr -d .)
     source ~/venvs/stride-align-newworld-$V/bin/activate
     pip install --force-reinstall \
-        wheelhouse/newworld/stride_align-0.3.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
+        wheelhouse/newworld/stride_align-0.6.0-1.newworld-${PY}-${PY}-linux_loongarch64.whl
     python -m pytest tests/test_ndarray.py tests/test_unicode_wide.py -q
     deactivate
 done
@@ -166,11 +167,10 @@ promises older-Python support.
 
 ## Pitfalls a future AI should know
 
-- **Always use the wrappers** for new-world (CC/CXX = `wrappers/gcc`,
-  `wrappers/g++`). The bare `bin/loongarch64-loongson-linux-gnu-gcc`
-  produces ABI-compatible binaries but **without RPATH**, so the
-  result needs `LD_LIBRARY_PATH` set at runtime — fine in CI, awful
-  in a wheel.
+- **Use wrappers only for the validation interpreter.** Build distributable
+  wheels with `bin/loongarch64-loongson-linux-gnu-gcc` and
+  `bin/loongarch64-loongson-linux-gnu-g++`. The wrappers deliberately add
+  absolute build-host RPATHs, which must never appear in a wheel.
 - **Don't put 16.1's libs on LD_LIBRARY_PATH while running an
   old-world binary.** It pulls the new-world libstdc++ in, which
   DT_NEEDEDs the new-world loader, which the old-world process
@@ -200,10 +200,8 @@ promises older-Python support.
 
 ## Related
 
-- [docs/loongson-build.md](loongson-build.md) — current dual-toolchain
-  build incantation for the old-world wheel (working today) and the
-  new-world wheel (build-only; can't run-tested until this TODO is
-  done).
+- [docs/loongson-build.md](loongson-build.md) — current dual-toolchain build
+  and validation instructions for both worlds.
 - [README.md](../README.md) — points users at the right wheel URL
   per their world; URLs above must match the GitHub Release asset
   names produced in §3 and §5.

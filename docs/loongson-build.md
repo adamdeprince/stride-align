@@ -16,7 +16,7 @@ We ship **one stride-align wheel per world**:
 | Wheel build tag | Toolchain | Target audience |
 | --- | --- | --- |
 | `1.oldworld` | GCC 15.2.0 (`/opt/loongson-gcc-15.2.0`) | stock Kylin, older LoongArch distros |
-| `1.newworld` | GCC 16.1.0 (`/opt/loongson-gcc-16.1.0`, via `wrappers/`) | recent LoongArch distros with the new loader installed |
+| `1.newworld` | GCC 16.1.0 (`/opt/loongson-gcc-16.1.0`) | recent LoongArch distros with the new loader installed |
 
 Both wheels are byte-for-byte identical at the source level — the
 distinction lives entirely in which toolchain links them. The
@@ -31,15 +31,20 @@ Both toolchains coexist at `/opt/loongson-gcc-15.2.0` and
 `/opt/loongson-cmake-4.3.2` (the system `/usr/bin/cmake` is 3.16,
 too old for scikit-build-core).
 
-The one-time **sudo** step the new-world loader needs:
+All transfers into or out of the reference box must be serialized and capped
+at 100 KiB/s. Use resumable rsync, including for local-LAN transfers:
 
 ```bash
-sudo ln -sf /opt/loongson-gcc-16.1.0/sysroot/lib64/ld-linux-loongarch-lp64d.so.1 \
-            /lib64/ld-linux-loongarch-lp64d.so.1
+rsync -av --partial --append-verify --bwlimit=100 SOURCE loongson:DESTINATION
 ```
 
-This creates a new filename and never touches `/lib64/ld.so.1`, so
-existing old-world binaries are unaffected.
+Do not run multiple capped transfers concurrently: the 100 KiB/s limit is the
+aggregate ceiling, not a per-process allowance.
+
+The build-only new-world validation interpreters use the GCC 16 sysroot and
+loader. That is a test harness, not a migration recipe for an old-world user
+system; users select a wheel from the loader embedded in their Python
+executable.
 
 ## Building the old-world wheel
 
@@ -69,23 +74,22 @@ and tag the resulting file with build tag `1.oldworld` (see
 ```bash
 ssh loongson '
     export GCC16=/opt/loongson-gcc-16.1.0
-    export PATH=/opt/loongson-cmake-4.3.2/bin:$GCC16/wrappers:$GCC16/bin:$PATH
-    export CC=$GCC16/wrappers/gcc
-    export CXX=$GCC16/wrappers/g++
+    export PATH=/opt/loongson-cmake-4.3.2/bin:$GCC16/bin:$PATH
+    export CC=$GCC16/bin/loongarch64-loongson-linux-gnu-gcc
+    export CXX=$GCC16/bin/loongarch64-loongson-linux-gnu-g++
     cd ~/dev/stride-align
     .venv/bin/pip install -e . --no-build-isolation --no-deps
 '
 ```
 
-Note the **wrappers** directory on PATH and as CC/CXX. The wrappers
-exec the real `gcc` / `g++` with three extra `-Wl,-rpath,…` flags so
-the produced `.so` carries an RPATH pointing at the new-world sysroot
-libs (libstdc++, libc, libm, the new loader). Without the wrappers
-the .so still builds, but it would need `LD_LIBRARY_PATH` set at run
-time — which we don't want users to need.
+Use the toolchain binaries directly. They already target the new-world sysroot,
+and stride-align statically links libstdc++ and libgcc into its extension
+modules. The old `wrappers/` launchers add an absolute `/opt/loongson-gcc-*`
+RPATH; that happens to work on the build box but is not suitable for a
+redistributable wheel.
 
-The user box needs the loader symlink installed (see above) but no
-LD_LIBRARY_PATH. The RPATH locates everything else.
+The user box needs the new-world loader (normally supplied by its distribution)
+but no build-host RPATH or `LD_LIBRARY_PATH`.
 
 ## Wheel build tags
 
@@ -94,8 +98,8 @@ distribution name and the Python tag, format `\d+(\.\w+)*` per
 PEP 491. We use it to mark the LoongArch world:
 
 ```
-stride_align-0.3.0-1.oldworld-cp313-cp313-linux_loongarch64.whl
-stride_align-0.3.0-1.newworld-cp313-cp313-linux_loongarch64.whl
+stride_align-0.6.0-1.oldworld-cp313-cp313-linux_loongarch64.whl
+stride_align-0.6.0-1.newworld-cp313-cp313-linux_loongarch64.whl
 ```
 
 `pip install <url>` accepts either filename and installs the right
@@ -130,21 +134,22 @@ release of each world.
 If the venv numpy was last built against the wrong world's libstdc++
 (e.g. you switched worlds and pytest now fails with
 `GLIBCXX_3.4.29 not found` or `ld-linux-loongarch-lp64d.so.1: cannot
-open shared object file`), rebuild it with the matching wrappers:
+open shared object file`), rebuild it with the matching toolchain:
 
 ```bash
 ssh loongson '
     export GCC16=/opt/loongson-gcc-16.1.0
-    export PATH=/opt/loongson-cmake-4.3.2/bin:$GCC16/wrappers:$GCC16/bin:$PATH
+    export PATH=/opt/loongson-cmake-4.3.2/bin:$GCC16/bin:$PATH
     cd ~/dev/stride-align
     .venv/bin/pip install cython
-    CC=$GCC16/wrappers/gcc CXX=$GCC16/wrappers/g++ \
+    CC=$GCC16/bin/loongarch64-loongson-linux-gnu-gcc \
+        CXX=$GCC16/bin/loongarch64-loongson-linux-gnu-g++ \
         .venv/bin/pip install --no-binary numpy --force-reinstall numpy
 '
 ```
 
-For the old-world venv swap `GCC16` → `GCC15` and drop the wrappers
-suffix (`$GCC15/bin/gcc`, `$GCC15/bin/g++`).
+For the old-world venv swap `GCC16` → `GCC15`; the compiler paths remain
+`$GCC15/bin/gcc` and `$GCC15/bin/g++`.
 
 ## Gotchas
 
@@ -153,10 +158,10 @@ suffix (`$GCC15/bin/gcc`, `$GCC15/bin/g++`).
   the dynamic linker load the new-world libstdc++, which DT_NEEDEDs
   the new-world loader, which the running process can't satisfy.
   Everything breaks.
-- **Use the wrappers, not bare `bin/`, for new-world builds.** The
-  bare binaries skip the RPATH and produce .so files that need
-  `LD_LIBRARY_PATH` to find their libs at run time. Users won't
-  thank you.
+- **Do not ship the toolchain wrappers' RPATH.** Build new-world wheels with
+  bare `bin/loongarch64-loongson-linux-gnu-gcc` and
+  `bin/loongarch64-loongson-linux-gnu-g++`, then audit every `.so` with
+  `readelf -d` to ensure no build-host `RPATH` or `RUNPATH` remains.
 - **Static C++ runtime is on by default for loongarch64.** Don't
   disable it unless you're certain the user box has a matching
   libstdc++ in `LD_LIBRARY_PATH` — the wheel becomes ABI-fragile

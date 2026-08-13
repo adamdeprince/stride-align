@@ -53,7 +53,7 @@ def parse_ncbi(path: Path) -> tuple[str, list[int]]:
 
 def gap_defaults(name: str) -> tuple[int, int, int]:
     if name.startswith("BLOSUM"):
-        level = int(name.removeprefix("BLOSUM"))
+        level = int(name[len("BLOSUM") :])
         if level >= 80:
             return -5, -10, -1
         if level >= 62:
@@ -62,7 +62,7 @@ def gap_defaults(name: str) -> tuple[int, int, int]:
             return -6, -13, -2
         return -6, -14, -2
     if name.startswith("PAM"):
-        level = int(name.removeprefix("PAM"))
+        level = int(name[len("PAM") :])
         if level <= 30:
             return -5, -9, -1
         if level <= 120:

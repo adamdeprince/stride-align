@@ -128,6 +128,19 @@ def test_duckdb_download_is_prominent_in_both_homepages() -> None:
     assert "https://distribution.goblinreactor.com/stride-align/duckdb/index.zh-CN.html" in chinese
 
 
+def test_loongarch_python_install_is_prominent_and_bilingual() -> None:
+    english = HOMEPAGE.read_text(encoding="utf-8")
+    chinese = CHINESE_HOMEPAGE_SOURCE.read_text(encoding="utf-8")
+
+    release = "https://github.com/adamdeprince/stride-align/releases/tag/v0.6.0"
+    assert release in english
+    assert "PyPI does not index" in english
+    assert "README.html#loongarch-installation" in english
+    assert release in chinese
+    assert "PyPI 不索引" in chinese
+    assert "README.zh-CN.html#loongarch" in chinese
+
+
 def _code_block(homepage: str, element_id: str) -> str:
     return unescape(homepage.split(f'<code id="{element_id}">', 1)[1].split("</code>", 1)[0])
 

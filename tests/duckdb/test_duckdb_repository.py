@@ -42,12 +42,12 @@ def test_duckdb_repository_metadata_matches_project_version() -> None:
     assert expected_filename in homepage
 
 
-def test_planned_power_and_loongson_packages_are_pending_not_downloads() -> None:
+def test_power_and_loongson_packages_are_downloadable() -> None:
     indexes = {
         "en": (DUCKDB_BINDING / "repository-index.html").read_text(encoding="utf-8"),
         "zh-CN": (DUCKDB_BINDING / "repository-index.zh-CN.html").read_text(encoding="utf-8"),
     }
-    pending_profiles = (
+    available_profiles = (
         "POWER8+ / VSX",
         "LA464 / LSX",
         "LA464 / LASX",
@@ -55,15 +55,16 @@ def test_planned_power_and_loongson_packages_are_pending_not_downloads() -> None
     )
 
     for language, page in indexes.items():
-        pending_rows = re.findall(r'<tr class="pending-row">(.*?)</tr>', page, flags=re.DOTALL)
-
-        assert len(pending_rows) == len(pending_profiles)
-        assert all(any(profile in row for row in pending_rows) for profile in pending_profiles)
-        assert all("<a " not in row for row in pending_rows)
-        assert page.count('class="download"') == 4
+        assert 'class="pending-row"' not in page
+        available_rows = re.findall(r"<tr>(.*?)</tr>", page, flags=re.DOTALL)
+        for profile in available_profiles:
+            row = next(row for row in available_rows if profile in row)
+            assert 'class="download"' in row
+            assert "stride_align.0.6.0.duckdb_extension" in row
+        assert page.count('class="download"') == 8
         assert f'<html lang="{language}">' in page
 
-    assert indexes["en"].count('<span class="pending">Pending</span>') == 4
-    assert indexes["zh-CN"].count('<span class="pending">待发布</span>') == 4
+    assert '<span class="pending">Pending</span>' not in indexes["en"]
+    assert '<span class="pending">待发布</span>' not in indexes["zh-CN"]
     assert 'href="index.zh-CN.html"' in indexes["en"]
     assert 'href="index.html"' in indexes["zh-CN"]

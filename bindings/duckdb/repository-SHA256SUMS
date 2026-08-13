@@ -2,3 +2,7 @@
 1ef7408cc7dc02ba9742dd9d5c93a4cefe048d922990177dcdf9d94e08d0f58f  v1.5.5/linux_amd64/generic/stride_align.0.6.0.duckdb_extension
 1ae5093ddb664f6e594a5dac6c9799159b7b6e27200f05f30c561d2bbabb7aaa  v1.5.5/linux_amd64/avx2/stride_align.0.6.0.duckdb_extension
 80f96057f53a7b336ba19ca0588cc17e938e9a49435704759744b337b9a084e2  v1.5.5/linux_amd64/avx512bwvl/stride_align.0.6.0.duckdb_extension
+58715369ce827ddc9053e3364494e14a6fb3699a6c86d50402cd662e140109af  v1.5.5/linux_ppc64le/power8_vsx/stride_align.0.6.0.duckdb_extension
+2cc3b99e326ccbee6e514768b9269701a7de274e7871a78062eb40c1c15de365  v1.5.5/linux_loongarch64/la464_lsx/stride_align.0.6.0.duckdb_extension
+ebdbc4e31ad7367bbb0bdafb11c3dfe7edb1345ff9dcd56402f177eb1cd2643b  v1.5.5/linux_loongarch64/la464_lasx/stride_align.0.6.0.duckdb_extension
+efe05f69152f669e5e989a1fc1bef65055ad04d1834872bf0a0af75a463bbe37  v1.5.5/linux_loongarch64/la664_lasx/stride_align.0.6.0.duckdb_extension

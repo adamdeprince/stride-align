@@ -77,7 +77,7 @@ SELECT stride_levenshtein(repeat('你好', 40), repeat('你号', 40));
 40
 
 query I
-SELECT stride_align_simd_level() IN ('generic', 'native', 'avx2', 'avx512bwvl', 'neon', 'la464_lsx', 'la464_lasx', 'la664_lasx');
+SELECT stride_align_simd_level() IN ('generic', 'native', 'avx2', 'avx512bwvl', 'neon', 'power8_vsx', 'la464_lsx', 'la464_lasx', 'la664_lasx');
 ----
 1
 

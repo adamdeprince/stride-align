@@ -11,6 +11,7 @@
      defined(STRIDE_ALIGN_DUCKDB_TARGET_AVX2) + \
      defined(STRIDE_ALIGN_DUCKDB_TARGET_AVX512BWVL) + \
      defined(STRIDE_ALIGN_DUCKDB_TARGET_NEON) + \
+     defined(STRIDE_ALIGN_DUCKDB_TARGET_POWER8_VSX) + \
      defined(STRIDE_ALIGN_DUCKDB_TARGET_LSX) + \
      defined(STRIDE_ALIGN_DUCKDB_TARGET_LASX)) != 1
 #error "Exactly one DuckDB package target must be selected"
@@ -45,6 +46,11 @@
 #if defined(STRIDE_ALIGN_DUCKDB_TARGET_NEON) && \
     !defined(__ARM_NEON) && !defined(__ARM_NEON__)
 #error "The NEON DuckDB profile did not select the NEON templates"
+#endif
+
+#if defined(STRIDE_ALIGN_DUCKDB_TARGET_POWER8_VSX) && \
+    (!defined(__VSX__) || !defined(__POWER8_VECTOR__))
+#error "The POWER8 VSX DuckDB profile did not select the POWER8 templates"
 #endif
 
 #if defined(STRIDE_ALIGN_DUCKDB_TARGET_LSX) && \
