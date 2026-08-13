@@ -71,25 +71,55 @@ record linkage, ranking, or biological sequence scoring.
 
 ## SQL functions
 
-All two-string functions accept `VARCHAR` and propagate SQL `NULL`. Hamming
-functions require equal-length strings.
+All string functions accept ordinary UTF-8 `VARCHAR` values. List-valued APIs
+use `VARCHAR[]`, and every function can be applied to DuckDB columns as well as
+literals. Hamming functions require equal-length strings.
 
-| Function | Result |
+| Family | Examples |
 | --- | --- |
-| `stride_levenshtein(a, b)` | Levenshtein distance |
-| `stride_levenshtein_similarity(a, b)` | normalized similarity |
-| `stride_osa(a, b)` / `stride_osa_similarity(a, b)` | restricted Damerau-Levenshtein |
-| `stride_true_damerau_levenshtein(a, b)` | unrestricted Damerau-Levenshtein |
-| `stride_indel(a, b)` / `stride_indel_similarity(a, b)` | insert/delete distance |
-| `stride_hamming(a, b)` / `stride_hamming_similarity(a, b)` | equal-length Hamming |
-| `stride_jaro(a, b)` / `stride_jaro_winkler(a, b)` | Jaro similarities |
-| `stride_smith_waterman(a, b)` | local-alignment score, defaults `2/-1/-1` |
-| `stride_needleman_wunsch(a, b)` | global-alignment score, defaults `2/-1/-1` |
-| `stride_*_affine(a, b)` | affine-gap SW/NW score, defaults `2/-1/-2/-1` |
-| `stride_align_simd_level()` | selected package profile |
+| Pairwise edit and alignment | `stride_levenshtein_score`, `stride_indel_score`, `stride_jaro_winkler_similarity`, `stride_smith_waterman_score` |
+| One-to-many vectors | `stride_levenshtein_scores(query, targets)`, `stride_jaro_similarities(query, targets)`, `stride_wratios(query, targets)` |
+| Ranking | `stride_levenshtein_top_k`, `stride_jaro_best`, `stride_extract` |
+| All-pairs | `stride_cdist`, `stride_cdist_above_threshold`, `stride_cdist_top_k`, `stride_cdist_top_k_per_query` |
+| Text algorithms | LCS, n-gram, Ratcliff-Obershelp, token ratios, WRatio, and Monge-Elkan |
+| Phonetics | Soundex, Metaphone, NYSIIS, Match Rating, Caverphone, Cologne, Daitch-Mokotoff, Double Metaphone, and Beider-Morse |
+| Sequences | DTW, local/global paths and CIGARs, BLOSUM/PAM/nucleotide matrices, and custom substitution matrices |
 
-DuckDB exposes the native stride-align SQL surface. The RapidFuzz, Parasail,
-Jellyfish, and TheFuzz compatibility APIs are Python-only migration aids.
+The ranking and cdist functions are native bounded operations. They apply
+length bounds, adaptive score cutoffs, and bounded heaps while scanning; a
+query does not need to materialize and sort a full cross-product first.
+
+```sql
+SELECT stride_levenshtein_top_k(
+  'kitten', ['sitting', 'kitten', 'bitten', 'kitchen'], 2
+);
+
+SELECT stride_cdist_top_k(
+  ['kitten', 'sitting'],
+  ['kitten', 'bitten', 'kitchen'],
+  'jaro_winkler',
+  4
+);
+```
+
+Built-in matrices are addressed by name. Custom matrices are SQL values and
+can be passed to scalar, vector, path, cdist, threshold, and top-k functions.
+
+```sql
+WITH matrix AS (
+  SELECT stride_identity_matrix('ACGT', 5, -4, 'N', 'DNA', -5) AS value
+)
+SELECT stride_smith_waterman_matrix_score('ACGT', 'AGGT', value)
+FROM matrix;
+```
+
+Use `stride_matrix_available()` to list the embedded BLOSUM, PAM, nucleotide,
+text, and keyboard matrices. `stride_substitution_matrix`,
+`stride_matrix_from_ncbi_text`, `stride_keyboard_from_confusion_counts`, and
+`stride_keyboard_from_npy` build application-specific matrices.
+
+DuckDB exposes the native stride-align surface. RapidFuzz, Parasail, Jellyfish,
+and TheFuzz compatibility facades are intentionally not registered.
 
 ## Packages
 
@@ -149,9 +179,25 @@ Validate the resulting DuckDB CLI with `PRAGMA platform`; it must return
 ## Python parity tests
 
 The Python test harness sideloads the real extension into the pinned DuckDB
-client and compares every SQL scorer with its native `stride_align` Python
-counterpart. It also exercises vector-sized inputs, Unicode, `NULL`
-propagation, and error translation.
+client and compares the complete native SQL surface with `stride_align`'s
+Python results. It covers scalar and vector calls, optimized cdist/ranking,
+Unicode, `NULL`, paths, DTW, phonetics, and built-in/custom matrices.
+
+`python-test-parity.tsv` maps every non-compatibility Python test module to its
+DuckDB adaptation. The checker fails when a new native Python suite is added
+without a DuckDB counterpart:
+
+```sh
+bindings/duckdb/check-python-test-parity.py
+```
+
+`native-api.tsv` separately maps every public Python/R capability to its SQL
+form and verifies that each named function is present in the loaded extension:
+
+```sh
+STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.duckdb_extension \
+  bindings/duckdb/check-native-api.py
+```
 
 Place a package artifact under the normal distribution layout and run:
 

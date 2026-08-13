@@ -233,7 +233,113 @@ def test_duckdb_extension_catalog_is_exact(duckdb_extension: Any) -> None:
             "WHERE function_name LIKE 'stride_%'"
         ).fetchall()
     }
-    assert registered == {scorer.sql_name for scorer in SCORERS} | {"stride_align_simd_level"}
+    required = {scorer.sql_name for scorer in SCORERS} | {
+        "stride_align_simd_level",
+        "stride_available_backends",
+        "stride_backend_is_available",
+        "stride_detect_best_backend",
+        "stride_scores",
+        "stride_extract",
+        "stride_extract_best",
+        "stride_cdist",
+        "stride_cdist_above_threshold",
+        "stride_cdist_top_k",
+        "stride_cdist_top_k_per_query",
+        "stride_lcs_length",
+        "stride_lcs_substring_length",
+        "stride_lcs_substring",
+        "stride_jaccard",
+        "stride_dice",
+        "stride_cosine",
+        "stride_overlap",
+        "stride_ratcliff_obershelp_similarity",
+        "stride_partial_ratio",
+        "stride_partial_ratios",
+        "stride_token_sort_ratio",
+        "stride_token_sort_ratios",
+        "stride_token_set_ratio",
+        "stride_token_set_ratios",
+        "stride_partial_token_sort_ratio",
+        "stride_partial_token_sort_ratios",
+        "stride_partial_token_set_ratio",
+        "stride_partial_token_set_ratios",
+        "stride_wratio",
+        "stride_wratios",
+        "stride_monge_elkan",
+        "stride_soundex",
+        "stride_metaphone",
+        "stride_nysiis",
+        "stride_match_rating_codex",
+        "stride_caverphone",
+        "stride_cologne_phonetic",
+        "stride_daitch_mokotoff",
+        "stride_double_metaphone",
+        "stride_beider_morse",
+        "stride_dtw",
+        "stride_dtw_distances",
+        "stride_matrix_available",
+        "stride_matrix_info",
+        "stride_matrix_encode",
+        "stride_matrix_score_step_limit",
+        "stride_substitution_matrix",
+        "stride_substitution_matrix_score",
+        "stride_matrix_transpose",
+        "stride_matrix_from_ncbi_text",
+        "stride_identity_matrix",
+        "stride_ascii_matrix",
+        "stride_keyboard_from_confusion_counts",
+        "stride_keyboard_from_npy",
+        "stride_keyboard_available",
+        "stride_cdist_matrix_local",
+        "stride_cdist_matrix_global",
+        "stride_cdist_matrix_above_threshold",
+        "stride_cdist_matrix_top_k",
+    }
+    required |= {
+        f"stride_{name}"
+        for name in (
+            "levenshtein_score",
+            "levenshtein_normalized_score",
+            "damerau_levenshtein_score",
+            "damerau_levenshtein_normalized_score",
+            "true_damerau_levenshtein_score",
+            "true_damerau_levenshtein_normalized_score",
+            "indel_score",
+            "indel_normalized_score",
+            "hamming_score",
+            "hamming_normalized_score",
+            "jaro_similarity",
+            "jaro_winkler_similarity",
+            "smith_waterman_score",
+            "smith_waterman_normalized_score",
+            "smith_waterman_farrar_score",
+            "smith_waterman_farrar_normalized_score",
+            "needleman_wunsch_score",
+            "needleman_wunsch_normalized_score",
+        )
+    }
+    required |= {
+        f"stride_{stem}_{suffix}"
+        for stem in ("smith_waterman", "needleman_wunsch")
+        for suffix in (
+            "scores",
+            "normalized_scores",
+            "path",
+            "path_info",
+            "cigar",
+            "trace_cigar",
+            "trade_cigar",
+            "matrix_score",
+            "matrix_scores",
+            "matrix_path",
+            "matrix_path_info",
+            "matrix_cigar",
+        )
+    }
+    assert required <= registered
+
+    compatibility_markers = ("rapidfuzz", "parasail", "jellyfish", "thefuzz")
+    assert not any(marker in name for name in registered for marker in compatibility_markers)
 
 
 def test_duckdb_reports_loaded_artifact(duckdb_extension: Any) -> None:

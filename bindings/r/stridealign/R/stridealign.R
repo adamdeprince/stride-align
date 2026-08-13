@@ -19,6 +19,39 @@
   "stride_r_needleman_wunsch_affine"
 )
 
+.stridealign_primary_calls <- c(
+  "stride_r_lcs_length",
+  "stride_r_lcs_substring_length",
+  "stride_r_lcs_substring",
+  "stride_r_jaccard",
+  "stride_r_dice",
+  "stride_r_cosine",
+  "stride_r_overlap",
+  "stride_r_ratcliff_obershelp",
+  "stride_r_partial_ratio",
+  "stride_r_token_sort_ratio",
+  "stride_r_token_set_ratio",
+  "stride_r_partial_token_sort_ratio",
+  "stride_r_partial_token_set_ratio",
+  "stride_r_wratio",
+  "stride_r_soundex",
+  "stride_r_soundex_equal",
+  "stride_r_metaphone",
+  "stride_r_metaphone_equal",
+  "stride_r_nysiis",
+  "stride_r_nysiis_equal",
+  "stride_r_match_rating_codex",
+  "stride_r_match_rating_compare",
+  "stride_r_caverphone",
+  "stride_r_cologne_phonetic",
+  "stride_r_daitch_mokotoff",
+  "stride_r_double_metaphone",
+  "stride_r_bmpm_register",
+  "stride_r_beider_morse",
+  "stride_r_dtw",
+  "stride_r_alignment_path"
+)
+
 .stridealign_symbol <- function(name) {
   symbol <- .stridealign_state$symbols[[name]]
   if (is.null(symbol)) {
@@ -102,10 +135,26 @@
   .stridealign_state$backend <- selected
   .stridealign_state$available <- candidates
   .stridealign_state$loaded_name <- loaded_name
-  .stridealign_state$symbols <- lapply(
+  backend_symbols <- lapply(
     registered[.stridealign_registered_calls],
     function(symbol) symbol$address
   )
+  primary_registered <- getDLLRegisteredRoutines(baseline)[[".Call"]]
+  missing_primary <- setdiff(.stridealign_primary_calls, names(primary_registered))
+  if (length(missing_primary)) {
+    stop(
+      "stride-align baseline is missing registered routines: ",
+      paste(missing_primary, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  primary_symbols <- lapply(
+    primary_registered[.stridealign_primary_calls],
+    function(symbol) symbol$address
+  )
+  .stridealign_state$symbols <- c(backend_symbols, primary_symbols)
+  .stridealign_state$bmpm_registered <- FALSE
+  .stride_keyboard_load_bundled()
 }
 
 .onUnload <- function(libpath) {

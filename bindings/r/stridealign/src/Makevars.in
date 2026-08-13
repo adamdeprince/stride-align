@@ -3,7 +3,7 @@ CXX_STD = CXX20
 PKG_CPPFLAGS = -Ivendor @STRIDE_ALIGN_R_HAVE_DEFINES@
 PKG_CXXFLAGS = $(CXX_VISIBILITY)
 
-OBJECTS = backend_generic.o cpu_detect.o
+OBJECTS = backend_generic.o cpu_detect.o beider_morse_impl.o
 STRIDE_ALIGN_R_BACKENDS = @STRIDE_ALIGN_R_BACKENDS@
 STRIDE_ALIGN_R_SHLIB_EXT = @STRIDE_ALIGN_R_SHLIB_EXT@
 STRIDE_ALIGN_R_EXTRA_SHLIBS = $(addprefix stridealign_,$(addsuffix $(STRIDE_ALIGN_R_SHLIB_EXT),$(STRIDE_ALIGN_R_BACKENDS)))
@@ -14,6 +14,9 @@ backend_generic.o: backend_generic.cpp backend_impl.hpp target_profile.hpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_BASE_FLAGS@ -O3 -c $< -o $@
 
 cpu_detect.o: cpu_detect.cpp cpu_detect.hpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_BASE_FLAGS@ -O3 -c $< -o $@
+
+beider_morse_impl.o: beider_morse_impl.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) @STRIDE_ALIGN_R_BASE_FLAGS@ -O3 -c $< -o $@
 
 backend_sse41.o: backend_sse41.cpp backend_impl.hpp target_profile.hpp
@@ -81,4 +84,4 @@ clean: stridealign-r-clean
 shlib-clean: stridealign-r-clean
 
 stridealign-r-clean:
-	rm -f backend_*.o cpu_detect.o stridealign_*$(STRIDE_ALIGN_R_SHLIB_EXT)
+	rm -f backend_*.o cpu_detect.o beider_morse_impl.o stridealign_*$(STRIDE_ALIGN_R_SHLIB_EXT)

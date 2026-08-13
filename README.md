@@ -36,14 +36,15 @@ ctest --test-dir build/core
 ```
 
 DuckDB support is delivered as a sideloadable extension with native
-`stride_*` scalar SQL functions and per-CPU packages. Usage, downloads, and
-build instructions are documented in
+`stride_*` pair, vector, ranking, cdist, path, phonetic, DTW, and substitution-
+matrix SQL functions plus per-CPU packages. Usage, downloads, and build
+instructions are documented in
 [`bindings/duckdb/`](bindings/duckdb/README.md).
 
-R support is delivered as the `stridealign` package. It accepts ordinary
-character vectors, broadcasts a length-one input, preserves missing values,
-and selects a compatible SIMD backend when the package loads. Build, install,
-and API examples are documented in
+R support is delivered as the `stridealign` package. It exposes the native
+Python API's pair, batch, selection, cdist, alignment, matrix, phonetic, and
+DTW capabilities through ordinary R objects, and selects a compatible SIMD
+backend when the package loads. Build, install, and API examples are documented in
 [`bindings/r/`](bindings/r/README.md).
 
 Instead of giving you a lecture, we're going to learn by doing.

@@ -1,0 +1,28 @@
+python_test	test_functions	r_tests	adaptation
+tests/duckdb/test_duckdb_extension.py	8	bindings/r/stridealign/tests/duckdb-parity.R	Exercises the same scorer catalog through the installed R batch API; DuckDB SQL details stay covered by the source suite.
+tests/duckdb/test_duckdb_native_api.py	20	bindings/r/stridealign/tests/duckdb-parity.R;bindings/r/stridealign/tests/extended-api.R;bindings/r/stridealign/tests/python-batch-api.R	Exercises the same native algorithms, batch/ranking families, paths, matrices, phonetics, and inclusive cutoff boundaries through the installed R API; DuckDB SQL types stay source-specific.
+tests/test_alignment_unicode.py	19	bindings/r/stridealign/tests/python-test-alignment-unicode.R	Direct Unicode scalar cases, paths, CIGARs, and batches.
+tests/test_api.py	112	bindings/r/stridealign/tests/python-test-api.R;bindings/r/stridealign/tests/api.R;bindings/r/stridealign/tests/backend-generic.R;bindings/r/stridealign/tests/backend-invalid.R	Nanobind loading and CLI probes become installed-package, public-dispatch, and backend checks; third-party adapter probes are excluded.
+tests/test_beider_morse.py	7	bindings/r/stridealign/tests/python-test-beider-morse.R	Canonical names, languages, modes, concatenation, and validation.
+tests/test_bounded_lazy_f_regression.py	1	bindings/r/stridealign/tests/python-test-bounded-lazy-f-regression.R	Runs every checked-in bounded lazy-F counterexample.
+tests/test_cdist.py	22	bindings/r/stridealign/tests/python-test-cdist.R	R matrices replace NumPy result arrays; values and validation are preserved.
+tests/test_cdist_above_threshold.py	14	bindings/r/stridealign/tests/python-test-cdist-above-threshold.R	Threshold, normalization, ordering, and metric coverage.
+tests/test_cdist_length_pruning.py	12	bindings/r/stridealign/tests/python-test-cdist-length-pruning.R	Original parameter grids and length-pruning outcomes.
+tests/test_cdist_sw_nw.py	23	bindings/r/stridealign/tests/python-test-cdist-sw-nw.R	Smith-Waterman and Needleman-Wunsch matrix and threshold cases.
+tests/test_cdist_top_k.py	15	bindings/r/stridealign/tests/python-test-cdist-top-k.R	Global top-k values and deterministic one-based R indices.
+tests/test_dtw.py	25	bindings/r/stridealign/tests/python-test-dtw.R	R numeric vectors replace NumPy numeric arrays.
+tests/test_dual_sw_batch.py	6	bindings/r/stridealign/tests/python-test-dual-sw-batch.R	Dual-score batch equivalence, Unicode, validation, and affine scoring.
+tests/test_fuzz.py	29	bindings/r/stridealign/tests/python-test-fuzz.R	Native fuzz scorers and processor-like normalization behavior; no TheFuzz facade.
+tests/test_indel.py	21	bindings/r/stridealign/tests/python-test-indel.R	Distance, normalized similarity, bounds, batch, and randomized reference checks.
+tests/test_jaro.py	19	bindings/r/stridealign/tests/python-test-jaro.R	Jaro and Jaro-Winkler cases plus independent randomized references.
+tests/test_keyboard_matrices.py	14	bindings/r/stridealign/tests/python-test-keyboard-matrices.R	R cannot store embedded NUL in CHARSXP, so its ASCII matrix covers code points 1 through 127.
+tests/test_lcs.py	11	bindings/r/stridealign/tests/python-test-lcs.R	Similarity, normalized similarity, bounds, Unicode, batch, and reference checks.
+tests/test_matrices.py	64	bindings/r/stridealign/tests/python-test-matrices.R	R matrix objects replace Python buffer-protocol assertions while preserving signed int8 layout and scores.
+tests/test_monge_elkan.py	19	bindings/r/stridealign/tests/python-test-monge-elkan.R	Token scoring, symmetry, empty values, Unicode, validation, and batches.
+tests/test_ndarray.py	24	bindings/r/stridealign/tests/python-test-ndarray.R	NumPy-only dtype/layout mechanics become R STRSXP validation and Unicode 16/32-bit core-path checks.
+tests/test_ngram.py	20	bindings/r/stridealign/tests/python-test-ngram.R	N-gram similarity, normalization, Unicode, bounds, and batch behavior.
+tests/test_phonetic.py	81	bindings/r/stridealign/tests/python-test-phonetic.R	All canonical phonetic tables, equal helpers, Unicode handling, and validation.
+tests/test_ratcliff_obershelp.py	11	bindings/r/stridealign/tests/python-test-ratcliff-obershelp.R	Similarity, normalization, Unicode, empty values, and batches.
+tests/test_top_k.py	50	bindings/r/stridealign/tests/python-test-top-k.R	Global and per-query ranking, cutoffs, Hamming filtering, progress callbacks, and one-based R indices.
+tests/test_true_damerau_levenshtein.py	16	bindings/r/stridealign/tests/python-test-true-damerau-levenshtein.R	Unrestricted Damerau distance, normalization, Unicode, batches, and independent randomized reference.
+tests/test_unicode_wide.py	10	bindings/r/stridealign/tests/python-test-unicode-wide.R	All valid Unicode scalars are covered; surrogate code points cannot form R strings.

@@ -6,6 +6,29 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME} LANGUAGES CXX)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(STRIDE_ALIGN_EMBEDDED_DATA ${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_data.hpp)
+file(GLOB STRIDE_ALIGN_BMPM_RESOURCES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/stride_align/bmpm_data/*.txt)
+file(GLOB STRIDE_ALIGN_MATRIX_RESOURCES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/stride_align/matrix_data/*
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/stride_align/matrices/keyboard_data/*.npy)
+add_custom_command(
+  OUTPUT ${STRIDE_ALIGN_EMBEDDED_DATA}
+  COMMAND
+    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/generate_embedded_data.py
+    --source-root ${CMAKE_CURRENT_LIST_DIR}/../..
+    --output ${STRIDE_ALIGN_EMBEDDED_DATA}
+  DEPENDS
+    ${CMAKE_CURRENT_LIST_DIR}/generate_embedded_data.py
+    ${CMAKE_CURRENT_LIST_DIR}/../../src/stride_align/matrices/__init__.py
+    ${CMAKE_CURRENT_LIST_DIR}/../../src/stride_align/matrices/keyboard.py
+    ${STRIDE_ALIGN_BMPM_RESOURCES}
+    ${STRIDE_ALIGN_MATRIX_RESOURCES}
+  VERBATIM
+)
+
 set(
   STRIDE_ALIGN_DUCKDB_SIMD
   "native"
@@ -25,7 +48,15 @@ set_property(
     la664_lasx
 )
 
-set(EXTENSION_SOURCES src/stride_align_extension.cpp)
+set(
+  EXTENSION_SOURCES
+  src/stride_align_extension.cpp
+  src/batch_functions.cpp
+  src/algorithm_functions.cpp
+  src/matrix_functions.cpp
+  ../../src/cpp/beider_morse_impl.cpp
+  ${STRIDE_ALIGN_EMBEDDED_DATA}
+)
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
@@ -36,6 +67,7 @@ function(configure_stride_align_duckdb_target target_name)
     PRIVATE
       ${CMAKE_CURRENT_LIST_DIR}/src/include
       ${CMAKE_CURRENT_LIST_DIR}/../../include
+      ${CMAKE_CURRENT_BINARY_DIR}/generated
   )
   target_compile_definitions(
     ${target_name}

@@ -232,7 +232,7 @@
         </div>
         <div>
           <h2>SIMD string matching.<br><span>Right inside DuckDB.</span></h2>
-          <p>Load stride-align once, then use its fast scalar functions anywhere you write SQL. Pass ordinary DuckDB <code>VARCHAR</code> values—including CJK, accents, and emoji—and get a score back.</p>
+          <p>Load stride-align once, then use its fast pair, vector, ranking, and cdist functions anywhere you write SQL. Pass ordinary DuckDB <code>VARCHAR</code> values—including CJK, accents, and emoji—and get useful results back.</p>
         </div>
       </div>
 
@@ -254,17 +254,17 @@
         <article class="duckdb-benefit">
           <span class="benefit-number">03</span>
           <p>FAST BY DEFAULT</p>
-          <h3>Built for columns, not Python loops.</h3>
-          <div class="benefit-example"><code>SELECT stride_jaro(name, ?) FROM records</code></div>
-          <small>DuckDB evaluates whole vectors through the SIMD package selected for the machine.</small>
+          <h3>Rank candidates without sorting every pair.</h3>
+          <div class="benefit-example"><code>stride_cdist_top_k(queries, targets, 'jaro', 10)</code></div>
+          <small>Native bounds, adaptive cutoffs, and bounded heaps skip work DuckDB cannot infer from a generic join.</small>
         </article>
       </div>
 
       <div class="port-contract">
         <article>
           <span>THE SCORERS YOU EXPECT</span>
-          <strong>Edit distance, similarity, and sequence alignment.</strong>
-          <p>Levenshtein, Damerau–Levenshtein, Indel, Hamming, Jaro, Smith–Waterman, and Needleman–Wunsch share one straightforward SQL surface.</p>
+          <strong>Pair, vector, cdist, top-k, phonetic, DTW, and matrix APIs.</strong>
+          <p>Use the native stride-align capabilities from SQL, including custom substitution matrices and local/global alignment paths.</p>
         </article>
         <article>
           <span>PACKAGE DISPATCH</span>
@@ -430,16 +430,16 @@ scores = sa.levenshtein_normalized_scores(
 query &lt;- <span class="code-string">"你好世界"</span>
 targets &lt;- c(<span class="code-string">"你好世间"</span>, <span class="code-string">"再见世界"</span>)
 
-score &lt;- stride_levenshtein_similarity(
+score &lt;- levenshtein_normalized_score(
     query, targets[1]
 )
-scores &lt;- stride_levenshtein_similarity(
+scores &lt;- levenshtein_normalized_scores(
     query, targets
 )
 
 <span class="code-call">print</span>(score)  <span class="code-comment"># 0.75</span></code></pre>
           </div>
-          <p class="track-note">The R package accepts ordinary character vectors and selects the best compatible packaged backend when its namespace loads. <a href="bindings/r/index.html">Build and install the R package.</a></p>
+          <p class="track-note">The R package provides pair, batch, selection, and cdist APIs over ordinary R objects, and selects the best compatible packaged backend when its namespace loads. <a href="bindings/r/index.html">Build and install the R package.</a></p>
           </article>
 
           <article class="install-track install-track-duckdb example-panel" id="example-duckdb" data-example-panel="duckdb" aria-label="DuckDB example" hidden>

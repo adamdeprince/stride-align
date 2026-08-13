@@ -8,3 +8,4 @@ rm -f "$package_root/src/cpu_detect.o"
 rm -f "$package_root/src/"stridealign_*.so
 rm -f "$package_root/src/"stridealign_*.dll
 rm -f "$package_root/src/"stridealign_*.dylib
+rm -f "$package_root/src/beider_morse_impl.o"

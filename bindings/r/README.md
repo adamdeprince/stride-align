@@ -1,9 +1,10 @@
 # stride-align for R
 
-`stridealign` brings stride-align's Unicode-aware string distances,
-similarities, and sequence-alignment scores to ordinary R character vectors.
-Calls are vectorized, a length-one argument is broadcast, and missing strings
-produce missing scores.
+`stridealign` brings stride-align's complete native API to ordinary R objects:
+Unicode string distances and similarities, sequence alignment, batch search,
+substitution matrices, phonetics, and Dynamic Time Warping. Pair calls are
+vectorized, a length-one argument is broadcast, and missing strings produce
+missing scores.
 
 ## Build and install
 
@@ -32,30 +33,54 @@ An unavailable or CPU-incompatible override is rejected during package load.
 library(stridealign)
 
 stride_backend()
-stride_levenshtein("kitten", "sitting")
-stride_levenshtein_similarity("你好世界", "你好世间")
+levenshtein_score("kitten", "sitting")
+levenshtein_normalized_score("你好世界", "你好世间")
 
-names <- c("Martha", "Marhta", "Arthur", NA_character_)
-stride_jaro_winkler(names, "Martha")
+targets <- c("Martha", "Marhta", "Arthur", NA_character_)
+jaro_winkler_similarities("Martha", targets)
+jaro_winkler_top_k("Martha", targets, k = 2)
 
-stride_needleman_wunsch(
-    c("GATTACA", "GACTATA"),
-    "GATTACA",
-    match_score = 2,
-    mismatch_score = -1,
-    gap_score = -1
+cdist(
+    c("Martha", "Arthur"),
+    c("Martha", "Marhta", "Arthur"),
+    scorer = Scorer$JARO_WINKLER
 )
+
+smith_waterman_scores("HE", c("HE", "HH"), matrix = blosum62)
 ```
 
-The R package exposes stride-align's native two-string algorithms. It does not
-reproduce the Python compatibility namespaces.
+Selection results use data frames or named lists and one-based R indices.
+`cdist()` returns an ordinary numeric matrix. The canonical names mirror the
+Python package, while return containers follow R conventions.
 
-## Native functions
+## Native API
 
-- Levenshtein, optimal string alignment, unrestricted Damerau-Levenshtein,
-  indel, and Hamming distance and normalized similarity
-- Jaro and configurable Jaro-Winkler similarity
-- Smith-Waterman and Needleman-Wunsch scores with linear or affine gaps
+- Pair, one-to-many, top-k, best-match, persistent-query, and all-pairs APIs
+  for all 16 `Scorer` values
+- Levenshtein, OSA, unrestricted Damerau-Levenshtein, indel, Hamming, Jaro,
+  and Jaro-Winkler
+- Smith-Waterman and Needleman-Wunsch scores, normalized scores, traceback,
+  CIGAR output, linear and affine gaps, and substitution matrices
+- LCS, n-gram similarities, Ratcliff-Obershelp, token and partial ratios,
+  WRatio, and Monge-Elkan
+- Soundex, Metaphone, NYSIIS, Match Rating, Caverphone, Cologne,
+  Daitch-Mokotoff, Double Metaphone, and Beider-Morse phonetics
+- Dynamic Time Warping scalar and one-to-many distances
 
-All functions compare Unicode code points, accept character vectors, and
-return numeric vectors.
+The package intentionally does not reproduce the RapidFuzz, Parasail,
+Jellyfish, or TheFuzz compatibility layers.
+
+## Tests
+
+The R tests mirror every native Python test module. Runtime-specific checks
+use R equivalents—for example, ordinary numeric matrices instead of NumPy
+arrays and one-based result indices. The parity ledger intentionally excludes
+only the four RapidFuzz, Parasail, Jellyfish, and TheFuzz shim suites.
+
+From the repository root, audit that mapping and run the package tests with:
+
+```sh
+python3 bindings/r/check-python-test-parity.py
+bindings/r/build-package.sh
+R CMD check --no-manual --no-build-vignettes dist/r/stridealign_0.6.0.tar.gz
+```

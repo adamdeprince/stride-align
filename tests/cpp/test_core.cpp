@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -13,6 +14,8 @@
 #include <vector>
 
 #include "stride_align/core.hpp"
+#include "stride_align/batch.hpp"
+#include "stride_align/wratio.hpp"
 
 namespace {
 
@@ -250,6 +253,58 @@ int main() {
         33U, 34U, 100000000, -90000000, -70000000,
         -110000000, -30000000);
   }
+
+  // Batch selection is part of the host-neutral core: language adapters must
+  // not rebuild cdist, filtering, or ranking out of scalar host calls.
+  namespace batch = stride_align::batch;
+  const batch::Text batch_query("kitten");
+  const std::vector<std::optional<batch::Text>> batch_targets = {
+      batch::Text("sitting"), batch::Text("kitten"), batch::Text("bitten"),
+      batch::Text("a much longer string")};
+  const auto ranked = batch::top_k(
+      batch_query, batch_targets, batch::Scorer::levenshtein, 2U);
+  assert(ranked.size() == 2U);
+  assert(ranked[0].index == 1U && ranked[0].score == 0.0);
+  assert(ranked[1].index == 2U && ranked[1].score == 1.0);
+  assert(batch::top_k(
+      batch_query, batch_targets, batch::Scorer::levenshtein, 0U).empty());
+  assert(close(
+      batch::maximum_similarity(batch::Scorer::jaro, 3U, 30U),
+      0.7));
+  assert(batch::maximum_similarity(
+      batch::Scorer::jaro_winkler, 3U, 30U) >= 0.7);
+
+  const std::vector<std::optional<batch::Text>> batch_queries = {
+      batch::Text("kitten"), batch::Text("bitten")};
+  const auto all_pairs = batch::cdist(
+      batch_queries, batch_targets, batch::Scorer::levenshtein_normalized);
+  assert(all_pairs.size() == 2U && all_pairs[0].size() == 4U);
+  const auto filtered = batch::cdist_above_threshold(
+      batch_queries, batch_targets,
+      batch::Scorer::levenshtein_normalized, 0.8);
+  for (const auto& match : filtered) {
+    assert(match.score >= 0.8);
+    assert(close(match.score, *all_pairs[match.query_index][match.target_index]));
+  }
+  const auto global = batch::cdist_top_k(
+      batch_queries, batch_targets,
+      batch::Scorer::levenshtein_normalized, 3U, false);
+  assert(global.size() == 3U);
+  assert(global[0].score >= global[1].score &&
+         global[1].score >= global[2].score);
+  const auto per_query = batch::cdist_top_k_per_query(
+      batch_queries, batch_targets,
+      batch::Scorer::levenshtein_normalized, 2U);
+  assert(per_query.size() == 2U);
+  assert(per_query[0].size() == 2U && per_query[1].size() == 2U);
+
+  const std::vector<std::uint32_t> wratio_left{
+      U'n', U'e', U'w', U' ', U'y', U'o', U'r', U'k', U' ', U'm', U'e', U't', U's'};
+  const std::vector<std::uint32_t> wratio_right{
+      U'n', U'e', U'w', U' ', U'y', U'o', U'r', U'k', U' ', U'y', U'a', U'n', U'k', U'e', U'e', U's'};
+  assert(close(
+      stride_align::wratio::native_wratio(wratio_left, wratio_right),
+      0.9025));
 
   return 0;
 }

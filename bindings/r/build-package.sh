@@ -18,7 +18,21 @@ stage_package="$stage_parent/stridealign"
 cp -R "$script_directory/stridealign" "$stage_package"
 mkdir -p "$stage_package/src/vendor"
 cp -R "$repository_root/include/stride_align" "$stage_package/src/vendor/stride_align"
+cp "$repository_root/src/cpp/beider_morse_impl.cpp" "$stage_package/src/beider_morse_impl.cpp"
 mkdir -p "$stage_package/inst"
+mkdir -p "$stage_package/inst/bmpm_data"
+cp "$repository_root/src/stride_align/bmpm_data/"*.txt "$stage_package/inst/bmpm_data/"
+mkdir -p "$stage_package/inst/matrix_data"
+cp "$repository_root/src/stride_align/matrix_data/"* "$stage_package/inst/matrix_data/"
+mkdir -p "$stage_package/inst/keyboard_data"
+cp "$repository_root/src/stride_align/matrices/keyboard_data/"*.npy \
+  "$stage_package/inst/keyboard_data/"
+mkdir -p "$stage_package/inst/testdata"
+cp "$repository_root/docs/bounded-lazy-f-counterexamples.txt" \
+  "$stage_package/inst/testdata/bounded-lazy-f-counterexamples.txt"
+Rscript "$script_directory/generate-matrix-data.R" \
+  "$repository_root/src/stride_align/matrices/__init__.py" \
+  "$stage_package/inst/matrix_data"
 cp "$repository_root/LICENSE" "$stage_package/inst/LICENSE-APACHE-2.0"
 cp "$repository_root/NOTICE" "$stage_package/NOTICE"
 

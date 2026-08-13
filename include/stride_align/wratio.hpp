@@ -1,6 +1,6 @@
 #pragma once
 
-// ``sa.WRatio`` / ``stride_align.rapidfuzz.fuzz.WRatio`` kernel.
+// Compatibility-style WRatio kernel.
 //
 // Reimplements rapidfuzz's documented WRatio recipe in C++ so the
 // whole computation (ratio + len-ratio branch + token variants +
@@ -9,7 +9,7 @@
 // was driven entirely by Python wrapper overhead and intermediate
 // ``float()`` / ``max()`` work in the previous Python recipe.
 //
-// Recipe (matches the Python reference bit-exactly):
+// Recipe (matches the compatibility reference bit-exactly):
 //
 //   base = indel_normalized(a, b)        # range [0, 1]
 //   len_ratio = max(|a|, |b|) / min(|a|, |b|)
@@ -42,7 +42,8 @@
 // All component subroutines (token_sort, token_set, partial,
 // partial_token_sort, partial_token_set) are inlined from
 // ``token_ratios.hpp`` and ``partial_ratio.hpp`` so the whole
-// recipe is a single function instantiation per (Token, K) pair.
+// recipe is a single function instantiation per Token type. The native
+// stride-align contract is implemented separately at the end of this file.
 
 #include <algorithm>
 #include <cstddef>
@@ -281,6 +282,82 @@ inline double wratio(
       std::span<const Codepoint>(a),
       std::span<const Codepoint>(b),
       score_cutoff);
+}
+
+// stride-align's top-level WRatio contract predates the compatibility shim:
+// it evaluates partial and token candidates in both length regimes. Keep the
+// optimized compatibility recipe above available to the shim, while native
+// language adapters call this complete recipe.
+template <typename Token>
+inline double native_wratio_engine(
+    std::span<const Token> a,
+    std::span<const Token> b) {
+  if (a.empty() || b.empty()) return a.empty() && b.empty() ? 1.0 : 0.0;
+
+  constexpr double kUnbaseScale = 0.95;
+  double partial_scale = 0.9;
+  double unbase_scale = kUnbaseScale;
+  const double len_a = static_cast<double>(a.size());
+  const double len_b = static_cast<double>(b.size());
+  const double len_ratio = len_a > len_b ? len_a / len_b : len_b / len_a;
+  if (len_ratio < 1.5) {
+    partial_scale = kUnbaseScale;
+  } else if (len_ratio >= 8.0) {
+    unbase_scale = 0.6;
+  }
+
+  double best = ::stride_align::token_ratios::indel_normalized<Token>(a, b);
+  if (best >= 1.0) return best;
+
+  double partial;
+  if constexpr (std::is_same_v<Token, std::uint8_t>) {
+    partial = ::stride_align::partial_ratio::partial_ratio_bytes(a, b);
+  } else {
+    std::vector<Codepoint> a_cp(a.begin(), a.end());
+    std::vector<Codepoint> b_cp(b.begin(), b.end());
+    partial = ::stride_align::partial_ratio::partial_ratio(a_cp, b_cp);
+  }
+  best = std::max(best, partial * partial_scale);
+
+  double token_sort = 0.0;
+  double token_set = 0.0;
+  ::stride_align::token_ratios::compute_token_sort_and_set_ratio<Token>(
+      a, b, token_sort, token_set);
+  best = std::max(best, token_sort * unbase_scale);
+  best = std::max(best, token_set * unbase_scale);
+
+  const double combined_scale = partial_scale * unbase_scale;
+  best = std::max(
+      best, partial_token_sort_ratio_engine<Token>(a, b) * combined_scale);
+  best = std::max(
+      best, partial_token_set_ratio_engine<Token>(a, b) * combined_scale);
+  return best;
+}
+
+inline double native_wratio(
+    const std::vector<Codepoint>& a,
+    const std::vector<Codepoint>& b) {
+  bool fits_in_byte = true;
+  for (const auto codepoint : a) {
+    if (codepoint >= 256U) {
+      fits_in_byte = false;
+      break;
+    }
+  }
+  if (fits_in_byte) {
+    for (const auto codepoint : b) {
+      if (codepoint >= 256U) {
+        fits_in_byte = false;
+        break;
+      }
+    }
+  }
+  if (fits_in_byte) {
+    const std::vector<std::uint8_t> left(a.begin(), a.end());
+    const std::vector<std::uint8_t> right(b.begin(), b.end());
+    return native_wratio_engine<std::uint8_t>(left, right);
+  }
+  return native_wratio_engine<Codepoint>(a, b);
 }
 
 }  // namespace stride_align::wratio
