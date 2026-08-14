@@ -15,6 +15,7 @@
 
 #include "stride_align/core.hpp"
 #include "stride_align/batch.hpp"
+#include "stride_align/encoded.hpp"
 #include "stride_align/wratio.hpp"
 
 namespace {
@@ -142,6 +143,48 @@ int main() {
   assert(utf8::is_ascii(ascii_boundary));
   ascii_boundary[128] = static_cast<char>(0x80U);
   assert(!utf8::is_ascii(ascii_boundary));
+
+  namespace encoded = stride_align::encoded;
+  const auto mock_multibyte_width = [](std::string_view remaining) {
+    return static_cast<unsigned char>(remaining.front()) < 0x80U ? 1U : 2U;
+  };
+  const encoded::EncodingProfile single_byte{1U, 1U};
+  const std::string latin_left("caf\xe9", 4U);
+  const std::string latin_right("cafe", 4U);
+  const auto latin_pair = encoded::prepare_pair(
+      latin_left, latin_right, single_byte, mock_multibyte_width);
+  assert(latin_pair.width == utf8::TokenWidth::u8);
+  assert(latin_pair.borrowed_ascii && !latin_pair.packed);
+
+  const auto fixed_u16 = encoded::prepare_pair(
+      "ABCD", "ABEF", encoded::EncodingProfile{2U, 2U},
+      mock_multibyte_width);
+  assert(fixed_u16.width == utf8::TokenWidth::u16);
+  assert(!fixed_u16.borrowed_ascii && !fixed_u16.packed);
+  const auto fixed_u32 = encoded::prepare_pair(
+      "ABCDEFGH", "ABCDIJKL", encoded::EncodingProfile{4U, 4U},
+      mock_multibyte_width);
+  assert(fixed_u32.width == utf8::TokenWidth::u32);
+  assert(!fixed_u32.borrowed_ascii && !fixed_u32.packed);
+
+  const encoded::EncodingProfile variable_width{0U, 2U};
+  const std::string euc_left("\xc6\xfc\xcb\xdc", 4U);
+  const std::string euc_right("\xc6\xfc", 2U);
+  const auto short_native = encoded::prepare_pair(
+      euc_left, euc_right, variable_width, mock_multibyte_width);
+  assert(short_native.width == utf8::TokenWidth::u16);
+  assert(!short_native.borrowed_ascii && !short_native.packed);
+  std::string long_native_left;
+  std::string long_native_right;
+  for (std::size_t index = 0; index < 40U; ++index) {
+    long_native_left += euc_left.substr(0U, 2U);
+    long_native_right += euc_left.substr(2U, 2U);
+  }
+  const auto packed_native = encoded::prepare_pair(
+      long_native_left, long_native_right,
+      variable_width, mock_multibyte_width);
+  assert(packed_native.width == utf8::TokenWidth::u8);
+  assert(!packed_native.borrowed_ascii && packed_native.packed);
 
   bool rejected = false;
   try {

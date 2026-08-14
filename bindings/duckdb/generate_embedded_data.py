@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate build-local C++ data for DuckDB's self-contained extension.
+"""Generate build-local C++ data for a self-contained native extension.
 
 The output is intentionally not tracked.  It is derived from the same Python
 matrix objects and BMPM text resources used by the Python and R adapters, so
@@ -163,7 +163,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--namespace",
+        default="duckdb::stride_align_embedded",
+        help="C++ namespace for the generated records",
+    )
     args = parser.parse_args()
+
+    if not re.fullmatch(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*", args.namespace):
+        parser.error("--namespace must be a valid qualified C++ namespace")
 
     source_root = args.source_root.resolve()
     lines = [
@@ -172,7 +180,7 @@ def main() -> int:
         "#include <string>",
         "#include <unordered_map>",
         "#include <vector>",
-        "namespace duckdb::stride_align_embedded {",
+        f"namespace {args.namespace} {{",
         "struct MatrixRecord {",
         "  const char* sql_name; const char* name; const char* alphabet;",
         "  const char* wildcard; std::int64_t gap_score;",
@@ -210,7 +218,7 @@ def main() -> int:
             cpp_string(path.stem) + ",std::string(reinterpret_cast<const char*>(" +
             symbol + "),sizeof(" + symbol + "))}; }(),"
         )
-    lines.extend(["}; }", "}  // namespace duckdb::stride_align_embedded", ""])
+    lines.extend(["}; }", f"}}  // namespace {args.namespace}", ""])
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines), encoding="utf-8")

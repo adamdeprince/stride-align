@@ -1,0 +1,5 @@
+comment = 'stride-align native string comparison and sequence alignment'
+default_version = '0.6.0'
+module_pathname = '$libdir/stride_align'
+relocatable = true
+trusted = false

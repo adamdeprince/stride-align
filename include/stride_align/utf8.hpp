@@ -76,8 +76,9 @@ struct PreparedPair {
   TokenBuffer query;
   TokenBuffer target;
 
-  // The all-ASCII fast path stores non-owning spans. The source string views
-  // must remain alive until every consumer of this pair has returned.
+  // A borrowed 8-bit fast path stores non-owning spans. This is ASCII for the
+  // UTF-8 adapter; native single-byte host adapters may also borrow high-bit
+  // characters. The source views must outlive every consumer of this pair.
 
   std::size_t query_size() const noexcept {
     return std::visit([](const auto& value) { return value.size(); }, query);

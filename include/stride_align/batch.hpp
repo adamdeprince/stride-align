@@ -224,16 +224,16 @@ struct Text {
   Text() = default;
   explicit Text(std::string value)
       : bytes(std::move(value)), length(unicode_length(bytes)) {}
+  Text(std::string value, std::size_t character_length)
+      : bytes(std::move(value)), length(character_length) {}
 };
 
-inline double score(
+inline double score_prepared(
     Scorer scorer,
-    std::string_view query,
-    std::string_view target,
+    const utf8::PreparedPair& pair,
     const ScoreOptions& options = {},
     std::optional<double> similarity_cutoff = std::nullopt,
     std::optional<std::size_t> distance_cutoff = std::nullopt) {
-  const auto pair = utf8::prepare_pair(query, target);
   switch (scorer) {
     case Scorer::levenshtein:
       return static_cast<double>(core::levenshtein_distance(
@@ -327,6 +327,43 @@ inline double score(
   }
   throw std::logic_error("unsupported stride-align scorer");
 }
+
+template <typename PreparePair>
+inline double score_with(
+    Scorer scorer,
+    std::string_view query,
+    std::string_view target,
+    PreparePair&& prepare_pair,
+    const ScoreOptions& options = {},
+    std::optional<double> similarity_cutoff = std::nullopt,
+    std::optional<std::size_t> distance_cutoff = std::nullopt) {
+  const auto pair = prepare_pair(query, target);
+  return score_prepared(
+      scorer, pair, options, similarity_cutoff, distance_cutoff);
+}
+
+inline double score(
+    Scorer scorer,
+    std::string_view query,
+    std::string_view target,
+    const ScoreOptions& options = {},
+    std::optional<double> similarity_cutoff = std::nullopt,
+    std::optional<std::size_t> distance_cutoff = std::nullopt) {
+  return score_with(
+      scorer, query, target,
+      [](std::string_view left, std::string_view right) {
+        return utf8::prepare_pair(left, right);
+      },
+      options, similarity_cutoff, distance_cutoff);
+}
+
+struct Utf8PreparePair {
+  utf8::PreparedPair operator()(
+      std::string_view query,
+      std::string_view target) const {
+    return utf8::prepare_pair(query, target);
+  }
+};
 
 // Cheap upper bound used before invoking a normalized scorer. Length-only
 // bounds let threshold and top-k operations avoid preparing or analysing a
@@ -436,11 +473,13 @@ inline void insert_ranked(
   std::push_heap(output.begin(), output.end(), better);
 }
 
-inline std::vector<RankedMatch> top_k(
+template <typename PreparePair>
+inline std::vector<RankedMatch> top_k_with(
     const Text& query,
     std::span<const std::optional<Text>> targets,
     Scorer scorer,
     std::size_t k,
+    PreparePair&& prepare_pair,
     const ScoreOptions& options = {},
     bool skip_invalid_hamming = false) {
   std::vector<RankedMatch> output;
@@ -478,9 +517,9 @@ inline std::vector<RankedMatch> top_k(
     }
     insert_ranked(
         output,
-        {score(
-             scorer, query.bytes, target.bytes, options, cutoff,
-             distance_cutoff),
+        {score_with(
+             scorer, query.bytes, target.bytes, prepare_pair, options,
+             cutoff, distance_cutoff),
          index},
         k, higher);
   }
@@ -492,10 +531,24 @@ inline std::vector<RankedMatch> top_k(
   return output;
 }
 
-inline std::vector<std::optional<double>> scores(
+inline std::vector<RankedMatch> top_k(
     const Text& query,
     std::span<const std::optional<Text>> targets,
     Scorer scorer,
+    std::size_t k,
+    const ScoreOptions& options = {},
+    bool skip_invalid_hamming = false) {
+  return top_k_with(
+      query, targets, scorer, k, Utf8PreparePair{}, options,
+      skip_invalid_hamming);
+}
+
+template <typename PreparePair>
+inline std::vector<std::optional<double>> scores_with(
+    const Text& query,
+    std::span<const std::optional<Text>> targets,
+    Scorer scorer,
+    PreparePair&& prepare_pair,
     const ScoreOptions& options = {}) {
   std::vector<std::optional<double>> output;
   output.reserve(targets.size());
@@ -503,10 +556,19 @@ inline std::vector<std::optional<double>> scores(
     if (!target.has_value()) {
       output.emplace_back(std::nullopt);
     } else {
-      output.emplace_back(score(scorer, query.bytes, target->bytes, options));
+      output.emplace_back(score_with(
+          scorer, query.bytes, target->bytes, prepare_pair, options));
     }
   }
   return output;
+}
+
+inline std::vector<std::optional<double>> scores(
+    const Text& query,
+    std::span<const std::optional<Text>> targets,
+    Scorer scorer,
+    const ScoreOptions& options = {}) {
+  return scores_with(query, targets, scorer, Utf8PreparePair{}, options);
 }
 
 inline bool same_texts(
@@ -523,10 +585,12 @@ inline bool same_texts(
 
 using DistanceMatrix = std::vector<std::vector<std::optional<double>>>;
 
-inline DistanceMatrix cdist(
+template <typename PreparePair>
+inline DistanceMatrix cdist_with(
     std::span<const std::optional<Text>> queries,
     std::span<const std::optional<Text>> targets,
     Scorer scorer,
+    PreparePair&& prepare_pair,
     const ScoreOptions& options = {}) {
   DistanceMatrix output(
       queries.size(),
@@ -538,9 +602,9 @@ inline DistanceMatrix cdist(
     for (std::size_t target_index = target_begin;
          target_index < targets.size(); ++target_index) {
       if (!targets[target_index].has_value()) continue;
-      const double value = score(
+      const double value = score_with(
           scorer, queries[query_index]->bytes,
-          targets[target_index]->bytes, options);
+          targets[target_index]->bytes, prepare_pair, options);
       output[query_index][target_index] = value;
       if (symmetric && query_index != target_index) {
         output[target_index][query_index] = value;
@@ -548,6 +612,14 @@ inline DistanceMatrix cdist(
     }
   }
   return output;
+}
+
+inline DistanceMatrix cdist(
+    std::span<const std::optional<Text>> queries,
+    std::span<const std::optional<Text>> targets,
+    Scorer scorer,
+    const ScoreOptions& options = {}) {
+  return cdist_with(queries, targets, scorer, Utf8PreparePair{}, options);
 }
 
 struct MatrixMatch {
@@ -585,11 +657,13 @@ inline void insert_ranked(
   std::push_heap(output.begin(), output.end(), better);
 }
 
-inline std::vector<MatrixMatch> cdist_above_threshold(
+template <typename PreparePair>
+inline std::vector<MatrixMatch> cdist_above_threshold_with(
     std::span<const std::optional<Text>> queries,
     std::span<const std::optional<Text>> targets,
     Scorer scorer,
     double threshold,
+    PreparePair&& prepare_pair,
     const ScoreOptions& options = {}) {
   if (!is_normalized_or_similarity(scorer)) {
     throw std::invalid_argument(
@@ -612,8 +686,8 @@ inline std::vector<MatrixMatch> cdist_above_threshold(
               scorer, query.length, target.length, options) < threshold) {
         continue;
       }
-      const double value = score(
-          scorer, query.bytes, target.bytes, options, threshold);
+      const double value = score_with(
+          scorer, query.bytes, target.bytes, prepare_pair, options, threshold);
       if (value >= threshold) {
         output.push_back({value, query_index, target_index});
       }
@@ -622,12 +696,24 @@ inline std::vector<MatrixMatch> cdist_above_threshold(
   return output;
 }
 
-inline std::vector<MatrixMatch> cdist_top_k(
+inline std::vector<MatrixMatch> cdist_above_threshold(
+    std::span<const std::optional<Text>> queries,
+    std::span<const std::optional<Text>> targets,
+    Scorer scorer,
+    double threshold,
+    const ScoreOptions& options = {}) {
+  return cdist_above_threshold_with(
+      queries, targets, scorer, threshold, Utf8PreparePair{}, options);
+}
+
+template <typename PreparePair>
+inline std::vector<MatrixMatch> cdist_top_k_with(
     std::span<const std::optional<Text>> queries,
     std::span<const std::optional<Text>> targets,
     Scorer scorer,
     std::size_t k,
     bool reject_duplicates,
+    PreparePair&& prepare_pair,
     const ScoreOptions& options = {}) {
   if (!is_normalized_or_similarity(scorer)) {
     throw std::invalid_argument(
@@ -660,7 +746,9 @@ inline std::vector<MatrixMatch> cdist_top_k(
       }
       insert_ranked(
           output,
-          {score(scorer, query.bytes, target.bytes, options, cutoff),
+          {score_with(
+               scorer, query.bytes, target.bytes, prepare_pair, options,
+               cutoff),
            query_index, target_index},
           k);
     }
@@ -673,11 +761,25 @@ inline std::vector<MatrixMatch> cdist_top_k(
   return output;
 }
 
-inline std::vector<std::vector<RankedMatch>> cdist_top_k_per_query(
+inline std::vector<MatrixMatch> cdist_top_k(
     std::span<const std::optional<Text>> queries,
     std::span<const std::optional<Text>> targets,
     Scorer scorer,
     std::size_t k,
+    bool reject_duplicates,
+    const ScoreOptions& options = {}) {
+  return cdist_top_k_with(
+      queries, targets, scorer, k, reject_duplicates,
+      Utf8PreparePair{}, options);
+}
+
+template <typename PreparePair>
+inline std::vector<std::vector<RankedMatch>> cdist_top_k_per_query_with(
+    std::span<const std::optional<Text>> queries,
+    std::span<const std::optional<Text>> targets,
+    Scorer scorer,
+    std::size_t k,
+    PreparePair&& prepare_pair,
     const ScoreOptions& options = {}) {
   if (!is_normalized_or_similarity(scorer)) {
     throw std::invalid_argument(
@@ -690,11 +792,21 @@ inline std::vector<std::vector<RankedMatch>> cdist_top_k_per_query(
       output.emplace_back();
       continue;
     }
-    output.push_back(top_k(
-        *query, targets, scorer, k, options,
+    output.push_back(top_k_with(
+        *query, targets, scorer, k, prepare_pair, options,
         /*skip_invalid_hamming=*/true));
   }
   return output;
+}
+
+inline std::vector<std::vector<RankedMatch>> cdist_top_k_per_query(
+    std::span<const std::optional<Text>> queries,
+    std::span<const std::optional<Text>> targets,
+    Scorer scorer,
+    std::size_t k,
+    const ScoreOptions& options = {}) {
+  return cdist_top_k_per_query_with(
+      queries, targets, scorer, k, Utf8PreparePair{}, options);
 }
 
 }  // namespace stride_align::batch
