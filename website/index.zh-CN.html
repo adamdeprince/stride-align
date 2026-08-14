@@ -30,7 +30,7 @@
     <nav class="research-nav" aria-label="主导航">
       <a href="#scope">范围</a>
       <a href="#results">测量结果</a>
-      <a href="#install">示例</a>
+      <a href="#getting-started">快速上手</a>
       <a href="docs/api/index.zh-CN.html">编程接口</a>
     </nav>
     <div class="research-actions">
@@ -46,7 +46,7 @@
         <h1>统一码（Unicode）字符串比较与序列比对。</h1>
         <p class="research-lede">stride-align 以一套原生 C++ 实现提供编辑距离、相似度、生物序列比对、语音编码与时间序列比对。Python、R 和 DuckDB 使用相同的底层评分定义。</p>
         <div class="research-actions-row">
-          <a class="research-button" href="#install">运行示例</a>
+          <a class="research-button" href="#getting-started">太长不看——直接开始 ↓</a>
           <a class="research-text-link" href="#results">查看测量结果 ↓</a>
           <a class="research-text-link" href="docs/api/index.zh-CN.html">浏览编程接口 ↗</a>
         </div>
@@ -146,9 +146,9 @@
       </div>
     </section>
 
-    <section class="walkthrough-intro" aria-labelledby="walkthrough-title">
-      <p class="research-label">可复现的演练</p>
-      <h2 id="walkthrough-title">先安装并验证，再从一对字符串扩展到整个语料库。</h2>
+    <section class="walkthrough-intro" id="getting-started" aria-labelledby="getting-started-title">
+      <p class="research-label">快速上手</p>
+      <h2 id="getting-started-title">先安装并验证，再从一对字符串扩展到整个语料库。</h2>
       <p>每一步都有语言选择器，而且彼此同步。无论读到哪里，只需选择一次接口，整套演练就会随之切换。</p>
     </section>
 
@@ -158,12 +158,12 @@
         <p class="step-number" aria-label="步骤 1"></p>
         <h2>安装所选接口。</h2>
         <p>三个接口都公开原生 stride-align 算法。DuckDB 软件包需要按 DuckDB 版本、平台和单指令多数据（SIMD）级别明确选择。</p>
-        <div class="example-language-control">
-          <label for="install-language">语言</label>
-          <span><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="install-language">接口</label>
+          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python</span><a href="README.zh-CN.html#_1">安装指南 ↗</a></header>
           <div class="research-code">
@@ -207,12 +207,12 @@ export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb
         <p class="step-number" aria-label="步骤 2"></p>
         <h2>验证一对字符串。</h2>
         <p>两个字符串的四个码点中有一个不同，因此归一化 Levenshtein 相似度为 3 ÷ 4 = 0.75。</p>
-        <div class="example-language-control">
-          <label for="trivial-language">语言</label>
-          <span><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="trivial-language">接口</label>
+          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>保存为 trivial.py</span><code>python3 trivial.py</code></header>
           <div class="research-code">
@@ -276,12 +276,12 @@ print(score)</code></pre>
           <strong>作者说明</strong>
           <p>如果在这里使用基督教经文让任何人感到被排斥或冒犯，我在此致歉。我无意用宗教文本表达宗教立场或推广任何主张。这个演示需要多部大型公版文献，它们以不同措辞表达相同含义；不同《圣经》译本恰好非常符合这一要求——甚至好得有些离谱。</p>
         </aside>
-        <div class="example-language-control">
-          <label for="bible-language">语言</label>
-          <span><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="bible-language">接口</label>
+          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python 批量 API</span><code>python3 bible.py</code></header>
           <div class="research-code research-code-tall">
@@ -456,12 +456,12 @@ print(f"score: {score:.6f}")</code></pre>
         <p class="step-number" aria-label="步骤 4"></p>
         <h2>把同一操作用于拼写检查器。</h2>
         <p>这个示例有意保持简单，不处理标点、词频、上下文或专有名词。它只用于展示如何通过批量或向量化路径，把一个词元与整部词典比较。</p>
-        <div class="example-language-control">
-          <label for="spell-language">语言</label>
-          <span><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="spell-language">接口</label>
+          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python 批量 API</span><code>printf '...' | python3 spell.py</code></header>
           <div class="research-code research-code-tall">

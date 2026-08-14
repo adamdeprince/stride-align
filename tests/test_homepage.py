@@ -64,6 +64,41 @@ def test_homepage_walkthrough_is_complete_for_every_interface() -> None:
         assert parser.copy_source_ids <= parser.ids, homepage
 
 
+def test_getting_started_jump_and_custom_selectors_are_next_to_examples() -> None:
+    pages = {
+        "english": HOMEPAGE.read_text(encoding="utf-8"),
+        "chinese": CHINESE_HOMEPAGE_SOURCE.read_text(encoding="utf-8"),
+    }
+
+    assert 'href="#getting-started">TL;DR — get me started ↓</a>' in pages["english"]
+    assert '<p class="research-label">Getting started</p>' in pages["english"]
+    assert "Reproducible walkthrough" not in pages["english"]
+    assert 'href="#getting-started">太长不看——直接开始 ↓</a>' in pages["chinese"]
+    assert '<p class="research-label">快速上手</p>' in pages["chinese"]
+    assert "可复现的演练" not in pages["chinese"]
+
+    for homepage in pages.values():
+        assert '<section class="walkthrough-intro" id="getting-started"' in homepage
+        for step in WORKFLOW_STEPS:
+            section = homepage.split(
+                f'<section class="workflow-step" id="{step}">', 1
+            )[1].split("</section>", 1)[0]
+            heading, stage = section.split('<div class="workflow-stage">', 1)
+            assert "example-language-control" not in heading
+            assert stage.index('class="example-language-control"') < stage.index(
+                'class="language-panel"'
+            )
+            assert 'class="example-language-picker"' in stage
+
+    switcher = (ROOT / "website" / "language-switch.js").read_text(encoding="utf-8")
+    styles = (ROOT / "website" / "home.css").read_text(encoding="utf-8")
+    assert 'createElement("button")' in switcher
+    assert 'setAttribute("role", "listbox")' in switcher
+    assert 'className = "example-language-option"' in switcher
+    assert ".example-language-menu" in styles
+    assert "-webkit-appearance: none" in styles
+
+
 def test_homepage_benchmark_numbers_name_their_artifacts() -> None:
     homepage = HOMEPAGE.read_text(encoding="utf-8")
 

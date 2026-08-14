@@ -30,7 +30,7 @@
     <nav class="research-nav" aria-label="Primary navigation">
       <a href="#scope">Scope</a>
       <a href="#results">Measurements</a>
-      <a href="#install">Examples</a>
+      <a href="#getting-started">Getting started</a>
       <a href="docs/api/index.html">API</a>
     </nav>
     <div class="research-actions">
@@ -46,7 +46,7 @@
         <h1>Unicode string comparison and sequence alignment.</h1>
         <p class="research-lede">stride-align provides one native C++ implementation of edit distance, similarity, biological alignment, phonetic encoding, and time-series alignment. It is available from Python, R, and DuckDB without changing the underlying scoring definitions.</p>
         <div class="research-actions-row">
-          <a class="research-button" href="#install">Run an example</a>
+          <a class="research-button" href="#getting-started">TL;DR — get me started ↓</a>
           <a class="research-text-link" href="#results">Review measurements ↓</a>
           <a class="research-text-link" href="docs/api/index.html">Browse the API ↗</a>
         </div>
@@ -146,9 +146,9 @@
       </div>
     </section>
 
-    <section class="walkthrough-intro" aria-labelledby="walkthrough-title">
-      <p class="research-label">Reproducible walkthrough</p>
-      <h2 id="walkthrough-title">Install, verify, then move from one pair to a corpus.</h2>
+    <section class="walkthrough-intro" id="getting-started" aria-labelledby="getting-started-title">
+      <p class="research-label">Getting started</p>
+      <h2 id="getting-started-title">Install, verify, then move from one pair to a corpus.</h2>
       <p>Every step has a language selector. They stay synchronized, so choose the interface wherever you are reading and the complete walkthrough changes with it.</p>
     </section>
 
@@ -158,12 +158,12 @@
         <p class="step-number" aria-label="Step 1"></p>
         <h2>Install the selected interface.</h2>
         <p>Each interface exposes the native stride-align algorithms. DuckDB packages are selected explicitly by DuckDB version, platform, and SIMD level.</p>
-        <div class="example-language-control">
-          <label for="install-language">Language</label>
-          <span><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="install-language">Interface</label>
+          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python</span><a href="README.html#getting-started">Installation guide ↗</a></header>
           <div class="research-code">
@@ -208,12 +208,12 @@ export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb
         <p class="step-number" aria-label="Step 2"></p>
         <h2>Verify one pair.</h2>
         <p>The strings differ in one of four code points, so normalized Levenshtein similarity is 3 ÷ 4 = 0.75.</p>
-        <div class="example-language-control">
-          <label for="trivial-language">Language</label>
-          <span><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="trivial-language">Interface</label>
+          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Save as trivial.py</span><code>python3 trivial.py</code></header>
           <div class="research-code">
@@ -277,12 +277,12 @@ print(score)</code></pre>
           <strong>A note from the author</strong>
           <p>I apologize to anyone who finds the use of Christian scripture here exclusionary or offensive. I am not using religious texts to make a religious statement or push an agenda. This demonstration needs multiple large public-domain documents with the same meaning phrased differently, and Bible translations happen to fit that requirement freakishly well.</p>
         </aside>
-        <div class="example-language-control">
-          <label for="bible-language">Language</label>
-          <span><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="bible-language">Interface</label>
+          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python batch API</span><code>python3 bible.py</code></header>
           <div class="research-code research-code-tall">
@@ -457,12 +457,12 @@ print(f"score: {score:.6f}")</code></pre>
         <p class="step-number" aria-label="Step 4"></p>
         <h2>Apply the same operation to a spell checker.</h2>
         <p>This intentionally small example ignores punctuation, frequency, context, and proper nouns. Its purpose is to show one token compared with an entire dictionary through a batch or vectorized path.</p>
-        <div class="example-language-control">
-          <label for="spell-language">Language</label>
-          <span><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></span>
-        </div>
       </div>
       <div class="workflow-stage">
+        <div class="example-language-control">
+          <label for="spell-language">Interface</label>
+          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+        </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python batch API</span><code>printf '...' | python3 spell.py</code></header>
           <div class="research-code research-code-tall">

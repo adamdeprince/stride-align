@@ -17,7 +17,7 @@ tests/test_cdist_top_k.py	15	bindings/r/stridealign/tests/python-test-cdist-top-
 tests/test_dtw.py	25	bindings/r/stridealign/tests/python-test-dtw.R	R numeric vectors replace NumPy numeric arrays.
 tests/test_dual_sw_batch.py	6	bindings/r/stridealign/tests/python-test-dual-sw-batch.R	Dual-score batch equivalence, Unicode, validation, and affine scoring.
 tests/test_fuzz.py	29	bindings/r/stridealign/tests/python-test-fuzz.R	Native fuzz scorers and processor-like normalization behavior; no TheFuzz facade.
-tests/test_homepage.py	9	bindings/r/stridealign/tests/api.R;bindings/r/stridealign/tests/python-batch-api.R	The R scalar and batch suites execute the language-switchable calls illustrated by the static homepage; the source homepage test covers architecture-specific installation links.
+tests/test_homepage.py	10	bindings/r/stridealign/tests/api.R;bindings/r/stridealign/tests/python-batch-api.R	The R scalar and batch suites execute the language-switchable calls illustrated by the static homepage; the source homepage test covers architecture-specific installation links and synchronized custom language controls.
 tests/test_indel.py	21	bindings/r/stridealign/tests/python-test-indel.R	Distance, normalized similarity, bounds, batch, and randomized reference checks.
 tests/test_jaro.py	19	bindings/r/stridealign/tests/python-test-jaro.R	Jaro and Jaro-Winkler cases plus independent randomized references.
 tests/test_keyboard_matrices.py	14	bindings/r/stridealign/tests/python-test-keyboard-matrices.R	R cannot store embedded NUL in CHARSXP, so its ASCII matrix covers code points 1 through 127.

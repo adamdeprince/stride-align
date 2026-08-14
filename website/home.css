@@ -2528,10 +2528,9 @@ pre {
 /* --------------------------------------------------------------------------
    Scientific homepage
 
-   The Chinese homepage still uses the original editorial layout above. The
-   English homepage is deliberately quieter and is scoped under this body
-   class so the two presentations can coexist while the translation catches
-   up independently.
+   The English and Chinese homepages share this quieter research layout. It is
+   scoped under this body class so the older subpage styles above remain
+   independent.
    -------------------------------------------------------------------------- */
 
 body.scientific-home {
@@ -3786,66 +3785,182 @@ body.scientific-home {
 }
 
 .example-language-control {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  position: relative;
+  z-index: 8;
+  width: max-content;
+  max-width: 100%;
+  display: inline-flex;
   align-items: center;
-  margin-top: 30px;
-  overflow: hidden;
-  border: 1px solid var(--research-rule);
-  border-radius: 4px;
+  margin: 0 0 12px;
+  border: 1px solid #aebbb2;
+  border-radius: 3px;
   background: var(--research-paper);
+  box-shadow: 0 2px 7px rgba(23, 33, 27, 0.08);
 }
 
 .example-language-control label {
-  padding: 0 14px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
   color: var(--research-muted);
+  background: #f3f6f3;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
-.example-language-control span {
+.example-language-picker {
   position: relative;
-  min-width: 0;
+  min-width: 138px;
   border-left: 1px solid var(--research-rule);
 }
 
-.example-language-control span::after {
-  content: "↓";
+.example-language-picker::after {
+  content: "⌄";
   position: absolute;
   top: 50%;
-  right: 13px;
-  color: var(--research-green);
+  right: 11px;
+  color: #fff;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
+  font-size: 12px;
   pointer-events: none;
-  transform: translateY(-50%);
+  transform: translateY(-56%);
 }
 
 .example-language-control select {
   width: 100%;
-  min-height: 44px;
-  padding: 0 38px 0 13px;
+  min-height: 36px;
+  display: block;
+  padding: 0 34px 0 12px;
   border: 0;
   border-radius: 0;
-  color: var(--research-ink);
-  background: #f3f6f3;
+  color: #fff;
+  background: var(--research-green);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   cursor: pointer;
+  -webkit-appearance: none;
   appearance: none;
 }
 
 .example-language-control select:focus-visible {
-  outline: 2px solid var(--research-green);
+  outline: 2px solid #8db4a1;
   outline-offset: -3px;
 }
 
-@media (max-width: 860px) {
-  .example-language-control {
-    max-width: 360px;
-  }
+.example-language-picker.is-enhanced::after {
+  display: none;
+}
+
+.example-language-picker.is-enhanced select {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  clip-path: inset(50%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.example-language-trigger {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  background: var(--research-green);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.example-language-trigger:hover,
+.example-language-trigger:focus-visible,
+.example-language-trigger[aria-expanded="true"] {
+  background: #173b2f;
+}
+
+.example-language-trigger:focus-visible {
+  outline: 2px solid #8db4a1;
+  outline-offset: -3px;
+}
+
+.example-language-chevron {
+  font-size: 12px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.example-language-trigger[aria-expanded="true"] .example-language-chevron {
+  transform: rotate(180deg);
+}
+
+.example-language-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  right: -1px;
+  left: -1px;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid #91a399;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 10px 25px rgba(23, 33, 27, 0.2);
+}
+
+.example-language-option {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--research-ink);
+  background: transparent;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.example-language-option + .example-language-option {
+  margin-top: 2px;
+}
+
+.example-language-option:hover,
+.example-language-option:focus-visible {
+  color: #fff;
+  background: var(--research-green);
+  outline: 0;
+}
+
+.example-language-option[aria-selected="true"] {
+  color: var(--research-green);
+  background: var(--research-green-light);
+  font-weight: 600;
+}
+
+.example-language-option[aria-selected="true"]::after {
+  content: "✓";
+  margin-left: 12px;
+}
+
+.example-language-option[aria-selected="true"]:hover,
+.example-language-option[aria-selected="true"]:focus-visible {
+  color: #fff;
+  background: var(--research-green);
 }
