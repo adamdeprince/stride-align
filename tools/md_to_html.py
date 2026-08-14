@@ -532,9 +532,12 @@ def build_generic(md_relpath: Path) -> None:
         masthead_title=page_h1 or md_path.stem,
         tagline=(
             (
-                "Python、R 与 DuckDB 共用的一套原生算法接口"
+                "Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 共用的一套原生算法接口"
                 if api_locale == "zh-CN"
-                else "One native algorithm surface for Python, R, and DuckDB"
+                else (
+                    "One native algorithm surface for Python, R, Go, DuckDB, "
+                    "PostgreSQL, and Memgraph"
+                )
             )
             if is_api_index
             else ("stride-align 文档" if lang == "zh-CN" else "stride-align documentation")
@@ -546,12 +549,18 @@ def build_generic(md_relpath: Path) -> None:
         page_class="api-page" if is_api_index else "",
         description=(
             (
-                "面向 Python、R 与 DuckDB 的 stride-align 跨语言编程接口示例。"
+                (
+                    "面向 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 的 "
+                    "stride-align 跨语言编程接口示例。"
+                )
                 if api_locale == "zh-CN"
-                else "Cross-language stride-align API examples for Python, R, and DuckDB."
+                else (
+                    "Cross-language stride-align API examples for Python, R, Go, "
+                    "DuckDB, PostgreSQL, and Memgraph."
+                )
             )
             if is_api_index
-            else "SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW for Python."
+            else "SIMD-accelerated fuzzy string matching, sequence alignment, phonetics, and DTW."
         ),
     )
     out_path = OUT / Path(built_markdown_relpath(md_posix).as_posix())

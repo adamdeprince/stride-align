@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — 面向 Python、R、DuckDB、PostgreSQL 与 Memgraph 的统一码字符串分析</title>
-  <meta name="description" content="面向 Python、R、DuckDB、PostgreSQL 与 Memgraph、由单指令多数据技术加速的统一码字符串匹配与序列比对，附有可复现的基准测试和可运行示例。">
+  <title>stride-align — 面向 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 的统一码字符串分析</title>
+  <meta name="description" content="面向 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph、由单指令多数据技术加速的统一码字符串匹配与序列比对，附有可复现的基准测试和可运行示例。">
   <meta name="theme-color" content="#21493a">
   <meta property="og:title" content="stride-align — 统一码字符串分析">
-  <meta property="og:description" content="面向 Python、R、DuckDB、PostgreSQL 与 Memgraph 的字符串匹配与序列比对，由原生单指令多数据内核提供支持。">
+  <meta property="og:description" content="面向 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 的字符串匹配与序列比对，由原生单指令多数据内核提供支持。">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
@@ -44,7 +44,7 @@
       <div class="research-intro-copy">
         <p class="research-label">版本 0.6.0 · Apache-2.0</p>
         <h1>统一码（Unicode）字符串比较与序列比对。</h1>
-        <p class="research-lede">stride-align 以一套原生 C++ 实现提供编辑距离、相似度、生物序列比对、语音编码与时间序列比对。Python、R、DuckDB、PostgreSQL 和 Memgraph 使用相同的底层评分定义。</p>
+        <p class="research-lede">stride-align 以一套原生 C++ 实现提供编辑距离、相似度、生物序列比对、语音编码与时间序列比对。Python、R、Go、DuckDB、PostgreSQL 和 Memgraph 使用相同的底层评分定义。</p>
         <div class="research-actions-row">
           <a class="research-button" href="#getting-started">太长不看——直接开始 ↓</a>
           <a class="research-text-link" href="#results">查看测量结果 ↓</a>
@@ -55,7 +55,7 @@
       <aside class="project-record" aria-labelledby="project-record-title">
         <h2 id="project-record-title">项目概览</h2>
         <dl>
-          <div><dt>接口</dt><dd>Python、R、DuckDB、PostgreSQL、Memgraph</dd></div>
+          <div><dt>接口</dt><dd>Python、R、Go、DuckDB、PostgreSQL、Memgraph</dd></div>
           <div><dt>文本模型</dt><dd>统一码，包括中日韩文字与表情符号</dd></div>
           <div><dt>执行形式</dt><dd>标量、批量、全配对、阈值、前 k 项</dd></div>
           <div><dt>体系结构</dt><dd>x86、Arm、LoongArch、POWER</dd></div>
@@ -157,12 +157,12 @@
       <div class="workflow-step-heading">
         <p class="step-number" aria-label="步骤 1"></p>
         <h2>安装所选接口。</h2>
-        <p>五个接口都公开原生 stride-align 算法。数据库扩展需要按服务器版本、平台和单指令多数据（SIMD）级别选择或构建。</p>
+        <p>六个接口都公开原生 stride-align 算法。数据库扩展需要按服务器版本、平台和单指令多数据（SIMD）级别选择或构建。</p>
       </div>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="install-language">接口</label>
-          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
+          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="go">Go</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python</span><a href="README.zh-CN.html#_1">安装指南 ↗</a></header>
@@ -185,6 +185,18 @@
 )'</code></pre>
           </div>
           <p>托管的源码包是可移植的安装方式。仓库也会标明二进制包适用的更具体环境。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="go" hidden>
+          <header><span>Go 1.22+ 与 cgo</span><a href="bindings/go/">Go 软件包指南（英文）↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-go-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="install-go-code">mkdir stride-align-demo &amp;&amp; cd stride-align-demo
+go mod init example.com/stride-align-demo
+go get github.com/adamdeprince/stride-align/bindings/go@main</code></pre>
+          </div>
+          <p>常规 Go 软件包通过 cgo 从源代码编译共享的 C++23 核心。可移植构建无需标签；应用程序还可选择 native、AVX2、AVX-512、POWER8 或三种龙架构配置。</p>
+          <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/go/index.zh-CN.html" rel="noopener"><span>没有 C++23 编译器？使用预编译后端</span><b>→</b></a>
         </article>
 
         <article class="language-panel" data-language-panel="duckdb" hidden>
@@ -247,7 +259,7 @@ export STRIDE_ALIGN_MEMGRAPH_PORT=7687</code></pre>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="trivial-language">接口</label>
-          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
+          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="go">Go</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>保存为 trivial.py</span><code>python3 trivial.py</code></header>
@@ -274,6 +286,32 @@ score &lt;- levenshtein_normalized_score(
     "你好世间"
 )
 print(score)</code></pre>
+          </div>
+        </article>
+
+        <article class="language-panel" data-language-panel="go" hidden>
+          <header><span>保存为 main.go</span><code>go run .</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-go-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="trivial-go-code">package main
+
+import (
+    "fmt"
+    "log"
+
+    stridealign "github.com/adamdeprince/stride-align/bindings/go"
+)
+
+func main() {
+    score, err := stridealign.LevenshteinNormalizedScore(
+        "你好世界",
+        "你好世间",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(score)
+}</code></pre>
           </div>
         </article>
 
@@ -355,7 +393,7 @@ print(score)</code></pre>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="bible-language">接口</label>
-          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
+          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="go">Go</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python 批量 API</span><code>python3 bible.py</code></header>
@@ -434,6 +472,98 @@ cat(references[[best]], "\t", verses[[best]], "\n", sep = "")
 cat(sprintf("score: %.6f\n", scores[[best]]))</code></pre>
           </div>
           <p>R 将完整字符向量交给批量 API，并为每节经文接收一个分数。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="go" hidden>
+          <header><span>Go 批量 API</span><code>go run bible.go</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-go-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="bible-go-code">package main
+
+import (
+    "bufio"
+    "errors"
+    "fmt"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "strings"
+
+    stridealign "github.com/adamdeprince/stride-align/bindings/go"
+)
+
+func main() {
+    const corpus = "kjv.txt"
+    if _, err := os.Stat(corpus); errors.Is(err, os.ErrNotExist) {
+        response, err := http.Get(
+            "https://openbible.com/textfiles/kjv.txt",
+        )
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer response.Body.Close()
+        file, err := os.Create(corpus)
+        if err != nil {
+            log.Fatal(err)
+        }
+        if _, err = io.Copy(file, response.Body); err != nil {
+            log.Fatal(err)
+        }
+        if err = file.Close(); err != nil {
+            log.Fatal(err)
+        }
+    } else if err != nil {
+        log.Fatal(err)
+    }
+
+    file, err := os.Open(corpus)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer file.Close()
+    var references, verses []string
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        line := strings.TrimPrefix(scanner.Text(), "\ufeff")
+        reference, verse, ok := strings.Cut(line, "\t")
+        if ok {
+            references = append(references, reference)
+            verses = append(verses, verse)
+        }
+    }
+    if err := scanner.Err(); err != nil {
+        log.Fatal(err)
+    }
+
+    normalized := make([]string, len(verses))
+    for index, verse := range verses {
+        normalized[index] = strings.ToLower(verse)
+    }
+    query := strings.Join([]string{
+        "The earth will mourn, and the heavens will lament from above.",
+        "For I have spoken, I have decided, and I have not regretted.",
+        "Neither will I be turned away from it.",
+    }, " ")
+    scores, err := stridealign.NeedlemanWunschNormalizedScores(
+        strings.ToLower(query), normalized, nil,
+    )
+    if err != nil || len(scores) == 0 {
+        log.Fatal("could not score corpus: ", err)
+    }
+    best := 0
+    for index := 1; index &lt; len(scores); index++ {
+        if scores[index] &gt; scores[best] {
+            best = index
+        }
+    }
+    fmt.Printf(
+        "%s\t%s\nscore: %.6f\n",
+        references[best], verses[best], scores[best],
+    )
+}</code></pre>
+          </div>
+          <p>Go 会把完整经文切片扁平化，并且只进入一次 C++ 批量评分器。结果切片保持语料库顺序，因此其从零开始的索引可直接定位源记录。</p>
         </article>
 
         <article class="language-panel" data-language-panel="duckdb" hidden>
@@ -663,7 +793,7 @@ print(f"score: {best['score']:.6f}")</code></pre>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="spell-language">接口</label>
-          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
+          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="go">Go</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python 批量 API</span><code>printf '...' | python3 spell.py</code></header>
@@ -723,6 +853,80 @@ tokens &lt;- strsplit(tolower(line), "\\s+")[[1L]]
 cat(paste(vapply(tokens, correct, ""), collapse = " "), "\n")</code></pre>
           </div>
           <p>每个词元是一个标量，候选词典则作为一个 R 字符向量传给批量 API。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="go" hidden>
+          <header><span>Go 批量 API</span><code>printf '...' | go run spell.go</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-go-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="spell-go-code">package main
+
+import (
+    "bufio"
+    "fmt"
+    "log"
+    "os"
+    "strings"
+
+    stridealign "github.com/adamdeprince/stride-align/bindings/go"
+)
+
+func main() {
+    paths := []string{
+        "/usr/share/dict/words",
+        "/usr/dict/words",
+        "/var/lib/dict/words",
+        "/etc/dictionaries-common/words",
+    }
+    var dictionary *os.File
+    for _, path := range paths {
+        file, err := os.Open(path)
+        if err == nil {
+            dictionary = file
+            break
+        }
+    }
+    if dictionary == nil {
+        log.Fatal("no system dictionary found")
+    }
+    defer dictionary.Close()
+
+    seen := make(map[string]struct{})
+    var words []string
+    scanner := bufio.NewScanner(dictionary)
+    for scanner.Scan() {
+        word := strings.ToLower(strings.TrimSpace(scanner.Text()))
+        if _, exists := seen[word]; word != "" &amp;&amp; !exists {
+            seen[word] = struct{}{}
+            words = append(words, word)
+        }
+    }
+    if err := scanner.Err(); err != nil {
+        log.Fatal(err)
+    }
+
+    input := bufio.NewScanner(os.Stdin)
+    if !input.Scan() {
+        return
+    }
+    tokens := strings.Fields(strings.ToLower(input.Text()))
+    corrected := make([]string, len(tokens))
+    for index, token := range tokens {
+        match, ok, err := stridealign.Best(
+            token,
+            words,
+            stridealign.ScorerNeedlemanWunschNormalized,
+            nil,
+        )
+        if err != nil || !ok {
+            log.Fatal("could not match token: ", err)
+        }
+        corrected[index] = match.Target
+    }
+    fmt.Println(strings.Join(corrected, " "))
+}</code></pre>
+          </div>
+          <p>每个词元都会把完整词典切片交给 stride-align 的有界原生最佳一项路径；Go 无需构造或排序完整分数向量。</p>
         </article>
 
         <article class="language-panel" data-language-panel="duckdb" hidden>
@@ -938,10 +1142,10 @@ print(" ".join(row["correction"] for row in rows))</code></pre>
     <section class="research-next" aria-labelledby="next-title">
       <div>
         <p class="research-label">参考资料</p>
-        <h2 id="next-title">在五个接口中使用同一套 API。</h2>
+        <h2 id="next-title">在六个接口中使用同一套 API。</h2>
       </div>
       <nav aria-label="API 文档">
-        <a href="docs/api/index.zh-CN.html"><span>编程接口</span><strong>查看 Python、R、DuckDB、PostgreSQL 与 Memgraph 中的每一种算法</strong><i>→</i></a>
+        <a href="docs/api/index.zh-CN.html"><span>编程接口</span><strong>查看 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 中的每一种算法</strong><i>→</i></a>
       </nav>
     </section>
   </main>
@@ -949,7 +1153,7 @@ print(" ".join(row["correction"] for row in rows))</code></pre>
   <footer class="research-footer">
     <div>
       <strong>stride-align 0.6.0</strong>
-      <span>Apache-2.0 · Python · R · DuckDB · PostgreSQL · Memgraph</span>
+      <span>Apache-2.0 · Python · R · Go · DuckDB · PostgreSQL · Memgraph</span>
     </div>
     <nav aria-label="页脚链接">
       <a href="BENCHMARK.html">基准测试</a>

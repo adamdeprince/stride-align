@@ -1,20 +1,24 @@
 # API
 
-stride-align exposes its native algorithms through Python, R, DuckDB,
+stride-align exposes its native algorithms through Python, R, Go, DuckDB,
 PostgreSQL, and Memgraph. Every algorithm below includes one call in each
 interface. Use the selector on any example; all selectors on this page and the
 homepage stay synchronized.
 
 The examples assume `import stride_align as sa` in Python,
-`library(stridealign)` in R, or the Python database clients shown in each
+`library(stridealign)` in R, the Go import shown in each complete Go program,
+or the Python database clients shown in each
 database panel. See the [homepage installation walkthrough](../../index.html#install),
 [download the DuckDB extension](https://distribution.goblinreactor.com/stride-align/duckdb/),
 or [download the Memgraph query module](https://distribution.goblinreactor.com/stride-align/memgraph/)
 matching the server platform and CPU. PostgreSQL 16–18 installation uses the
-[PGXS build guide](../../bindings/postgres/).
+[PGXS build guide](../../bindings/postgres/). Go installation and SIMD build
+profiles are covered by the [Go package guide](../../bindings/go/), with
+[precompiled native backends](https://distribution.goblinreactor.com/stride-align/go/)
+available when a C++23 compiler is unavailable.
 
-The API is organized by algorithm, not by language adapter. Python and R use
-ordinary function calls. DuckDB and PostgreSQL expose `stride_*` SQL functions;
+The API is organized by algorithm, not by language adapter. Python, R, and Go
+use ordinary function calls. DuckDB and PostgreSQL expose `stride_*` SQL functions;
 Memgraph exposes `stride_align.*` Cypher functions and a streaming `cdist`
 procedure. Database examples use Python only to connect, load data, and submit
 the native SQL or Cypher operation. Compatibility facades are intentionally
@@ -43,6 +47,7 @@ types:
 | --- | --- |
 | Python | Score vectors and dense `cdist` results are NumPy arrays. Rankings are tuples/lists; threshold and per-query forms are iterators. Match indices are zero-based. |
 | R | Results use numeric vectors, matrices, data frames, and lists. Match indices are one-based. Pair scorers also accept equal-length character vectors or broadcast a length-one side. |
+| Go | Results use slices, nested slices, and typed match structs with zero-based indices. Slice-oriented operations flatten strings and enter C++ once per call; `cdist_top_k` is global while `CDistTopKPerQuery` returns one group per query. |
 | DuckDB | Results use `LIST`, nested `LIST`, and `STRUCT` values. Match index fields are zero-based, while SQL list subscripts are one-based. Pair functions applied to table columns run through DuckDB's vectorized chunk machinery; list-valued functions can additionally batch a candidate collection within each row. |
 | PostgreSQL | Results use native arrays and `jsonb` match records. SQL array subscripts are one-based; match records retain zero-based source indices. Its native batch functions accept `text[]` collections directly. |
 | Memgraph | Scalar functions compose over Cypher rows. There are no plural, extraction, or top-k function names. `cdist` is a batch read procedure yielding zero-based `query_index`, `target_index`, and `score` fields in row-major order, so consumers need not materialize a matrix. |

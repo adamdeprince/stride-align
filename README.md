@@ -5,10 +5,10 @@
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
 `stride-align` provides SIMD-accelerated fuzzy string matching and sequence
-alignment for Python, R, and DuckDB, with first-class Unicode/CJK support. The
-Python package also includes phonetic encoding and time-series distance. Its
-native packages dispatch to the best compatible backend for x86, ARM,
-LoongArch, POWER, and RISC-V, with a portable fallback.
+alignment for Python, R, Go, DuckDB, PostgreSQL, and Memgraph, with first-class
+Unicode/CJK support. The native APIs include phonetic encoding, substitution
+matrices, and time-series distance. Builds cover x86, ARM, LoongArch, POWER,
+and RISC-V, with a portable fallback.
 
 It also provides work-alike imports for four popular libraries:
 `import stride_align.rapidfuzz as rapidfuzz` replaces `rapidfuzz`,
@@ -47,6 +47,12 @@ DTW capabilities through ordinary R objects, and selects a compatible SIMD
 backend when the package loads. Build, install, and API examples are documented in
 [`bindings/r/`](bindings/r/README.md).
 
+Go support is delivered as a cgo package over the same C++23 core. It matches
+the R package's native scalar, batch, selection, cdist, alignment, matrix,
+phonetic, keyboard, and DTW feature set without the Python compatibility
+facades. Installation, SIMD build tags, and runnable examples are documented
+in [`bindings/go/`](bindings/go/README.md).
+
 Instead of giving you a lecture, we're going to learn by doing.
 Let's dive right into how it works.
 
@@ -55,6 +61,17 @@ Let's dive right into how it works.
 ```bash
 pip install stride-align
 ```
+
+For Go applications:
+
+```bash
+go get github.com/adamdeprince/stride-align/bindings/go@main
+```
+
+Go normally builds the native core from source. Systems without a suitable
+C++23 compiler can use the project's
+[precompiled Go backends](https://distribution.goblinreactor.com/stride-align/go/)
+with the same package and API.
 
 **POWER8 / ppc64le and Loongson / LoongArch64 users:** architecture wheels
 are available from the project's
@@ -432,6 +449,7 @@ CIGAR-style summaries where available.
 | [`CHANGELOG.md`](CHANGELOG.md) | upgraders | version history with breaking-change notes |
 | [`docs/adding-a-new-algorithm.md`](docs/adding-a-new-algorithm.md) | contributors | the internal kernel + binding pattern |
 | [`docs/loongson-build.md`](docs/loongson-build.md) | LoongArch packagers | dual-toolchain (old-world / new-world) build recipe |
+| [`bindings/go/`](bindings/go/README.md) | Go developers | cgo installation, full native API examples, and SIMD build profiles |
 
 Both READMEs and every markdown file in the repo are rendered to
 HTML by [`tools/md_to_html.py`](https://github.com/adamdeprince/stride-align/blob/main/tools/md_to_html.py). The long-form

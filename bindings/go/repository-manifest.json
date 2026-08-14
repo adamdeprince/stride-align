@@ -1,0 +1,86 @@
+{
+  "artifacts": [
+    {
+      "build_number": 1,
+      "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+      "compiler_target": "-DSTRIDE_ALIGN_GO_TARGET_NEON=1 -mcpu=apple-m1 -mmacosx-version-min=13.0",
+      "cxx_runtime": "system",
+      "linux_abi": null,
+      "path": "v0.6.0/darwin_arm64/neon/stride-align-go-0.6.0-1-darwin_arm64-neon.tar.gz",
+      "platform": "darwin_arm64",
+      "profile": "neon",
+      "sha256": "0d8909ad676e2ebb92bab9f4cc4a7cd06434c48174e6b92fa6a0d5fa76457079",
+      "size": 441501,
+      "validation": "runtime-tested"
+    },
+    {
+      "build_number": 1,
+      "compiler": "c++ (GCC) 14.2.1 20250110 (Red Hat 14.2.1-11)",
+      "compiler_target": "-DSTRIDE_ALIGN_GO_TARGET_AVX2=1 -march=x86-64-v3 -mtune=generic",
+      "cxx_runtime": "bundled-static",
+      "linux_abi": "manylinux_2_28",
+      "path": "v0.6.0/linux_amd64/avx2/stride-align-go-0.6.0-1-linux_amd64-avx2.tar.gz",
+      "platform": "linux_amd64",
+      "profile": "avx2",
+      "sha256": "9dcae1e6dc8180063809e2275c18c9116e45156402c4e18528da43bffffd0746",
+      "size": 2020689,
+      "validation": "runtime-tested"
+    },
+    {
+      "build_number": 1,
+      "compiler": "c++ (GCC) 14.2.1 20250110 (Red Hat 14.2.1-11)",
+      "compiler_target": "-DSTRIDE_ALIGN_GO_TARGET_AVX512BWVL=1 -march=x86-64-v4 -mtune=generic",
+      "cxx_runtime": "bundled-static",
+      "linux_abi": "manylinux_2_28",
+      "path": "v0.6.0/linux_amd64/avx512bwvl/stride-align-go-0.6.0-1-linux_amd64-avx512bwvl.tar.gz",
+      "platform": "linux_amd64",
+      "profile": "avx512bwvl",
+      "sha256": "373717ca7b0b313065d2bf2c68fd50a28b980babaf40d972d0822f243c2b9ed5",
+      "size": 2023066,
+      "validation": "runtime-tested"
+    },
+    {
+      "build_number": 1,
+      "compiler": "c++ (GCC) 14.2.1 20250110 (Red Hat 14.2.1-11)",
+      "compiler_target": "-DSTRIDE_ALIGN_GO_TARGET_GENERIC=1 -march=x86-64 -mtune=generic -msse2 -mno-avx -mno-avx2 -mno-avx512f",
+      "cxx_runtime": "bundled-static",
+      "linux_abi": "manylinux_2_28",
+      "path": "v0.6.0/linux_amd64/generic/stride-align-go-0.6.0-1-linux_amd64-generic.tar.gz",
+      "platform": "linux_amd64",
+      "profile": "generic",
+      "sha256": "7080d07130e9b3ed7534230e940b49672980a5e00065178af65a634c91a401ce",
+      "size": 1970382,
+      "validation": "runtime-tested"
+    }
+  ],
+  "base_url": "https://distribution.goblinreactor.com/stride-align/go/",
+  "build_number": 1,
+  "linux_abi": "manylinux_2_28",
+  "pending": [
+    {
+      "platform": "linux_arm64",
+      "profile": "neon"
+    },
+    {
+      "platform": "linux_ppc64le",
+      "profile": "power8_vsx"
+    },
+    {
+      "platform": "linux_loong64",
+      "profile": "la464_lsx"
+    },
+    {
+      "platform": "linux_loong64",
+      "profile": "la464_lasx"
+    },
+    {
+      "platform": "linux_loong64",
+      "profile": "la664_lasx"
+    }
+  ],
+  "project": "stride-align",
+  "project_version": "0.6.0",
+  "published_at": "2026-08-14",
+  "schema_version": 1,
+  "source_standard": "C++23"
+}

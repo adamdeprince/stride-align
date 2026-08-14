@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Go 预编译后端 — stride-align</title>
+  <meta name="description" content="下载 stride-align 0.6.0 的 Go 预编译 C++23 后端。">
+  <meta name="theme-color" content="#21493a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+:root { --ink:#15231b; --muted:#617068; --green:#21493a; --blue:#315f78; --paper:#fff; --soft:#f2f6f3; --rule:#ced8d1; font-family:"IBM Plex Sans",system-ui,sans-serif; }
+    * { box-sizing:border-box; }
+    html { color:var(--ink); background:#edf3ef; background-image:linear-gradient(rgba(33,73,58,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(33,73,58,.035) 1px,transparent 1px); background-size:40px 40px; }
+    body { width:min(1180px,calc(100% - 36px)); margin:24px auto; background:var(--paper); border:1px solid var(--rule); }
+    a { color:var(--blue); }
+    .topbar { min-height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 28px; border-bottom:1px solid var(--rule); background:var(--soft); font:600 10px/1 "IBM Plex Mono",monospace; letter-spacing:.07em; text-transform:uppercase; }
+    .topbar strong { color:var(--green); }
+    .topbar nav { display:flex; align-self:stretch; }
+    .topbar a { display:flex; align-items:center; padding:0 16px; border-left:1px solid var(--rule); color:var(--green); text-decoration:none; }
+    .topbar a:hover { color:#fff; background:var(--green); }
+    header { padding:58px 54px 50px; border-bottom:1px solid var(--rule); }
+    .eyebrow { margin:0 0 18px; color:var(--green); font:600 9px/1 "IBM Plex Mono",monospace; letter-spacing:.09em; text-transform:uppercase; }
+    h1 { max-width:900px; margin:0; font-size:clamp(42px,7vw,76px); font-weight:500; line-height:.98; letter-spacing:-.045em; }
+    header p { max-width:820px; margin:24px 0 0; color:var(--muted); font-size:18px; line-height:1.65; }
+    .primary-cta { display:inline-flex; align-items:center; min-height:50px; margin-top:28px; padding:0 20px; color:#fff; background:var(--green); border:1px solid var(--green); font:600 10px/1 "IBM Plex Mono",monospace; letter-spacing:.065em; text-decoration:none; text-transform:uppercase; }
+    .primary-cta:hover { color:var(--green); background:#fff; }
+    main { padding:54px; }
+    .section-heading { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,.65fr); gap:42px; align-items:end; }
+    h2 { margin:0; font-size:clamp(28px,4vw,42px); font-weight:500; letter-spacing:-.035em; }
+    .section-heading p,.note { margin:0; color:var(--muted); line-height:1.65; }
+    .table-wrap { overflow-x:auto; margin-top:30px; border:1px solid var(--rule); }
+    table { width:100%; min-width:930px; border-collapse:collapse; font-size:14px; }
+    th,td { padding:16px 15px; border-bottom:1px solid var(--rule); text-align:left; vertical-align:middle; }
+    th { color:var(--muted); background:var(--soft); font:600 9px/1.2 "IBM Plex Mono",monospace; letter-spacing:.065em; text-transform:uppercase; }
+    tr:last-child td { border-bottom:0; }
+    tbody tr:nth-child(even) { background:#f9fbfa; }
+    .download { display:inline-flex; align-items:center; min-height:36px; padding:0 13px; color:#fff; background:var(--green); border:1px solid var(--green); font:600 9px/1 "IBM Plex Mono",monospace; letter-spacing:.055em; text-decoration:none; text-transform:uppercase; }
+    .download:hover { color:var(--green); background:#fff; }
+    .checksum { margin-left:9px; font:500 10px/1 "IBM Plex Mono",monospace; }
+    .status { color:var(--green); white-space:nowrap; }
+    .pending { color:var(--muted); font:600 9px/1 "IBM Plex Mono",monospace; letter-spacing:.06em; text-transform:uppercase; }
+    .notes { display:grid; grid-template-columns:1fr 1fr; gap:28px; margin-top:28px; }
+    .note { padding:18px 20px; border-left:3px solid var(--green); background:var(--soft); font-size:14px; }
+    code,pre { font-family:"IBM Plex Mono",monospace; }
+    code { color:var(--green); }
+    h3 { margin:54px 0 14px; font-size:24px; font-weight:500; }
+    pre { margin:0; padding:22px; overflow:auto; color:#e4ece7; background:#14221a; font-size:13px; line-height:1.6; }
+    footer { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; padding:22px 28px; color:#aebbb3; background:#14221a; font:500 10px/1.4 "IBM Plex Mono",monospace; }
+    footer a { color:#dbe6df; }
+    @media (max-width:760px) { body{width:100%;margin:0;border:0}.topbar{padding:0 16px}.topbar strong{font-size:9px}.topbar a{padding:0 10px}header,main{padding:38px 22px}.section-heading,.notes{grid-template-columns:1fr}.section-heading{gap:14px}header p{font-size:16px}.table-wrap{margin-right:-22px;margin-left:-22px;border-right:0;border-left:0} }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <strong>stride-align / Go</strong>
+    <nav aria-label="页面导航">
+      <a href="https://stride-align.com/bindings/go/">指南</a>
+      <a href="https://stride-align.com/docs/api/index.zh-CN.html?language=go">编程接口</a>
+      <a href="index.html" hreflang="en" lang="en">English</a>
+    </nav>
+  </div>
+  <header>
+    <p class="eyebrow">版本 0.6.0 · Go 1.22+ · C++23 二进制回退</p>
+    <h1>保留 Go API，省去 C++23 编译。</h1>
+    <p>常规安装仍由 Go 下载源代码并通过 cgo 构建。这些静态后端只为无法使用合适 C++23 编译器的系统提供回退；Go 软件包、API 与结果均不改变。</p>
+    <a class="primary-cta" href="#packages">查看下载 ↓</a>
+  </header>
+  <main>
+    <section id="packages" aria-labelledby="packages-title">
+      <div class="section-heading">
+        <h2 id="packages-title">可用下载</h2>
+        <p>安装器会选择保守配置。只有在部署处理器明确支持时才选择更宽的 SIMD 配置。</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>平台</th><th>CPU 软件包</th><th>文件</th><th>验证</th></tr></thead>
+          <tbody>
+            <tr><td>macOS arm64 13+</td><td>NEON / Apple M1 基线</td><td><a class="download" href="v0.6.0/darwin_arm64/neon/stride-align-go-0.6.0-1-darwin_arm64-neon.tar.gz">下载</a><a class="checksum" href="v0.6.0/darwin_arm64/neon/stride-align-go-0.6.0-1-darwin_arm64-neon.tar.gz.sha256">SHA-256</a></td><td class="status">运行测试</td></tr>
+            <tr><td>Linux x86-64</td><td>generic / SSE2 基线</td><td><a class="download" href="v0.6.0/linux_amd64/generic/stride-align-go-0.6.0-1-linux_amd64-generic.tar.gz">下载</a><a class="checksum" href="v0.6.0/linux_amd64/generic/stride-align-go-0.6.0-1-linux_amd64-generic.tar.gz.sha256">SHA-256</a></td><td class="status">运行测试</td></tr>
+            <tr><td>Linux x86-64</td><td>AVX2 / x86-64-v3</td><td><a class="download" href="v0.6.0/linux_amd64/avx2/stride-align-go-0.6.0-1-linux_amd64-avx2.tar.gz">下载</a><a class="checksum" href="v0.6.0/linux_amd64/avx2/stride-align-go-0.6.0-1-linux_amd64-avx2.tar.gz.sha256">SHA-256</a></td><td class="status">运行测试</td></tr>
+            <tr><td>Linux x86-64</td><td>AVX-512 F/BW/VL/DQ / x86-64-v4</td><td><a class="download" href="v0.6.0/linux_amd64/avx512bwvl/stride-align-go-0.6.0-1-linux_amd64-avx512bwvl.tar.gz">下载</a><a class="checksum" href="v0.6.0/linux_amd64/avx512bwvl/stride-align-go-0.6.0-1-linux_amd64-avx512bwvl.tar.gz.sha256">SHA-256</a></td><td class="status">运行测试</td></tr>
+            <tr class="pending-row"><td>Linux arm64</td><td>Armv8-A / NEON 基线</td><td><span class="pending">待发布</span></td><td>—</td></tr>
+            <tr class="pending-row"><td>Linux ppc64le</td><td>POWER8+ / VSX</td><td><span class="pending">待发布</span></td><td>—</td></tr>
+            <tr class="pending-row"><td>Linux 龙架构 64 位</td><td>LA464 / LSX</td><td><span class="pending">待发布</span></td><td>—</td></tr>
+            <tr class="pending-row"><td>Linux 龙架构 64 位</td><td>LA464 / LASX</td><td><span class="pending">待发布</span></td><td>—</td></tr>
+            <tr class="pending-row"><td>Linux 龙架构 64 位</td><td>LA664 / LASX</td><td><span class="pending">待发布</span></td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="notes">
+        <p class="note">首选源码安装：它由 Go 模块校验和保护，并在应用程序的实际目标上编译。</p>
+        <p class="note">预编译模式仍需要 cgo、C 编译器与 pkg-config，但不会调用 C++ 编译器。Linux 软件包包含静态 C++ 运行库并以 glibc 2.28 为基线；安装器会在解压前验证 SHA-256。</p>
+      </div>
+    </section>
+
+    <h3>从源代码安装（推荐）</h3>
+    <pre><code>go get github.com/adamdeprince/stride-align/bindings/go@main</code></pre>
+
+    <h3>安装预编译回退</h3>
+    <pre><code>go run github.com/adamdeprince/stride-align/bindings/go/cmd/stridealign-prebuilt@main
+
+# 安装器会输出所需的 PKG_CONFIG_PATH 与 go build 命令</code></pre>
+    <p class="note" style="margin-top:20px">Intel 用户可传入 --profile avx2 或 --profile avx512bwvl。Linux arm64、POWER 与龙架构软件包仍待发布；这些平台目前请使用源码安装。软件包清单与全部校验和也可单独下载。 <a href="manifest.json">软件包清单</a> · <a href="SHA256SUMS">全部校验和</a>.</p>
+  </main>
+  <footer><span>stride-align 0.6.0 · Go 1.22+ · Apache-2.0</span><a href="https://github.com/adamdeprince/stride-align">源代码 ↗</a></footer>
+</body>
+</html>

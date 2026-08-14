@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -8,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOMEPAGE = ROOT / "html" / "index.html"
 CHINESE_HOMEPAGE_SOURCE = ROOT / "website" / "index.zh-CN.html"
 CHINESE_HOMEPAGE = ROOT / "html" / "index.zh-CN.html"
-TARGETS = {"python", "r", "duckdb", "postgres", "memgraph"}
+TARGETS = {"python", "r", "go", "duckdb", "postgres", "memgraph"}
 WORKFLOW_STEPS = {"install", "first-score", "bible-search", "spell-checker"}
 
 
@@ -95,6 +96,9 @@ def test_getting_started_jump_and_custom_selectors_are_next_to_examples() -> Non
     assert 'createElement("button")' in switcher
     assert 'setAttribute("role", "listbox")' in switcher
     assert 'className = "example-language-option"' in switcher
+    supported = re.search(r"var supported = \[([^]]+)]", switcher)
+    assert supported
+    assert set(re.findall(r'"([^"]+)"', supported.group(1))) == TARGETS
     assert ".example-language-menu" in styles
     assert "-webkit-appearance: none" in styles
 
@@ -150,7 +154,7 @@ def test_homepage_has_one_cross_language_api_destination() -> None:
 
     assert reference.count("<a ") == 1
     assert 'href="docs/api/index.html"' in reference
-    assert "Every algorithm in Python, R, DuckDB, PostgreSQL, and Memgraph" in reference
+    assert "Every algorithm in Python, R, Go, DuckDB, PostgreSQL, and Memgraph" in reference
 
 
 def test_duckdb_download_is_prominent_in_both_homepages() -> None:
@@ -166,6 +170,13 @@ def test_duckdb_download_is_prominent_in_both_homepages() -> None:
         "https://distribution.goblinreactor.com/stride-align/memgraph/index.zh-CN.html"
         in chinese
     )
+    assert "https://distribution.goblinreactor.com/stride-align/go/" in english
+    assert "No C++23 compiler? Use a precompiled backend" in english
+    assert (
+        "https://distribution.goblinreactor.com/stride-align/go/index.zh-CN.html"
+        in chinese
+    )
+    assert "没有 C++23 编译器？使用预编译后端" in chinese
 
 
 def test_loongarch_python_install_is_prominent_and_bilingual() -> None:
@@ -197,7 +208,7 @@ def test_chinese_homepage_matches_the_current_scientific_story() -> None:
     assert "前 k 项筛选" in chinese
     assert "性能结论均附基线与工作负载" in chinese
     assert "如果在这里使用基督教经文让任何人感到被排斥或冒犯" in chinese
-    assert "查看 Python、R、DuckDB、PostgreSQL 与 Memgraph 中的每一种算法" in chinese
+    assert "查看 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 中的每一种算法" in chinese
     assert '<script src="language-switch.js"></script>' in chinese
     assert "site-header" not in chinese
     assert "兼容层" not in chinese
@@ -207,16 +218,19 @@ def test_chinese_homepage_matches_the_current_scientific_story() -> None:
     code_ids = (
         "trivial-python-code",
         "trivial-r-code",
+        "trivial-go-code",
         "trivial-duckdb-code",
         "trivial-postgres-code",
         "trivial-memgraph-code",
         "bible-python-code",
         "bible-r-code",
+        "bible-go-code",
         "bible-duckdb-code",
         "bible-postgres-code",
         "bible-memgraph-code",
         "spell-python-code",
         "spell-r-code",
+        "spell-go-code",
         "spell-duckdb-code",
         "spell-postgres-code",
         "spell-memgraph-code",

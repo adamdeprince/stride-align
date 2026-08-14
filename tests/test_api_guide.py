@@ -6,6 +6,8 @@ from pathlib import Path
 
 from tools.api_catalog import (
     EXAMPLES,
+    GO_EXAMPLES,
+    GO_VECTORIZATION_EXAMPLES,
     MEMGRAPH_EXAMPLE_BODIES,
     MEMGRAPH_VECTORIZATION_BODIES,
     POSTGRES_SQL_OVERRIDES,
@@ -21,7 +23,7 @@ from tools.api_catalog import (
     render_vectorization_guide,
 )
 
-TARGETS = {"python", "r", "duckdb", "postgres", "memgraph"}
+TARGETS = {"python", "r", "go", "duckdb", "postgres", "memgraph"}
 ROOT = Path(__file__).resolve().parents[1]
 CHINESE_API_SOURCE = ROOT / "docs" / "api" / "README.zh-CN.md"
 CHINESE_API = ROOT / "html" / "docs" / "api" / "index.zh-CN.html"
@@ -72,6 +74,9 @@ def test_api_catalog_has_a_synchronized_selector_for_every_example() -> None:
 
         assert parser.selects == {slug: 1 for slug in slugs}
         assert parser.panels == {slug: TARGETS for slug in slugs}
+
+    assert set(GO_EXAMPLES) == {example.slug for example in EXAMPLES}
+    assert set(GO_VECTORIZATION_EXAMPLES) == {example.slug for example in VECTORIZATION_EXAMPLES}
 
 
 def test_chinese_api_catalog_covers_every_card_and_uses_chinese_terms() -> None:

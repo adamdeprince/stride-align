@@ -4,10 +4,10 @@
 
 **Languages:** [English](README.md) · [简体中文](README.zh-CN.md)
 
-`stride-align` 为 Python、R 和 DuckDB 提供 SIMD 加速的模糊字符串匹配
-与序列比对，并把 Unicode/CJK 作为一等公民。Python 软件包还包括语音
-编码与时间序列距离。原生软件包会为 x86、ARM、龙架构、POWER 和
-RISC-V 选择兼容的 SIMD 后端，并带可移植回退路径。
+`stride-align` 为 Python、R、Go、DuckDB、PostgreSQL 与 Memgraph 提供
+SIMD 加速的模糊字符串匹配与序列比对，并把统一码（Unicode）/中日韩
+文字作为一等公民。原生 API 还包括语音编码、替换矩阵与时间序列距离。
+构建目标覆盖 x86、ARM、龙架构、POWER 和 RISC-V，并带可移植回退路径。
 
 它同时是四个常用库的直接替代品：
 `import stride_align.rapidfuzz as rapidfuzz` 替代 `rapidfuzz`，
@@ -25,6 +25,11 @@ R 软件包的构建、安装与 API 示例见
 [`bindings/r/`](bindings/r/README.md)；DuckDB 侧载扩展的使用、下载与
 构建说明见 [`bindings/duckdb/`](bindings/duckdb/README.md)。
 
+Go 绑定是共享 C++23 核心之上的 cgo 软件包。除 Python 兼容层之外，
+它与 R 软件包具有相同的标量、批处理、筛选、距离矩阵、序列比对、
+替换矩阵、语音编码、键盘混淆矩阵和动态时间规整功能。安装方法、
+SIMD 构建标签和可运行示例见 [`bindings/go/`](bindings/go/README.md)。
+
 这里不讲理论，直接动手——边做边学。
 
 ## 快速开始
@@ -32,6 +37,16 @@ R 软件包的构建、安装与 API 示例见
 ```bash
 pip install stride-align
 ```
+
+Go 应用可安装开发分支（下一个同步版本发布后可改用对应版本标签）：
+
+```bash
+go get github.com/adamdeprince/stride-align/bindings/go@main
+```
+
+Go 通常从源代码构建原生核心。没有合适 C++23 编译器的系统可以使用项目的
+[Go 预编译后端](https://distribution.goblinreactor.com/stride-align/go/index.zh-CN.html)，
+软件包路径与 API 均不改变。
 
 预编译 wheel 覆盖 Linux x86_64（glibc 与 musl）、macOS arm64、
 Linux aarch64、Linux ppc64le 在 CPython 3.12 / 3.13 / 3.14 上的

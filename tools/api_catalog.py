@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import textwrap
 from dataclasses import dataclass
 from html import escape
 
@@ -370,6 +371,106 @@ EXAMPLES = (
 )
 
 
+GO_EXAMPLES = {
+    "levenshtein": 'fmt.Println(stridealign.LevenshteinNormalizedScore("kitten", "sitting"))',
+    "osa": 'fmt.Println(stridealign.DamerauLevenshteinScore("CA", "AC"))',
+    "true-damerau": 'fmt.Println(stridealign.TrueDamerauLevenshteinScore("CA", "ABC"))',
+    "indel": 'fmt.Println(stridealign.IndelNormalizedScore("fuzzy", "fizzi"))',
+    "hamming": 'fmt.Println(stridealign.HammingScore("karolin", "kathrin"))',
+    "jaro": 'fmt.Println(stridealign.JaroSimilarity("MARTHA", "MARHTA"))',
+    "jaro-winkler": 'fmt.Println(stridealign.JaroWinklerSimilarity("MARTHA", "MARHTA", nil))',
+    "lcs": '''fmt.Println(stridealign.LCSLength("banana", "ananas"))
+fmt.Println(stridealign.LCSSubstringLength("banana", "ananas"))
+fmt.Println(stridealign.LCSSubstring("banana", "ananas"))''',
+    "ngrams": '''fmt.Println(stridealign.Jaccard("night", "nacht", 2))
+fmt.Println(stridealign.Dice("night", "nacht", 2))
+fmt.Println(stridealign.Cosine("night", "nacht", 2))
+fmt.Println(stridealign.Overlap("night", "nacht", 2))''',
+    "ratcliff-obershelp": 'fmt.Println(stridealign.RatcliffObershelpSimilarity("abcd", "abdc"))',
+    "token-ratios": '''fmt.Println(stridealign.PartialRatio("New York Mets", "Mets"))
+fmt.Println(stridealign.TokenSortRatio("New York Mets", "Mets New York"))
+fmt.Println(stridealign.TokenSetRatio("New York Mets", "New York Mets vs Braves"))
+fmt.Println(stridealign.PartialTokenSortRatio("New York Mets", "Mets New York"))
+fmt.Println(stridealign.PartialTokenSetRatio("New York Mets", "Mets vs Braves"))
+fmt.Println(stridealign.WRatio("New York Mets", "New York Meats"))''',
+    "monge-elkan": 'fmt.Println(stridealign.MongeElkan("Computer Science Department", "Department of Computer Science", "jaro", true))',
+    "smith-waterman": 'fmt.Println(stridealign.SmithWatermanScore("ACACACTA", "AGCACACA", nil))',
+    "needleman-wunsch": 'fmt.Println(stridealign.NeedlemanWunschScore("GATTACA", "GCATGCU", nil))',
+    "traceback": 'fmt.Println(stridealign.SmithWatermanCIGAR("ACGTAC", "ACGTAG", nil))',
+    "one-to-many": '''targets := []string{"sitting", "bitten", "kitchen"}
+scores, scoreErr := stridealign.LevenshteinNormalizedScores("kitten", targets)
+best, ok, bestErr := stridealign.LevenshteinNormalizedBest("kitten", targets)
+top, topErr := stridealign.LevenshteinNormalizedTopK("kitten", targets, 2)
+fmt.Println(scores, scoreErr, best, ok, bestErr, top, topErr)''',
+    "cdist": '''queries := []string{"Martha", "Arthur"}
+targets := []string{"Martha", "Marhta"}
+dense, denseErr := stridealign.CDist(queries, targets, stridealign.ScorerJaroWinkler, nil)
+nearest, nearestErr := stridealign.CDistTopKPerQuery(
+    queries, targets, stridealign.ScorerJaroWinkler, 1, nil,
+)
+fmt.Println(dense, denseErr, nearest, nearestErr)''',
+    "matrices": '''blosum62, matrixErr := stridealign.BLOSUM62()
+if matrixErr != nil {
+    panic(matrixErr)
+}
+fmt.Println(blosum62.SmithWatermanScore("HEAGAWGHEE", "PAWHEAE", nil))''',
+    "dtw": 'fmt.Println(stridealign.DTW([]float64{1, 2, 3}, []float64{1, 2.5, 3}, nil))',
+    "soundex": 'fmt.Println(stridealign.Soundex("Robert"))',
+    "metaphone": 'fmt.Println(stridealign.Metaphone("Schwarzenegger", stridealign.MetaphonePhilips))',
+    "double-metaphone": 'fmt.Println(stridealign.DoubleMetaphone("Smith", 64, stridealign.DoubleMetaphoneCommons))',
+    "nysiis": 'fmt.Println(stridealign.NYSIIS("Macdonald"))',
+    "match-rating": 'fmt.Println(stridealign.MatchRatingCompare("Smith", "Smyth"))',
+    "caverphone": 'fmt.Println(stridealign.Caverphone("Catherine"))',
+    "cologne": 'fmt.Println(stridealign.ColognePhonetic("Müller"))',
+    "daitch-mokotoff": 'fmt.Println(stridealign.DaitchMokotoff("Goldberg", true, true))',
+    "beider-morse": 'fmt.Println(stridealign.BeiderMorse("Müller", stridealign.BmpmApprox, true, 20))',
+}
+
+
+GO_VECTORIZATION_EXAMPLES = {
+    "shape-one-to-many": '''targets := []string{"sitting", "bitten", "kitchen"}
+scores, err := stridealign.LevenshteinNormalizedScores("kitten", targets)
+fmt.Println(len(scores), err) // scores[i] belongs to targets[i].''',
+    "shape-ranking": '''targets := []string{"sitting", "bitten", "kitchen"}
+best, ok, bestErr := stridealign.LevenshteinNormalizedBest("kitten", targets)
+top, topErr := stridealign.LevenshteinNormalizedTopK("kitten", targets, 2)
+fmt.Println(best, ok, bestErr, top, topErr) // Indices are zero-based.''',
+    "shape-cdist-matrix": '''queries := []string{"kitten", "sitting"}
+targets := []string{"kitten", "bitten", "kitchen"}
+scores, err := stridealign.CDist(queries, targets, stridealign.ScorerJaro, nil)
+fmt.Println(len(scores), len(scores[0]), scores[0][1], err) // 2 × 3''',
+    "shape-global-selection": '''queries := []string{"kitten", "sitting"}
+targets := []string{"kitten", "bitten", "kitchen"}
+filtered, filterErr := stridealign.CDistAboveThreshold(
+    queries, targets, stridealign.ScorerJaro, 0.8, nil,
+)
+globalTop, topErr := stridealign.CDistTopK(
+    queries, targets, stridealign.ScorerJaro, 2, false, nil,
+)
+fmt.Println(filtered, filterErr, globalTop, topErr) // At most 2 total.''',
+    "shape-per-query-selection": '''queries := []string{"kitten", "sitting"}
+targets := []string{"kitten", "bitten", "kitchen"}
+perQuery, err := stridealign.CDistTopKPerQuery(
+    queries, targets, stridealign.ScorerJaro, 2, nil,
+)
+fmt.Println(perQuery, err) // Two groups, each with at most two matches.''',
+}
+
+
+def _go_program(body: str) -> str:
+    return f'''package main
+
+import (
+    "fmt"
+
+    stridealign "github.com/adamdeprince/stride-align/bindings/go"
+)
+
+func main() {{
+{textwrap.indent(body, "    ")}
+}}'''
+
+
 ZH_EXAMPLE_TEXT = {
     "levenshtein": ("编辑距离", "Levenshtein 距离", "插入、删除与替换。"),
     "osa": (
@@ -472,6 +573,7 @@ def _selector(slug: str, locale: str) -> str:
 <span><select id="{select_id}" data-language-select>
 <option value="python">Python</option>
 <option value="r">R</option>
+<option value="go">Go</option>
 <option value="duckdb">DuckDB</option>
 <option value="postgres">PostgreSQL</option>
 <option value="memgraph">Memgraph</option>
@@ -483,6 +585,7 @@ def _panel(language: str, code: str) -> str:
     imports = {
         "python": "import stride_align as sa\n\n",
         "r": "library(stridealign)\n\n",
+        "go": "",
         "duckdb": "",
         "postgres": "",
         "memgraph": "",
@@ -765,6 +868,7 @@ def render_api_catalog(locale: str = "en") -> str:
 <div class="api-language-panels">
 {_panel("python", example.python)}
 {_panel("r", example.r)}
+{_panel("go", _go_program(GO_EXAMPLES[example.slug]))}
 {_panel("duckdb", _duckdb_python(example.duckdb))}
 {_panel("postgres", _postgres_python(postgres_sql))}
 {_panel("memgraph", _memgraph_python(memgraph_body))}
@@ -808,6 +912,7 @@ def render_vectorization_guide(locale: str = "en") -> str:
 <div class="api-language-panels">
 {_panel("python", example.python)}
 {_panel("r", example.r)}
+{_panel("go", _go_program(GO_VECTORIZATION_EXAMPLES[example.slug]))}
 {_panel("duckdb", _duckdb_python(example.duckdb))}
 {_panel("postgres", _postgres_python(postgres_sql))}
 {_panel("memgraph", _memgraph_python(memgraph_body))}
