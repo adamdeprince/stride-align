@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var supported = ["python", "r", "duckdb"];
+  var supported = ["python", "r", "duckdb", "postgres", "memgraph"];
   var selects = Array.prototype.slice.call(
     document.querySelectorAll("[data-language-select]")
   );

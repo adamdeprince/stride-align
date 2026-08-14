@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html import escape
 
@@ -54,10 +55,10 @@ VECTORIZATION_EXAMPLES = (
     ),
     VectorizationExample(
         "shape-cdist-matrix",
-        "Dense all-pairs matrix",
+        "All-pairs cdist",
         "Q queries × T targets",
-        "Q rows × T columns",
-        "cdist scores the Cartesian product. Row q belongs to queries[q], column t belongs to targets[t], and cell [q, t] is that pair's score.",
+        "Q × T cells or Q·T streamed rows",
+        "cdist scores the Cartesian product. Array-oriented hosts return a dense matrix; Memgraph emits one indexed pair row at a time through its batch procedure.",
         'queries = ["kitten", "sitting"]\ntargets = ["kitten", "bitten", "kitchen"]\nscores = sa.cdist(queries, targets, scorer=sa.Scorer.JARO)\nassert scores.shape == (2, 3)\nquery_0_target_1 = scores[0, 1]',
         'queries <- c("kitten", "sitting")\ntargets <- c("kitten", "bitten", "kitchen")\nscores <- cdist(queries, targets, scorer = Scorer$JARO)\nstopifnot(identical(dim(scores), c(2L, 3L)))\nquery_1_target_2 <- scores[1, 2]',
         "WITH scored AS (\n  SELECT stride_cdist(\n    ['kitten', 'sitting'],\n    ['kitten', 'bitten', 'kitchen'],\n    'jaro'\n  ) AS scores\n)\nSELECT\n  scores,\n  len(scores) AS query_count,\n  len(scores[1]) AS target_count,\n  scores[1][2] AS query_0_target_1\nFROM scored;",
@@ -443,10 +444,10 @@ ZH_VECTORIZATION_TEXT = {
         "最佳匹配只返回一个候选项；前 k 项仅保留指定数量的候选项，应用代码无需构造并排序完整分数向量。",
     ),
     "shape-cdist-matrix": (
-        "稠密全配对矩阵",
+        "全配对距离计算（cdist）",
         "Q 个查询 × T 个目标",
-        "Q 行 × T 列",
-        "cdist 为笛卡尔积评分。第 q 行对应第 q 个查询，第 t 列对应第 t 个目标，单元格 [q, t] 就是这一对的分数。",
+        "Q × T 个单元格，或 Q·T 条流式记录",
+        "cdist 为笛卡尔积评分。面向数组的宿主返回稠密矩阵；Memgraph 的批处理过程则逐条返回带索引的配对记录。",
     ),
     "shape-global-selection": (
         "阈值筛选与全局前 k 项",
@@ -472,6 +473,8 @@ def _selector(slug: str, locale: str) -> str:
 <option value="python">Python</option>
 <option value="r">R</option>
 <option value="duckdb">DuckDB</option>
+<option value="postgres">PostgreSQL</option>
+<option value="memgraph">Memgraph</option>
 </select></span>
 </div>"""
 
@@ -481,6 +484,8 @@ def _panel(language: str, code: str) -> str:
         "python": "import stride_align as sa\n\n",
         "r": "library(stridealign)\n\n",
         "duckdb": "",
+        "postgres": "",
+        "memgraph": "",
     }
     prefix = imports[language]
     if code.startswith("from stride_align"):
@@ -490,6 +495,244 @@ def _panel(language: str, code: str) -> str:
         + ("" if language == "python" else " hidden")
         + f"><pre><code>{escape(prefix + code)}</code></pre></div>"
     )
+
+
+POSTGRES_SQL_OVERRIDES = {
+    "one-to-many": """SELECT stride_levenshtein_normalized_scores(
+  'kitten', ARRAY['sitting', 'bitten', 'kitchen']
+);
+SELECT stride_levenshtein_normalized_best(
+  'kitten', ARRAY['sitting', 'bitten', 'kitchen']
+);
+SELECT stride_levenshtein_normalized_top_k(
+  'kitten', ARRAY['sitting', 'bitten', 'kitchen'], 2
+);""",
+    "cdist": """SELECT stride_cdist(
+  ARRAY['Martha', 'Arthur'], ARRAY['Martha', 'Marhta'], 'jaro_winkler'
+);
+SELECT stride_cdist_top_k_per_query(
+  ARRAY['Martha', 'Arthur'], ARRAY['Martha', 'Marhta'], 'jaro_winkler', 1
+);""",
+    "dtw": """SELECT stride_dtw(
+  ARRAY[1.0, 2.0, 3.0], ARRAY[1.0, 2.5, 3.0], 1
+);""",
+}
+
+
+POSTGRES_VECTORIZATION_SQL = {
+    "shape-one-to-many": """SELECT stride_levenshtein_normalized_scores(
+  'kitten', ARRAY['sitting', 'bitten', 'kitchen']
+) AS scores;""",
+    "shape-ranking": """SELECT
+  stride_levenshtein_normalized_best(
+    'kitten', ARRAY['sitting', 'bitten', 'kitchen']
+  ) AS best,
+  stride_levenshtein_normalized_top_k(
+    'kitten', ARRAY['sitting', 'bitten', 'kitchen'], 2
+  ) AS top;""",
+    "shape-cdist-matrix": """WITH scored AS (
+  SELECT stride_cdist(
+    ARRAY['kitten', 'sitting'],
+    ARRAY['kitten', 'bitten', 'kitchen'],
+    'jaro'
+  ) AS scores
+)
+SELECT
+  scores,
+  array_length(scores, 1) AS query_count,
+  array_length(scores, 2) AS target_count,
+  scores[1][2] AS query_0_target_1
+FROM scored;""",
+    "shape-global-selection": """SELECT stride_cdist_above_threshold(
+  ARRAY['kitten', 'sitting'],
+  ARRAY['kitten', 'bitten', 'kitchen'],
+  'jaro', 0.8
+) AS filtered;
+SELECT stride_cdist_top_k(
+  ARRAY['kitten', 'sitting'],
+  ARRAY['kitten', 'bitten', 'kitchen'],
+  'jaro', 2
+) AS global_top;""",
+    "shape-per-query-selection": """SELECT stride_cdist_top_k_per_query(
+  ARRAY['kitten', 'sitting'],
+  ARRAY['kitten', 'bitten', 'kitchen'],
+  'jaro', 2
+) AS per_query;""",
+}
+
+
+MEMGRAPH_EXAMPLE_BODIES = {
+    "one-to-many": '''parameters = {
+    "query": "kitten",
+    "targets": ["sitting", "bitten", "kitchen"],
+}
+rows = list(graph.execute_and_fetch(
+    """UNWIND $targets AS target
+    WITH target,
+         stride_align.levenshtein_normalized_score(
+             $query, target
+         ) AS score
+    RETURN target, score
+    ORDER BY score DESC, target""",
+    parameters,
+))
+best = rows[0] if rows else None
+top = rows[:2]
+print(best, top)''',
+    "cdist": '''rows = graph.execute_and_fetch(
+    """CALL stride_align.cdist(
+        $queries, $targets, 'jaro_winkler'
+    )
+    YIELD query_index, target_index, score
+    RETURN query_index, target_index, score""",
+    {
+        "queries": ["Martha", "Arthur"],
+        "targets": ["Martha", "Marhta"],
+    },
+)
+for row in rows:
+    print(row)''',
+}
+
+
+MEMGRAPH_VECTORIZATION_BODIES = {
+    "shape-one-to-many": '''parameters = {
+    "query": "kitten",
+    "targets": ["sitting", "bitten", "kitchen"],
+}
+rows = graph.execute_and_fetch(
+    """UNWIND $targets AS target
+    RETURN target,
+           stride_align.levenshtein_normalized_score(
+               $query, target
+           ) AS score""",
+    parameters,
+)
+scores = [row["score"] for row in rows]
+assert len(scores) == len(parameters["targets"])''',
+    "shape-ranking": '''rows = list(graph.execute_and_fetch(
+    """UNWIND $targets AS target
+    WITH target,
+         stride_align.levenshtein_normalized_score(
+             $query, target
+         ) AS score
+    RETURN target, score
+    ORDER BY score DESC, target
+    LIMIT $k""",
+    {
+        "query": "kitten",
+        "targets": ["sitting", "bitten", "kitchen"],
+        "k": 2,
+    },
+))
+best = rows[0] if rows else None
+top = rows''',
+    "shape-cdist-matrix": '''rows = graph.execute_and_fetch(
+    """CALL stride_align.cdist($queries, $targets, 'jaro')
+    YIELD query_index, target_index, score
+    RETURN query_index, target_index, score""",
+    {
+        "queries": ["kitten", "sitting"],
+        "targets": ["kitten", "bitten", "kitchen"],
+    },
+)
+# No result matrix is materialized: consume Q*T pair rows as needed.
+for row in rows:
+    print(row["query_index"], row["target_index"], row["score"])''',
+    "shape-global-selection": '''rows = graph.execute_and_fetch(
+    """CALL stride_align.cdist($queries, $targets, 'jaro')
+    YIELD query_index, target_index, score
+    WITH query_index, target_index, score
+    WHERE score >= $threshold
+    RETURN query_index, target_index, score
+    ORDER BY score DESC, query_index, target_index
+    LIMIT $k""",
+    {
+        "queries": ["kitten", "sitting"],
+        "targets": ["kitten", "bitten", "kitchen"],
+        "threshold": 0.8,
+        "k": 2,
+    },
+)
+global_top = list(rows)
+assert len(global_top) <= 2''',
+    "shape-per-query-selection": '''rows = graph.execute_and_fetch(
+    """CALL stride_align.cdist($queries, $targets, 'jaro')
+    YIELD query_index, target_index, score
+    WITH query_index, target_index, score
+    ORDER BY query_index, score DESC, target_index
+    WITH query_index,
+         collect({target_index: target_index, score: score}) AS ranked
+    RETURN query_index, ranked[..$k] AS matches
+    ORDER BY query_index""",
+    {
+        "queries": ["kitten", "sitting"],
+        "targets": ["kitten", "bitten", "kitchen"],
+        "k": 2,
+    },
+)
+per_query = list(rows)
+assert len(per_query) == 2''',
+}
+
+
+def _sql_statements(sql: str) -> list[str]:
+    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+
+def _duckdb_python(sql: str) -> str:
+    calls = []
+    for statement in _sql_statements(sql):
+        calls.append(f'print(db.execute("""{statement}""").fetchall())')
+    body = "\n".join(calls)
+    return f"""import os
+import duckdb
+
+db = duckdb.connect(config={{"allow_unsigned_extensions": "true"}})
+extension = os.environ["STRIDE_ALIGN_DUCKDB_EXTENSION"].replace("'", "''")
+db.execute(f"LOAD '{{extension}}'")
+
+{body}"""
+
+
+def _postgres_python(sql: str) -> str:
+    calls = []
+    for statement in _sql_statements(sql):
+        calls.append(f'print(pg.execute("""{statement}""").fetchall())')
+    body = "\n".join(calls)
+    return f"""import os
+import psycopg
+
+pg = psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"])
+
+{body}"""
+
+
+def _memgraph_scalar_body(sql: str) -> str:
+    calls = []
+    for statement in _sql_statements(sql):
+        if not statement.startswith("SELECT "):
+            raise ValueError(f"cannot translate Memgraph example: {statement}")
+        expression = statement.removeprefix("SELECT ")
+        expression = re.sub(r"\bstride_([a-z])", r"stride_align.\1", expression)
+        calls.append(
+            "print(next(graph.execute_and_fetch(\n"
+            f'    """RETURN {expression} AS value"""\n'
+            '))["value"])'
+        )
+    return "\n".join(calls)
+
+
+def _memgraph_python(body: str) -> str:
+    return f"""import os
+from gqlalchemy import Memgraph
+
+graph = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+
+{body}"""
 
 
 def render_api_catalog(locale: str = "en") -> str:
@@ -506,6 +749,12 @@ def render_api_catalog(locale: str = "en") -> str:
             if example.detail
             else ""
         )
+        postgres_sql = POSTGRES_SQL_OVERRIDES.get(example.slug, example.duckdb)
+        memgraph_body = (
+            MEMGRAPH_EXAMPLE_BODIES[example.slug]
+            if example.slug in MEMGRAPH_EXAMPLE_BODIES
+            else _memgraph_scalar_body(example.duckdb)
+        )
         cards.append(
             f"""<section class="api-example" id="{escape(example.slug)}">
 <header class="api-example-heading">
@@ -516,7 +765,9 @@ def render_api_catalog(locale: str = "en") -> str:
 <div class="api-language-panels">
 {_panel("python", example.python)}
 {_panel("r", example.r)}
-{_panel("duckdb", example.duckdb)}
+{_panel("duckdb", _duckdb_python(example.duckdb))}
+{_panel("postgres", _postgres_python(postgres_sql))}
+{_panel("memgraph", _memgraph_python(memgraph_body))}
 </div>
 {detail}
 </section>"""
@@ -540,6 +791,8 @@ def render_vectorization_guide(locale: str = "en") -> str:
         shape_label = "向量化形状" if locale == "zh-CN" else "Vectorization shape"
         input_label = "输入" if locale == "zh-CN" else "Input"
         output_label = "输出" if locale == "zh-CN" else "Output"
+        postgres_sql = POSTGRES_VECTORIZATION_SQL[example.slug]
+        memgraph_body = MEMGRAPH_VECTORIZATION_BODIES[example.slug]
         cards.append(
             f"""<section class="api-example vectorization-example" id="{escape(example.slug)}">
 <header class="api-example-heading">
@@ -555,7 +808,9 @@ def render_vectorization_guide(locale: str = "en") -> str:
 <div class="api-language-panels">
 {_panel("python", example.python)}
 {_panel("r", example.r)}
-{_panel("duckdb", example.duckdb)}
+{_panel("duckdb", _duckdb_python(example.duckdb))}
+{_panel("postgres", _postgres_python(postgres_sql))}
+{_panel("memgraph", _memgraph_python(memgraph_body))}
 </div>
 </section>"""
         )

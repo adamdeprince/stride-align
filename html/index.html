@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — Unicode string analysis for Python, R, and DuckDB</title>
-  <meta name="description" content="SIMD-accelerated Unicode string matching and sequence alignment for Python, R, and DuckDB, with reproducible benchmarks and runnable examples.">
+  <title>stride-align — Unicode string analysis for Python, R, DuckDB, PostgreSQL, and Memgraph</title>
+  <meta name="description" content="SIMD-accelerated Unicode string matching and sequence alignment for Python, R, DuckDB, PostgreSQL, and Memgraph, with reproducible benchmarks and runnable examples.">
   <meta name="theme-color" content="#21493a">
   <meta property="og:title" content="stride-align — Unicode string analysis">
-  <meta property="og:description" content="String matching and sequence alignment for Python, R, and DuckDB, backed by native SIMD kernels.">
+  <meta property="og:description" content="String matching and sequence alignment for Python, R, DuckDB, PostgreSQL, and Memgraph, backed by native SIMD kernels.">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
@@ -44,7 +44,7 @@
       <div class="research-intro-copy">
         <p class="research-label">Release 0.6.0 · Apache-2.0</p>
         <h1>Unicode string comparison and sequence alignment.</h1>
-        <p class="research-lede">stride-align provides one native C++ implementation of edit distance, similarity, biological alignment, phonetic encoding, and time-series alignment. It is available from Python, R, and DuckDB without changing the underlying scoring definitions.</p>
+        <p class="research-lede">stride-align provides one native C++ implementation of edit distance, similarity, biological alignment, phonetic encoding, and time-series alignment. It is available from Python, R, DuckDB, PostgreSQL, and Memgraph without changing the underlying scoring definitions.</p>
         <div class="research-actions-row">
           <a class="research-button" href="#getting-started">TL;DR — get me started ↓</a>
           <a class="research-text-link" href="#results">Review measurements ↓</a>
@@ -55,7 +55,7 @@
       <aside class="project-record" aria-labelledby="project-record-title">
         <h2 id="project-record-title">Project record</h2>
         <dl>
-          <div><dt>Interfaces</dt><dd>Python, R, DuckDB SQL</dd></div>
+          <div><dt>Interfaces</dt><dd>Python, R, DuckDB, PostgreSQL, Memgraph</dd></div>
           <div><dt>Text model</dt><dd>Unicode, including CJK and emoji</dd></div>
           <div><dt>Execution</dt><dd>Scalar, batch, cdist, threshold, top-k</dd></div>
           <div><dt>Architectures</dt><dd>x86, Arm, LoongArch, POWER</dd></div>
@@ -157,12 +157,12 @@
       <div class="workflow-step-heading">
         <p class="step-number" aria-label="Step 1"></p>
         <h2>Install the selected interface.</h2>
-        <p>Each interface exposes the native stride-align algorithms. DuckDB packages are selected explicitly by DuckDB version, platform, and SIMD level.</p>
+        <p>Each interface exposes the native stride-align algorithms. Database extensions are selected or built for the server version, platform, and SIMD level.</p>
       </div>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="install-language">Interface</label>
-          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python</span><a href="README.html#getting-started">Installation guide ↗</a></header>
@@ -200,6 +200,42 @@ export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb
           <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/duckdb/" rel="noopener"><span>Download the DuckDB extension package</span><b>→</b></a>
           <p>DuckDB extensions are tied to the DuckDB ABI. Choose generic, AVX2, AVX-512, or NEON from the package index rather than loading an ISA your machine does not support.</p>
         </article>
+
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>PostgreSQL 16–18, orchestrated by Python</span><a href="bindings/postgres/">PGXS build guide ↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-postgres-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="install-postgres-code">python3 -m pip install "psycopg[binary]&gt;=3.2"
+
+make -C bindings/postgres \
+  PG_CONFIG="$(command -v pg_config)" \
+  STRIDE_ALIGN_POSTGRES_SIMD=native
+sudo make -C bindings/postgres \
+  PG_CONFIG="$(command -v pg_config)" install
+
+psql "$STRIDE_ALIGN_POSTGRES_DSN" \
+  -c 'CREATE EXTENSION stride_align'</code></pre>
+          </div>
+          <p>The PGXS extension supports PostgreSQL 16, 17, and 18. Build once for each server major and choose a SIMD profile supported by that server machine.</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>Memgraph, orchestrated by Python</span><a href="https://distribution.goblinreactor.com/stride-align/memgraph/" rel="noopener">Query-module packages ↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-memgraph-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="install-memgraph-code">python3 -m pip install "gqlalchemy&gt;=1.9"
+
+# Download the module matching Memgraph 3.10.1,
+# the server platform, and its CPU profile, then install it as:
+sudo install -m 0755 stride_align-0.6.0.so \
+  /usr/lib/memgraph/query_modules/stride_align.so
+
+export STRIDE_ALIGN_MEMGRAPH_HOST=127.0.0.1
+export STRIDE_ALIGN_MEMGRAPH_PORT=7687</code></pre>
+          </div>
+          <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/memgraph/" rel="noopener"><span>Download the Memgraph query module</span><b>→</b></a>
+          <p>Use the module matching the Memgraph process, not merely the client machine. Linux generic and AVX2 packages are runtime tested; the native macOS arm64 package targets macOS 13 or later.</p>
+        </article>
       </div>
     </section>
 
@@ -212,7 +248,7 @@ export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="trivial-language">Interface</label>
-          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Save as trivial.py</span><code>python3 trivial.py</code></header>
@@ -261,6 +297,45 @@ print(score)</code></pre>
           </div>
         </article>
 
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>Save as trivial_postgres.py</span><code>python3 trivial_postgres.py</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-postgres-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="trivial-postgres-code">import os
+import psycopg
+
+with psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"]) as db:
+    score = db.execute(
+        "SELECT stride_levenshtein_similarity(%s, %s)",
+        ("你好世界", "你好世间"),
+    ).fetchone()[0]
+
+print(score)</code></pre>
+          </div>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>Save as trivial_memgraph.py</span><code>python3 trivial_memgraph.py</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-memgraph-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="trivial-memgraph-code">import os
+from gqlalchemy import Memgraph
+
+db = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+score = next(db.execute_and_fetch(
+    """RETURN stride_align.levenshtein_similarity(
+        $query, $target
+    ) AS score""",
+    {"query": "你好世界", "target": "你好世间"},
+))["score"]
+
+print(score)</code></pre>
+          </div>
+        </article>
+
         <div class="expected-result">
           <span>Expected result</span>
           <code>0.75</code>
@@ -281,7 +356,7 @@ print(score)</code></pre>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="bible-language">Interface</label>
-          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python batch API</span><code>python3 bible.py</code></header>
@@ -440,6 +515,134 @@ print(f"score: {score:.6f}")</code></pre>
           <p>The Python orchestration has the same cache-if-present behavior as the Python example, but loads the corpus into DuckDB. SQL forms one ordered candidate list, then <code>stride_extract_best</code> runs stride-align's optimized Needleman–Wunsch batch and top-one path.</p>
         </article>
 
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>Save as bible_postgres.py</span><code>python3 bible_postgres.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-postgres-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="bible-postgres-code">import os
+from pathlib import Path
+from urllib.request import urlretrieve
+
+import psycopg
+
+corpus = Path("kjv.txt")
+if not corpus.exists():
+    urlretrieve("https://openbible.com/textfiles/kjv.txt", corpus)
+
+rows = [
+    (reference.strip(), verse.strip())
+    for line in corpus.read_text(encoding="utf-8-sig").splitlines()
+    if "\t" in line
+    for reference, verse in [line.split("\t", 1)]
+    if verse.strip()
+]
+query = (
+    "The earth will mourn, and the heavens will lament from above. "
+    "For I have spoken, I have decided, and I have not regretted. "
+    "Neither will I be turned away from it."
+)
+
+with psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"]) as db:
+    db.execute(
+        "CREATE TEMP TABLE demo_bible "
+        "(reference text, verse text) ON COMMIT DROP"
+    )
+    with db.cursor().copy(
+        "COPY demo_bible (reference, verse) FROM STDIN"
+    ) as copy:
+        for row in rows:
+            copy.write_row(row)
+
+    reference, verse, score = db.execute(
+        """
+        WITH corpus AS (
+            SELECT
+                array_agg(reference ORDER BY reference, verse) AS references,
+                array_agg(verse ORDER BY reference, verse) AS verses,
+                array_agg(lower(verse) ORDER BY reference, verse) AS normalized
+            FROM demo_bible
+        ), matched AS (
+            SELECT references, verses, stride_extract_best(
+                lower(%s), normalized, 'needleman_wunsch_normalized'
+            ) AS best_match
+            FROM corpus
+        )
+        SELECT
+            references[((best_match-&gt;&gt;'index')::integer) + 1],
+            verses[((best_match-&gt;&gt;'index')::integer) + 1],
+            (best_match-&gt;&gt;'score')::double precision
+        FROM matched
+        """,
+        (query,),
+    ).fetchone()
+
+print(f"{reference}\t{verse}")
+print(f"score: {score:.6f}")</code></pre>
+          </div>
+          <p>Python uses PostgreSQL's COPY protocol to load the corpus. One ordered <code>text[]</code> then enters <code>stride_extract_best</code>, preserving stride-align's optimized batch and top-one path inside the server.</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>Save as bible_memgraph.py</span><code>python3 bible_memgraph.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-memgraph-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="bible-memgraph-code">import os
+from pathlib import Path
+from urllib.request import urlretrieve
+
+from gqlalchemy import Memgraph
+
+corpus = Path("kjv.txt")
+if not corpus.exists():
+    urlretrieve("https://openbible.com/textfiles/kjv.txt", corpus)
+
+rows = [
+    {"reference": reference.strip(), "verse": verse.strip()}
+    for line in corpus.read_text(encoding="utf-8-sig").splitlines()
+    if "\t" in line
+    for reference, verse in [line.split("\t", 1)]
+    if verse.strip()
+]
+query = (
+    "The earth will mourn, and the heavens will lament from above. "
+    "For I have spoken, I have decided, and I have not regretted. "
+    "Neither will I be turned away from it."
+)
+
+db = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+db.execute("MATCH (v:StrideAlignDemoVerse) DETACH DELETE v")
+for offset in range(0, len(rows), 1000):
+    db.execute(
+        """UNWIND $rows AS row
+        CREATE (:StrideAlignDemoVerse {
+            reference: row.reference,
+            verse: row.verse,
+            normalized: toLower(row.verse)
+        })""",
+        {"rows": rows[offset : offset + 1000]},
+    )
+
+best = next(db.execute_and_fetch(
+    """MATCH (verse:StrideAlignDemoVerse)
+    WITH verse,
+         stride_align.needleman_wunsch_normalized_score(
+             $query, verse.normalized
+         ) AS score
+    RETURN verse.reference AS reference, verse.verse AS verse, score
+    ORDER BY score DESC, reference, verse
+    LIMIT 1""",
+    {"query": query.lower()},
+))
+
+print(f"{best['reference']}\t{best['verse']}")
+print(f"score: {best['score']:.6f}")</code></pre>
+          </div>
+          <p>Python loads corpus nodes in bounded chunks, then submits one Cypher query. Memgraph applies the scalar scorer across its record stream and performs ordering and top-one selection inside the database.</p>
+        </article>
+
         <div class="experiment-result">
           <span>Observed top-ranked record</span>
           <dl>
@@ -456,12 +659,12 @@ print(f"score: {score:.6f}")</code></pre>
       <div class="workflow-step-heading">
         <p class="step-number" aria-label="Step 4"></p>
         <h2>Apply the same operation to a spell checker.</h2>
-        <p>This intentionally small example ignores punctuation, frequency, context, and proper nouns. Its purpose is to show one token compared with an entire dictionary through a batch or vectorized path.</p>
+        <p>This intentionally small example ignores punctuation, frequency, context, and proper nouns. Its purpose is to show one token compared with an entire dictionary through a native batch path or database record stream.</p>
       </div>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="spell-language">Interface</label>
-          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python batch API</span><code>printf '...' | python3 spell.py</code></header>
@@ -600,6 +803,130 @@ print(corrected)</code></pre>
           <p>Python finds the dictionary, sideloads the extension, and submits one query. DuckDB owns tokenization and reconstruction; each token is matched through stride-align's one-to-many top-one operation.</p>
         </article>
 
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>Save as spell_postgres.py</span><code>printf '...' | python3 spell_postgres.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-postgres-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="spell-postgres-code">import os
+import sys
+from pathlib import Path
+
+import psycopg
+
+paths = [
+    Path("/usr/share/dict/words"),
+    Path("/usr/dict/words"),
+    Path("/var/lib/dict/words"),
+    Path("/etc/dictionaries-common/words"),
+]
+dictionary_path = next((path for path in paths if path.is_file()), None)
+if dictionary_path is None:
+    raise FileNotFoundError("no system dictionary found")
+
+words = sorted({
+    word.strip().lower()
+    for word in dictionary_path.read_text(errors="ignore").splitlines()
+    if word.strip()
+})
+tokens = sys.stdin.readline().lower().split()
+
+with psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"]) as db:
+    db.execute(
+        "CREATE TEMP TABLE demo_dictionary (word text) ON COMMIT DROP"
+    )
+    with db.cursor().copy(
+        "COPY demo_dictionary (word) FROM STDIN"
+    ) as copy:
+        for word in words:
+            copy.write_row((word,))
+
+    corrected = db.execute(
+        """
+        WITH dictionary AS (
+            SELECT array_agg(word ORDER BY word) AS words
+            FROM demo_dictionary
+        ), input_tokens AS (
+            SELECT token, position
+            FROM unnest(%s::text[]) WITH ORDINALITY AS input(token, position)
+        ), matched AS (
+            SELECT position, stride_extract_best(
+                token, words, 'needleman_wunsch_normalized'
+            ) AS best_match
+            FROM input_tokens
+            CROSS JOIN dictionary
+        )
+        SELECT coalesce(
+            string_agg(best_match-&gt;&gt;'target', ' ' ORDER BY position),
+            ''
+        )
+        FROM matched
+        """,
+        (tokens,),
+    ).fetchone()[0]
+
+print(corrected)</code></pre>
+          </div>
+          <p>Python loads the dictionary through COPY and submits the token list once. PostgreSQL applies stride-align's native one-to-many top-one operation to each token and reconstructs the sentence in SQL.</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>Save as spell_memgraph.py</span><code>printf '...' | python3 spell_memgraph.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-memgraph-code"><span class="copy-default">Copy</span><span class="copy-success">Copied</span></button>
+            <pre><code id="spell-memgraph-code">import os
+import sys
+from pathlib import Path
+
+from gqlalchemy import Memgraph
+
+paths = [
+    Path("/usr/share/dict/words"),
+    Path("/usr/dict/words"),
+    Path("/var/lib/dict/words"),
+    Path("/etc/dictionaries-common/words"),
+]
+dictionary_path = next((path for path in paths if path.is_file()), None)
+if dictionary_path is None:
+    raise FileNotFoundError("no system dictionary found")
+
+words = sorted({
+    word.strip().lower()
+    for word in dictionary_path.read_text(errors="ignore").splitlines()
+    if word.strip()
+})
+tokens = sys.stdin.readline().lower().split()
+
+db = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+db.execute("MATCH (w:StrideAlignDemoWord) DETACH DELETE w")
+for offset in range(0, len(words), 1000):
+    db.execute(
+        """UNWIND $words AS word
+        CREATE (:StrideAlignDemoWord {value: word})""",
+        {"words": words[offset : offset + 1000]},
+    )
+
+rows = db.execute_and_fetch(
+    """UNWIND range(0, size($tokens) - 1) AS position
+    MATCH (word:StrideAlignDemoWord)
+    WITH position, word.value AS candidate,
+         stride_align.needleman_wunsch_normalized_score(
+             $tokens[position], word.value
+         ) AS score
+    ORDER BY position, score DESC, candidate
+    WITH position, collect(candidate)[0] AS correction
+    RETURN position, correction
+    ORDER BY position""",
+    {"tokens": tokens},
+)
+
+print(" ".join(row["correction"] for row in rows))</code></pre>
+          </div>
+          <p>Python loads dictionary nodes in bounded chunks and submits the token list once. Memgraph expands candidates as Cypher rows, calls the scalar scorer on those rows, and performs per-token ranking inside the query.</p>
+        </article>
+
         <div class="expected-result expected-result-block spell-result">
           <span>Example</span>
           <p><strong>Input</strong> this is a demonstrtion of a spell checker</p>
@@ -612,10 +939,10 @@ print(corrected)</code></pre>
     <section class="research-next" aria-labelledby="next-title">
       <div>
         <p class="research-label">Reference</p>
-        <h2 id="next-title">Use one API across all three interfaces.</h2>
+        <h2 id="next-title">Use one API across all five interfaces.</h2>
       </div>
       <nav aria-label="API documentation">
-        <a href="docs/api/index.html"><span>API</span><strong>Every algorithm in Python, R, and DuckDB</strong><i>→</i></a>
+        <a href="docs/api/index.html"><span>API</span><strong>Every algorithm in Python, R, DuckDB, PostgreSQL, and Memgraph</strong><i>→</i></a>
       </nav>
     </section>
   </main>
@@ -623,7 +950,7 @@ print(corrected)</code></pre>
   <footer class="research-footer">
     <div>
       <strong>stride-align 0.6.0</strong>
-      <span>Apache-2.0 · Python · R · DuckDB</span>
+      <span>Apache-2.0 · Python · R · DuckDB · PostgreSQL · Memgraph</span>
     </div>
     <nav aria-label="Footer links">
       <a href="BENCHMARK.html">Benchmarks</a>

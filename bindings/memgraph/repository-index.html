@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memgraph packages — stride-align</title>
+  <meta name="description" content="Download stride-align 0.6.0 query modules built against Memgraph 3.10.1 for macOS arm64 and Linux x86-64.">
+  <meta name="theme-color" content="#21493a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    :root { --ink:#15231b; --muted:#617068; --green:#21493a; --blue:#315f78; --paper:#fff; --soft:#f2f6f3; --rule:#ced8d1; font-family:"IBM Plex Sans",system-ui,sans-serif; }
+    * { box-sizing:border-box; }
+    html { color:var(--ink); background:#edf3ef; background-image:linear-gradient(rgba(33,73,58,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(33,73,58,.035) 1px,transparent 1px); background-size:40px 40px; }
+    body { width:min(1180px,calc(100% - 36px)); margin:24px auto; background:var(--paper); border:1px solid var(--rule); }
+    a { color:var(--blue); }
+    .topbar { min-height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 28px; border-bottom:1px solid var(--rule); background:var(--soft); font:600 10px/1 "IBM Plex Mono",monospace; letter-spacing:.07em; text-transform:uppercase; }
+    .topbar strong { color:var(--green); }
+    .topbar nav { display:flex; align-self:stretch; }
+    .topbar a { display:flex; align-items:center; padding:0 16px; border-left:1px solid var(--rule); color:var(--green); text-decoration:none; }
+    .topbar a:hover { color:#fff; background:var(--green); }
+    header { padding:58px 54px 50px; border-bottom:1px solid var(--rule); }
+    .eyebrow { margin:0 0 18px; color:var(--green); font:600 9px/1 "IBM Plex Mono",monospace; letter-spacing:.09em; text-transform:uppercase; }
+    h1 { max-width:850px; margin:0; font-size:clamp(42px,7vw,76px); font-weight:500; line-height:.98; letter-spacing:-.045em; }
+    header p { max-width:800px; margin:24px 0 0; color:var(--muted); font-size:18px; line-height:1.65; }
+    .primary-cta { display:inline-flex; align-items:center; min-height:50px; margin-top:28px; padding:0 20px; color:#fff; background:var(--green); border:1px solid var(--green); font:600 10px/1 "IBM Plex Mono",monospace; letter-spacing:.065em; text-decoration:none; text-transform:uppercase; }
+    .primary-cta:hover { color:var(--green); background:#fff; }
+    main { padding:54px; }
+    .section-heading { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,.65fr); gap:42px; align-items:end; }
+    h2 { margin:0; font-size:clamp(28px,4vw,42px); font-weight:500; letter-spacing:-.035em; }
+    .section-heading p, .note { margin:0; color:var(--muted); line-height:1.65; }
+    .table-wrap { overflow-x:auto; margin-top:30px; border:1px solid var(--rule); }
+    table { width:100%; min-width:880px; border-collapse:collapse; font-size:14px; }
+    th, td { padding:16px 15px; border-bottom:1px solid var(--rule); text-align:left; vertical-align:middle; }
+    th { color:var(--muted); background:var(--soft); font:600 9px/1.2 "IBM Plex Mono",monospace; letter-spacing:.065em; text-transform:uppercase; }
+    tr:last-child td { border-bottom:0; }
+    tbody tr:nth-child(even) { background:#f9fbfa; }
+    .download { display:inline-flex; align-items:center; min-height:36px; padding:0 13px; color:#fff; background:var(--green); border:1px solid var(--green); font:600 9px/1 "IBM Plex Mono",monospace; letter-spacing:.055em; text-decoration:none; text-transform:uppercase; }
+    .download:hover { color:var(--green); background:#fff; }
+    .checksum { margin-left:9px; font:500 10px/1 "IBM Plex Mono",monospace; }
+    .status { color:var(--green); white-space:nowrap; }
+    .notes { display:grid; grid-template-columns:1fr 1fr; gap:28px; margin-top:28px; }
+    .note { padding:18px 20px; border-left:3px solid var(--green); background:var(--soft); font-size:14px; }
+    code, pre { font-family:"IBM Plex Mono",monospace; }
+    code { color:var(--green); }
+    h3 { margin:54px 0 14px; font-size:24px; font-weight:500; }
+    pre { margin:0; padding:22px; overflow:auto; color:#e4ece7; background:#14221a; font-size:13px; line-height:1.6; }
+    footer { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; padding:22px 28px; color:#aebbb3; background:#14221a; font:500 10px/1.4 "IBM Plex Mono",monospace; }
+    footer a { color:#dbe6df; }
+    @media (max-width:760px) { body{width:100%;margin:0;border:0}.topbar{padding:0 16px}.topbar span{display:none}.topbar a{padding:0 10px}header,main{padding:38px 22px}.section-heading,.notes{grid-template-columns:1fr}.section-heading{gap:14px}header p{font-size:16px}.table-wrap{margin-right:-22px;margin-left:-22px;border-right:0;border-left:0} }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <strong>stride-align / Memgraph packages</strong>
+    <nav aria-label="Page navigation">
+      <a href="https://stride-align.com/bindings/memgraph/">Guide</a>
+      <a href="https://stride-align.com/docs/api/index.html?language=memgraph">API</a>
+      <a href="index.zh-CN.html" hreflang="zh-CN" lang="zh-CN">简体中文</a>
+    </nav>
+  </div>
+  <header>
+    <p class="eyebrow">Release 0.6.0 · Memgraph 3.10.1 · native query module</p>
+    <h1>Choose the module built for your server process.</h1>
+    <p>Match the operating system, architecture, and CPU profile used by Memgraph itself. The Linux packages were loaded and exercised on Memgraph 3.10.1; the macOS arm64 package was linked against the same public module API and inspected locally.</p>
+    <a class="primary-cta" href="#packages">View available downloads ↓</a>
+  </header>
+  <main>
+    <section id="packages" aria-labelledby="packages-title">
+      <div class="section-heading">
+        <h2 id="packages-title">Available packages</h2>
+        <p>The filename is versioned for distribution. Install it as <code>stride_align.so</code> so Memgraph registers the <code>stride_align</code> namespace.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Platform</th><th>CPU package</th><th>Artifact</th><th>Validation</th></tr></thead>
+          <tbody>
+            <tr><td>macOS arm64 13+</td><td>NEON / Apple M1 baseline</td><td><a class="download" href="v3.10.1/osx_arm64/neon/stride_align-0.6.0.so">Download</a><a class="checksum" href="v3.10.1/osx_arm64/neon/stride_align-0.6.0.so.sha256">SHA-256</a></td><td class="status">Build tested</td></tr>
+            <tr><td>Linux x86-64</td><td>generic / SSE2 baseline</td><td><a class="download" href="v3.10.1/linux_amd64/generic/stride_align-0.6.0.so">Download</a><a class="checksum" href="v3.10.1/linux_amd64/generic/stride_align-0.6.0.so.sha256">SHA-256</a></td><td class="status">Runtime tested</td></tr>
+            <tr><td>Linux x86-64</td><td>AVX2 / x86-64-v3</td><td><a class="download" href="v3.10.1/linux_amd64/avx2/stride_align-0.6.0.so">Download</a><a class="checksum" href="v3.10.1/linux_amd64/avx2/stride_align-0.6.0.so.sha256">SHA-256</a></td><td class="status">Runtime tested</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="notes">
+        <p class="note">A Memgraph container on macOS runs a Linux server process. Use a package matching that container architecture, not the macOS host package.</p>
+        <p class="note">Both Linux packages target the manylinux_2_28 ABI (glibc 2.28 or newer). The AVX2 package also requires an x86-64-v3 processor; use generic when the server CPU is unknown.</p>
+      </div>
+    </section>
+
+    <h3>Install into a native Linux server</h3>
+    <pre><code>sudo install -m 0755 stride_align-0.6.0.so \
+  /usr/lib/memgraph/query_modules/stride_align.so
+
+# Restart Memgraph, or reload the module from Cypher:
+echo 'CALL mg.load("stride_align");' | mgconsole</code></pre>
+
+    <h3>Mount into a container</h3>
+    <pre><code>podman run --rm -p 7687:7687 \
+  -v "$PWD/stride_align-0.6.0.so:/usr/lib/memgraph/query_modules/stride_align.so:ro" \
+  docker.io/memgraph/memgraph:3.10.1</code></pre>
+    <p class="note" style="margin-top:20px">The module provides 90 scalar Cypher functions and a row-streaming <code>cdist</code> procedure. See the <a href="https://stride-align.com/docs/api/index.html?language=memgraph">cross-language API</a>, the <a href="https://stride-align.com/bindings/memgraph/FUNCTIONS.html">complete Memgraph catalog</a>, the <a href="manifest.json">machine-readable manifest</a>, or <a href="SHA256SUMS">all checksums</a>.</p>
+  </main>
+  <footer><span>stride-align 0.6.0 · Memgraph 3.10.1 · Apache-2.0</span><a href="https://github.com/adamdeprince/stride-align">Source code ↗</a></footer>
+</body>
+</html>

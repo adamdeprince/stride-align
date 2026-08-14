@@ -91,6 +91,29 @@ int main() {
   assert(core::levenshtein_distance(emoji) == 1U);
   assert(core::hamming_distance(emoji) == 1U);
 
+  // Streaming host adapters own promoted codepoint buffers across callback
+  // boundaries. PreparedPair can borrow those stable UCS-2/UCS-4 spans so a
+  // streamed cdist row does not copy either string for every pair.
+  const std::vector<std::uint16_t> borrowed_u16_query{0x4f60U, 0x597dU};
+  const std::vector<std::uint16_t> borrowed_u16_target{
+      0x4f60U, 0x4eecU, 0x597dU};
+  utf8::PreparedPair borrowed_u16;
+  borrowed_u16.width = utf8::TokenWidth::u16;
+  borrowed_u16.borrowed_ascii = false;
+  borrowed_u16.query = std::span<const std::uint16_t>(borrowed_u16_query);
+  borrowed_u16.target = std::span<const std::uint16_t>(borrowed_u16_target);
+  assert(core::levenshtein_distance(borrowed_u16) == 1U);
+
+  const std::vector<std::uint32_t> borrowed_u32_query{U'a', 0x1f600U};
+  const std::vector<std::uint32_t> borrowed_u32_target{U'a', 0x1f603U};
+  utf8::PreparedPair borrowed_u32;
+  borrowed_u32.width = utf8::TokenWidth::u32;
+  borrowed_u32.borrowed_ascii = false;
+  borrowed_u32.query = std::span<const std::uint32_t>(borrowed_u32_query);
+  borrowed_u32.target = std::span<const std::uint32_t>(borrowed_u32_target);
+  assert(core::levenshtein_distance(borrowed_u32) == 1U);
+  assert(core::hamming_distance(borrowed_u32) == 1U);
+
   std::string long_query;
   std::string long_target;
   for (std::size_t index = 0; index < 80U; ++index) {

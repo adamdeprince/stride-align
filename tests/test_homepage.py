@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOMEPAGE = ROOT / "html" / "index.html"
 CHINESE_HOMEPAGE_SOURCE = ROOT / "website" / "index.zh-CN.html"
 CHINESE_HOMEPAGE = ROOT / "html" / "index.zh-CN.html"
-TARGETS = {"python", "r", "duckdb"}
+TARGETS = {"python", "r", "duckdb", "postgres", "memgraph"}
 WORKFLOW_STEPS = {"install", "first-score", "bible-search", "spell-checker"}
 
 
@@ -150,7 +150,7 @@ def test_homepage_has_one_cross_language_api_destination() -> None:
 
     assert reference.count("<a ") == 1
     assert 'href="docs/api/index.html"' in reference
-    assert "Every algorithm in Python, R, and DuckDB" in reference
+    assert "Every algorithm in Python, R, DuckDB, PostgreSQL, and Memgraph" in reference
 
 
 def test_duckdb_download_is_prominent_in_both_homepages() -> None:
@@ -161,6 +161,11 @@ def test_duckdb_download_is_prominent_in_both_homepages() -> None:
     assert "https://distribution.goblinreactor.com/stride-align/duckdb/" in english
     assert 'class="duckdb-download-link"' in chinese
     assert "https://distribution.goblinreactor.com/stride-align/duckdb/index.zh-CN.html" in chinese
+    assert "https://distribution.goblinreactor.com/stride-align/memgraph/" in english
+    assert (
+        "https://distribution.goblinreactor.com/stride-align/memgraph/index.zh-CN.html"
+        in chinese
+    )
 
 
 def test_loongarch_python_install_is_prominent_and_bilingual() -> None:
@@ -192,7 +197,7 @@ def test_chinese_homepage_matches_the_current_scientific_story() -> None:
     assert "前 k 项筛选" in chinese
     assert "性能结论均附基线与工作负载" in chinese
     assert "如果在这里使用基督教经文让任何人感到被排斥或冒犯" in chinese
-    assert "查看 Python、R 与 DuckDB 中的每一种算法" in chinese
+    assert "查看 Python、R、DuckDB、PostgreSQL 与 Memgraph 中的每一种算法" in chinese
     assert '<script src="language-switch.js"></script>' in chinese
     assert "site-header" not in chinese
     assert "兼容层" not in chinese
@@ -203,15 +208,48 @@ def test_chinese_homepage_matches_the_current_scientific_story() -> None:
         "trivial-python-code",
         "trivial-r-code",
         "trivial-duckdb-code",
+        "trivial-postgres-code",
+        "trivial-memgraph-code",
         "bible-python-code",
         "bible-r-code",
         "bible-duckdb-code",
+        "bible-postgres-code",
+        "bible-memgraph-code",
         "spell-python-code",
         "spell-r-code",
         "spell-duckdb-code",
+        "spell-postgres-code",
+        "spell-memgraph-code",
     )
     for element_id in code_ids:
         assert _code_block(chinese, element_id) == _code_block(english, element_id)
+
+
+def test_postgres_and_memgraph_examples_are_complete_python_programs() -> None:
+    homepage = HOMEPAGE.read_text(encoding="utf-8")
+    code = {
+        element_id: _code_block(homepage, element_id)
+        for element_id in (
+            "trivial-postgres-code",
+            "trivial-memgraph-code",
+            "bible-postgres-code",
+            "bible-memgraph-code",
+            "spell-postgres-code",
+            "spell-memgraph-code",
+        )
+    }
+    for element_id, program in code.items():
+        compile(program, f"{element_id}.py", "exec")
+
+    assert "cursor().copy(" in code["bible-postgres-code"]
+    assert "stride_extract_best" in code["bible-postgres-code"]
+    assert "array_agg(lower(verse)" in code["bible-postgres-code"]
+    assert "StrideAlignDemoVerse" in code["bible-memgraph-code"]
+    assert "stride_align.needleman_wunsch_normalized_score" in code["bible-memgraph-code"]
+    assert "ORDER BY score DESC" in code["bible-memgraph-code"]
+    assert "stride_extract_best" in code["spell-postgres-code"]
+    assert "StrideAlignDemoWord" in code["spell-memgraph-code"]
+    assert "collect(candidate)[0]" in code["spell-memgraph-code"]
 
 
 def test_generated_chinese_homepage_matches_its_source() -> None:

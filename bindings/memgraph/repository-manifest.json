@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "project": "stride-align",
+  "project_version": "0.6.0",
+  "memgraph_version": "3.10.1",
+  "linux_abi": "manylinux_2_28",
+  "base_url": "https://distribution.goblinreactor.com/stride-align/memgraph/",
+  "published_at": "2026-08-13",
+  "artifacts": [
+    {
+      "platform": "osx_arm64",
+      "profile": "neon",
+      "compiler_target": "-mcpu=apple-m1; macOS 13.0 minimum",
+      "validation": "build-tested",
+      "path": "v3.10.1/osx_arm64/neon/stride_align-0.6.0.so",
+      "sha256": "d847a57715b6d3ae437b489a7f177bc70a187d5d355518b7f68121ad392664e9"
+    },
+    {
+      "platform": "linux_amd64",
+      "profile": "generic",
+      "compiler_target": "-march=x86-64 -mtune=generic -msse2 -mno-avx -mno-avx2 -mno-avx512f",
+      "validation": "runtime-tested",
+      "path": "v3.10.1/linux_amd64/generic/stride_align-0.6.0.so",
+      "sha256": "85ca7a69189396ccfa4bb39cde5add39e83ef4403c0377240177e708a16d3632"
+    },
+    {
+      "platform": "linux_amd64",
+      "profile": "avx2",
+      "compiler_target": "-march=x86-64-v3 -mtune=generic",
+      "validation": "runtime-tested",
+      "path": "v3.10.1/linux_amd64/avx2/stride_align-0.6.0.so",
+      "sha256": "05b8824bf3160e885ef6f92b7eb9f899ed26baf877678b5d29c96cf1f7f462d1"
+    }
+  ]
+}

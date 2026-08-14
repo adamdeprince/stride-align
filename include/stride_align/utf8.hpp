@@ -66,7 +66,9 @@ struct PreparationOptions {
 using TokenBuffer = std::variant<
     std::span<const std::uint8_t>,
     std::vector<std::uint8_t>,
+    std::span<const std::uint16_t>,
     std::vector<std::uint16_t>,
+    std::span<const std::uint32_t>,
     std::vector<std::uint32_t>>;
 
 struct PreparedPair {
@@ -76,9 +78,11 @@ struct PreparedPair {
   TokenBuffer query;
   TokenBuffer target;
 
-  // A borrowed 8-bit fast path stores non-owning spans. This is ASCII for the
-  // UTF-8 adapter; native single-byte host adapters may also borrow high-bit
-  // characters. The source views must outlive every consumer of this pair.
+  // Borrowed fast paths store non-owning spans. This is ASCII for the UTF-8
+  // pair adapter; native single-byte host adapters may also borrow high-bit
+  // characters. Streaming host adapters can borrow stable UCS-2/UCS-4
+  // buffers after promoting their inputs once. Every source view must outlive
+  // every consumer of this pair.
 
   std::size_t query_size() const noexcept {
     return std::visit([](const auto& value) { return value.size(); }, query);

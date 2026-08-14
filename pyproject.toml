@@ -163,6 +163,7 @@ addopts = "-q"
 testpaths = ["tests"]
 markers = [
   "duckdb: requires a version- and platform-matched sideloaded DuckDB extension",
+  "memgraph: builds and loads the native query module in a Memgraph container",
   "postgres: builds and loads the native extension in a temporary PostgreSQL server",
 ]
 

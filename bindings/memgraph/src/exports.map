@@ -1,0 +1,7 @@
+{
+  global:
+    mgp_init_module;
+    mgp_shutdown_module;
+  local:
+    *;
+};

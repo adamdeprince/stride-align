@@ -24,32 +24,31 @@ namespace stride_align::core {
 
 namespace detail {
 
-inline std::span<const std::uint8_t> u8_span(const utf8::TokenBuffer& buffer) {
-  if (const auto* borrowed = std::get_if<std::span<const std::uint8_t>>(&buffer)) {
+template <typename Token>
+inline std::span<const Token> token_span(const utf8::TokenBuffer& buffer) {
+  if (const auto* borrowed = std::get_if<std::span<const Token>>(&buffer)) {
     return *borrowed;
   }
-  const auto& owned = std::get<std::vector<std::uint8_t>>(buffer);
-  return std::span<const std::uint8_t>(owned.data(), owned.size());
+  const auto& owned = std::get<std::vector<Token>>(buffer);
+  return std::span<const Token>(owned.data(), owned.size());
 }
 
 template <typename Function>
 decltype(auto) visit_pair(const utf8::PreparedPair& pair, Function&& function) {
   switch (pair.width) {
     case utf8::TokenWidth::u8:
-      return function(u8_span(pair.query), u8_span(pair.target));
-    case utf8::TokenWidth::u16: {
-      const auto& query = std::get<std::vector<std::uint16_t>>(pair.query);
-      const auto& target = std::get<std::vector<std::uint16_t>>(pair.target);
       return function(
-          std::span<const std::uint16_t>(query.data(), query.size()),
-          std::span<const std::uint16_t>(target.data(), target.size()));
+          token_span<std::uint8_t>(pair.query),
+          token_span<std::uint8_t>(pair.target));
+    case utf8::TokenWidth::u16: {
+      return function(
+          token_span<std::uint16_t>(pair.query),
+          token_span<std::uint16_t>(pair.target));
     }
     case utf8::TokenWidth::u32: {
-      const auto& query = std::get<std::vector<std::uint32_t>>(pair.query);
-      const auto& target = std::get<std::vector<std::uint32_t>>(pair.target);
       return function(
-          std::span<const std::uint32_t>(query.data(), query.size()),
-          std::span<const std::uint32_t>(target.data(), target.size()));
+          token_span<std::uint32_t>(pair.query),
+          token_span<std::uint32_t>(pair.target));
     }
   }
   throw std::logic_error("unsupported token width");

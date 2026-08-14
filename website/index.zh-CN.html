@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>stride-align — 面向 Python、R 与 DuckDB 的统一码字符串分析</title>
-  <meta name="description" content="面向 Python、R 与 DuckDB、由单指令多数据技术加速的统一码字符串匹配与序列比对，附有可复现的基准测试和可运行示例。">
+  <title>stride-align — 面向 Python、R、DuckDB、PostgreSQL 与 Memgraph 的统一码字符串分析</title>
+  <meta name="description" content="面向 Python、R、DuckDB、PostgreSQL 与 Memgraph、由单指令多数据技术加速的统一码字符串匹配与序列比对，附有可复现的基准测试和可运行示例。">
   <meta name="theme-color" content="#21493a">
   <meta property="og:title" content="stride-align — 统一码字符串分析">
-  <meta property="og:description" content="面向 Python、R 与 DuckDB 的字符串匹配与序列比对，由原生单指令多数据内核提供支持。">
+  <meta property="og:description" content="面向 Python、R、DuckDB、PostgreSQL 与 Memgraph 的字符串匹配与序列比对，由原生单指令多数据内核提供支持。">
   <meta property="og:type" content="website">
   <link rel="icon" type="image/png" href="goblin.png">
   <link rel="apple-touch-icon" href="goblin.png">
@@ -44,7 +44,7 @@
       <div class="research-intro-copy">
         <p class="research-label">版本 0.6.0 · Apache-2.0</p>
         <h1>统一码（Unicode）字符串比较与序列比对。</h1>
-        <p class="research-lede">stride-align 以一套原生 C++ 实现提供编辑距离、相似度、生物序列比对、语音编码与时间序列比对。Python、R 和 DuckDB 使用相同的底层评分定义。</p>
+        <p class="research-lede">stride-align 以一套原生 C++ 实现提供编辑距离、相似度、生物序列比对、语音编码与时间序列比对。Python、R、DuckDB、PostgreSQL 和 Memgraph 使用相同的底层评分定义。</p>
         <div class="research-actions-row">
           <a class="research-button" href="#getting-started">太长不看——直接开始 ↓</a>
           <a class="research-text-link" href="#results">查看测量结果 ↓</a>
@@ -55,7 +55,7 @@
       <aside class="project-record" aria-labelledby="project-record-title">
         <h2 id="project-record-title">项目概览</h2>
         <dl>
-          <div><dt>接口</dt><dd>Python、R、DuckDB SQL</dd></div>
+          <div><dt>接口</dt><dd>Python、R、DuckDB、PostgreSQL、Memgraph</dd></div>
           <div><dt>文本模型</dt><dd>统一码，包括中日韩文字与表情符号</dd></div>
           <div><dt>执行形式</dt><dd>标量、批量、全配对、阈值、前 k 项</dd></div>
           <div><dt>体系结构</dt><dd>x86、Arm、LoongArch、POWER</dd></div>
@@ -157,12 +157,12 @@
       <div class="workflow-step-heading">
         <p class="step-number" aria-label="步骤 1"></p>
         <h2>安装所选接口。</h2>
-        <p>三个接口都公开原生 stride-align 算法。DuckDB 软件包需要按 DuckDB 版本、平台和单指令多数据（SIMD）级别明确选择。</p>
+        <p>五个接口都公开原生 stride-align 算法。数据库扩展需要按服务器版本、平台和单指令多数据（SIMD）级别选择或构建。</p>
       </div>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="install-language">接口</label>
-          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="install-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python</span><a href="README.zh-CN.html#_1">安装指南 ↗</a></header>
@@ -199,6 +199,42 @@ export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb
           <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/duckdb/index.zh-CN.html" rel="noopener"><span>下载 DuckDB 扩展软件包</span><b>→</b></a>
           <p>DuckDB 扩展与 DuckDB ABI 绑定。请从软件包索引选择 generic、AVX2、AVX-512 或 NEON，不要加载本机不支持的指令集。</p>
         </article>
+
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>由 Python 编排的 PostgreSQL 16–18</span><a href="bindings/postgres/">PGXS 构建指南（英文）↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-postgres-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="install-postgres-code">python3 -m pip install "psycopg[binary]&gt;=3.2"
+
+make -C bindings/postgres \
+  PG_CONFIG="$(command -v pg_config)" \
+  STRIDE_ALIGN_POSTGRES_SIMD=native
+sudo make -C bindings/postgres \
+  PG_CONFIG="$(command -v pg_config)" install
+
+psql "$STRIDE_ALIGN_POSTGRES_DSN" \
+  -c 'CREATE EXTENSION stride_align'</code></pre>
+          </div>
+          <p>PGXS 扩展支持 PostgreSQL 16、17 与 18。每个服务器主版本都要分别构建，并选择该服务器机器支持的 SIMD 配置。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>由 Python 编排的 Memgraph</span><a href="https://distribution.goblinreactor.com/stride-align/memgraph/index.zh-CN.html" rel="noopener">查询模块软件包 ↗</a></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="install-memgraph-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="install-memgraph-code">python3 -m pip install "gqlalchemy&gt;=1.9"
+
+# Download the module matching Memgraph 3.10.1,
+# the server platform, and its CPU profile, then install it as:
+sudo install -m 0755 stride_align-0.6.0.so \
+  /usr/lib/memgraph/query_modules/stride_align.so
+
+export STRIDE_ALIGN_MEMGRAPH_HOST=127.0.0.1
+export STRIDE_ALIGN_MEMGRAPH_PORT=7687</code></pre>
+          </div>
+          <a class="duckdb-download-link" href="https://distribution.goblinreactor.com/stride-align/memgraph/index.zh-CN.html" rel="noopener"><span>下载 Memgraph 查询模块</span><b>→</b></a>
+          <p>请选择与 Memgraph 进程匹配的模块，而不是只看客户端机器。Linux generic 与 AVX2 软件包已经过运行测试；原生 macOS arm64 软件包要求 macOS 13 或更新版本。</p>
+        </article>
       </div>
     </section>
 
@@ -211,7 +247,7 @@ export STRIDE_ALIGN_DUCKDB_EXTENSION=/absolute/path/to/stride_align.0.6.0.duckdb
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="trivial-language">接口</label>
-          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="trivial-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>保存为 trivial.py</span><code>python3 trivial.py</code></header>
@@ -260,6 +296,45 @@ print(score)</code></pre>
           </div>
         </article>
 
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>保存为 trivial_postgres.py</span><code>python3 trivial_postgres.py</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-postgres-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="trivial-postgres-code">import os
+import psycopg
+
+with psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"]) as db:
+    score = db.execute(
+        "SELECT stride_levenshtein_similarity(%s, %s)",
+        ("你好世界", "你好世间"),
+    ).fetchone()[0]
+
+print(score)</code></pre>
+          </div>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>保存为 trivial_memgraph.py</span><code>python3 trivial_memgraph.py</code></header>
+          <div class="research-code">
+            <button type="button" data-copy-source="trivial-memgraph-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="trivial-memgraph-code">import os
+from gqlalchemy import Memgraph
+
+db = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+score = next(db.execute_and_fetch(
+    """RETURN stride_align.levenshtein_similarity(
+        $query, $target
+    ) AS score""",
+    {"query": "你好世界", "target": "你好世间"},
+))["score"]
+
+print(score)</code></pre>
+          </div>
+        </article>
+
         <div class="expected-result">
           <span>预期结果</span>
           <code>0.75</code>
@@ -280,7 +355,7 @@ print(score)</code></pre>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="bible-language">接口</label>
-          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="bible-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python 批量 API</span><code>python3 bible.py</code></header>
@@ -439,6 +514,134 @@ print(f"score: {score:.6f}")</code></pre>
           <p>Python 编排方式与 Python 示例一样：已有文件就复用，否则下载；随后将语料库载入 DuckDB。SQL 形成一个有序候选列表，再由 <code>stride_extract_best</code> 执行 stride-align 优化的 Needleman–Wunsch 批量与最佳一项路径。</p>
         </article>
 
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>保存为 bible_postgres.py</span><code>python3 bible_postgres.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-postgres-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="bible-postgres-code">import os
+from pathlib import Path
+from urllib.request import urlretrieve
+
+import psycopg
+
+corpus = Path("kjv.txt")
+if not corpus.exists():
+    urlretrieve("https://openbible.com/textfiles/kjv.txt", corpus)
+
+rows = [
+    (reference.strip(), verse.strip())
+    for line in corpus.read_text(encoding="utf-8-sig").splitlines()
+    if "\t" in line
+    for reference, verse in [line.split("\t", 1)]
+    if verse.strip()
+]
+query = (
+    "The earth will mourn, and the heavens will lament from above. "
+    "For I have spoken, I have decided, and I have not regretted. "
+    "Neither will I be turned away from it."
+)
+
+with psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"]) as db:
+    db.execute(
+        "CREATE TEMP TABLE demo_bible "
+        "(reference text, verse text) ON COMMIT DROP"
+    )
+    with db.cursor().copy(
+        "COPY demo_bible (reference, verse) FROM STDIN"
+    ) as copy:
+        for row in rows:
+            copy.write_row(row)
+
+    reference, verse, score = db.execute(
+        """
+        WITH corpus AS (
+            SELECT
+                array_agg(reference ORDER BY reference, verse) AS references,
+                array_agg(verse ORDER BY reference, verse) AS verses,
+                array_agg(lower(verse) ORDER BY reference, verse) AS normalized
+            FROM demo_bible
+        ), matched AS (
+            SELECT references, verses, stride_extract_best(
+                lower(%s), normalized, 'needleman_wunsch_normalized'
+            ) AS best_match
+            FROM corpus
+        )
+        SELECT
+            references[((best_match-&gt;&gt;'index')::integer) + 1],
+            verses[((best_match-&gt;&gt;'index')::integer) + 1],
+            (best_match-&gt;&gt;'score')::double precision
+        FROM matched
+        """,
+        (query,),
+    ).fetchone()
+
+print(f"{reference}\t{verse}")
+print(f"score: {score:.6f}")</code></pre>
+          </div>
+          <p>Python 通过 PostgreSQL 的 COPY 协议装载语料库。有序的 <code>text[]</code> 只进入 <code>stride_extract_best</code> 一次，使 stride-align 优化过的批量与最佳一项路径留在服务器内执行。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>保存为 bible_memgraph.py</span><code>python3 bible_memgraph.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="bible-memgraph-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="bible-memgraph-code">import os
+from pathlib import Path
+from urllib.request import urlretrieve
+
+from gqlalchemy import Memgraph
+
+corpus = Path("kjv.txt")
+if not corpus.exists():
+    urlretrieve("https://openbible.com/textfiles/kjv.txt", corpus)
+
+rows = [
+    {"reference": reference.strip(), "verse": verse.strip()}
+    for line in corpus.read_text(encoding="utf-8-sig").splitlines()
+    if "\t" in line
+    for reference, verse in [line.split("\t", 1)]
+    if verse.strip()
+]
+query = (
+    "The earth will mourn, and the heavens will lament from above. "
+    "For I have spoken, I have decided, and I have not regretted. "
+    "Neither will I be turned away from it."
+)
+
+db = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+db.execute("MATCH (v:StrideAlignDemoVerse) DETACH DELETE v")
+for offset in range(0, len(rows), 1000):
+    db.execute(
+        """UNWIND $rows AS row
+        CREATE (:StrideAlignDemoVerse {
+            reference: row.reference,
+            verse: row.verse,
+            normalized: toLower(row.verse)
+        })""",
+        {"rows": rows[offset : offset + 1000]},
+    )
+
+best = next(db.execute_and_fetch(
+    """MATCH (verse:StrideAlignDemoVerse)
+    WITH verse,
+         stride_align.needleman_wunsch_normalized_score(
+             $query, verse.normalized
+         ) AS score
+    RETURN verse.reference AS reference, verse.verse AS verse, score
+    ORDER BY score DESC, reference, verse
+    LIMIT 1""",
+    {"query": query.lower()},
+))
+
+print(f"{best['reference']}\t{best['verse']}")
+print(f"score: {best['score']:.6f}")</code></pre>
+          </div>
+          <p>Python 以有界分块装载语料库节点，然后只提交一条 Cypher 查询。Memgraph 在记录流上调用标量评分器，并在数据库内完成排序与最佳一项筛选。</p>
+        </article>
+
         <div class="experiment-result">
           <span>实际排名第一的记录</span>
           <dl>
@@ -455,12 +658,12 @@ print(f"score: {score:.6f}")</code></pre>
       <div class="workflow-step-heading">
         <p class="step-number" aria-label="步骤 4"></p>
         <h2>把同一操作用于拼写检查器。</h2>
-        <p>这个示例有意保持简单，不处理标点、词频、上下文或专有名词。它只用于展示如何通过批量或向量化路径，把一个词元与整部词典比较。</p>
+        <p>这个示例有意保持简单，不处理标点、词频、上下文或专有名词。它只用于展示如何通过原生批量路径或数据库记录流，把一个词元与整部词典比较。</p>
       </div>
       <div class="workflow-stage">
         <div class="example-language-control">
           <label for="spell-language">接口</label>
-          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option></select></div>
+          <div class="example-language-picker"><select id="spell-language" data-language-select><option value="python">Python</option><option value="r">R</option><option value="duckdb">DuckDB</option><option value="postgres">PostgreSQL</option><option value="memgraph">Memgraph</option></select></div>
         </div>
         <article class="language-panel" data-language-panel="python">
           <header><span>Python 批量 API</span><code>printf '...' | python3 spell.py</code></header>
@@ -599,6 +802,130 @@ print(corrected)</code></pre>
           <p>Python 查找词典、旁加载扩展并提交一次查询。DuckDB 负责分词和重组；每个词元都通过 stride-align 的一对多最佳匹配操作完成处理。</p>
         </article>
 
+        <article class="language-panel" data-language-panel="postgres" hidden>
+          <header><span>保存为 spell_postgres.py</span><code>printf '...' | python3 spell_postgres.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-postgres-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="spell-postgres-code">import os
+import sys
+from pathlib import Path
+
+import psycopg
+
+paths = [
+    Path("/usr/share/dict/words"),
+    Path("/usr/dict/words"),
+    Path("/var/lib/dict/words"),
+    Path("/etc/dictionaries-common/words"),
+]
+dictionary_path = next((path for path in paths if path.is_file()), None)
+if dictionary_path is None:
+    raise FileNotFoundError("no system dictionary found")
+
+words = sorted({
+    word.strip().lower()
+    for word in dictionary_path.read_text(errors="ignore").splitlines()
+    if word.strip()
+})
+tokens = sys.stdin.readline().lower().split()
+
+with psycopg.connect(os.environ["STRIDE_ALIGN_POSTGRES_DSN"]) as db:
+    db.execute(
+        "CREATE TEMP TABLE demo_dictionary (word text) ON COMMIT DROP"
+    )
+    with db.cursor().copy(
+        "COPY demo_dictionary (word) FROM STDIN"
+    ) as copy:
+        for word in words:
+            copy.write_row((word,))
+
+    corrected = db.execute(
+        """
+        WITH dictionary AS (
+            SELECT array_agg(word ORDER BY word) AS words
+            FROM demo_dictionary
+        ), input_tokens AS (
+            SELECT token, position
+            FROM unnest(%s::text[]) WITH ORDINALITY AS input(token, position)
+        ), matched AS (
+            SELECT position, stride_extract_best(
+                token, words, 'needleman_wunsch_normalized'
+            ) AS best_match
+            FROM input_tokens
+            CROSS JOIN dictionary
+        )
+        SELECT coalesce(
+            string_agg(best_match-&gt;&gt;'target', ' ' ORDER BY position),
+            ''
+        )
+        FROM matched
+        """,
+        (tokens,),
+    ).fetchone()[0]
+
+print(corrected)</code></pre>
+          </div>
+          <p>Python 通过 COPY 装载词典，并一次提交词元列表。PostgreSQL 为每个词元调用 stride-align 原生的一对多最佳匹配操作，再在 SQL 中重组句子。</p>
+        </article>
+
+        <article class="language-panel" data-language-panel="memgraph" hidden>
+          <header><span>保存为 spell_memgraph.py</span><code>printf '...' | python3 spell_memgraph.py</code></header>
+          <div class="research-code research-code-tall">
+            <button type="button" data-copy-source="spell-memgraph-code"><span class="copy-default">复制</span><span class="copy-success">已复制</span></button>
+            <pre><code id="spell-memgraph-code">import os
+import sys
+from pathlib import Path
+
+from gqlalchemy import Memgraph
+
+paths = [
+    Path("/usr/share/dict/words"),
+    Path("/usr/dict/words"),
+    Path("/var/lib/dict/words"),
+    Path("/etc/dictionaries-common/words"),
+]
+dictionary_path = next((path for path in paths if path.is_file()), None)
+if dictionary_path is None:
+    raise FileNotFoundError("no system dictionary found")
+
+words = sorted({
+    word.strip().lower()
+    for word in dictionary_path.read_text(errors="ignore").splitlines()
+    if word.strip()
+})
+tokens = sys.stdin.readline().lower().split()
+
+db = Memgraph(
+    host=os.environ.get("STRIDE_ALIGN_MEMGRAPH_HOST", "127.0.0.1"),
+    port=int(os.environ.get("STRIDE_ALIGN_MEMGRAPH_PORT", "7687")),
+)
+db.execute("MATCH (w:StrideAlignDemoWord) DETACH DELETE w")
+for offset in range(0, len(words), 1000):
+    db.execute(
+        """UNWIND $words AS word
+        CREATE (:StrideAlignDemoWord {value: word})""",
+        {"words": words[offset : offset + 1000]},
+    )
+
+rows = db.execute_and_fetch(
+    """UNWIND range(0, size($tokens) - 1) AS position
+    MATCH (word:StrideAlignDemoWord)
+    WITH position, word.value AS candidate,
+         stride_align.needleman_wunsch_normalized_score(
+             $tokens[position], word.value
+         ) AS score
+    ORDER BY position, score DESC, candidate
+    WITH position, collect(candidate)[0] AS correction
+    RETURN position, correction
+    ORDER BY position""",
+    {"tokens": tokens},
+)
+
+print(" ".join(row["correction"] for row in rows))</code></pre>
+          </div>
+          <p>Python 以有界分块装载词典节点，并一次提交词元列表。Memgraph 将候选项展开为 Cypher 记录，在这些记录上调用标量评分器，并在查询内为每个词元完成排名。</p>
+        </article>
+
         <div class="expected-result expected-result-block spell-result">
           <span>示例</span>
           <p><strong>输入</strong> this is a demonstrtion of a spell checker</p>
@@ -611,10 +938,10 @@ print(corrected)</code></pre>
     <section class="research-next" aria-labelledby="next-title">
       <div>
         <p class="research-label">参考资料</p>
-        <h2 id="next-title">在三个接口中使用同一套 API。</h2>
+        <h2 id="next-title">在五个接口中使用同一套 API。</h2>
       </div>
       <nav aria-label="API 文档">
-        <a href="docs/api/index.zh-CN.html"><span>编程接口</span><strong>查看 Python、R 与 DuckDB 中的每一种算法</strong><i>→</i></a>
+        <a href="docs/api/index.zh-CN.html"><span>编程接口</span><strong>查看 Python、R、DuckDB、PostgreSQL 与 Memgraph 中的每一种算法</strong><i>→</i></a>
       </nav>
     </section>
   </main>
@@ -622,7 +949,7 @@ print(corrected)</code></pre>
   <footer class="research-footer">
     <div>
       <strong>stride-align 0.6.0</strong>
-      <span>Apache-2.0 · Python · R · DuckDB</span>
+      <span>Apache-2.0 · Python · R · DuckDB · PostgreSQL · Memgraph</span>
     </div>
     <nav aria-label="页脚链接">
       <a href="BENCHMARK.html">基准测试</a>

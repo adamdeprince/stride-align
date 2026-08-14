@@ -6,14 +6,22 @@ from pathlib import Path
 
 from tools.api_catalog import (
     EXAMPLES,
+    MEMGRAPH_EXAMPLE_BODIES,
+    MEMGRAPH_VECTORIZATION_BODIES,
+    POSTGRES_SQL_OVERRIDES,
+    POSTGRES_VECTORIZATION_SQL,
     VECTORIZATION_EXAMPLES,
     ZH_EXAMPLE_TEXT,
     ZH_VECTORIZATION_TEXT,
+    _duckdb_python,
+    _memgraph_python,
+    _memgraph_scalar_body,
+    _postgres_python,
     render_api_catalog,
     render_vectorization_guide,
 )
 
-TARGETS = {"python", "r", "duckdb"}
+TARGETS = {"python", "r", "duckdb", "postgres", "memgraph"}
 ROOT = Path(__file__).resolve().parents[1]
 CHINESE_API_SOURCE = ROOT / "docs" / "api" / "README.zh-CN.md"
 CHINESE_API = ROOT / "html" / "docs" / "api" / "index.zh-CN.html"
@@ -81,6 +89,7 @@ def test_chinese_api_catalog_covers_every_card_and_uses_chinese_terms() -> None:
     assert ">Language<" not in rendered
     assert "整个网格全局" in source
     assert "3 × Q" in source
+    assert "逐步产生配对记录" in source
 
 
 def test_generated_chinese_api_page_has_translation_navigation() -> None:
@@ -125,6 +134,39 @@ def test_r_api_catalog_functions_are_exported() -> None:
     assert referenced <= exported
 
 
+def test_database_api_catalog_examples_are_python_orchestrated_and_compile() -> None:
+    for example in EXAMPLES:
+        compile(_duckdb_python(example.duckdb), f"{example.slug}-duckdb.py", "exec")
+        compile(
+            _postgres_python(POSTGRES_SQL_OVERRIDES.get(example.slug, example.duckdb)),
+            f"{example.slug}-postgres.py",
+            "exec",
+        )
+        memgraph_body = (
+            MEMGRAPH_EXAMPLE_BODIES[example.slug]
+            if example.slug in MEMGRAPH_EXAMPLE_BODIES
+            else _memgraph_scalar_body(example.duckdb)
+        )
+        compile(
+            _memgraph_python(memgraph_body),
+            f"{example.slug}-memgraph.py",
+            "exec",
+        )
+
+    for example in VECTORIZATION_EXAMPLES:
+        compile(_duckdb_python(example.duckdb), f"{example.slug}-duckdb.py", "exec")
+        compile(
+            _postgres_python(POSTGRES_VECTORIZATION_SQL[example.slug]),
+            f"{example.slug}-postgres.py",
+            "exec",
+        )
+        compile(
+            _memgraph_python(MEMGRAPH_VECTORIZATION_BODIES[example.slug]),
+            f"{example.slug}-memgraph.py",
+            "exec",
+        )
+
+
 def test_vectorization_guide_distinguishes_global_and_per_query_top_k() -> None:
     guide = render_vectorization_guide()
     source = (ROOT / "docs/api/README.md").read_text(encoding="utf-8")
@@ -134,6 +176,10 @@ def test_vectorization_guide_distinguishes_global_and_per_query_top_k() -> None:
     assert "across the whole grid" in source
     assert "3 × Q" in source
     assert "DuckDB's vectorized chunk machinery" in source
+    assert "PostgreSQL" in source
+    assert "Q·T" in source
+    assert "CALL stride_align.cdist" in source
+    assert "continues to produce pair rows incrementally" in source
 
 
 def test_detailed_cdist_shapes_match_the_python_api() -> None:

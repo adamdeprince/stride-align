@@ -7,6 +7,10 @@ and per-query top-k operations, paths and CIGARs, phonetics, DTW, and
 substitution-matrix operations. RapidFuzz, TheFuzz, Parasail, and Jellyfish
 compatibility shims are intentionally not included.
 
+See the [cross-language API](https://stride-align.com/docs/api/index.html?language=postgres)
+for runnable Python-orchestrated PostgreSQL examples, including pair scoring,
+native arrays, ranking, and all-pairs operations.
+
 PostgreSQL extensions are tied to a server major version. Build and package a
 separate binary for each of 16, 17, and 18; the implementation and generated
 SQL catalog are shared.
