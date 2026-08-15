@@ -146,6 +146,13 @@ build-dir = "build/{wheel_tag}"
 cmake.build-type = "Release"
 editable.mode = "redirect"
 wheel.packages = ["src/stride_align"]
+# Never package local agent configuration or state. These exclusions are
+# explicit rather than relying on a developer's global Git ignore rules.
+sdist.exclude = [
+  "/.agents",
+  "/.claude",
+  "/.codex",
+]
 # Beider-Morse rule files (Apache Commons Codec GENERIC name-type) ship
 # under ``src/stride_align/bmpm_data/`` and are loaded at runtime via
 # ``importlib.resources``. scikit-build-core packages every file under
