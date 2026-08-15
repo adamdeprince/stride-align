@@ -4,6 +4,14 @@ All notable changes to `stride-align` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-08-15
+
+### Fixed
+
+* **Clean Python source distribution.** The source manifest now explicitly
+  excludes local `.agents`, `.claude`, and `.codex` configuration and state.
+  This Python-only patch release is otherwise identical to 0.6.0.
+
 ## [0.6.0] - 2026-07-16
 
 ### Added
